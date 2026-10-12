@@ -506,6 +506,15 @@ class ProductionBakeBackend:
                 "Current applied Custom Effects inventory does not match the cache",
             )
         signatures = self._signatures_at(scene, manifest.frame_start)
+        if manifest.settings_signature != signatures["settings_signature"]:
+            # A cache baked before owner decision D1 hashed the device into
+            # its identity; judge it against that form of the same scene.
+            from . import cache_identity
+
+            for legacy in cache_identity.legacy_signature_bundles(scene, signatures):
+                if legacy["settings_signature"] == manifest.settings_signature:
+                    signatures = legacy
+                    break
         for key, code in (
             ("scene_key", "SCENE_KEY_MISMATCH"),
             ("settings_signature", "SETTINGS_SIGNATURE_MISMATCH"),

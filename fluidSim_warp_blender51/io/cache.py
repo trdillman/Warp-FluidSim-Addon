@@ -67,7 +67,16 @@ _SCENE_KEY_IGNORED_SETTINGS = frozenset({
 })
 _CACHE_METADATA_IGNORED_SETTINGS = frozenset({
     "live_surface_publish_cadence",
+    # Where the solve ran is not cache identity (owner decision D1,
+    # 2026-10-12): a cache plays back, resumes and exports on any device.
+    "device",
 })
+# Caches written before D1 hashed ``device`` into the settings signature.
+# Matching those against these spellings keeps them readable; the
+# preference stores one of them.
+_LEGACY_SIGNATURE_DEVICES = ("cuda:0", "cuda:1", "cuda:2", "cuda:3",
+                             "cuda:4", "cuda:5", "cuda:6", "cuda:7",
+                             "cuda", "cpu", "")
 def _digest(h, value):
     """Feed one setting value into the running hash."""
     if isinstance(value, np.ndarray):
@@ -165,10 +174,7 @@ def source_frame_stamp_from_records(source_records) -> str:
     return outer.hexdigest()
 
 
-def signature_bundle_from_records(settings, source_records) -> dict[str, str]:
-    """Return the cache identity bundle from adapter-produced records."""
-    settings_signature = settings_record(settings)["signature"]
-    source_signature = source_signature_from_records(source_records)
+def _bundle(settings_signature: str, source_signature: str) -> dict[str, str]:
     digest = hashlib.sha256()
     digest.update(
         f"scene-key={SCENE_KEY_VERSION}|settings={settings_signature}|"
@@ -179,6 +185,18 @@ def signature_bundle_from_records(settings, source_records) -> dict[str, str]:
         "settings_signature": settings_signature,
         "source_signature": source_signature,
     }
+
+
+def signature_bundle_from_records(settings, source_records) -> dict[str, str]:
+    """Return the cache identity bundle from adapter-produced records."""
+    return _bundle(settings_record(settings)["signature"],
+                   source_signature_from_records(source_records))
+
+
+def legacy_signature_bundles(bundle: dict[str, str], settings) -> tuple[dict[str, str], ...]:
+    """Pre-D1 forms of ``bundle``: same sources, device-hashing settings."""
+    return tuple(_bundle(signature, bundle["source_signature"])
+                 for signature in legacy_settings_signatures(settings))
 
 
 def _savez_fast_compressed(path, payload):
@@ -214,8 +232,7 @@ def _jsonable_setting(value):
         return repr(value)
 
 
-def settings_record(settings) -> dict:
-    """Canonical, JSON-safe settings snapshot plus its stable content hash."""
+def _settings_values(settings, ignored) -> dict:
     if isinstance(settings, dict):
         names = sorted(settings)
         value_for = settings.__getitem__
@@ -223,13 +240,50 @@ def settings_record(settings) -> dict:
         fields = getattr(settings, "__dataclass_fields__", None)
         names = sorted(fields) if fields is not None else sorted(vars(settings))
         value_for = lambda name: getattr(settings, name)
-    values = {name: _jsonable_setting(value_for(name)) for name in names
-              if (not name.startswith("_")
-                  and name not in _CACHE_METADATA_IGNORED_SETTINGS
-                  and (isinstance(settings, dict) or hasattr(settings, name)))}
+    return {name: _jsonable_setting(value_for(name)) for name in names
+            if (not name.startswith("_")
+                and name not in ignored
+                and (isinstance(settings, dict) or hasattr(settings, name)))}
+
+
+def _signature_of(values: dict) -> str:
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"),
                          allow_nan=False).encode("utf-8")
-    return {"signature": hashlib.sha256(encoded).hexdigest(), "settings": values}
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def settings_record(settings) -> dict:
+    """Canonical, JSON-safe settings snapshot plus its stable content hash."""
+    values = _settings_values(settings, _CACHE_METADATA_IGNORED_SETTINGS)
+    return {"signature": _signature_of(values), "settings": values}
+
+
+def legacy_settings_signatures(settings) -> tuple[str, ...]:
+    """Signatures a pre-D1 cache may carry for these settings.
+
+    Those caches hashed the compute device in; this recomputes the hash for
+    each device spelling the preference can hold. Empty for settings that
+    carry no ``device`` field.
+    """
+    has_device = (("device" in settings) if isinstance(settings, dict)
+                  else hasattr(settings, "device"))
+    if not has_device:
+        return ()
+    ignored = _CACHE_METADATA_IGNORED_SETTINGS - {"device"}
+    values = _settings_values(settings, ignored)
+    result = []
+    for device in _LEGACY_SIGNATURE_DEVICES:
+        values["device"] = device
+        result.append(_signature_of(values))
+    return tuple(result)
+
+
+def settings_signature_matches(settings, baked: str) -> bool:
+    """Whether ``baked`` names these settings, in the current or pre-D1 form."""
+    baked = str(baked)
+    if settings_record(settings)["signature"] == baked:
+        return True
+    return baked in legacy_settings_signatures(settings)
 
 
 _ATTRIBUTE_KEYS_BY_SCHEMA: dict[int, dict[str, tuple[str, ...]]] = {

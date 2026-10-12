@@ -425,7 +425,8 @@ def test_cache_playback_compares_only_the_frame_settings_signature(monkeypatch):
         "fluidSim_warp_blender51.blender.cache_identity")
     fake_identity.signature_bundle = must_not_run
     fake_identity.scene_key = must_not_run
-    fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.legacy_settings_signatures = lambda _scene: ()
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication")
     _install_cache_playback_modules(
@@ -459,7 +460,8 @@ def test_cache_playback_classifies_whitewater_types(monkeypatch):
     }
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity")
-    fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.legacy_settings_signatures = lambda _scene: ()
     fake_cache.read_frame = lambda _base, _frame: frame_data
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication")
@@ -493,7 +495,8 @@ def test_cache_playback_reports_recoverable_render_sync_warning(monkeypatch):
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity"
     )
-    fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.legacy_settings_signatures = lambda _scene: ()
     warning = "Render input synchronization failed: RuntimeError: offline"
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication"
@@ -534,7 +537,8 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
     current = ["baked-settings"]
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity")
-    fake_identity.settings_signature = lambda _scene: current[0]
+    fake_identity.settings_signature = lambda _scene: current[0]
+    fake_identity.legacy_settings_signatures = lambda _scene: ()
 
     fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     drawn = []

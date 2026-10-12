@@ -105,7 +105,7 @@ def plan_export(base_dir, settings=None, *, frame_start=0, frame_end=0) -> VDBEx
     if settings is not None:
         # Only a byte-identical canonical settings record can authenticate the
         # unstored origin of old frames. New frames do not consult live state.
-        if cache.settings_record(settings)["signature"] != manifest.settings_signature:
+        if not cache.settings_signature_matches(settings, manifest.settings_signature):
             raise ValueError("Restore the baked domain and simulation settings before exporting an older cache without origin metadata.")
         corner = np.asarray(settings.domain_min, dtype=np.float32).astype(np.float64)
         if corner.shape != (3,) or not np.all(np.isfinite(corner)):

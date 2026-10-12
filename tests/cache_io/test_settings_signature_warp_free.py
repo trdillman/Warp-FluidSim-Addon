@@ -19,8 +19,13 @@ PACKAGE_NAME = "fluidSim_warp_blender51"
 
 # Computed on the unchanged base (cfff382) before the settings model moved;
 # re-pinned when lane J added narrow_band_enabled/narrow_band_voxels (every
-# SolverSettings field is part of the signature, so existing caches re-bake).
-PINNED_SIGNATURE = "f812a312f5c45196d3e4709a368d9e6df192b633115c652e13a205d8c9d1f606"
+# SolverSettings field is part of the signature, so existing caches re-bake),
+# and again when owner decision D1 (2026-10-12) took the compute device out
+# of cache identity.
+PINNED_SIGNATURE = "6d5bb730f1b3c7c26485c54a49e3e85582d7d0d72903a68d3877e63df05c3012"
+# The device-hashing value caches written before D1 carry. They must still
+# match the same scene, or every 3.0/3.1 cache would be refused.
+PRE_D1_SIGNATURE = "f812a312f5c45196d3e4709a368d9e6df192b633115c652e13a205d8c9d1f606"
 
 _SCRIPT = r'''
 import importlib
@@ -67,6 +72,7 @@ scene = SimpleNamespace(
 )
 print(json.dumps({
     "signature": cache_identity.settings_signature(scene),
+    "legacy": list(cache_identity.legacy_settings_signatures(scene)),
     "warp_loaded": sorted(n for n in sys.modules
                           if n == "warp" or n.startswith("warp.")),
 }))
@@ -86,7 +92,9 @@ def _run(mask: bool) -> dict:
 
 
 def test_settings_signature_value_is_pinned():
-    assert _run(mask=False)["signature"] == PINNED_SIGNATURE
+    result = _run(mask=False)
+    assert result["signature"] == PINNED_SIGNATURE
+    assert PRE_D1_SIGNATURE in result["legacy"]
 
 
 def test_settings_signature_needs_no_warp_and_is_unchanged_by_the_mask():

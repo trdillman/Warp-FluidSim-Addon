@@ -422,9 +422,10 @@ def _check_cache_scene_key(scene, frame_data):
     if not baked:
         return
     current = cache_identity.settings_signature(scene)
-    if baked != current:
-        raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(
-            frame=frame, baked=baked[:12], current=current[:12]))
+    if baked == current or baked in cache_identity.legacy_settings_signatures(scene):
+        return
+    raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(
+        frame=frame, baked=baked[:12], current=current[:12]))
 
 
 def play_cache_frame(sess, scene, frame=None):

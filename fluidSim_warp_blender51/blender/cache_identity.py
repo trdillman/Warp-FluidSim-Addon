@@ -164,6 +164,21 @@ def settings_signature(scene) -> str:
     return settings_record(_settings_record(scene))["signature"]
 
 
+def legacy_settings_signatures(scene) -> tuple[str, ...]:
+    """Signatures a cache baked before owner decision D1 may carry for the
+    scene's current settings (that form hashed the compute device in)."""
+    from ..io.cache import legacy_settings_signatures as _legacy
+
+    return _legacy(_settings_record(scene))
+
+
+def legacy_signature_bundles(scene, bundle: dict[str, str]) -> tuple[dict[str, str], ...]:
+    """Pre-D1 identity bundles a cache baked from this scene may carry."""
+    from ..io.cache import legacy_signature_bundles as _legacy
+
+    return _legacy(bundle, _settings_record(scene))
+
+
 def signature_bundle(scene, depsgraph=None) -> dict[str, str]:
     """Return the cache settings/source identity bundle for a scene."""
     from ..io.cache import signature_bundle_from_records
