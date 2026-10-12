@@ -327,7 +327,13 @@ class HostFrame:
                     np.ascontiguousarray(tris, dtype=np.int32))
         return self._get("surface_mesh", load)
 
-    def surface_velocity(self, positions):
+    def surface_velocity(self, positions, *, source=None):
+        """Sample the MAC velocity at ``positions``.
+
+        ``source`` is the object the positions came from (the surface vertex
+        array); passing it shares one device upload of the targets with the
+        nearest-transfer channels of the same frame.
+        """
         targets = np.asarray(
             positions, dtype=np.float32).reshape((-1, 3))
 
@@ -347,8 +353,8 @@ class HostFrame:
                     ),
                 )
                 return np.ascontiguousarray(self.velocities[nearest])
-            device_targets = wp.array(
-                targets, dtype=wp.vec3, device=device)
+            device_targets = self._surface_targets_device(
+                targets if source is None else source, targets)
             out = wp.empty(len(targets), dtype=wp.vec3, device=device)
             wp.launch(
                 k_sample_surface_velocity,
@@ -568,7 +574,7 @@ class HostFrame:
             if cached is not None and cached[0] is target_source:
                 return cached[1]
         surface_velocity = (
-            self.surface_velocity(targets)
+            self.surface_velocity(targets, source=target_source)
             if velocity_keys.intersection(keys) else None)
         nearest = None
         source_positions = None
