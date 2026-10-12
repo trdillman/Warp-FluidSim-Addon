@@ -640,3 +640,51 @@ def test_revert_skips_a_deleted_snapshot_object_and_restores_the_rest(
     assert kept.group.emission_mode == "INITIAL_FILL"
     reasons = bridge.pending.pending_presentation(scene)["reasons"]
     assert not any(reason.startswith("Reinitialize") for reason in reasons)
+    # The deleted camera never fed the simulation (B59), so nothing is left.
+    assert bridge.pending.pending_presentation(scene)["action"] == "NONE"
+
+# --- B59: only simulation participants enter the reset signature ------------
+
+
+def _object(name, role="NONE", **overrides):
+    values = dict(role=role, point_source_representation="DIRECT_APPEND",
+                  mesh_evaluation_mode="FIRST_SIM_FRAME",
+                  emission_mode="INITIAL_FILL", auto_inject_seed=False)
+    values.update(overrides)
+    return SimpleNamespace(name=name, fluidsim=SimpleNamespace(**values))
+
+
+def test_adding_a_non_participating_object_is_not_a_pending_reset(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    scene.objects = [_object("Source", "SOURCE")]
+    sess, _solver = _activate(bridge, scene, frame=3)
+
+    # A camera, a light, or an output object Output Preparation creates.
+    scene.objects.append(_object("FluidSim Particles"))
+    scene.objects.append(_object("Camera"))
+    bridge.pending.refresh_pending_state(scene, sess)
+
+    assert bridge.pending.pending_presentation(scene)["action"] == "NONE"
+
+
+def test_participants_seeds_and_role_changes_still_make_reset_pending(
+        monkeypatch):
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    bystander = _object("Cube")
+    scene.objects = [bystander]
+    sess, _solver = _activate(bridge, scene, frame=3)
+
+    scene.objects.append(_object("Seed", auto_inject_seed=True))
+    bridge.pending.refresh_pending_state(scene, sess)
+    assert bridge.pending.pending_presentation(scene)["action"] == "RESET_PENDING"
+
+    scene.objects.pop()
+    bystander.fluidsim.role = "COLLIDER"
+    bridge.pending.refresh_pending_state(scene, sess)
+    assert bridge.pending.pending_presentation(scene)["action"] == "RESET_PENDING"
+
+    # Revert can still put a newly tagged object back to role NONE.
+    assert bridge.pending.revert_pending_values(scene) is True
+    assert bystander.fluidsim.role == "NONE"

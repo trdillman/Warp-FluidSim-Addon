@@ -422,6 +422,18 @@ def _read_setting(owner, name):
     return None if owner is None else getattr(owner, name)
 
 
+def _participates(pg):
+    """Whether an object's FluidSim group feeds the simulation.
+
+    Every Blender object carries the group, so cameras, lights, the domain and
+    FluidSim's own output objects all have one at role ``NONE``. Only a tagged
+    role or an auto-injected seed enters the reset signature: adding or
+    deleting a bystander is not a simulation change. A role change still is,
+    since it moves the object into or out of this set.
+    """
+    return pg.role != "NONE" or bool(pg.auto_inject_seed)
+
+
 def _reset_signature(scene):
     scene_fs, domain_fs = _signature_owners(scene)
     values = [(name, _stable_value(_read_setting(_declaring_group(scene_fs, domain_fs, name), name)))
@@ -429,7 +441,7 @@ def _reset_signature(scene):
     objects = []
     for obj in getattr(scene, "objects", ()) or ():
         pg = getattr(obj, "fluidsim", None)
-        if pg is None:
+        if pg is None or not _participates(pg):
             continue
         object_id = _stable_value(obj)
         fields = tuple((name, _stable_value(getattr(pg, name)))
