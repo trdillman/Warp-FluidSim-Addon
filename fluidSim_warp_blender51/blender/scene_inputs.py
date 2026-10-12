@@ -131,6 +131,33 @@ def _referenced_bounds(world_verts, tris):
     return points.min(axis=0), points.max(axis=0)
 
 
+def _height_profile(pixels, width, height, scale):
+    """Transposed Rec. 709 luminance of RGBA pixels, times ``scale``.
+
+    Bit for bit ``((r*0.2126 + g*0.7152) + b*0.0722).T * scale`` in float32,
+    as a C-contiguous ``(width, height)`` array: the same float32 operations
+    on every pixel, in the same order. Working through bands of rows keeps
+    each band in cache and writes it straight into its transposed place; the
+    whole-image temporaries and the cache-hostile 16 MiB transposing copy
+    cost ~95 ms per sync for a 2048^2 image.
+    """
+    rgba = pixels.reshape(height, width, 4)
+    profile = np.empty((width, height), dtype=np.float32)
+    for start in range(0, height, _HEIGHT_PROFILE_BAND_ROWS):
+        band = rgba[start:start + _HEIGHT_PROFILE_BAND_ROWS]
+        luminance = np.multiply(band[..., 0], 0.2126)
+        term = np.multiply(band[..., 1], 0.7152)
+        luminance += term
+        np.multiply(band[..., 2], 0.0722, out=term)
+        luminance += term
+        luminance *= scale
+        profile[:, start:start + _HEIGHT_PROFILE_BAND_ROWS] = luminance.T
+    return profile
+
+
+_HEIGHT_PROFILE_BAND_ROWS = 16
+
+
 class StagedMesh:
     """Identity stand-in for a collider/source mesh during admission staging.
 
@@ -1074,12 +1101,9 @@ class SceneInputs:
                 foreach_get(pixels)
             else:
                 pixels[:] = np.asarray(image.pixels, dtype=np.float32)
-            rgba = pixels.reshape(height, width, 4)
-            profile = np.ascontiguousarray(
-                (rgba[..., 0] * 0.2126 + rgba[..., 1] * 0.7152
-                 + rgba[..., 2] * 0.0722).T
-                * float(getattr(fs, "height_profile_scale", 1.0)),
-                dtype=np.float32)
+            profile = _height_profile(
+                pixels, width, height,
+                float(getattr(fs, "height_profile_scale", 1.0)))
         fs.height_error = ""
         desc = HeightSourceDesc()
         desc.enabled = True
