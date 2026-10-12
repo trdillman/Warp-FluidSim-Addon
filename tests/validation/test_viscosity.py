@@ -418,6 +418,7 @@ def test_solver_records_viscosity_convergence_the_way_it_records_pressure():
         stats=FrameStats(),
         device="cpu",
         pressure_solver=None,
+        _classify_collision_voxels=lambda: None,
     )
     stub._native_solver_message = MethodType(
         FluidSolver._native_solver_message, stub)

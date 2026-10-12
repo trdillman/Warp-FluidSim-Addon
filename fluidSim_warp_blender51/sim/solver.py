@@ -1499,6 +1499,12 @@ class FluidSolver:
         s = self.settings
         if not s.viscosity_enabled:
             return
+        # The grid clear zeroes voxel_type every substep and the collision bits
+        # are otherwise re-derived only in _collision_faces, after this solve,
+        # so viscosity's VOXEL_COLLISION guards would never fire for mesh
+        # colliders or domain walls. collision_sdf is final by now; the later
+        # pass re-derives the same bits.
+        self._classify_collision_voxels()
         if not s.viscosity_from_particles and s.viscosity_constant > 0.0:
             fast_launch(
                 k_fill_float, dim=self._nvox,
@@ -1522,7 +1528,7 @@ class FluidSolver:
         self.stats.viscosity_residual = float(status["residual"])
         self.stats.native_solver_message = self._native_solver_message()
 
-    def _collision_faces(self):
+    def _classify_collision_voxels(self):
         g = self.grid
         fast_launch(
             k_sdf_to_axis_collision, dim=self._nvox,
@@ -1530,6 +1536,10 @@ class FluidSolver:
                     g.voxels_dim, g.leaves_dim, g.num_leaves, 0.0],
             outputs=[self.voxel_type.data], device=self.device,
         )
+
+    def _collision_faces(self):
+        g = self.grid
+        self._classify_collision_voxels()
         fast_launch(
             k_expand_shift_axis_velocity_in_collider, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w, self.voxel_type.data,
