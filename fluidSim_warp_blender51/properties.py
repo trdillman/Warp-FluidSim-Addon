@@ -198,6 +198,29 @@ def _request_sync(self, context):
     _request_scene_update(context, SceneUpdate.SYNC)
 
 
+# The source UI schema the tagging operators stamp (``blender/sources.py``):
+# from 3 the runtime reads the Emission/Removal Region kinds, from 4 the
+# Source Fill Target sampling controls the Object panel shows.
+_CURRENT_SOURCE_UI_SCHEMA = 4
+
+
+def _update_object_role(self, context):
+    """A role chosen in the Role dropdown gets the schema the panel draws.
+
+    Below the current schema the runtime ignores the region and sampling
+    controls the Object panel shows for sources, sinks and field sources, so
+    a dropdown-tagged object is brought to the schema the "Set Selected as"
+    operators stamp; a new liquid source inherits Liquid Sampling as theirs do.
+    """
+    if (self.role in {"SOURCE", "SINK", "FIELD"}
+            and int(self.source_ui_schema_version) < _CURRENT_SOURCE_UI_SCHEMA):
+        if self.role == "SOURCE":
+            self.source_sampling_mode = "INHERIT"
+            self.source_sampling_multiplier = 1.0
+        self.source_ui_schema_version = _CURRENT_SOURCE_UI_SCHEMA
+    _request_reset(self, context)
+
+
 def _update_field_region_kind(self, context):
     """Keep field payload controls reachable for the selected coverage mode."""
     if self.field_region_kind != "VOLUME_GRID" and self.field_value_source != "CONSTANT":
@@ -362,7 +385,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
              "Source pressure, scalar, vector, or staggered velocity fields without emitting liquid"),
         ],
         default="NONE",
-        update=_request_reset,
+        update=_update_object_role,
     )
     # Source shape settings.
     shape: EnumProperty(
