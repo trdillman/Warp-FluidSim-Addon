@@ -602,12 +602,16 @@ class CompiledSourceBatch:
     required_leaf_coords: np.ndarray
     diagnostics: tuple[SourceDiagnostic, ...]
     device_bytes: int
+    # (device leaf coords, count) uploaded once for topology marking; owned
+    # by SourcePipeline.mark_source_topology.
+    topology_upload: object = field(default=None, repr=False)
 
     @property
     def footprints(self) -> tuple[CompiledSourceFootprint, ...]:
         return tuple(_compiled_footprint(source) for source in self.sources)
 
     def release(self):
+        self.topology_upload = None
         for source in self.sources:
             source.region.release()
 

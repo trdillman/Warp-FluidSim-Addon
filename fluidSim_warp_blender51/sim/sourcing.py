@@ -8,6 +8,7 @@ import numpy as np
 import warp as wp
 
 from . import constants as C
+from .fastlaunch import launch as fast_launch
 from .enums import (
     BlendMode,
     MeshSinkRegionMode,
@@ -53,6 +54,7 @@ from .source_kernels import (
     k_count_mesh_source_particles,
     k_count_source_shapes_particles,
     k_emit_compiled_source_particles,
+    k_mark_source_leaves,
     k_mesh_source_field,
     k_mesh_source_particles,
     k_reserve_owned_point_slots,
@@ -154,6 +156,7 @@ __all__ = [
     "k_apply_compiled_source",
     "k_apply_compiled_staggered_source",
     "k_emit_compiled_source_particles",
+    "k_mark_source_leaves",
     "k_assign_emitted_uids",
     "k_add_emission_demand",
     "k_admit_emission_batch",
@@ -393,6 +396,41 @@ class SourcePipeline(CompiledSourceExecution):
             bounds = getattr(plan.region, "bounds", None)
             if bounds is not None and plan.activation.enabled:
                 yield bounds()
+
+    def mark_source_topology(self, grid, batch):
+        """Flag every leaf a compiled source needs, in one launch.
+
+        Marks the compiled flat leaf coordinates themselves. Converting each
+        to a world box and marking it inclusively also flagged the next leaf
+        on every positive side (up to eight leaves per source leaf), and
+        cost one Python dispatch per leaf on every rebuild.
+        """
+        from .source_regions import plan_requires_source_topology
+
+        upload = batch.topology_upload
+        if upload is None:
+            coords = [
+                (compiled.region.topology_leaf_coords
+                 if compiled.region.topology_leaf_coords is not None
+                 else compiled.region.leaf_coords)
+                for compiled in batch.sources
+                if plan_requires_source_topology(compiled.plan)
+            ]
+            coords = [value for value in coords if len(value)]
+            host = (np.unique(np.concatenate(coords), axis=0).astype(np.int32)
+                    if coords else np.empty((0, 3), np.int32))
+            device = (wp.array(host, dtype=wp.vec3i, device=self.device)
+                      if len(host) else None)
+            upload = batch.topology_upload = (device, int(len(host)))
+        device, count = upload
+        if count:
+            fast_launch(
+                k_mark_source_leaves,
+                dim=count,
+                inputs=[device, count, grid.leaves_dim, grid.leaf_flags],
+                device=self.device,
+            )
+        return count
 
     def compile(self, frame=0, substep=0, *, upload=True):
         """Compile current plans for the owner's sparse-grid context."""

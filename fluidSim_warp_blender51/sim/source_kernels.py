@@ -30,6 +30,7 @@ import warp as wp
 
 from . import constants as C
 from .fields import (
+    leaf_linear_index,
     sample_scalar_trilinear,
     voxel_center_world,
     voxel_coord_of_flat,
@@ -1872,6 +1873,29 @@ def k_emit_compiled_source_particles(
         wp.atomic_add(voxel_counts, flat, 1)
         wp.atomic_add(result, 0, 1)
         wp.atomic_add(emission_state, 2, 1)
+
+
+@wp.kernel
+def k_mark_source_leaves(
+    source_leaf_coords: wp.array(dtype=wp.vec3i),
+    source_leaf_count: int,
+    leaves_dim: wp.vec3i,
+    leaf_flags: wp.array(dtype=wp.int32),
+):
+    """Flag exactly the compiled source leaves for the topology rebuild.
+
+    One thread per leaf coordinate. Writing the constant 1 is
+    order-independent, so concurrent duplicates are harmless.
+    """
+    tid = wp.tid()
+    if tid >= source_leaf_count:
+        return
+    lc = source_leaf_coords[tid]
+    if lc[0] < 0 or lc[1] < 0 or lc[2] < 0:
+        return
+    if lc[0] >= leaves_dim[0] or lc[1] >= leaves_dim[1] or lc[2] >= leaves_dim[2]:
+        return
+    leaf_flags[leaf_linear_index(lc, leaves_dim)] = 1
 
 
 @wp.kernel
