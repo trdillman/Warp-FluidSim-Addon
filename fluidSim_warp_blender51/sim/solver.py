@@ -425,6 +425,9 @@ class ColliderDesc:
     # only when this collider is moving. Non-None marks it eligible for
     # per-substep re-transform; the Blender bridge never sets this field.
     base_points: object = None
+    # Solver-internal: mesh.points currently hold an extrapolated sub-frame
+    # pose that _restore_collider_poses must undo.
+    reposed: bool = False
 
 
 @dataclass
@@ -669,6 +672,9 @@ class FluidSolver:
             tuple(legacy_descriptors), tuple(native_plans)))
 
     def set_colliders(self, colliders):
+        # The meshes are the scene's cached collider meshes; hand back any we
+        # re-posed before letting go of them (also covers a step that raised).
+        self._restore_collider_poses()
         self.colliders = list(colliders)
         for col in self.colliders:
             moving = col.mesh is not None and (
@@ -1271,6 +1277,22 @@ class FluidSolver:
                 outputs=[col.mesh.points], device=self.device,
             )
             col.mesh.refit()
+            col.reposed = True
+
+    def _restore_collider_poses(self):
+        """Put re-posed collider meshes back at their authored frame pose.
+
+        ``_update_moving_colliders`` writes extrapolated points into the
+        scene-owned cached mesh. Left there, a collider that then stops keeps
+        its extrapolated pose: the scene reuses the unchanged cached mesh and
+        zero velocity never re-poses it.
+        """
+        for col in getattr(self, "colliders", ()):
+            if col.base_points is None or not getattr(col, "reposed", False):
+                continue
+            wp.copy(col.mesh.points, col.base_points)
+            col.mesh.refit()
+            col.reposed = False
 
     def _apply_collisions(self):
         g = self.grid
@@ -2085,6 +2107,7 @@ class FluidSolver:
         # elapsed simulation time without multiplying work by CFL substeps.
         with self._phase("g2p"):
             self._mix_particle_colors(frame_dt)
+        self._restore_collider_poses()
 
         self.frame += 1
         self._host_frame_cache = None
