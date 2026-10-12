@@ -525,6 +525,20 @@ class SurfacePipeline:
         """Mark the simulation SDF stale after particle positions change."""
         self.solver_sdf_key = None
 
+    def advance_solver_sdf_key(self, previous_key):
+        """Keep a current SDF current across a frame/time advance.
+
+        The key stands in for "these particle positions": the solver moves
+        frame or time without touching particles at the end of a substep and
+        of a frame, so an SDF built for ``previous_key`` (whitewater builds
+        one after advection) still describes them. Every position change has
+        its own explicit invalidation or a topology generation in the key, so
+        those still force a rebuild (P11).
+        """
+        key = getattr(self, "solver_sdf_key", None)
+        if key is not None and key == previous_key:
+            self.solver_sdf_key = self.solver_sdf_build_key()
+
     def invalidate_particle_state(self):
         """Invalidate every surface product after an out-of-step particle edit."""
 

@@ -2367,7 +2367,11 @@ class FluidSolver:
                 self._whitewater(dt, sdf_ready=sdf_ready)
             self.features.run(
                 FrameFeaturePhase.AFTER_PARTICLE_UPDATE, self, time_ctx)
+            # Time advances, particles do not: a solver SDF built after
+            # advection (whitewater) stays current for the next consumer.
+            sdf_key = self.surface.solver_sdf_build_key()
             self.sim_time += dt
+            self.surface.advance_solver_sdf_key(sdf_key)
             time_ctx["time"] = self.sim_time
 
         # Color is an artistic display attribute, so exchange it once per
@@ -2377,7 +2381,9 @@ class FluidSolver:
             self._mix_particle_colors(frame_dt)
         self._restore_collider_poses()
 
+        sdf_key = self.surface.solver_sdf_build_key()
         self.frame += 1
+        self.surface.advance_solver_sdf_key(sdf_key)
         self._host_frame_cache = None
         with self._phase("whitewater"):
             whitewater_particles = self._finalize_whitewater()
