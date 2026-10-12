@@ -177,3 +177,119 @@ def test_resume_with_a_later_end_frame_extends_a_complete_cache():
     assert controller.next_frame == 11
     assert controller.frame_end == 20
     assert backend.calls[-1] == {"end": 20}
+
+
+class _PreviewSession:
+    """The pre-bake preview session; the Live callback admits like playback does."""
+
+    def __init__(self):
+        self.owner = None
+        self.initialized = []
+        self.released = []
+        self.solver = object()
+
+    def owns_scene(self, scene):
+        return scene is self.owner
+
+    def initialize(self, scene, depsgraph=None):
+        self.initialized.append(scene)
+        self.owner = scene
+
+    def sync_scene(self, _scene, _depsgraph=None):
+        pass
+
+    def release(self, scene):
+        self.released.append(scene)
+        self.owner = None
+
+
+def _held_edit_world(backend, monkeypatch, *, current_settings):
+    from fluidSim_warp_blender51.blender import cache_identity
+
+    suppressed = []
+
+    @contextlib.contextmanager
+    def suppress_mode_transitions():
+        suppressed.append(True)
+        try:
+            yield
+        finally:
+            suppressed.pop()
+
+    sys.modules["fluidSim_warp_blender51.blender.playback"].suppress_mode_transitions = (
+        suppress_mode_transitions)
+    session = _PreviewSession()
+
+    class _Settings:
+        """Mirrors playback.set_live_enabled: turning Live on admits a free session."""
+        _live = False
+
+        @property
+        def live(self):
+            return self._live
+
+        @live.setter
+        def live(self, value):
+            self._live = bool(value)
+            if value and not suppressed and not session.owns_scene(scene):
+                session.initialize(scene)
+
+    scene = _Scene(live=False)
+    scene.fluidsim = _Settings()
+    restored = []
+    monkeypatch.setattr(production_bake, "restore_solver",
+                        lambda solver, payload: restored.append(payload))
+    monkeypatch.setattr(cache_identity, "settings_signature",
+                        lambda _scene: current_settings)
+    session.owner = scene  # the bake's own session owns the scene until restore
+    backend.sess = session
+    backend._original_frame = 37
+    backend._original_live = True
+    backend._original_session_active = True
+    backend._original_session_payload = "pre-bake checkpoint"
+    backend._original_session_signatures = {
+        "scene_key": "key", "settings_signature": "before",
+        "source_signature": "sources"}
+    return scene, session, restored
+
+
+def test_a_held_settings_edit_leaves_the_preview_released(backend, monkeypatch):
+    """Review finding (e): the restore never compared the captured signature, so
+    a held Reinitialize-tier edit restored the pre-bake checkpoint into a solver
+    admitted from the edited settings (or failed a COMPLETE bake)."""
+    scene, session, restored = _held_edit_world(
+        backend, monkeypatch, current_settings="edited")
+    session.initialized.clear()
+
+    backend.finish(scene)
+
+    assert restored == []                 # no checkpoint into an incompatible grid
+    assert session.initialized == []      # not re-admitted, Live included
+    assert session.released == [scene]
+    assert scene.fluidsim.live is True
+    assert scene.frame_current == 37
+    assert "Initialize" in backend.restore_notice
+
+
+def test_unchanged_settings_still_restore_the_preview(backend, monkeypatch):
+    scene, session, restored = _held_edit_world(
+        backend, monkeypatch, current_settings="before")
+
+    backend.finish(scene)
+
+    assert restored == ["pre-bake checkpoint"]
+    assert session.initialized == [scene]
+    assert backend.restore_notice == ""
+
+
+def test_a_complete_bake_stays_complete_and_says_initialize_is_needed():
+    notice = "Settings changed during the bake: Initialize to restart the preview"
+    backend = SimpleNamespace(finish=lambda _scene: None, restore_notice=notice)
+    controller = BakeController(backend=backend)
+    controller.status = BakeStatus.RUNNING
+    controller.frame_start, controller.frame_end, controller.next_frame = 1, 2, 3
+
+    controller.tick(_Scene())
+
+    assert controller.status is BakeStatus.COMPLETE
+    assert notice in controller.message

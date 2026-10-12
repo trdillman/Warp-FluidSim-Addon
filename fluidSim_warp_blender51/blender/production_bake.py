@@ -202,7 +202,8 @@ class BakeController:
             if self.status is BakeStatus.CANCELLING or self._cancel_requested:
                 self.backend.cancel(scene)
                 self.status = BakeStatus.CANCELLED
-                self.message = "Production bake cancelled at a safe frame boundary"
+                self.message = self._with_restore_notice(
+                    "Production bake cancelled at a safe frame boundary")
                 self._emit(
                     "bake_cancelled", last_committed_frame=self.last_committed_frame
                 )
@@ -215,7 +216,7 @@ class BakeController:
                 self.backend.finish(scene)
                 self.status = BakeStatus.COMPLETE
                 self.progress = 1.0
-                self.message = "Production bake complete"
+                self.message = self._with_restore_notice("Production bake complete")
                 self._emit(
                     "bake_complete", last_committed_frame=self.last_committed_frame
                 )
@@ -250,6 +251,11 @@ class BakeController:
                 self.status = BakeStatus.FAILED
             self._emit("bake_failed", error=self.error)
             return None
+
+    def _with_restore_notice(self, message: str) -> str:
+        """Append why the pre-bake preview was not put back, if it was not."""
+        notice = str(getattr(self.backend, "restore_notice", "") or "")
+        return f"{message}. {notice}" if notice else message
 
     def result(self) -> BakeResult:
         return BakeResult(
@@ -512,6 +518,9 @@ class ProductionBakeBackend:
         # True once initialize() has replaced the live session, so a failure
         # in the remaining initialization restores it and not only Live.
         self._session_replaced = False
+        # Set when the pre-bake preview could not be put back; the controller
+        # appends it to the bake's terminal message.
+        self.restore_notice = ""
 
     @staticmethod
     def _bpy():
@@ -1080,8 +1089,20 @@ class ProductionBakeBackend:
         if self.sess is None:
             return
         restore_error = None
+        released_for_edits = False
         try:
-            if self._original_session_active and self._original_session_payload is not None:
+            if (self._original_session_active
+                    and self._original_session_payload is not None
+                    and self._held_settings_changed(scene)):
+                # A held mid-bake edit (decision D2) changed the settings the
+                # preview was admitted with. Its checkpoint only fits a solver
+                # admitted from those settings, so leave the preview released.
+                self.sess.release(scene)
+                released_for_edits = True
+                self.restore_notice = (
+                    "Settings changed during the bake: Initialize to restart "
+                    "the preview")
+            elif self._original_session_active and self._original_session_payload is not None:
                 with playback.suppress_frame_handlers():
                     self.sess.initialize(
                         scene,
@@ -1107,7 +1128,12 @@ class ProductionBakeBackend:
             key = scene_identity(scene)
             _RESTORING_SCENES.add(key)
             try:
-                scene.fluidsim.live = self._original_live
+                if released_for_edits:
+                    # Turning Live back on would admit the released session.
+                    with playback.suppress_mode_transitions():
+                        scene.fluidsim.live = self._original_live
+                else:
+                    scene.fluidsim.live = self._original_live
             finally:
                 _RESTORING_SCENES.discard(key)
             self._initialized = False
@@ -1115,6 +1141,22 @@ class ProductionBakeBackend:
             self._session_replaced = False
         if restore_error is not None:
             raise RuntimeError(f"could not restore pre-bake live state: {restore_error}")
+
+    def _held_settings_changed(self, scene) -> bool:
+        """Whether the settings identity moved since the pre-bake snapshot."""
+        from . import cache_identity
+
+        captured = (self._original_session_signatures or {}).get("settings_signature")
+        if captured is None:
+            return False
+
+        def current():
+            return cache_identity.settings_signature(scene)
+
+        # At the snapshot's frame, so a keyframed setting does not read as an edit.
+        if self._original_frame is None:
+            return captured != current()
+        return captured != self._at_frame(scene, int(self._original_frame), current)
 
     def finish(self, scene) -> None:
         self._restore_original_state(scene)
