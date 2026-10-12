@@ -628,6 +628,7 @@ def _write_npz_atomic(path: Path, payload: dict, *, compressed=False) -> tuple[s
     temp_path = Path(temp_name)
     try:
         with os.fdopen(descriptor, "w+b") as handle:
+            descriptor = None  # the handle owns and closes it now
             if compressed:
                 np.savez_compressed(handle, **payload)
             else:
@@ -643,10 +644,11 @@ def _write_npz_atomic(path: Path, payload: dict, *, compressed=False) -> tuple[s
                 os.close(directory)
         return sha256_file(path), path.stat().st_size
     except Exception:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         try:
             temp_path.unlink()
         except FileNotFoundError:

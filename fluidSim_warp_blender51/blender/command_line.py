@@ -116,6 +116,7 @@ def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     temp = Path(temp_name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            descriptor = None  # the handle owns and closes it now
             json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
             handle.write("\n")
             handle.flush()
@@ -128,10 +129,11 @@ def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
             finally:
                 os.close(directory)
     except Exception:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         try:
             temp.unlink()
         except FileNotFoundError:

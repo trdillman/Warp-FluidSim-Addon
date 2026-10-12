@@ -218,6 +218,7 @@ def write_checkpoint_atomic(path: Path | str, payload: CheckpointPayload) -> str
     temp = Path(temp_name)
     try:
         with os.fdopen(descriptor, "w+b") as handle:
+            descriptor = None  # the handle owns and closes it now
             metadata = json.dumps(
                 _metadata(payload), sort_keys=True, separators=(",", ":"), allow_nan=False
             )
@@ -232,10 +233,11 @@ def write_checkpoint_atomic(path: Path | str, payload: CheckpointPayload) -> str
         _fsync_directory(path.parent)
         return digest
     except Exception:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         try:
             temp.unlink()
         except FileNotFoundError:
