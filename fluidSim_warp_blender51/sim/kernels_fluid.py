@@ -1757,8 +1757,13 @@ def k_attract_sdf_gradient_direction(
     u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
     wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
 ):
-    """fluidSimAttractSdfGradientDirection: pull fluid along -grad(SDF)."""
+    """fluidSimAttractSdfGradientDirection: pull fluid along -grad(SDF).
 
+    A neighbour holding the collider grid's far value (1e6, written outside
+    every collider's query band) is treated like a missing voxel: differencing
+    against it gave a ~1e6/(2h) gradient and a velocity spike at the band
+    edge whenever no domain-wall SDF lies underneath (B33).
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
@@ -1774,9 +1779,9 @@ def k_attract_sdf_gradient_direction(
         fhi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, hi)
         s_hi = phi
         s_lo = phi
-        if fhi >= 0:
+        if fhi >= 0 and sdf[fhi] < 5.0e5:
             s_hi = sdf[fhi]
-        if flo >= 0:
+        if flo >= 0 and sdf[flo] < 5.0e5:
             s_lo = sdf[flo]
         g = (s_hi - s_lo) * inv2h
         dv = -strength * g * dt  # descend the SDF
