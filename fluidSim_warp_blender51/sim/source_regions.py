@@ -1263,8 +1263,12 @@ class SourceCompiler:
             # No coverage, but the leaves holding the points must be active on
             # the frame they are appended: topology is rebuilt before
             # emission, so otherwise they get no grid support until the next
-            # rebuild sees them.
-            region.topology_leaf_coords = self._point_leaves(r.positions, context)
+            # rebuild sees them. Planning counts them here; the runtime marks
+            # the uploaded points on the GPU instead (see
+            # SourcePipeline.mark_source_topology), keeping large packets off
+            # the host on every recompile.
+            if not context.upload:
+                region.topology_leaf_coords = self._point_leaves(r.positions, context)
             return region
         leaves = self._candidate_leaves(r.bounds(), context)
         rejected = self._preflight_leaves(plan, leaves, context, output_arrays=1)
@@ -1289,7 +1293,19 @@ class SourceCompiler:
                             / context.voxel_size).astype(np.int64) - 1
         inside = np.all((voxels >= domain_lo) & (voxels <= domain_hi), axis=1)
         leaves = np.floor_divide(voxels[inside], C.LEAF_DIM)
-        return np.ascontiguousarray(np.unique(leaves, axis=0), dtype=np.int32)
+        if not len(leaves):
+            return np.empty((0, 3), np.int32)
+        # Row-wise np.unique is slow for large packets; deduplicate a linear
+        # key over the leaves' bounding box instead (same sorted result).
+        low = leaves.min(axis=0)
+        dims = leaves.max(axis=0) - low + 1
+        relative = leaves - low
+        keys = np.unique((relative[:, 0] * dims[1] + relative[:, 1]) * dims[2]
+                         + relative[:, 2])
+        unique = np.stack((keys // (dims[1] * dims[2]),
+                           (keys // dims[2]) % dims[1],
+                           keys % dims[2]), axis=1) + low
+        return np.ascontiguousarray(unique, dtype=np.int32)
 
     @staticmethod
     def _rasterize_points(positions, leaves, context, radius, max_rows=1_000_000):

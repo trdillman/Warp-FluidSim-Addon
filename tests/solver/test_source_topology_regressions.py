@@ -74,14 +74,20 @@ def test_compiled_source_marks_exactly_its_leaves(cuda_device):
 def test_direct_append_points_have_topology_on_their_emission_frame(cuda_device):
     solver = FluidSolver(_settings(cuda_device))
     try:
+        from fluidSim_warp_blender51.sim.source_regions import CompileContext, SourceCompiler
+
         points = np.array([(2.55, 2.55, 2.55), (2.65, 2.45, 2.75)], np.float32)
-        solver.set_source_batch(native_plans=(SourcePlan(
+        plan = SourcePlan(
             SourceKey("append"), SourceOperation.LIQUID, SourceLifecycle.DIRECT_APPEND,
             SourceEvaluationCadence.STATIC, PointRegionPlan(points),
-            PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES)),))
+            PayloadPlan(kind=SourcePayloadKind.LIQUID_ATTRIBUTES))
+        solver.set_source_batch(native_plans=(plan,))
         solver._rebuild_topology(expand=0)
         assert _active_leaves(solver) == {(3, 3, 3)}
-        footprint = solver.sourcing._compiled_batch.footprints[0]
+        # Admission planning counts the same leaf.
+        planning = CompileContext(0, 0, 0, "cpu", (0.0, 0.0, 0.0), 0.1, (0.0, 0.0, 0.0),
+                                  (3.2, 3.2, 3.2), upload=False)
+        footprint = SourceCompiler().compile((plan,), planning).footprints[0]
         assert footprint.leaf_coords == ((3, 3, 3),)
 
         solver._clear_grid_fields()

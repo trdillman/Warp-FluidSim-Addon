@@ -407,13 +407,26 @@ class SourcePipeline(CompiledSourceExecution):
         """
         from .source_regions import plan_requires_source_topology
 
-        # A DIRECT_APPEND packet needs its leaves only until it has fired;
-        # after that its particles mark their own leaves.
+        # A DIRECT_APPEND packet needs the leaves holding its points, and only
+        # until it has fired; after that its particles mark their own leaves.
+        # Its uploaded points are marked exactly like particles.
+        for compiled in batch.sources:
+            plan, points = compiled.plan, compiled.region.points
+            if (plan.lifecycle == SourceLifecycle.DIRECT_APPEND
+                    and str(plan.stable_id) not in self._initial_fired
+                    and points is not None
+                    and points.device_positions is not None
+                    and len(points.positions)):
+                count = int(len(points.positions))
+                grid.mark_points(
+                    points.device_positions,
+                    wp.array([count], dtype=wp.int32, device=self.device),
+                    count,
+                )
         included = tuple(
             index for index, compiled in enumerate(batch.sources)
             if plan_requires_source_topology(compiled.plan)
-            and not (compiled.plan.lifecycle == SourceLifecycle.DIRECT_APPEND
-                     and str(compiled.plan.stable_id) in self._initial_fired)
+            and compiled.plan.lifecycle != SourceLifecycle.DIRECT_APPEND
         )
         upload = batch.topology_upload
         if upload is None or upload[0] != included:
