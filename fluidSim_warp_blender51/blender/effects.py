@@ -861,6 +861,29 @@ def sync_animated_effect_bindings(scene, session) -> bool:
     return True
 
 
+def _running_effect_trust_revoked(stack, store) -> bool:
+    """Is code the solver may be running no longer trusted?
+
+    Judged on the applied snapshot, not the draft: an edited draft has a new
+    content digest (an edited built-in is no longer the built-in) and so reads
+    untrusted, yet the solver still runs the applied code, which was trusted
+    when it was admitted. Only a trust change to that applied code revokes it.
+    An unreadable snapshot behind an applied stack fails closed.
+    """
+    if not getattr(stack, "applied_signature", ""):
+        return False
+    try:
+        payload = json.loads(getattr(stack, "applied_snapshot_json", "") or "[]")
+        applied = tuple(EffectInstanceV2.from_dict(item) for item in payload)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return True
+    trusted = {TrustState.BUILT_IN_TRUSTED, TrustState.LOCAL_TRUSTED}
+    return any(
+        store.status(content_trust_digest(instance.definition),
+                     built_in=instance.definition.built_in) not in trusted
+        for instance in effective_stack_instances(applied))
+
+
 def refresh_stack_state(scene):
     stack = scene.fluidsim_effects
     try:
@@ -871,7 +894,6 @@ def refresh_stack_state(scene):
         stack.draft_signature = signature
         store = trust_store_for_scene(scene)
         blocking = []
-        revoked_running = False
         instances_by_id = {instance.instance_id: instance for instance in instances}
         for pg in stack.items:
             instance = instances_by_id[str(pg.instance_id)]
@@ -886,7 +908,6 @@ def refresh_stack_state(scene):
             elif trust not in {TrustState.BUILT_IN_TRUSTED, TrustState.LOCAL_TRUSTED}:
                 pg.status = "UNTRUSTED"
                 blocking.append(f"{pg.display_name}: exact source is not trusted")
-                revoked_running = revoked_running or bool(pg.applied_fingerprint)
             elif pg.runtime_error:
                 pg.status = "RUNTIME_ERROR"
                 blocking.append(f"{pg.display_name}: {pg.runtime_error}")
@@ -910,7 +931,7 @@ def refresh_stack_state(scene):
         stack.blocking_reason = "; ".join(blocking)
         # Playback keeps running the admitted stack: drafts apply on rewind or
         # Apply Changes. Only revoked trust in running code stops the solver.
-        if revoked_running:
+        if _running_effect_trust_revoked(stack, store):
             from .playback import stop_revoked_effects
 
             stop_revoked_effects(scene)
