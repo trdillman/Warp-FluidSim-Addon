@@ -550,6 +550,42 @@ def test_modal_bake_cancels_and_unregisters_when_initiating_scene_is_removed(
         production_bake.clear_active_bake(registration_proxy, controller)
 
 
+@pytest.mark.parametrize("cache_path", ["//fluidsim_cache/", "relative_cache"])
+def test_bake_refuses_a_relative_cache_path_in_an_unsaved_file(
+    monkeypatch, tmp_path, cache_path
+):
+    """B31x: '//cache' of an unsaved file resolves against Blender's CWD and
+    points somewhere else once the file is saved; refuse before baking."""
+    fake_bpy, cache_operators = _install_bpy_stub(monkeypatch)
+    from fluidSim_warp_blender51.blender import production_bake
+
+    _ModalController.instances.clear()
+    monkeypatch.setattr(production_bake, "BakeController", _ModalController)
+    monkeypatch.setattr(production_bake, "ProductionBakeBackend", _ModalBackend)
+    fake_bpy.data.filepath = ""
+    # ``from . import common`` reuses the package attribute, which can be a
+    # common module bound to an earlier test's stub bpy; pin this test's bpy.
+    monkeypatch.setattr(cache_operators._runtime, "bpy", fake_bpy)
+    scene = _Scene(606, tmp_path)
+    scene.fluidsim.cache_path = cache_path
+    fake_bpy.data.scenes[:] = [scene]
+    context, _removed = _modal_context(scene)
+    reports = []
+    operator = cache_operators.FLUIDSIM_OT_bake_start()
+    operator.restart_existing = False
+    operator.report = lambda level, message: reports.append((level, message))
+
+    assert operator.execute(context) == {"CANCELLED"}
+    assert not _ModalController.instances, "no bake run may start"
+    assert reports and "Save the .blend file first" in reports[-1][1]
+    with pytest.raises(ValueError, match="Save the .blend file first"):
+        cache_operators._runtime._resolved_cache_path(scene)
+
+    # Once saved, the same relative setting has a folder and is accepted.
+    fake_bpy.data.filepath = str(tmp_path / "shot.blend")
+    assert cache_operators._runtime._unsaved_relative_cache_path(scene) is False
+
+
 @pytest.mark.parametrize("failure_point", ["timer", "modal_handler"])
 def test_modal_start_acquisition_failure_restores_cache_and_releases_ownership(
     monkeypatch, tmp_path, failure_point

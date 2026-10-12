@@ -62,6 +62,9 @@ class _FLUIDSIM_OT_production_bake_modal:
         return _runtime._runtime_poll(cls)
 
     def execute(self, context):
+        if _runtime._unsaved_relative_cache_path(context.scene):
+            self.report({"ERROR"}, _runtime.UNSAVED_RELATIVE_CACHE_MESSAGE)
+            return {"CANCELLED"}
         from ..blender.cache_bake import BakeRun
 
         self._window_manager = context.window_manager
