@@ -51,6 +51,19 @@ def capacity_blocking_message(blockers):
     )
 
 
+def narrow_band_refusal(settings, scene_objects):
+    """The narrow-band admission refusal for ``settings`` in a scene, or "".
+
+    Initialize/Reset refuse narrow-band particles with features that keep
+    per-particle interior state. Edits that reach a running solver without a
+    new admission (live settings, scene sync) ask the same question here.
+    """
+    if not bool(getattr(settings, "narrow_band_enabled", False)):
+        return ""
+    reasons = narrow_band.scene_blocking_reasons(settings, scene_objects or ())
+    return narrow_band.refusal_message(reasons) if reasons else ""
+
+
 def reset_memory_blocking_message(capacity_plan):
     estimate = int(getattr(capacity_plan, "estimated_bytes", 0))
     budget = int(getattr(capacity_plan, "budget_bytes", 0))
@@ -425,11 +438,9 @@ class SimulationAdmission:
                 if hasattr(applied_allocation, name) and hasattr(settings, name)}
             if preserved:
                 settings = replace(settings, **preserved)
-        if bool(getattr(settings, "narrow_band_enabled", False)):
-            reasons = narrow_band.scene_blocking_reasons(
-                settings, getattr(scene, "objects", ()))
-            if reasons:
-                raise RuntimeError(narrow_band.refusal_message(reasons))
+        refusal = narrow_band_refusal(settings, getattr(scene, "objects", ()))
+        if refusal:
+            raise RuntimeError(refusal)
         if runtime_capacity is not None:
             settings = replace(settings, max_particles=int(runtime_capacity))
         resources = vram_snapshot(settings.device)
