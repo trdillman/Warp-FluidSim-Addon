@@ -70,12 +70,6 @@ class FrameFeatures:
             # effect that moved particles would otherwise leave surface
             # tension and whitewater reading the pre-effect interface.
             solver.surface.invalidate_solver_sdf()
-        if self.effects.runtime_errors:
-            latest = self.effects.runtime_errors[-1]
-            raise RuntimeError(
-                "Custom Effect runtime failure "
-                f"[{latest.effect_id}/{latest.kernel_id}]: {latest.message}"
-            )
 
     def frame_stats_snapshot(self) -> list[dict[str, object]]:
         return self.effects.frame_stats_snapshot()
