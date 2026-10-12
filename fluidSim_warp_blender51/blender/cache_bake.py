@@ -307,6 +307,14 @@ class BakeRun:
                 protection.restore()
         finally:
             release_active_bake(self.controller)
+        # Edits held while the bake ran (decision D2) now reach the restored
+        # session. Idempotent: close() may run more than once.
+        from .pending_settings import reapply_after_bake
+
+        try:
+            reapply_after_bake(self.scene)
+        except ReferenceError:
+            pass  # the scene was removed during the bake; nothing to apply to
 
 
 def run_synchronous(

@@ -222,6 +222,17 @@ class FLUIDSIM_OT_load_demo(_Operator):
     def description(cls, context, properties):
         return demo_tooltip(getattr(properties, "demo_id", ""))
 
+    @classmethod
+    def poll(cls, context):
+        # Loading releases the shared solver session, which a running bake
+        # is still stepping (owner decision D2).
+        from . import production_bake
+
+        if production_bake.any_bake_active():
+            cls.poll_message_set("A Production Bake is running; load demos after it ends")
+            return False
+        return True
+
     def execute(self, context):
         demo = DEMO_CATALOG.get(self.demo_id)
         if not demo:

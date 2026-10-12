@@ -425,7 +425,7 @@ def test_cache_playback_compares_only_the_frame_settings_signature(monkeypatch):
         "fluidSim_warp_blender51.blender.cache_identity")
     fake_identity.signature_bundle = must_not_run
     fake_identity.scene_key = must_not_run
-    fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.settings_signature = lambda _scene: "settings-sig"
     fake_identity.legacy_settings_signatures = lambda _scene: ()
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication")
@@ -460,7 +460,7 @@ def test_cache_playback_classifies_whitewater_types(monkeypatch):
     }
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity")
-    fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.settings_signature = lambda _scene: "settings-sig"
     fake_identity.legacy_settings_signatures = lambda _scene: ()
     fake_cache.read_frame = lambda _base, _frame: frame_data
     fake_viewport = types.ModuleType(
@@ -495,7 +495,7 @@ def test_cache_playback_reports_recoverable_render_sync_warning(monkeypatch):
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity"
     )
-    fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.settings_signature = lambda _scene: "settings-sig"
     fake_identity.legacy_settings_signatures = lambda _scene: ()
     warning = "Render input synchronization failed: RuntimeError: offline"
     fake_viewport = types.ModuleType(
@@ -537,7 +537,7 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
     current = ["baked-settings"]
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity")
-    fake_identity.settings_signature = lambda _scene: current[0]
+    fake_identity.settings_signature = lambda _scene: current[0]
     fake_identity.legacy_settings_signatures = lambda _scene: ()
 
     fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
@@ -1602,6 +1602,48 @@ def test_render_frame_restore_does_not_swallow_a_different_frame(monkeypatch):
     scene_bridge.playback._on_frame_change(scene, depsgraph=object())
 
     assert calls == ["sync", ("step", 6)]
+
+
+def test_cache_render_restore_republishes_the_restored_frame(monkeypatch):
+    """Review item B27: after a render, the outputs hold the last rendered
+    frame; marking the restore frame as published left them stale."""
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=5, playback=True)
+    sess = scene_bridge.session()
+    published = []
+    monkeypatch.setattr(
+        scene_bridge.playback, "play_cache_frame",
+        lambda _sess, _scene, frame: published.append(frame))
+
+    scene_bridge.playback.arm_render_frame_restore(5)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert published == [5]
+
+
+def test_a_refused_catch_up_frame_keeps_the_frames_that_stepped(monkeypatch):
+    """Review item B28: frames 2 and 3 stepped before frame 4 hit the
+    topology capacity; rolling last_frame back to 1 made a retry step 2 and 3
+    a second time."""
+    from fluidSim_warp_blender51.sim.fields import TopologyCapacityError
+
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=4, playback=False)
+    sess = scene_bridge.session()
+    sess.solver = SimpleNamespace(frame=1, settings=SimpleNamespace(flip_ratio=0.9, cfl=1.0))
+    sess.scene_identity = id(scene)
+    sess.start_frame = 1
+    sess.last_frame = 1
+    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
+
+    def step(_scene, **kwargs):
+        if kwargs["timeline_frame"] == 4:
+            raise TopologyCapacityError(required=200, capacity=100)
+
+    monkeypatch.setattr(sess, "step", step)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert sess.last_frame == 3
 
 
 def test_production_bake_failure_holds_cache_lease_through_cleanup(tmp_path):

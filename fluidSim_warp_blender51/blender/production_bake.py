@@ -6,7 +6,7 @@ Blender-specific scene/session work is confined to ``ProductionBakeBackend``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 import os
 from pathlib import Path
@@ -131,6 +131,10 @@ class BakeController:
             decision = self.backend.resume_decision(scene)
         else:
             decision = self.backend.resume_decision(scene, rebake_from=rebake_from)
+        if (decision.code == "ALREADY_COMPLETE" and end is not None
+                and rebake_from is None):
+            # A later end frame extends a complete cache (owner decision D4).
+            decision = self.backend.resume_decision(scene, end=int(end))
         if not decision.allowed or decision.resume_frame is None:
             raise ResumeRefused(decision)
         manifest = self.backend.load_manifest(scene)
@@ -303,8 +307,27 @@ def active_bake(scene) -> BakeController | None:
 
 
 def bake_is_active(scene) -> bool:
+    if scene_identity(scene) in _RESTORING_SCENES:
+        return False
     controller = active_bake(scene)
     return bool(controller is not None and controller.status in _ACTIVE_STATUSES)
+
+
+def any_bake_active() -> bool:
+    """Whether any Production Bake is running in this process.
+
+    The Solver Session is a process singleton, so a bake in one scene owns it
+    for every scene: anything that would initialize, reset, release, step or
+    re-configure the session must refuse while this is true.
+    """
+    return any(scene_identity(scene) not in _RESTORING_SCENES
+               for scene, _controller in active_bakes())
+
+
+# Scenes whose bake is restoring the pre-bake state. The bake still holds the
+# scene until its terminal status is set, and without this its own restore of
+# the Live flag is refused by the "Production Bake is active" guard.
+_RESTORING_SCENES: set[int] = set()
 
 
 def active_bakes() -> tuple[tuple[object, BakeController], ...]:
@@ -432,6 +455,9 @@ class ProductionBakeBackend:
         # True from the pre-bake snapshot until it is restored, so a start that
         # is refused before the solver is touched still puts the live flag back.
         self._snapshot_open = False
+        # True once initialize() has replaced the live session, so a failure
+        # in the remaining initialization restores it and not only Live.
+        self._session_replaced = False
 
     @staticmethod
     def _bpy():
@@ -456,7 +482,7 @@ class ProductionBakeBackend:
         return cached_parts[:2] == current_parts[:2]
 
     def resume_decision(
-        self, scene, *, rebake_from: int | None = None
+        self, scene, *, rebake_from: int | None = None, end: int | None = None
     ) -> ResumeDecision:
         """Whether the cache can continue, or with ``rebake_from`` restart there.
 
@@ -464,7 +490,9 @@ class ProductionBakeBackend:
         with ``SOURCE_ANIMATION_CHANGED`` when any committed frame was baked
         from a different animation of a source or collider; the decision then
         names the first such frame. ``rebake_from=N`` keeps the frames below N
-        (which must still match the animation) and bakes N onward.
+        (which must still match the animation) and bakes N onward. ``end``
+        later than the manifest's end frame extends the cache (owner decision
+        D4), so a cache complete through its old end can still continue.
         """
         base = self.cache_path(scene)
         try:
@@ -591,12 +619,13 @@ class ProductionBakeBackend:
                 "EMPTY_CACHE" if target is None else "REBAKE_READY",
                 f"Resume will start at frame {manifest.frame_start}",
             )
-        if last >= manifest.frame_end:
+        bound = manifest.frame_end if end is None else max(manifest.frame_end, int(end))
+        if last >= bound:
             return ResumeDecision(
                 False,
                 None,
                 "ALREADY_COMPLETE",
-                f"Cache is already complete through frame {manifest.frame_end}",
+                f"Cache is already complete through frame {bound}",
             )
         if target is not None:
             return ResumeDecision(
@@ -729,15 +758,15 @@ class ProductionBakeBackend:
         self.base_dir = self.cache_path(scene)
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.signatures = self._signatures_at(scene, int(start))
-        depsgraph = self._bpy().context.evaluated_depsgraph_get()
         from .effects import effect_identity
         self.effect_signature, self.effect_inventory = effect_identity(scene)
 
         stale_from = None
+        extended = False
         if resume:
             decision = (
-                self.resume_decision(scene) if rebake_from is None
-                else self.resume_decision(scene, rebake_from=rebake_from)
+                self.resume_decision(scene, end=end) if rebake_from is None
+                else self.resume_decision(scene, rebake_from=rebake_from, end=end)
             )
             if not decision.allowed or decision.resume_frame is None:
                 raise ResumeRefused(decision)
@@ -752,6 +781,11 @@ class ProductionBakeBackend:
                 # leaves the cache exactly as it was.
                 stale_from = int(rebake_from)
                 self.manifest = self.manifest.truncated_before(stale_from)
+            if int(end) > self.manifest.frame_end:
+                # In memory until the solver is restored, like a re-bake's
+                # truncation, so a failure before then leaves the cache as is.
+                self.manifest = replace(self.manifest, frame_end=int(end)).validate()
+                extended = True
         else:
             try:
                 existing = load_manifest(manifest_path(self.base_dir))
@@ -766,8 +800,23 @@ class ProductionBakeBackend:
             if restart:
                 self._clear_for_restart(self.base_dir)
 
+        # Admission evaluates the scene at its current frame. Pin it so the
+        # bake does not depend on where the playhead was: the start frame for a
+        # fresh bake, the last committed frame for a resume, which also primes
+        # collider velocity history exactly as an uninterrupted bake had it.
+        last_committed = (
+            self.manifest.last_committed_frame if resume else None)
+        admission_frame = int(start) if last_committed is None else int(last_committed)
+        if resume and last_committed is None:
+            admission_frame = int(self.manifest.frame_start)
         with playback.suppress_frame_handlers():
+            if int(scene.frame_current) != admission_frame:
+                scene.frame_set(admission_frame)
+            depsgraph = self._bpy().context.evaluated_depsgraph_get()
             self.sess.initialize(scene, depsgraph=depsgraph)
+            # The live session is gone from here on: any failure below must
+            # restore it, not just the Live flag.
+            self._session_replaced = True
             self.sess.start_frame = int(start)
             self.sess.sync_scene(scene, depsgraph)
             if not resume:
@@ -787,6 +836,12 @@ class ProductionBakeBackend:
                         expected_effect_signature=self.manifest.effect_signature,
                     )
                     restore_solver(self.sess.solver, payload)
+                    # The restored state already carries the INITIALIZATION
+                    # effects applied up to frame `last` (a timeline frame).
+                    features = getattr(self.sess.solver, "features", None)
+                    effects = getattr(features, "effects", None)
+                    if effects is not None:
+                        effects.mark_initialized_through(last)
                 else:
                     # Nothing to restore from (a re-bake from the first frame,
                     # or a cache with no committed frame): start from rest.
@@ -794,6 +849,10 @@ class ProductionBakeBackend:
                 next_frame = (
                     self.manifest.frame_start if last is None else last + 1
                 )
+                if extended and stale_from is None:
+                    # A re-bake commits its manifest in _discard_stale_frames.
+                    write_manifest_atomic(
+                        manifest_path(self.base_dir), self.manifest)
             else:
                 self.sess.solver.frame = int(start) - 1
                 next_frame = int(start)
@@ -869,6 +928,10 @@ class ProductionBakeBackend:
                 refresh_pending=True,
                 timeline_frame=frame,
                 publish_outputs=False,
+                # The baking solver keeps the settings it was admitted with
+                # (the manifest's settings identity); mid-bake edits are held
+                # and applied when the bake ends (owner decision D2).
+                apply_live_settings=False,
             )
         if int(self.sess.solver.frame) != frame:
             raise ValueError(
@@ -961,9 +1024,18 @@ class ProductionBakeBackend:
                         scene.frame_set(self._original_frame)
                 except Exception as exc:
                     restore_error = restore_error or exc
-            scene.fluidsim.live = self._original_live
+            # The bake still holds the scene until the controller sets its
+            # terminal status, so the Live callback would refuse this write
+            # ("Production Bake is active") and leave Live off.
+            key = scene_identity(scene)
+            _RESTORING_SCENES.add(key)
+            try:
+                scene.fluidsim.live = self._original_live
+            finally:
+                _RESTORING_SCENES.discard(key)
             self._initialized = False
             self._snapshot_open = False
+            self._session_replaced = False
         if restore_error is not None:
             raise RuntimeError(f"could not restore pre-bake live state: {restore_error}")
 
@@ -974,7 +1046,7 @@ class ProductionBakeBackend:
         self._restore_original_state(scene)
 
     def fail(self, scene, _error) -> None:
-        if self._initialized:
+        if self._initialized or self._session_replaced:
             self._restore_original_state(scene)
         elif self._snapshot_open:
             # initialize() raised after snapshotting (a refused resume, a 2.x

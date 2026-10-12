@@ -597,7 +597,10 @@ def handle_frame_change(sess, scene, depsgraph):
         fs.status = f"Solver desync: {message}"
         return
 
-    previous_last_frame = sess.last_frame
+    # The timeline frame the solver state represents: catch-up frames that
+    # stepped before a failure stay stepped, so a refused frame must not roll
+    # the bookkeeping back past them (a retry would step them twice).
+    advanced_to = sess.last_frame
     sess.last_frame = frame
     try:
         for offset in range(gap - 1, -1, -1):
@@ -606,11 +609,12 @@ def handle_frame_change(sess, scene, depsgraph):
                 scene, sess, refresh_pending=False,
                 timeline_frame=frame - offset,
                 publish_outputs=(offset == 0))
+            advanced_to = frame - offset
     except Exception as exc:  # noqa: BLE001 - never break playback
         from ..sim.fields import TopologyCapacityError
 
         if isinstance(exc, TopologyCapacityError):
-            sess.last_frame = previous_last_frame
+            sess.last_frame = advanced_to
             sess.set_error(scene, repr(exc))
             fs.live = False
             fs.status = (
@@ -648,12 +652,15 @@ def _on_frame_change(scene, depsgraph):
             and scene.frame_current == restore_frame):
         if getattr(getattr(scene, "fluidsim", None),
                    "cache_playback_enabled", False):
-            _CACHE_CURSORS[scene_identity(scene)] = restore_frame
+            # The outputs still hold the last rendered frame. Publishing a
+            # cached frame steps nothing, so republish the restored frame
+            # instead of marking it as already shown.
+            _CACHE_CURSORS.pop(scene_identity(scene), None)
         else:
             sess = _bridge().session()
             if sess.owns_scene(scene):
                 sess.last_frame = restore_frame
-        return
+            return
     if _IN_FRAME_HANDLER or _SUPPRESS_FRAME_HANDLERS:
         return
     _IN_FRAME_HANDLER = True

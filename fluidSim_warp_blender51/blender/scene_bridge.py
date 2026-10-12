@@ -314,8 +314,13 @@ class Session:
             self.scene_inputs.gather_force_fields(scene))
         self.solver.set_height_source(self.scene_inputs.gather_height_source(scene))
 
-    def prepare_step(self, scene, *, refresh_pending=False):
-        """Reconcile pending signatures and live settings before every step."""
+    def prepare_step(self, scene, *, refresh_pending=False, apply_live=True):
+        """Reconcile pending signatures and live settings before every step.
+
+        Production Bake passes ``apply_live=False``: its solver keeps the
+        settings it was admitted with, which are the cache's identity, so an
+        edit made mid-bake cannot change later frames under that identity.
+        """
         if not self.owns_scene(scene):
             return False
         # Playback reuses snapshots refreshed by RNA/depsgraph/undo handlers.
@@ -326,6 +331,8 @@ class Session:
 
         pending_settings.refresh_pending_state(
             scene, self, use_cached=not refresh_pending)
+        if not apply_live:
+            return True
         return pending_settings.apply_live_settings_safely(scene, self)
 
     def step(self, scene, *, write_cache=True, timeline_frame=None,
@@ -334,6 +341,11 @@ class Session:
         if not self.owns_scene(scene):
             return None
         fs = scene.fluidsim
+        # Custom Effect frame windows are authored in timeline frames; tell the
+        # solver which one this step produces so preview and bake (whose solver
+        # frame counters start from different origins) agree (decision D6).
+        self.solver.effect_frame = int(
+            scene.frame_current if timeline_frame is None else timeline_frame)
         stats = self.solver.step_frame()
         sourcing = getattr(self.solver, "sourcing", None)
         apply_result = (getattr(sourcing, "last_apply_result", {})
@@ -528,15 +540,17 @@ def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):
 def step_frame(
         scene, sess: Session | None = None, *, write_cache: bool = True,
         refresh_pending: bool = True, timeline_frame=None,
-        publish_outputs: bool = True):
+        publish_outputs: bool = True, apply_live_settings: bool = True):
     """Reconcile live RNA, then advance through the authoritative step seam.
 
     Direct callers conservatively refresh pending signatures. Interactive
     playback passes ``refresh_pending=False`` because persistent RNA/depsgraph
-    handlers already refreshed the per-scene snapshot.
+    handlers already refreshed the per-scene snapshot. Production Bake passes
+    ``apply_live_settings=False`` (see ``Session.prepare_step``).
     """
     sess = sess or session()
-    reconciled = sess.prepare_step(scene, refresh_pending=refresh_pending)
+    reconciled = sess.prepare_step(
+        scene, refresh_pending=refresh_pending, apply_live=apply_live_settings)
     result = sess.step(
         scene, write_cache=write_cache, timeline_frame=timeline_frame,
         publish_outputs=publish_outputs)

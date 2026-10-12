@@ -44,13 +44,27 @@ def _runtime_poll(cls) -> bool:
     return ready
 
 
-def _mutation_poll(cls, context) -> bool:
-    """Block solver mutations while Production Bake owns the scene."""
+def _bake_poll(cls, context) -> bool:
+    """Refuse while any Production Bake runs (owner decision D2).
+
+    The Solver Session is a process singleton, so a bake in one scene owns it
+    for every scene.
+    """
     from ..blender import production_bake
 
     scene = getattr(context, "scene", None)
     if scene is not None and production_bake.bake_is_active(scene):
         cls.poll_message_set("Production Bake owns this scene")
+        return False
+    if production_bake.any_bake_active():
+        cls.poll_message_set("A Production Bake is running in another scene")
+        return False
+    return True
+
+
+def _mutation_poll(cls, context) -> bool:
+    """Block solver mutations while a Production Bake owns the session."""
+    if not _bake_poll(cls, context):
         return False
     return _runtime_poll(cls)
 

@@ -44,10 +44,7 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        from ..blender import production_bake
-
-        if production_bake.bake_is_active(context.scene):
-            cls.poll_message_set("Production Bake owns this scene")
+        if not _runtime._bake_poll(cls, context):
             return False
         selected = getattr(context, "selected_objects", ())
         if not any(getattr(obj, "type", None) == "MESH" for obj in selected):
@@ -241,6 +238,8 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        if not _runtime._bake_poll(cls, context):
+            return False
         if not _runtime._bridge().session().active:
             cls.poll_message_set("Initialize the solver before injecting points")
             return False

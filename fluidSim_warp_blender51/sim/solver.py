@@ -2020,8 +2020,13 @@ class FluidSolver:
         substeps, cfl_clamped = self._compute_substeps(frame_dt)
         dt = frame_dt / substeps
 
+        # The Solver Session sets effect_frame to the timeline frame this step
+        # produces (decision D6); a solver stepped directly uses its counter.
+        effect_frame = getattr(self, "effect_frame", None)
+        self.effect_frame = None
         time_ctx = {
-            "frame": self.frame, "time": self.sim_time,
+            "frame": self.frame if effect_frame is None else int(effect_frame),
+            "time": self.sim_time,
             "real_time_step": frame_dt, "solver_time_step": dt,
             "time_scale": s.time_scale, "substeps": substeps,
         }

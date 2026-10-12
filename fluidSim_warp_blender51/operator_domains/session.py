@@ -82,10 +82,7 @@ class FLUIDSIM_OT_release(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        from ..blender import production_bake
-
-        if production_bake.bake_is_active(getattr(context, "scene", None)):
-            cls.poll_message_set("Production Bake owns this scene")
+        if not _runtime._bake_poll(cls, context):
             return False
         sess = _runtime._bridge().session()
         if not sess.active:
@@ -147,6 +144,8 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        if not _runtime._bake_poll(cls, context):
+            return False
         plan = _runtime._owned_capacity_plan(getattr(context, "scene", None))
         if not getattr(plan, "suggestions", ()):
             cls.poll_message_set("Initialize first to calculate safe capacity options")
@@ -280,6 +279,8 @@ class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        if not _runtime._bake_poll(cls, context):
+            return False
         return bool(getattr(getattr(context, "scene", None), "fluidsim", None))
 
     def execute(self, context):
@@ -701,6 +702,9 @@ class FLUIDSIM_OT_cache_playback_start(bpy.types.Operator):
         fs = getattr(getattr(context, "scene", None), "fluidsim", None)
         if fs is None:
             cls.poll_message_set("The active scene has no FluidSim settings")
+            return False
+        # Cache playback releases the shared solver session.
+        if not _runtime._bake_poll(cls, context):
             return False
         return not bool(getattr(fs, "cache_playback_enabled", False))
 

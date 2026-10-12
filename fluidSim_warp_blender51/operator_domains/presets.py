@@ -35,6 +35,11 @@ class FLUIDSIM_OT_apply_product_preset(bpy.types.Operator):
     bl_label = "Apply FluidSim Preset"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        # A preset can reset or reinitialize the shared solver session.
+        return _runtime._bake_poll(cls, context)
+
     def execute(self, context):
         from ..presets import library
         from ..blender import pending_settings

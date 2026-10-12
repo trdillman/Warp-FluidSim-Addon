@@ -727,8 +727,43 @@ def _is_disposable_start(sess):
     return solver_frame <= 0 and sess.last_frame <= sess.start_frame
 
 
+_BAKE_HOLD_MESSAGE = "A Production Bake is running; changes apply when it ends"
+
+
+def _bake_refusal() -> str:
+    """Why the shared Solver Session must not be touched now, or ``""``.
+
+    Owner decision D2 (2026-10-12): while any Production Bake runs, edits
+    that would change the simulation are held, not applied to the baking
+    solver; the session is a process singleton, so this spans every scene.
+    """
+    from . import production_bake
+
+    return _BAKE_HOLD_MESSAGE if production_bake.any_bake_active() else ""
+
+
+def reapply_after_bake(scene):
+    """Apply the live edits held during a bake to the restored session."""
+    sess = session()
+    if not sess.owns_scene(scene):
+        refresh_pending_state(scene, sess)
+        return False
+    applied = apply_live_settings_safely(scene, sess)
+    try:
+        from .effects import _try_live_parameter_update
+
+        _try_live_parameter_update(scene)
+    except Exception as exc:  # noqa: BLE001 - handler boundary
+        sess.set_error(scene, repr(exc))
+    refresh_pending_state(scene, sess)
+    return applied
+
+
 def _apply_pending(scene, requested=None, *, depsgraph=None):
     """Apply a scene's pending transition, clearing it only after success."""
+    refusal = _bake_refusal()
+    if refusal:
+        raise RuntimeError(refusal)
     sess = session()
     state = refresh_pending_state(scene, sess)
     action = state.pending_action
@@ -803,6 +838,9 @@ def apply_changes(scene, *, allow_restart=False, depsgraph=None, force_restart=F
     sess = session()
     if production_bake.bake_is_active(scene):
         raise RuntimeError("Production Bake owns this scene")
+    refusal = _bake_refusal()
+    if refusal:
+        raise RuntimeError(refusal)
     if sess.active and not sess.owns_scene(scene):
         raise RuntimeError("Another scene owns the solver; release it from that scene first")
     state = refresh_pending_state(scene, sess)
@@ -840,6 +878,9 @@ def apply_changes(scene, *, allow_restart=False, depsgraph=None, force_restart=F
 def reinitialize_eligibility(scene):
     if getattr(scene, "fluidsim", None) is None:
         return False, "No FluidSim scene is active"
+    refusal = _bake_refusal()
+    if refusal:
+        return False, refusal
     if pending_presentation(scene)["action"] == "NONE":
         return False, "No pending settings to apply"
     sess = session()
@@ -849,6 +890,9 @@ def reinitialize_eligibility(scene):
 
 
 def reset_eligibility(scene):
+    refusal = _bake_refusal()
+    if refusal:
+        return False, refusal
     sess = session()
     if not sess.active:
         return False, "Initialize the solver first"
@@ -864,6 +908,9 @@ def reset_eligibility(scene):
 def revert_eligibility(scene):
     if getattr(scene, "fluidsim", None) is None:
         return False, "No FluidSim scene is active"
+    refusal = _bake_refusal()
+    if refusal:
+        return False, refusal
     if pending_presentation(scene)["count"] <= 0:
         return False, "No pending settings to revert"
     return True, ""
@@ -1023,6 +1070,22 @@ def request_scene_update(scene, action: SceneUpdate):
     if state.suppress_callbacks:
         return
     reason = _SCENE_UPDATE_REASONS[action]
+    refusal = _bake_refusal()
+    if refusal and sess.owns_scene(scene):
+        # The baking solver keeps its admitted settings (its cache identity);
+        # reapply_after_bake applies the held edits when the bake ends.
+        # Output-only settings still refresh the existing objects, without
+        # reading the solver, as they do with no session.
+        try:
+            if action in {SceneUpdate.RESET, SceneUpdate.REBUILD}:
+                refresh_pending_state(scene, sess)
+            elif action in {SceneUpdate.OUTPUT, SceneUpdate.SURFACE,
+                            SceneUpdate.WHITEWATER}:
+                output_publication.refresh_existing_output_settings(scene)
+            scene.fluidsim.status = refusal
+        finally:
+            _tag_view3d_redraw()
+        return
     if not sess.owns_scene(scene):
         try:
             if action in {SceneUpdate.RESET, SceneUpdate.REBUILD}:

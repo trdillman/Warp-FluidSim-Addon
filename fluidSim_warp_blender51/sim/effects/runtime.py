@@ -387,6 +387,25 @@ class EffectRuntimeManager:
         kernel = entry.compiled_kernel.kernel_definition
         return bool(instance.active_on_frame(frame) and kernel.active_on_frame(frame))
 
+    def mark_initialized_through(self, frame: int) -> None:
+        """Record INITIALIZATION effects that already ran by ``frame``.
+
+        A checkpoint restores solver state those effects already modified, but
+        not this manager's cadence history, so without this a resumed bake
+        re-applied them. An entry counts as run when any frame up to ``frame``
+        was inside its window.
+        """
+        frame = int(frame)
+        for entries in self.by_stage.values():
+            for entry in entries:
+                kernel = entry.compiled_kernel.kernel_definition
+                if kernel.cadence is not EffectCadence.INITIALIZATION:
+                    continue
+                first = max(int(entry.instance.frame_start or 0),
+                            int(kernel.frame_start or 0))
+                if any(self._should_run(entry, f) for f in range(first, frame + 1)):
+                    self._initialized.add(entry.key)
+
     def _cadence_allows(self, entry: EffectRuntimeEntry, frame: int) -> bool:
         cadence = entry.compiled_kernel.kernel_definition.cadence
         key = entry.key

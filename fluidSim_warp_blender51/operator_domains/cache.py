@@ -156,7 +156,9 @@ class _FLUIDSIM_OT_production_bake_modal:
         run = self._run
         if not _scene_is_available(run.scene, run.scene_key):
             return self._cancel_removed_scene(context)
-        if event.type in {"ESC", "RIGHTMOUSE"} and event.value == "PRESS":
+        # Esc only (owner decision D3): the bake runs in the background, so
+        # right-click must reach Blender for selection and context menus.
+        if event.type == "ESC" and event.value == "PRESS":
             run.request_cancel()
             _update_bake_rna(run.scene, run.controller)
             return {"RUNNING_MODAL"}
