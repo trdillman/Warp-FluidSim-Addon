@@ -12,7 +12,8 @@ source-schema facts of the bake. A format-2 manifest is refused with
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, replace
+import copy
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -219,6 +220,15 @@ class FrameEntry:
     particle_count: int
 
     def validate(self, *, key: int | None = None) -> "FrameEntry":
+        # An entry is frozen and every field is an immutable scalar, so once
+        # it has passed it always would: only the key check depends on the
+        # caller. Without this, every manifest validation re-checked every
+        # entry, which made a bake's commits O(N^2) (review P07).
+        if self.__dict__.get("_validated", False):
+            if key is not None and self.frame != key:
+                raise ValueError(
+                    f"frame entry key {key} does not match frame {self.frame}")
+            return self
         _require_int(self.frame, "frame")
         if key is not None and self.frame != key:
             raise ValueError(f"frame entry key {key} does not match frame {self.frame}")
@@ -242,7 +252,16 @@ class FrameEntry:
         _require_sha256(self.source_frame_stamp, "source_frame_stamp")
         _require_int(self.whitewater_count, "whitewater_count", minimum=0)
         _require_int(self.particle_count, "particle_count", minimum=0)
+        object.__setattr__(self, "_validated", True)
         return self
+
+    def as_record(self) -> dict[str, Any]:
+        """The entry as a fresh plain dict, equal to ``dataclasses.asdict``.
+
+        Every field is an immutable scalar, so a shallow dict is already the
+        deep copy ``asdict`` would build, at a fraction of its cost.
+        """
+        return {name: getattr(self, name) for name in _FRAME_ENTRY_FIELDS}
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "FrameEntry":
@@ -258,6 +277,9 @@ class FrameEntry:
                 f"unknown={sorted(unknown)}"
             )
         return cls(**{name: value[name] for name in expected}).validate()
+
+
+_FRAME_ENTRY_FIELDS = tuple(item.name for item in fields(FrameEntry))
 
 
 @dataclass
@@ -448,12 +470,28 @@ class CacheManifestV3:
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
-        result = asdict(self)
+        # asdict() of the whole manifest deep-copied every frame entry only
+        # for the copies to be replaced below; convert the header alone.
+        result = asdict(replace(self, frames={}))
         result["effect_inventory"] = [dict(item) for item in self.effect_inventory]
         result["frames"] = {
-            str(frame): asdict(self.frames[frame]) for frame in sorted(self.frames)
+            str(frame): self.frames[frame].as_record() for frame in sorted(self.frames)
         }
         return result
+
+    def clone(self) -> "CacheManifestV3":
+        """An independent copy: mutable containers are new, entries shared.
+
+        Frame entries are frozen with scalar fields, so sharing them is safe.
+        """
+        return replace(
+            self,
+            grid_spec=copy.deepcopy(self.grid_spec),
+            narrow_band=copy.deepcopy(self.narrow_band),
+            platform=copy.deepcopy(self.platform),
+            effect_inventory=copy.deepcopy(self.effect_inventory),
+            frames=dict(self.frames),
+        )
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "CacheManifestV3":
@@ -537,15 +575,48 @@ def manifest_path(base_dir: Path | str) -> Path:
     return Path(base_dir) / MANIFEST_FILENAME
 
 
+# Parsed manifests keyed by path and checked against the file's exact bytes.
+# Playback reads the manifest for every displayed frame and the Bake panel on
+# every redraw; parsing and validating 1000 entries took ~50 ms each time.
+# Reading the bytes (and comparing them) stays on every call, so a manifest
+# rewritten in the same clock tick with the same size is still seen; only the
+# JSON parse and schema validation of unchanged bytes are reused.
+_MANIFEST_CACHE_LIMIT = 8
+_manifest_cache: dict[str, list] = {}
+
+
+def _manifest_record(path: Path) -> list:
+    """``[raw bytes, parsed JSON, manifest or None]`` for the file as it is now.
+
+    The parsed JSON is shared between callers and must be treated as
+    read-only. Read and JSON errors propagate exactly as an uncached read's.
+    """
+    raw = path.read_bytes()
+    key = os.path.abspath(path)
+    record = _manifest_cache.get(key)
+    if record is None or record[0] != raw:
+        value = json.loads(raw.decode("utf-8"))
+        _manifest_cache.pop(key, None)
+        while len(_manifest_cache) >= _MANIFEST_CACHE_LIMIT:
+            _manifest_cache.pop(next(iter(_manifest_cache)))
+        record = [raw, value, None]
+        _manifest_cache[key] = record
+    return record
+
+
 def load_manifest(path: Path | str) -> CacheManifestV3 | None:
     path = Path(path)
     if not path.is_file():
         return None
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        record = _manifest_record(path)
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid cache manifest {path}: {exc}") from exc
-    return CacheManifestV3.from_dict(value)
+    if record[2] is None:
+        # Validation failures are not cached: they raise again next time.
+        record[2] = CacheManifestV3.from_dict(record[1])
+    # Callers own what they get: the cached original is never handed out.
+    return record[2].clone()
 
 
 def _fsync_directory(path: Path) -> None:
@@ -561,13 +632,15 @@ def _fsync_directory(path: Path) -> None:
 def write_manifest_atomic(path: Path | str, manifest: CacheManifestV3) -> None:
     """Durably replace a manifest; no partially written JSON becomes visible."""
     path = Path(path)
-    manifest.validate()
+    payload = manifest.to_dict()  # validates first
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + ".tmp")
-    payload = manifest.to_dict()
+    # One encode and one write: json.dump streams through the pure-Python
+    # encoder in thousands of small writes. The bytes are the same.
+    text = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False)
     try:
         with temp.open("w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
+            handle.write(text)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())

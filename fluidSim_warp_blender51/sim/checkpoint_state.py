@@ -11,6 +11,23 @@ from . import constants as C
 from .whitewater_types import validate_type_values
 
 
+def host_prefix(array, count: int) -> np.ndarray:
+    """Host copy of the first ``count`` rows of a Warp array.
+
+    Equal in dtype, shape and bytes to ``array.numpy()[:count]``, but slices
+    on the device first so only the live prefix crosses the bus instead of
+    the whole allocated capacity. Warp cannot read back a zero-length CUDA
+    view, so an empty prefix is cut from a one-row readback instead.
+    """
+    length = int(array.shape[0])
+    count = max(0, min(int(count), length))
+    if count:
+        return array[:count].numpy()
+    if length:
+        return array[:1].numpy()[:0]
+    return array.numpy()
+
+
 @dataclass(frozen=True)
 class CheckpointSchema:
     """Runtime capacities and channel inventory required to validate a restore."""

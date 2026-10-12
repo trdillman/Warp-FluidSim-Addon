@@ -1501,6 +1501,34 @@ def k_pressure_scale(
     x[tid] = x[tid] * scale
 
 
+# Fixed partial-sum count for ``measure_residual``: fixed, so the reduction
+# order (and therefore the reported residual) is the same on every call.
+RESIDUAL_PARTIALS = 65536
+
+
+@wp.kernel
+def k_residual_partial_squares(
+    rhs: wp.array(dtype=float),
+    ap: wp.array(dtype=float),
+    n: int,
+    stride: int,
+    partials: wp.array(dtype=wp.float64),
+):
+    """Strided partial sums of ``(rhs - ap)^2`` for the residual norm.
+
+    The difference is formed in float32, exactly as the old host readback
+    did; only the accumulation is widened to float64.
+    """
+    tid = wp.tid()
+    acc = wp.float64(0.0)
+    i = tid
+    while i < n:
+        d = wp.float64(rhs[i] - ap[i])
+        acc += d * d
+        i += stride
+    partials[tid] = acc
+
+
 
 register_fn(k_compute_divergence,
             "fluidSimProjectNonDivergentComputeDivergence",
@@ -1624,6 +1652,7 @@ class PressureSolver:
     _pcg_cmd_kind = None       # preconditioner the recorded PCG commands serve
     _pcg_mg_gather_cmd = None  # compacts the V-cycle output for the r.z dot
     last_pcg_check_every = 0   # check interval the last solve_pcg ran with
+    _residual_partials = None  # float64 scratch for measure_residual, lazy
 
     def __del__(self):
         # Cyclic validation/benchmark owners may reach GC without an explicit
@@ -2647,10 +2676,9 @@ class PressureSolver:
     def measure_residual(self, voxel_type):
         """L2 norm of (rhs - A*pressure) for the current pressure solution.
 
-        Used by validation/diagnostics; performs one readback.
+        Used by validation/diagnostics. The norm is reduced on the device and
+        only the scalar is read back; the rhs and A*p arrays stay resident.
         """
-        import numpy as _np
-
         full_n = self._dim()
         work_n = self._build_pressure_index(voxel_type)
         self.ap[:full_n].zero_()
@@ -2663,8 +2691,18 @@ class PressureSolver:
                         self._pcg_compact_p, self._pcg_compact_ap],
                 device=self.device,
             )
-        r = self.rhs[:full_n].numpy() - self.ap[:full_n].numpy()
-        return float(_np.linalg.norm(r))
+        partials = min(RESIDUAL_PARTIALS, full_n)
+        if self._residual_partials is None:
+            self._residual_partials = wp.zeros(
+                RESIDUAL_PARTIALS, dtype=wp.float64, device=self.device)
+        fast_launch(
+            k_residual_partial_squares, dim=partials,
+            inputs=[self.rhs, self.ap, full_n, partials,
+                    self._residual_partials],
+            device=self.device,
+        )
+        squared = wp.utils.array_sum(self._residual_partials[:partials])
+        return math.sqrt(float(squared))
 
     def apply_threshold(self, relative_threshold):
         if relative_threshold <= 0.0:

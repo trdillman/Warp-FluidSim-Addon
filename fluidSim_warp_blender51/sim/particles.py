@@ -11,6 +11,7 @@ import numpy as np
 import warp as wp
 from .fastlaunch import launch as fast_launch
 
+from .checkpoint_state import host_prefix
 from .constants import LEAF_VOLUME
 
 
@@ -331,15 +332,15 @@ class ParticleSystem:
         result = {}
         for name, value in self.vec4_attrs.items():
             result[f"particle_attr_{name}"] = np.ascontiguousarray(
-                value.numpy()[:count], dtype=np.float32)
+                host_prefix(value, count), dtype=np.float32)
         for name, value in self.int_attrs.items():
             result[f"particle_attr_{name}"] = np.ascontiguousarray(
-                value.numpy()[:count], dtype=np.int32)
+                host_prefix(value, count), dtype=np.int32)
         # Empty (0, 9) means "no affine state" (non-APIC writer); it is only
         # persisted while the channel is allocated, i.e. under APIC.
         if self.affine is not None and count:
             result["particle_affine"] = np.ascontiguousarray(
-                self.affine.numpy()[:count].reshape(count, 9), dtype=np.float32)
+                host_prefix(self.affine, count).reshape(count, 9), dtype=np.float32)
         else:
             result["particle_affine"] = np.zeros((0, 9), dtype=np.float32)
         return result

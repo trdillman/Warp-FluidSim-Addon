@@ -117,6 +117,65 @@ def _cache_signature(object_id, device, verts, tris, matrix_world):
             _array_signature(np.ascontiguousarray(matrix_world, dtype=np.float32)))
 
 
+def _referenced_bounds(world_verts, tris):
+    """Bounds of the vertices the triangles reference.
+
+    Equal to ``world_verts[np.unique(tris)].min/max(axis=0)``: a boolean
+    mask selects the same rows in the same (ascending) order, without the
+    sort/hash, which cost ~24 ms per call at 200k triangles and ran twice on
+    every rebuild of a moving collider.
+    """
+    used = np.zeros(len(world_verts), dtype=bool)
+    used[tris.reshape(-1)] = True
+    points = world_verts[used]
+    return points.min(axis=0), points.max(axis=0)
+
+
+def _height_profile(pixels, width, height, scale):
+    """Transposed Rec. 709 luminance of RGBA pixels, times ``scale``.
+
+    Bit for bit ``((r*0.2126 + g*0.7152) + b*0.0722).T * scale`` in float32,
+    as a C-contiguous ``(width, height)`` array: the same float32 operations
+    on every pixel, in the same order. Working through bands of rows keeps
+    each band in cache and writes it straight into its transposed place; the
+    whole-image temporaries and the cache-hostile 16 MiB transposing copy
+    cost ~95 ms per sync for a 2048^2 image.
+    """
+    rgba = pixels.reshape(height, width, 4)
+    profile = np.empty((width, height), dtype=np.float32)
+    for start in range(0, height, _HEIGHT_PROFILE_BAND_ROWS):
+        band = rgba[start:start + _HEIGHT_PROFILE_BAND_ROWS]
+        luminance = np.multiply(band[..., 0], 0.2126)
+        term = np.multiply(band[..., 1], 0.7152)
+        luminance += term
+        np.multiply(band[..., 2], 0.0722, out=term)
+        luminance += term
+        luminance *= scale
+        profile[:, start:start + _HEIGHT_PROFILE_BAND_ROWS] = luminance.T
+    return profile
+
+
+_HEIGHT_PROFILE_BAND_ROWS = 16
+
+
+class StagedMesh:
+    """Identity stand-in for a collider/source mesh during admission staging.
+
+    Admission gathers evaluated geometry on the CPU only to plan capacity and
+    bind descriptors; no BVH is queried until the committed replacement
+    materializes real meshes on its device. Building a CPU ``wp.Mesh`` here
+    cost ~140 ms per 200k triangles on every Initialize/Reset/plan refresh,
+    for a BVH that was then discarded. Descriptors hold this object until
+    :meth:`SceneInputs.materialize_device_meshes` swaps in the real mesh by
+    identity. It has no ``id``, so any premature query fails loudly.
+    """
+
+    __slots__ = ("__weakref__",)
+
+    def __repr__(self):
+        return "<StagedMesh: not materialized>"
+
+
 def _watertight_triangles(tris):
     """True when every triangle edge is shared by exactly two faces.
 
@@ -204,6 +263,9 @@ class SceneInputs:
 
     def __init__(self):
         self.device = "cuda:0"
+        # Admission sets this while it stages inputs on the CPU: meshes are
+        # then StagedMesh stand-ins until materialize_device_meshes.
+        self.stage_meshes = False
         self.clear()
 
     def clear(self):
@@ -299,9 +361,8 @@ class SceneInputs:
                 verts @ matrix[:3, :3].T + matrix[:3, 3],
                 dtype=np.float32,
             )
-            triangle_points = world_verts[np.unique(tris)]
-            diagonal = float(np.linalg.norm(
-                triangle_points.max(axis=0) - triangle_points.min(axis=0)))
+            aabb_min, aabb_max = _referenced_bounds(world_verts, tris)
+            diagonal = float(np.linalg.norm(aabb_max - aabb_min))
             edges_a = world_verts[tris[:, 1]] - world_verts[tris[:, 0]]
             edges_b = world_verts[tris[:, 2]] - world_verts[tris[:, 0]]
             area2 = np.linalg.norm(np.cross(edges_a, edges_b), axis=1)
@@ -313,8 +374,9 @@ class SceneInputs:
                 return None, "evaluated mesh contains only degenerate triangles"
             if had_degenerate:
                 tris = tris[valid]
+                # Dropped triangles can leave vertices unreferenced.
+                aabb_min, aabb_max = _referenced_bounds(world_verts, tris)
             tris = np.ascontiguousarray(tris, dtype=np.int32)
-            triangle_points = world_verts[np.unique(tris)]
         finally:
             evaluated.to_mesh_clear()
 
@@ -325,10 +387,15 @@ class SceneInputs:
             self.collider_mesh_cache_stats["reuses"] += 1
             return entry, ""
 
-        points = wp.array(world_verts, dtype=wp.vec3, device=self.device)
-        indices = wp.array(
-            tris.reshape(-1), dtype=wp.int32, device=self.device)
-        warp_mesh = wp.Mesh(points=points, indices=indices)
+        if self.stage_meshes:
+            # Admission staging: nothing queries a BVH before the committed
+            # replacement materializes its own on the solver device.
+            warp_mesh = StagedMesh()
+        else:
+            points = wp.array(world_verts, dtype=wp.vec3, device=self.device)
+            indices = wp.array(
+                tris.reshape(-1), dtype=wp.int32, device=self.device)
+            warp_mesh = wp.Mesh(points=points, indices=indices)
         entry = {
             "signature": signature,
             "device": self.device,
@@ -341,8 +408,8 @@ class SceneInputs:
             # mesh or mathutils proxy survives to persistent solver state.
             "vertices": np.ascontiguousarray(world_verts, dtype=np.float32),
             "triangles": np.ascontiguousarray(tris, dtype=np.int32),
-            "aabb_min": triangle_points.min(axis=0),
-            "aabb_max": triangle_points.max(axis=0),
+            "aabb_min": aabb_min,
+            "aabb_max": aabb_max,
             "force_center": tuple(float(value) for value in matrix[:3, 3]),
             # Deferred: computed on first SOLID-sink read via
             # _entry_is_watertight(). None means "not evaluated yet".
@@ -367,7 +434,10 @@ class SceneInputs:
         replacements = {}
         for entry in self._evaluated_mesh_cache.values():
             previous = entry.get("mesh")
-            if entry.get("device") == device and previous is not None:
+            # While staging, a same-device call only registers consumers.
+            if (entry.get("device") == device and previous is not None
+                    and (self.stage_meshes
+                         or not isinstance(previous, StagedMesh))):
                 continue
             points = wp.array(
                 entry["vertices"], dtype=wp.vec3, device=device)
@@ -1031,12 +1101,9 @@ class SceneInputs:
                 foreach_get(pixels)
             else:
                 pixels[:] = np.asarray(image.pixels, dtype=np.float32)
-            rgba = pixels.reshape(height, width, 4)
-            profile = np.ascontiguousarray(
-                (rgba[..., 0] * 0.2126 + rgba[..., 1] * 0.7152
-                 + rgba[..., 2] * 0.0722).T
-                * float(getattr(fs, "height_profile_scale", 1.0)),
-                dtype=np.float32)
+            profile = _height_profile(
+                pixels, width, height,
+                float(getattr(fs, "height_profile_scale", 1.0)))
         fs.height_error = ""
         desc = HeightSourceDesc()
         desc.enabled = True

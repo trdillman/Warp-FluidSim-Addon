@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import io
 import json
 import math
 import os
@@ -257,10 +258,18 @@ def read_checkpoint(
         raise ValueError(f"checkpoint is missing: {path}")
     if expected_size is not None and path.stat().st_size != int(expected_size):
         raise ValueError("checkpoint size mismatch")
-    if expected_sha256 is not None and _sha256(path) != expected_sha256:
-        raise ValueError("checkpoint checksum mismatch")
+    source: Path | io.BytesIO = path
+    if expected_sha256 is not None:
+        # Hash and parse the same bytes, read once: the file is not read a
+        # second time, and what is parsed is exactly what was verified.
+        raw = path.read_bytes()
+        if expected_size is not None and len(raw) != int(expected_size):
+            raise ValueError("checkpoint size mismatch")
+        if hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise ValueError("checkpoint checksum mismatch")
+        source = io.BytesIO(raw)
     try:
-        loaded = np.load(path, allow_pickle=False)
+        loaded = np.load(source, allow_pickle=False)
     except (OSError, EOFError, ValueError, zipfile.BadZipFile) as exc:
         raise ValueError(f"checkpoint could not be read: {exc}") from exc
     with loaded as data:

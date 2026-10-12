@@ -20,6 +20,7 @@ import numpy as np
 import warp as wp
 
 from . import constants as C
+from .checkpoint_state import host_prefix
 from .fastlaunch import launch as fast_launch
 from .kernels_narrow_band import (
     k_nb_advect_scalar,
@@ -383,8 +384,8 @@ class NarrowBand:
     def leaf_phi(self):
         """``(leaf_coords int32 (N,3), phi float32 (N, 512))`` for the cache."""
         count = int(self.solver.grid.refresh_topology_counts())
-        coords = self.solver.grid.leaf_coords.numpy()[:count].astype(np.int32)
-        data = self.phi.numpy()[:count * C.LEAF_VOLUME].reshape(
+        coords = host_prefix(self.solver.grid.leaf_coords, count).astype(np.int32)
+        data = host_prefix(self.phi, count * C.LEAF_VOLUME).reshape(
             count, C.LEAF_VOLUME).astype(np.float32)
         return coords, data
 
