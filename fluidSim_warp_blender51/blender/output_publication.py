@@ -1354,10 +1354,10 @@ def _set_hidden(obj, hidden, *, viewport=True, render=True):
     equal value or not, so per-frame publication must not rewrite them.
     """
     hidden = bool(hidden)
-    if viewport and bool(obj.hide_viewport) != hidden:
-        obj.hide_viewport = hidden
-    if render and bool(obj.hide_render) != hidden:
-        obj.hide_render = hidden
+    for enabled, name in ((viewport, "hide_viewport"), (render, "hide_render")):
+        current = getattr(obj, name, None)  # unknown state: write it
+        if enabled and (current is None or bool(current) != hidden):
+            setattr(obj, name, hidden)
 
 
 def _set_id_property(obj, key, value):
