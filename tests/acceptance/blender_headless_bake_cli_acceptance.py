@@ -85,6 +85,9 @@ def main(root):
     check("fixture: the FluidSim scene is not the active one", active_name != SCENE,
           active_name)
     env = dict(os.environ, **{CHILD_FLAG: "1"})
+    # A farm bake needs the GPU; never inherit a GPU-hiding variable that an
+    # earlier script in the gate's shared batch process left behind.
+    env.pop("CUDA_VISIBLE_DEVICES", None)
     command = [
         bpy.app.binary_path, "--background", "--factory-startup",
         "--python-use-system-env", str(blend),

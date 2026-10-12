@@ -172,6 +172,7 @@ def main(work):
 
 if __name__ == "__main__":
     work = Path(tempfile.mkdtemp(prefix="fsabc_"))
+    hidden = os.environ.get("CUDA_VISIBLE_DEVICES")
     try:
         main(work)
     except Exception:  # noqa: BLE001
@@ -179,6 +180,12 @@ if __name__ == "__main__":
         FAILURES.append("exception")
     finally:
         shutil.rmtree(work, ignore_errors=True)
+        # The gate's batch runs later scripts in this process; their child
+        # processes must not inherit a hidden GPU.
+        if hidden is None:
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = hidden
     if FAILURES:
         print(f"ALEMBIC_EXPORT_FAILED {FAILURES}", flush=True)
         sys.exit(1)
