@@ -72,6 +72,23 @@ def test_low_churn_above_surface_stays_foam():
     assert result is WhitewaterType.FOAM
 
 
+def test_zero_hysteresis_allowed_by_the_property_builds_a_policy():
+    # Review item B10: Type Hysteresis has min=0.0, but the policy required
+    # strict enter/exit separation and whitewater stepping raised.
+    policy = classification_policy(SimpleNamespace(
+        ww_foam_band=1.0, voxel_size=0.1, ww_spray_min_speed=1.0,
+        ww_type_hysteresis=0.0, ww_churn_threshold=0.5,
+    ))
+    assert policy.spray_enter_height == pytest.approx(policy.spray_exit_height)
+    assert policy.bubble_enter_depth == pytest.approx(policy.bubble_exit_depth)
+    assert transition_sample(
+        WhitewaterType.FOAM, sdf=0.11, speed=2.0, policy=policy
+    ) is WhitewaterType.SPRAY
+    assert transition_sample(
+        WhitewaterType.SPRAY, sdf=0.09, speed=2.0, policy=policy
+    ) is WhitewaterType.FOAM
+
+
 def test_transition_hysteresis_prevents_type_flicker():
     policy = classification_policy(SimpleNamespace(
         ww_foam_band=1.0,
