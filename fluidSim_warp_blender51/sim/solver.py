@@ -428,6 +428,9 @@ class ColliderDesc:
     # Solver-internal: mesh.points currently hold an extrapolated sub-frame
     # pose that _restore_collider_poses must undo.
     reposed: bool = False
+    # Solver-internal: rotation centre of that sub-frame pose (the frame-start
+    # centre translated with the points); None at the frame-start pose.
+    pose_center: object = None
 
 
 @dataclass
@@ -1297,6 +1300,10 @@ class FluidSolver:
             )
             col.mesh.refit()
             col.reposed = True
+            # The points rotate about the translated centre, so the contact
+            # velocity v + w x (p - c) must use it too (B38).
+            col.pose_center = tuple(
+                c + d for c, d in zip(col.center, linear_disp))
 
     def _restore_collider_poses(self):
         """Put re-posed collider meshes back at their authored frame pose.
@@ -1312,6 +1319,7 @@ class FluidSolver:
             wp.copy(col.mesh.points, col.base_points)
             col.mesh.refit()
             col.reposed = False
+            col.pose_center = None
 
     def _apply_collisions(self):
         g = self.grid
@@ -1326,11 +1334,12 @@ class FluidSolver:
                        math.sqrt(sum(value * value for value in extent)))
             lv = col.linear_velocity
             av = col.angular_velocity
+            center = getattr(col, "pose_center", None) or col.center
             fast_launch(
                 k_rasterize_collider_material, dim=self._nvox,
                 inputs=[col.mesh.id, g.leaf_coords, g.num_leaves, g.origin,
                         s.voxel_size, band, wp.vec3(*lv), wp.vec3(*av),
-                        wp.vec3(*col.center), col.friction, col.restitution],
+                        wp.vec3(*center), col.friction, col.restitution],
                 outputs=[self.collision_sdf.data, self.collision_vel,
                          self.collision_friction, self.collision_restitution],
                 device=self.device,
