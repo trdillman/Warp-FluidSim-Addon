@@ -714,7 +714,10 @@ def _refuse_narrow_band_conflicts(scene, settings):
     otherwise switch one on under an admitted narrow-band run, unchecked until
     the next Reset. Raising here keeps the solver on its admitted values.
     """
-    if not bool(getattr(settings, "narrow_band_enabled", False)):
+    # ``settings`` is the running solver's SolverSettings (never an RNA group),
+    # which always declares the flag; partial solver doubles may not.
+    if not (hasattr(settings, "narrow_band_enabled")
+            and settings.narrow_band_enabled):
         return
     from ..sim import narrow_band
 
