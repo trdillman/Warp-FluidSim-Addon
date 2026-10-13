@@ -762,8 +762,9 @@ def _try_live_parameter_update(scene) -> bool:
     from . import production_bake, scene_bridge
 
     if production_bake.any_bake_active():
-        # Held for reapply_after_bake: the baking solver keeps the effect
-        # parameters its cache identity was recorded with (decision D2).
+        # Held: the baking solver keeps the effect parameters its cache
+        # identity was recorded with (decision D2). The restored preview
+        # reads them at its next step.
         return False
     session = scene_bridge.session()
     if not session.active or not session.owns_scene(scene):

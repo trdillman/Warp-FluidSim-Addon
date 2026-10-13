@@ -9,9 +9,8 @@ reaches the backend's ``initialize``.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
@@ -192,13 +191,7 @@ def test_other_refusals_clear_the_offer(tmp_path):
     assert cache_bake.rebake_offer(scene) is None
 
 
-def test_a_bake_that_starts_clears_the_offer(monkeypatch, tmp_path):
-    # This controller test runs without Blender; verify cleanup calls the
-    # pending-settings boundary without importing its bpy-only implementation.
-    reapplied = []
-    pending = ModuleType("fluidSim_warp_blender51.blender.pending_settings")
-    pending.reapply_after_bake = reapplied.append
-    monkeypatch.setitem(sys.modules, pending.__name__, pending)
+def test_a_bake_that_starts_clears_the_offer(tmp_path):
     scene = _scene()
     with pytest.raises(ResumeRefused):
         BakeRun(scene, resume=True, backend=_Backend(tmp_path, _CHANGED))
@@ -209,7 +202,6 @@ def test_a_bake_that_starts_clears_the_offer(monkeypatch, tmp_path):
         assert cache_bake.rebake_offer(scene) is None
     finally:
         run.close()
-    assert reapplied == [scene]
 
 
 def test_offers_are_per_scene(tmp_path):

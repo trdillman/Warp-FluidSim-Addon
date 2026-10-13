@@ -793,23 +793,6 @@ def _bake_refusal() -> str:
     return _BAKE_HOLD_MESSAGE if production_bake.any_bake_active() else ""
 
 
-def reapply_after_bake(scene):
-    """Apply the live edits held during a bake to the restored session."""
-    sess = session()
-    if not sess.owns_scene(scene):
-        refresh_pending_state(scene, sess)
-        return False
-    applied = apply_live_settings_safely(scene, sess)
-    try:
-        from .effects import _try_live_parameter_update
-
-        _try_live_parameter_update(scene)
-    except Exception as exc:  # noqa: BLE001 - handler boundary
-        sess.set_error(scene, repr(exc))
-    refresh_pending_state(scene, sess)
-    return applied
-
-
 def _apply_pending(scene, requested=None, *, depsgraph=None):
     """Apply a scene's pending transition, clearing it only after success."""
     refusal = _bake_refusal()
@@ -1167,7 +1150,8 @@ def request_scene_update(scene, action: SceneUpdate):
     refusal = _bake_refusal()
     if refusal and sess.owns_scene(scene):
         # The baking solver keeps its admitted settings (its cache identity);
-        # reapply_after_bake applies the held edits when the bake ends.
+        # the held edits reach the preview when the bake's restore
+        # re-initializes it from the authored settings.
         # Output-only settings still refresh the existing objects, without
         # reading the solver, as they do with no session.
         try:
