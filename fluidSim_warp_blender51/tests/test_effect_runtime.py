@@ -402,9 +402,10 @@ def _compiled_particle_entry(device, *, access=FieldAccess.READ_WRITE_CURRENT,
 
 
 def _particle_solver(device, *, live=5, capacity=8):
+    from types import SimpleNamespace
+
     import numpy as np
     import warp as wp
-    from types import SimpleNamespace
 
     refreshes = []
     velocity = np.arange(capacity * 3, dtype=np.float32).reshape(capacity, 3)
