@@ -152,6 +152,39 @@ def main():
             json.dumps(metadata, default=str)[:500],
         )
 
+    # Decision D2: a live edit made while a bake runs is held off the baking
+    # solver, then reaches the restored preview session when the bake closes.
+    with tempfile.TemporaryDirectory(prefix="fluidsim_phase4_hold_") as cache_dir:
+        fs.cache_path = cache_dir
+        held_iterations = int(domain_settings.pressure_iterations) + 7
+        run = cache_bake.BakeRun(scene, start=1, end=2)
+        try:
+            while not run.finished and run.controller.status.value != "RUNNING":
+                run.tick()
+            baking = run.controller.backend.sess
+            domain_settings.pressure_iterations = held_iterations
+            check("mid-bake live edit is held off the baking solver",
+                  baking.solver.settings.pressure_iterations != held_iterations
+                  and "Production Bake" in fs.status,
+                  f"baking={baking.solver.settings.pressure_iterations} status={fs.status!r}")
+            while not run.finished:
+                run.tick()
+            check("bake with a held edit completes",
+                  run.controller.status.value == "COMPLETE", run.controller.message)
+        finally:
+            run.close()
+        restored = scene_bridge.session()
+        check("held edit reaches the restored session when the bake ends",
+              restored.active
+              and restored.solver.settings.pressure_iterations == held_iterations,
+              getattr(getattr(restored.solver, "settings", None),
+                      "pressure_iterations", None))
+        check("bake hold notice clears when the bake ends",
+              "Production Bake" not in fs.status
+              and pending_settings.pending_presentation(scene)["action"] == "NONE",
+              repr(fs.status))
+    sess = scene_bridge.session()
+
     # Interactive frame-change playback uses the same pre-step seam.
     scene.frame_set(1)
     sess.last_frame = 1
