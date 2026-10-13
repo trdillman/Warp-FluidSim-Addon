@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from fluidsim_testpkg.blender.production_bake import ProductionBakeBackend
+from fluidsim_testpkg.blender.cache_solver_version import resumable_solver_version
 from fluidsim_testpkg.blender.ui_cache_state import production_bake_action
 from fluidsim_testpkg.io.cache_schema import (
     LEGACY_2X_CACHE_MESSAGE,
@@ -85,9 +85,7 @@ def test_cache_controls_match_backend_resume_policy(
     before = manifest_file.read_bytes()
     state = production_bake_action(tmp_path)
     assert manifest_file.read_bytes() == before
-    backend_allows_resume = ProductionBakeBackend._compatible_solver_version(
-        solver_version, VERSION_STRING
-    )
+    backend_allows_resume = resumable_solver_version(solver_version, VERSION_STRING)
     assert (state.action == "RESUME") == (backend_allows_resume and not complete)
     assert state.destructive == (state.action == "RESTART")
     if solver_version in {"3.0.0", "3.1.0"}:

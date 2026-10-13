@@ -2661,7 +2661,8 @@ def _patch_bake_runtime(
         ui_cache_state,
         "production_bake_action",
         lambda _directory: SimpleNamespace(
-            action=action, message="Existing cache", destructive=action == "RESTART"
+            action=action, message="Existing cache", destructive=action == "RESTART",
+            warning=False,
         ),
     )
 
