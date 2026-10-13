@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import json
 
+import pytest
+from fluidsim_testpkg.blender.cache_solver_version import resumable_solver_version
 from fluidsim_testpkg.blender.ui_cache_state import production_bake_action
 from fluidsim_testpkg.io.cache_schema import (
     LEGACY_2X_CACHE_MESSAGE,
     CacheManifestV3,
     write_manifest_atomic,
 )
+from fluidsim_testpkg.version import VERSION_STRING
 
 
-def _manifest(*, frame_end: int = 10) -> CacheManifestV3:
+def _manifest(*, frame_end: int = 10, solver_version: str = VERSION_STRING) -> CacheManifestV3:
     return CacheManifestV3.new(
-        solver_version="3.0.0",
+        solver_version=solver_version,
         scene_key="sha256:" + "1" * 64,
         settings_signature="sha256:" + "2" * 64,
         source_signature="sha256:" + "3" * 64,
@@ -48,13 +51,17 @@ def test_production_bake_resumes_an_existing_incomplete_manifest(tmp_path):
     assert state.destructive is False
 
 
-def test_production_bake_restarts_a_complete_manifest(tmp_path):
-    manifest = _manifest(frame_end=1)
+@pytest.mark.parametrize("solver_version", ["3.0.0", "3.1.0", "3.2.0"])
+@pytest.mark.parametrize("complete", [False, True])
+def test_cache_controls_match_backend_resume_policy(
+    tmp_path, solver_version, complete
+):
+    manifest = _manifest(frame_end=1, solver_version=solver_version)
     # The UI presentation only needs the manifest transaction boundary; exact
     # frame/checkpoint integrity remains an execute-time responsibility.
     from fluidsim_testpkg.io.cache_schema import FrameEntry
 
-    manifest.frames[1] = FrameEntry(
+    entry = FrameEntry(
         frame=1,
         frame_file="frames/frame_000001.npz",
         frame_sha256="a" * 64,
@@ -71,10 +78,27 @@ def test_production_bake_restarts_a_complete_manifest(tmp_path):
         whitewater_count=0,
         particle_count=1,
     )
-    write_manifest_atomic(tmp_path / "fluidsim_cache.json", manifest)
+    if complete:
+        manifest.frames[1] = entry
+    manifest_file = tmp_path / "fluidsim_cache.json"
+    write_manifest_atomic(manifest_file, manifest)
+    before = manifest_file.read_bytes()
     state = production_bake_action(tmp_path)
-    assert state.action == "RESTART"
-    assert state.destructive is True
+    assert manifest_file.read_bytes() == before
+    backend_allows_resume = resumable_solver_version(solver_version, VERSION_STRING)
+    assert (state.action == "RESUME") == (backend_allows_resume and not complete)
+    assert state.destructive == (state.action == "RESTART")
+    if solver_version in {"3.0.0", "3.1.0"}:
+        assert state.warning is True
+        assert "remain playable" in state.message
+        assert "cannot resume" in state.message
+        assert "results" in state.message
+        assert "confirmation" in state.message
+    elif complete:
+        assert state.warning is False
+        assert "complete" in state.message
+    else:
+        assert state.warning is False
 
 
 def test_production_bake_restarts_an_invalid_manifest(tmp_path):
