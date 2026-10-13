@@ -37,6 +37,7 @@ from ..io.checkpoint import (
 )
 from ..sim.enums import ParticleSampleType
 from ..version import VERSION_STRING
+from .cache_solver_version import resumable_solver_version
 from .scene_access import scene_identity
 
 
@@ -538,12 +539,7 @@ class ProductionBakeBackend:
 
     @staticmethod
     def _compatible_solver_version(cached: str, current: str) -> bool:
-        try:
-            cached_parts = tuple(int(value) for value in cached.split("."))
-            current_parts = tuple(int(value) for value in current.split("."))
-        except ValueError:
-            return False
-        return cached_parts[:2] == current_parts[:2]
+        return resumable_solver_version(cached, current)
 
     def resume_decision(
         self, scene, *, rebake_from: int | None = None, end: int | None = None

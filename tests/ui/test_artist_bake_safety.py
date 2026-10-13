@@ -412,6 +412,33 @@ class _Scene:
         return self._fluidsim
 
 
+def test_restart_ui_requests_confirmation_without_touching_existing_cache(
+    monkeypatch, tmp_path
+):
+    _fake_bpy, cache_operators = _install_bpy_stub(monkeypatch)
+    cache_dir = tmp_path / "older-cache"
+    cache_dir.mkdir()
+    (cache_dir / "fluidsim_cache.json").write_bytes(b"old-manifest")
+    before = _cache_bytes(cache_dir)
+    scene = _Scene(606, cache_dir)
+    dialogs = []
+    context = SimpleNamespace(
+        scene=scene,
+        window_manager=SimpleNamespace(
+            invoke_props_dialog=lambda operator, **kwargs: dialogs.append(
+                (operator, kwargs)
+            ) or {"RUNNING_MODAL"}
+        ),
+    )
+    operator = cache_operators.FLUIDSIM_OT_bake_start()
+    operator.restart_existing = True
+
+    assert operator.invoke(context, None) == {"RUNNING_MODAL"}
+    assert dialogs == [(operator, {"width": 560})]
+    assert operator.expected_cache_path == str(cache_dir)
+    assert _cache_bytes(cache_dir) == before
+
+
 class _ModalBackend:
     def __init__(self, **_kwargs):
         self.base_dir = Path()

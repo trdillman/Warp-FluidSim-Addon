@@ -16,6 +16,8 @@ from ..io.cache_schema import (
     load_manifest,
     manifest_path,
 )
+from ..version import VERSION_STRING
+from .cache_solver_version import resumable_solver_version
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class ProductionBakeAction:
     action: str
     message: str
     destructive: bool = False
+    warning: bool = False
 
 
 def _manifest_stamp(path: Path):
@@ -98,14 +101,26 @@ def _production_bake_action(path: Path) -> ProductionBakeAction:
         )
     if manifest is None:
         return ProductionBakeAction("START", "No cache manifest exists")
+    if not resumable_solver_version(manifest.solver_version, VERSION_STRING):
+        return ProductionBakeAction(
+            "RESTART",
+            f"Committed frames from FluidSim {manifest.solver_version} remain "
+            f"playable in {VERSION_STRING}, but this cache cannot resume. "
+            "Solver corrections change "
+            "simulation results; rebake for current results. Restart replaces "
+            "this cache only after confirmation.",
+            destructive=True,
+            warning=True,
+        )
     last = manifest.last_committed_frame
     if last is None or last < manifest.frame_end:
         return ProductionBakeAction(
             "RESUME",
-            "Resume will verify signatures, checksums, and the last committed checkpoint",
+            "Current solver cache: Resume will verify signatures, checksums, "
+            "and the last committed checkpoint",
         )
     return ProductionBakeAction(
         "RESTART",
-        f"Existing production cache is complete through frame {manifest.frame_end}",
+        f"Current solver cache is complete through frame {manifest.frame_end}",
         destructive=True,
     )

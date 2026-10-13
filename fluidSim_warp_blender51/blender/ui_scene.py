@@ -1107,7 +1107,10 @@ def draw_cache_bake(layout, context):
 
         presentation = production_bake_action(_cache_directory(context.scene))
         if presentation.action != "START":
-            _draw_wrapped(layout, presentation.message, icon="INFO")
+            _draw_wrapped(
+                layout, presentation.message,
+                icon="ERROR" if presentation.warning else "INFO",
+            )
         _probe, _selected, runtime_ready, _runtime_message = _runtime_ui_state()
         actions.enabled = runtime_ready
         if presentation.action == "RESUME":
