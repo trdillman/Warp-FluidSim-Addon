@@ -100,8 +100,9 @@ The paired performance budget (about twenty minutes of Blender trials) is only
 measured when it has to be. By default the gate reuses
 `artifacts/performance_budget/summary.json` when it passed and no budget
 source changed since the commit it measured: the add-on (minus its docs and
-Markdown), `tools/repo_addon_loader.py`, the benchmark tools and the budget evaluator.
-Documentation, rebuilt demo blends and test-only commits therefore keep the
+Markdown), `tools/repo_addon_loader.py`, the benchmark tools, the budget evaluator,
+`tools/demos`, and the saved paddle/vortex scenes that the gate does not rebuild.
+Documentation, rebuilt dam/crown blends and test-only commits therefore keep the
 measured budget. The manifest records `performance_budget_reused` and
 `performance_budget_measured_at`. `--measure-budget` forces a fresh
 measurement; `--reuse-budget` fails instead of measuring.
