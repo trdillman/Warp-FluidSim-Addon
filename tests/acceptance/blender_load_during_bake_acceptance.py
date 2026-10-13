@@ -11,7 +11,12 @@ itself from a persistent timer, writes a JSON report and quits:
   blender --factory-startup --python-use-system-env --python tests/acceptance/blender_load_during_bake_acceptance.py
 Prints LOAD-DURING-BAKE-ACCEPTANCE-PASS when every check passes.
 """
-import json, os, sys, tempfile, time, traceback
+import json
+import os
+import sys
+import tempfile
+import time
+import traceback
 from pathlib import Path
 import bpy
 
@@ -44,17 +49,23 @@ def make_file(path, name):
     bpy.ops.wm.read_homefile(use_empty=False)
     bpy.context.scene.name = name
     cube = bpy.data.objects.get("Cube")
-    cube.select_set(True); bpy.context.view_layer.objects.active = cube
+    cube.select_set(True)
+    bpy.context.view_layer.objects.active = cube
     window = bpy.context.window_manager.windows[0]
     area = next(a for a in window.screen.areas if a.type == "VIEW_3D")
     with bpy.context.temp_override(window=window, area=area, active_object=cube, selected_objects=[cube]):
         print("SETUP", bpy.ops.fluidsim.setup_scene(), flush=True)
     from fluidSim_warp_blender51.blender import scene_bridge
     dom = scene_bridge.active_domain_settings(bpy.context.scene)
-    dom.voxel_size = 0.12; dom.whitewater_enabled = False; dom.surface_enabled = False
+    dom.voxel_size = 0.12
+    dom.whitewater_enabled = False
+    dom.surface_enabled = False
     fs = bpy.context.scene.fluidsim
     fs.cache_path = str(ROOT / f"cache_{name}")
-    fs.bake_start = 1; fs.bake_end = 400; fs.checkpoint_interval = 1; fs.live = False
+    fs.bake_start = 1
+    fs.bake_end = 400
+    fs.checkpoint_interval = 1
+    fs.live = False
     bpy.ops.wm.save_as_mainfile(filepath=str(path))
 
 def finish():
@@ -80,10 +91,11 @@ def finish():
     return None
 
 def tick():
-    from fluidSim_warp_blender51.blender import production_bake, scene_bridge
+    from fluidSim_warp_blender51.blender import production_bake
     try:
         if time.monotonic() - STATE["t0"] > 300:
-            ev("timeout"); return finish()
+            ev("timeout")
+            return finish()
         phase = STATE["phase"]
         if phase == "start_bake":
             window = bpy.context.window_manager.windows[0]
@@ -92,11 +104,14 @@ def tick():
             with bpy.context.temp_override(window=window, screen=window.screen, area=area, region=region):
                 result = bpy.ops.fluidsim.bake_start("EXEC_DEFAULT", restart_existing=False)
             ev(f"bake_start -> {result}")
-            STATE["phase"] = "wait_frames"; return 0.1
+            STATE["phase"] = "wait_frames"
+            return 0.1
         if phase == "wait_frames":
             bakes = production_bake.active_bakes()
             if not bakes:
-                ev("bake vanished before load"); STATE["report"]["error"] = "no bake"; return finish()
+                ev("bake vanished before load")
+                STATE["report"]["error"] = "no bake"
+                return finish()
             ctrl = bakes[0][1]
             last = getattr(getattr(ctrl, "backend", None), "manifest", None)
             last = None if last is None else last.last_committed_frame
@@ -132,20 +147,23 @@ def tick():
             return finish()
     except Exception:
         STATE["report"]["error"] = traceback.format_exc()
-        ev("exception"); return finish()
+        ev("exception")
+        return finish()
 
 def boot():
     try:
         from tools.repo_addon_loader import enable_repo_addon
         enable_repo_addon(str(REPO), default_set=True, persistent=False)
-        file_b = ROOT / "b.blend"; file_a = ROOT / "a.blend"
+        file_b = ROOT / "b.blend"
+        file_a = ROOT / "a.blend"
         make_file(file_b, "SceneB")
         make_file(file_a, "SceneA")
         STATE["file_b"] = file_b
         STATE["phase"] = "start_bake"
         bpy.app.timers.register(tick, first_interval=1.0, persistent=True)
     except Exception:
-        STATE["report"]["error"] = traceback.format_exc(); finish()
+        STATE["report"]["error"] = traceback.format_exc()
+        finish()
     return None
 
 bpy.app.timers.register(boot, first_interval=2.0, persistent=True)
