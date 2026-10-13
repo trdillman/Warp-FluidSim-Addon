@@ -9,6 +9,8 @@ Blender, Warp and the add-on and publishes the names the helpers below use as
 module globals (see ``_import_runtime``). Calling a helper before ``setup()``
 raises ``NameError``; ``main`` says so in plain words.
 """
+# ruff: noqa: F821 - setup() publishes the runtime names (bpy, wp, the add-on
+# classes) as module globals; see the docstring and _import_runtime.
 from __future__ import annotations
 
 import argparse
@@ -16,7 +18,6 @@ import importlib
 import json
 import statistics
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -268,20 +269,28 @@ def main(capability):
                            "volume_source.vdb").resolve())
         grids = []
         for name in ("density", "surface", "temperature", "vel_x", "vel_y", "vel_z"):
-            grid = openvdb.FloatGrid(); grid.name = name
+            grid = openvdb.FloatGrid()
+            grid.name = name
             accessor = grid.getAccessor()
             for x in range(4):
                 for y in range(4):
                     for z in range(4):
-                        if name == "density": value = 1.0
-                        elif name == "surface": value = float(x) - 2.0
-                        elif name == "temperature": value = float(x + y + z)
-                        elif name == "vel_x": value = float(x)
-                        elif name == "vel_y": value = float(y * 2)
-                        else: value = float(z * 3)
+                        if name == "density":
+                            value = 1.0
+                        elif name == "surface":
+                            value = float(x) - 2.0
+                        elif name == "temperature":
+                            value = float(x + y + z)
+                        elif name == "vel_x":
+                            value = float(x)
+                        elif name == "vel_y":
+                            value = float(y * 2)
+                        else:
+                            value = float(z * 3)
                         accessor.setValueOn((x, y, z), value)
             grids.append(grid)
-        vector = openvdb.Vec3SGrid(); vector.name = "velocity"
+        vector = openvdb.Vec3SGrid()
+        vector.name = "velocity"
         vector_accessor = vector.getAccessor()
         for x in range(4):
             for y in range(4):
@@ -309,7 +318,8 @@ def main(capability):
         source_object = bpy.data.objects.new("AnimatedSourceAdapterProbe", None)
         scene.collection.objects.link(source_object)
         source_object.matrix_world = Matrix.Translation((.65, 1.0, 1.0))
-        inputs = SceneInputs(); scene.frame_set(1)
+        inputs = SceneInputs()
+        scene.frame_set(1)
         inputs.object_velocity(source_object, scene)
         stable_key = (f"session:{inputs._session_generation}:object:"
                       f"{source_object.as_pointer()}")
@@ -355,7 +365,9 @@ def main(capability):
         emitted_particles = first_count
         solver_four, _, _ = step_solver((plan,), frames=1, substeps=4)
         four_substep_count = solver_four.particles.host_count
-        solver.reset(); solver.set_source_batch(native_plans=(plan,)); solver.step_frame()
+        solver.reset()
+        solver.set_source_batch(native_plans=(plan,))
+        solver.step_frame()
         reset_count = solver.particles.host_count
         reopened, _, _ = step_solver((plan,), frames=1)
         reopened_count = reopened.particles.host_count
@@ -366,7 +378,8 @@ def main(capability):
         rename_key = f"session:{scene_inputs._session_generation}:object:{pointer}"
         identity_obj.name = "LifecycleIdentityProbeRenamed"
         renamed_key = f"session:{scene_inputs._session_generation}:object:{identity_obj.as_pointer()}"
-        duplicate = identity_obj.copy(); bpy.context.scene.collection.objects.link(duplicate)
+        duplicate = identity_obj.copy()
+        bpy.context.scene.collection.objects.link(duplicate)
         duplicate_key = f"session:{scene_inputs._session_generation}:object:{duplicate.as_pointer()}"
         details.update(first_emitted=first_emitted,
                        second_emitted=second_emitted,
@@ -377,7 +390,8 @@ def main(capability):
                        reopen_fresh_count=reopened_count,
                        rename_key_stable=rename_key == renamed_key,
                        duplicate_key_distinct=rename_key != duplicate_key)
-        solver_four.release(); reopened.release()
+        solver_four.release()
+        reopened.release()
     else:
         solver, stats, step_samples = step_solver((plan,), frames=1)
         emitted_particles = solver.particles.host_count
@@ -420,7 +434,8 @@ def main(capability):
             "control_velocity_max": control_velocity_max,
             "projected_velocity_delta": pressure_velocity_max - control_velocity_max,
         }
-        pressure_solver.release(); control_solver.release()
+        pressure_solver.release()
+        control_solver.release()
 
         staggered_plan = SourcePlan(
             SourceKey("staggered-runtime"), SourceOperation.STAGGERED_VELOCITY,
@@ -531,13 +546,17 @@ def main(capability):
         try:
             PointRegionPlan([[0,0,0]], velocities=[[1,0,0],[2,0,0]])
         except ValueError as exc:
-            invalid = None; rejected = True; invalid_message = str(exc)
+            invalid = None
+            rejected = True
+            invalid_message = str(exc)
         invalid_case = "point_attribute_length_mismatch"
     elif capability == "source_lifecycle":
         try:
             source_plan(AnalyticRegionPlan(), key="")
         except ValueError as exc:
-            invalid = None; rejected = True; invalid_message = str(exc)
+            invalid = None
+            rejected = True
+            invalid_message = str(exc)
         invalid_case = "empty_runtime_source_identity"
     else:
         huge_triangles = np.tile(cube()[1], (4167, 1))[:50000]

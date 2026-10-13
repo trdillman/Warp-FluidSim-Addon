@@ -27,12 +27,12 @@ import pytest
 
 wp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim import cuda_reduction, source_execution
-from fluidSim_warp_blender51.sim import solver as solver_module
-from fluidSim_warp_blender51.sim.cuda_reduction import CudaDotProduct
-from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
-from fluidSim_warp_blender51.sim.source_contracts import DirectInjectionPacket
-from fluidSim_warp_blender51.sim.source_execution import CompiledSourceExecution
+from fluidSim_warp_blender51.sim import cuda_reduction, source_execution  # noqa: E402
+from fluidSim_warp_blender51.sim import solver as solver_module  # noqa: E402
+from fluidSim_warp_blender51.sim.cuda_reduction import CudaDotProduct  # noqa: E402
+from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings  # noqa: E402
+from fluidSim_warp_blender51.sim.source_contracts import DirectInjectionPacket  # noqa: E402
+from fluidSim_warp_blender51.sim.source_execution import CompiledSourceExecution  # noqa: E402
 
 REMEDY = "Set a valid CUDA device (e.g. 'cuda:0') in Add-on Preferences."
 

@@ -10,12 +10,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 wp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim.fields import (
+from fluidSim_warp_blender51.sim.fields import (  # noqa: E402
     SparseGrid,
     voxel_center_world,
     voxel_coord_of_flat,
 )
-from fluidSim_warp_blender51.sim.kernels_fluid import collision_sdf_gradient
+from fluidSim_warp_blender51.sim.kernels_fluid import collision_sdf_gradient  # noqa: E402
 
 VOXEL = 0.05
 PLANE_Z = 0.2

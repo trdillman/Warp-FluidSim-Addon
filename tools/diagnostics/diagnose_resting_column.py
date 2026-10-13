@@ -13,11 +13,11 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
 sys.path.insert(0,str(ROOT / "tests" / "solver"))
-import numpy as np
-import warp as wp
-from _narrow_band_harness import settings, lattice, H
-from fluidSim_warp_blender51.sim.solver import FluidSolver
-from fluidSim_warp_blender51.sim.pressure import k_apply_matrix
+import numpy as np  # noqa: E402
+import warp as wp  # noqa: E402
+from _narrow_band_harness import settings, lattice, H  # noqa: E402
+from fluidSim_warp_blender51.sim.solver import FluidSolver  # noqa: E402
+from fluidSim_warp_blender51.sim.pressure import k_apply_matrix  # noqa: E402
 
 
 def run_case(device, name, frames=30):

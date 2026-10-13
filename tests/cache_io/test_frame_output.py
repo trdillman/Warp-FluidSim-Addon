@@ -800,7 +800,6 @@ def test_live_payload_reads_attribute_inventory_from_designated_domain():
         whitewater_attribute_velocity=True,
         surface_attribute_velocity=True,
     ))
-    domain_settings = fs.domain_object.fluidsim_domain
     fs.particles_attribute_age = False
     fs.whitewater_attribute_velocity = False
     fs.surface_attribute_velocity = False

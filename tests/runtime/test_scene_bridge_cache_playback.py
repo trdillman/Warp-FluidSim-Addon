@@ -1609,7 +1609,7 @@ def test_cache_render_restore_republishes_the_restored_frame(monkeypatch):
     frame; marking the restore frame as published left them stale."""
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=5, playback=True)
-    sess = scene_bridge.session()
+    scene_bridge.session()
     published = []
     monkeypatch.setattr(
         scene_bridge.playback, "play_cache_frame",

@@ -31,7 +31,7 @@ ROOT = Path(os.environ.get("FLUIDSIM_REPO_ROOT")
             or Path(__file__).resolve().parents[2]).resolve()
 sys.path.insert(0, str(ROOT))
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 SCENE_DIRECTORIES = ("demos", "examples", "fluidSim_warp_blender51/resources")
 # RNA bookkeeping that is not a setting.

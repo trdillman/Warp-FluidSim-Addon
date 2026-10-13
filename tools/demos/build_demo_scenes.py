@@ -33,7 +33,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 DEMOS = os.path.join(REPO, "demos")
 CACHE = os.path.join(REPO, "artifacts", "demo_cache")

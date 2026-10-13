@@ -153,7 +153,7 @@ def _scene():
 
 
 def test_build_settings_maps_every_declared_scene_field(monkeypatch):
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
 
     settings = _build_settings(scene)
@@ -208,7 +208,7 @@ def test_build_settings_maps_every_declared_scene_field(monkeypatch):
 
 
 def test_build_settings_detaches_blender_vector_proxies(monkeypatch):
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
 
     class InvalidatableVector:
@@ -250,7 +250,7 @@ def test_closed_domain_projects_required_collision_walls(monkeypatch):
 
 
 def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    _install_scene_bridge_stubs(monkeypatch)
     scene = _scene()
     scene.fluidsim.domain_object.fluidsim_domain.limit_percent = 0.37
     scene.fluidsim.domain_object.fluidsim_domain.limit_behavior = "ACCELERATION"
@@ -267,7 +267,7 @@ def test_build_settings_maps_ui_aliases_without_shadow_attributes(monkeypatch):
 
 
 def test_scene_setting_translation_rejects_undeclared_targets(monkeypatch):
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    _install_scene_bridge_stubs(monkeypatch)
     from fluidSim_warp_blender51.blender import solver_settings
 
     settings = SolverSettings(voxel_size=9.0)
@@ -284,7 +284,7 @@ def test_scene_setting_translation_rejects_undeclared_targets(monkeypatch):
 
 
 def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    _install_scene_bridge_stubs(monkeypatch)
 
     from fluidSim_warp_blender51.blender import pending_settings
 
@@ -297,7 +297,7 @@ def test_realtime_surface_bridge_uses_public_solver_rebuild(monkeypatch):
 
 
 def test_explicit_output_refresh_bypasses_live_surface_cadence(monkeypatch):
-    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    _install_scene_bridge_stubs(monkeypatch)
 
     from fluidSim_warp_blender51.blender import pending_settings
 

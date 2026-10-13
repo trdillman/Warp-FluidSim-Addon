@@ -63,7 +63,7 @@ def main(work):
     from tiny_cache import build_tiny_cache
 
     from fluidSim_warp_blender51.blender import (
-        cache_identity, interchange, output_publication, playback)
+        cache_identity, output_publication, playback)
     from fluidSim_warp_blender51.io import cache
     from fluidSim_warp_blender51.panels import PLAYBACK_ONLY_TEXT, runtime_ui_state
 

@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "support"))
 from _test_device import script_device  # noqa: E402
 
-from tools.repo_addon_loader import ADDON_NAME, enable_repo_addon
+from tools.repo_addon_loader import ADDON_NAME, enable_repo_addon  # noqa: E402
 
 FAILURES = []
 

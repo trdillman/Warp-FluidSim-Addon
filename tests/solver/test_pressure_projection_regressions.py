@@ -12,20 +12,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 wp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim.constants import (
+from fluidSim_warp_blender51.sim.constants import (  # noqa: E402
     LEAF_VOLUME,
     VOXEL_COLLISION,
     VOXEL_FLUID,
     VOXEL_NONE,
 )
-from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
-from fluidSim_warp_blender51.sim.kernels_fluid import (
+from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid  # noqa: E402
+from fluidSim_warp_blender51.sim.kernels_fluid import (  # noqa: E402
     k_apply_collider_material_to_grid,
     resolve_collision,
     resolve_collision_segment,
 )
-from fluidSim_warp_blender51.sim.pressure import PressureSolver
-from fluidSim_warp_blender51.sim.solver import (
+from fluidSim_warp_blender51.sim.pressure import PressureSolver  # noqa: E402
+from fluidSim_warp_blender51.sim.solver import (  # noqa: E402
     ColliderDesc,
     FluidSolver,
     SolverSettings,

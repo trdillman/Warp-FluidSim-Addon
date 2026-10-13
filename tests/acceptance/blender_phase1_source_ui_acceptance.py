@@ -14,7 +14,6 @@ import traceback
 from pathlib import Path
 
 import bpy
-import numpy as np
 
 
 RESULT_ENV = "FLUIDSIM_PROFILE_SAFE_REVIEW_RESULT"

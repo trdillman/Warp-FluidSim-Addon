@@ -21,7 +21,6 @@ mode verifies the loaded/enabled add-on and leaves Blender open.
 import json
 import os
 import sys
-import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -33,7 +32,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 ARTIFACTS = os.path.join(REPO_ROOT, "artifacts")
 os.makedirs(ARTIFACTS, exist_ok=True)

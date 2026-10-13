@@ -1,14 +1,15 @@
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import warp as wp
 wp.init()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "support"))
-from _test_device import script_device
+from _test_device import script_device  # noqa: E402
 dev = script_device()
-from fluidSim_warp_blender51.sim.fields import SparseGrid, MacVelocityField
-from fluidSim_warp_blender51.sim import kernels_core, kernels_fluid, pressure
-from fluidSim_warp_blender51.sim.registry import KERNEL_REGISTRY
+from fluidSim_warp_blender51.sim.fields import SparseGrid, MacVelocityField  # noqa: E402
+from fluidSim_warp_blender51.sim import kernels_fluid, pressure  # noqa: E402
+from fluidSim_warp_blender51.sim.registry import KERNEL_REGISTRY  # noqa: E402
 
 g = SparseGrid(origin=(-1,-1,-1), size=(2,2,2), voxel_size=0.1, leaf_capacity=512, device=dev)
 print("dims", g.voxels_dim, g.leaves_dim, "cap", g.capacity)
@@ -19,7 +20,7 @@ n = g.finalize_topology()
 print("leaves", n)
 
 vel = MacVelocityField(g)
-import numpy as np
+import numpy as np  # noqa: E402
 # particles in a small box
 pts = np.random.uniform(-0.4, 0.4, size=(5000,3)).astype(np.float32)
 pos = wp.array(pts, dtype=wp.vec3, device=dev)

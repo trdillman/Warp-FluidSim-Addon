@@ -14,13 +14,12 @@ the real kernel with a short array.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 
 import pytest
 
 wp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim.cuda_reduction import CudaDotProduct
+from fluidSim_warp_blender51.sim.cuda_reduction import CudaDotProduct  # noqa: E402
 
 
 class _Array:

@@ -10,9 +10,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 wp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim.constants import LEAF_VOLUME, VOXEL_FLUID
-from fluidSim_warp_blender51.sim.fields import SparseGrid
-from fluidSim_warp_blender51.sim.pressure import PressureSolver
+from fluidSim_warp_blender51.sim.constants import LEAF_VOLUME, VOXEL_FLUID  # noqa: E402
+from fluidSim_warp_blender51.sim.fields import SparseGrid  # noqa: E402
+from fluidSim_warp_blender51.sim.pressure import PressureSolver  # noqa: E402
 
 
 def _one_leaf_grid(device, mark=True):

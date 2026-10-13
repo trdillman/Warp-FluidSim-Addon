@@ -374,7 +374,7 @@ def test_balanced_voxel_is_lattice_snapped_for_the_tightened_domain():
     for item, _plan in found:
         lo = item.changes.get("domain_min", authored["domain_min"])
         hi = item.changes.get("domain_max", authored["domain_max"])
-        longest = max(h - l for l, h in zip(lo, hi))
+        longest = max(high - low for low, high in zip(lo, hi))
         voxel = item.changes["voxel_size"]
         divisions = _lattice_divisions(voxel, longest)
         assert voxel == voxel_size_for_divisions(divisions, longest)

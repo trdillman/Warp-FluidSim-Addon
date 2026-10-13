@@ -20,7 +20,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 PACKAGE_NAME = "fluidSim_warp_blender51"

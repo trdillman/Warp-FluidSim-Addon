@@ -358,7 +358,10 @@ def main(argv=None):
     owns_process = args.owned_process_pid == os.getpid()
     provenance = None
     inventory = None
-    instrumentation_restore = lambda: None
+    def _restore_nothing():
+        return None
+
+    instrumentation_restore = _restore_nothing
 
     def setup_failure(error, extra=None):
         def build(finalization_errors):
