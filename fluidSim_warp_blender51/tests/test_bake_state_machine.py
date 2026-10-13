@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from fluidsim_testpkg.blender.production_bake import BakeController, BakeStatus
@@ -139,6 +140,11 @@ def test_public_synchronous_bake_reserves_cache_path_before_initialization(
         monkeypatch, tmp_path):
     from fluidsim_testpkg.blender import cache_bake, production_bake
 
+    reapplied = []
+    pending = ModuleType("fluidsim_testpkg.blender.pending_settings")
+    pending.reapply_after_bake = reapplied.append
+    monkeypatch.setitem(sys.modules, pending.__name__, pending)
+
     cache_path = tmp_path / "cache"
     active_during_initialize = []
     registration_state = []
@@ -192,6 +198,7 @@ def test_public_synchronous_bake_reserves_cache_path_before_initialization(
         (production_bake.BakeStatus.INITIALIZING, cache_path.resolve())]
     assert result.status is production_bake.BakeStatus.COMPLETE
     assert production_bake.cache_path_is_active(cache_path) is False
+    assert reapplied == [scene]
 
 
 def test_signal_cancellation_restores_handlers_installed_outside_python(monkeypatch):
