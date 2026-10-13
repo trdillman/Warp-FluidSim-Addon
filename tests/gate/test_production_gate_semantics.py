@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -212,12 +213,58 @@ def test_budget_from_an_earlier_commit_is_rejected_when_sources_changed(monkeypa
         run_production_gate._validate_performance_evidence(reuse=True)
 
 
-def test_budget_sources_exclude_documentation():
+def test_budget_sources_include_saved_workload_inputs_but_exclude_documentation():
     sources = run_production_gate._BUDGET_SOURCES
     assert ":(exclude)*.md" in sources
     assert ":(exclude)fluidSim_warp_blender51/docs" in sources
-    assert "fluidSim_warp_blender51" in sources and not any(
-        source.startswith("demos") for source in sources)
+    assert "fluidSim_warp_blender51" in sources
+    assert "tools/demos" in sources
+    assert "demos/paddle_stir.blend" in sources
+    assert "demos/chromatic_vortex.blend" in sources
+    assert "demos/dam_break.blend" not in sources
+    assert "demos/crown_splash.blend" not in sources
+
+
+def test_reuse_source_check_tracks_builder_and_unrebuilt_scenes(monkeypatch, tmp_path):
+    files = (
+        "tools/demos/build_demo_scenes.py",
+        "demos/paddle_stir.blend",
+        "demos/chromatic_vortex.blend",
+        "demos/dam_break.blend",
+        "docs/readme.md",
+    )
+    for name in files:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("original", encoding="utf-8")
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+
+    git("init", "-q")
+    git("add", ".")
+    git("-c", "user.name=Gate Test", "-c", "user.email=gate@example.invalid",
+        "commit", "-qm", "baseline")
+    measured_head = git("rev-parse", "HEAD")
+    monkeypatch.setattr(run_production_gate, "ROOT", tmp_path)
+
+    for name in files:
+        path = tmp_path / name
+        path.write_text("changed", encoding="utf-8")
+        changed = run_production_gate._budget_sources_changed_since(measured_head)
+        if name in ("demos/dam_break.blend", "docs/readme.md"):
+            assert changed == ""
+        else:
+            assert name in changed
+        path.write_text("original", encoding="utf-8")
+
+    (tmp_path / "tools/demos/build_demo_scenes.py").write_text(
+        "committed change", encoding="utf-8")
+    git("add", ".")
+    git("-c", "user.name=Gate Test", "-c", "user.email=gate@example.invalid",
+        "commit", "-qm", "changed builder")
+    assert "tools/demos/build_demo_scenes.py" in (
+        run_production_gate._budget_sources_changed_since(measured_head))
 
 
 def test_performance_budget_runs_in_headless_and_full_gate(monkeypatch):

@@ -12,10 +12,9 @@ Control surface
 - --include-gui or FLUIDSIM_FULL_GUI_ACCEPTANCE=1: also runs the interactive
   GUI acceptance lane, ending in FULL-PRODUCTION-GATE-PASS.
 - --reuse-budget: skip the paired performance budget and reuse the passing
-  summary a previous run wrote for this same commit. Speed is a property of the
-  code, so repeat runs that only prove reproducibility need not re-measure it.
-  It fails unless that summary is bound to HEAD and the add-on and benchmark
-  sources are unmodified; the manifest records the reuse.
+  summary a previous run wrote. It fails unless the measured commit still
+  covers the add-on, benchmark, and saved workload sources; the manifest
+  records the measured commit and whether its evidence was reused.
 - --quick: fast tier for localized changes (QUICK-GATE-PASS). Skips the demo
   rebuild/analysis, GUI lanes and performance budget; never release evidence.
 - Background acceptance scripts share one Blender session
@@ -517,13 +516,15 @@ def _fluidsim_version():
     return _version_constant("VERSION_STRING")
 
 
-# Sources the budget trials execute, minus the demo blends every gate rebuilds
-# and the documentation, which cannot change a timing. This orchestrator is
-# not run by a trial, and a reuse re-evaluates the raw runs with the current
-# tools/performance_budget.py, so gate-only edits keep the measured budget.
+# Sources and saved workloads the budget trials execute. The gate rebuilds
+# dam_break and crown_splash, so their input is the builder; paddle_stir and
+# chromatic_vortex are read from disk unchanged. Documentation cannot change a
+# timing. This orchestrator is not run by a trial, and reuse re-evaluates the
+# raw runs with the current evaluator, so gate-only edits keep the budget.
 _BUDGET_SOURCES = (
     "fluidSim_warp_blender51", "tools/repo_addon_loader.py", "tools/benchmark_demo_trial.py",
-    "tools/benchmark_versions.py", "tools/performance_budget.py",
+    "tools/benchmark_versions.py", "tools/performance_budget.py", "tools/demos",
+    "demos/paddle_stir.blend", "demos/chromatic_vortex.blend",
     ":(exclude)*.md", ":(exclude)fluidSim_warp_blender51/docs",
 )
 PERFORMANCE_SUMMARY = Path("artifacts") / "performance_budget" / "summary.json"
