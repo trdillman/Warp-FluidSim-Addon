@@ -10,10 +10,10 @@ from tools.release import fetch_warp_wheels
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOLS_RELEASE = ROOT.parent / "tools" / "release"
-WHEEL = "warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl"
-SHA256 = "47cd93636828dd16e55eeb4e77a0e3547b5fb0f383000a3d228629df68f28fd8"
-SIZE = 164347636
-WINDOWS_WHEEL = "warp_lang-1.17.0-py3-none-win_amd64.whl"
+WHEEL = "warp_lang-1.18.0-py3-none-manylinux_2_28_x86_64.whl"
+SHA256 = "090962bfae7dd22ade0d8e0258f41635e0e58980f15bcc9e7a7d312819dfe440"
+SIZE = 148811186
+WINDOWS_WHEEL = "warp_lang-1.18.0-py3-none-win_amd64.whl"
 
 
 def test_lock_pins_warp_wheels_for_user_installation():
@@ -23,8 +23,8 @@ def test_lock_pins_warp_wheels_for_user_installation():
     # Manifest should not bundle wheels anymore
     assert "wheels" not in manifest or manifest.get("wheels") == []
     # But lock file should still pin the certified versions for user download
-    assert lock["warp_version"] == "1.17.0"
-    assert lock["distribution_version"] == "1.17.0+cu12"
+    assert lock["warp_version"] == "1.18.0"
+    assert lock["distribution_version"] == "1.18.0+cu13"
     assert set(lock["files"]) == {WHEEL, WINDOWS_WHEEL}
     assert lock["files"][WHEEL]["platform"] == "linux-x64"
     assert lock["files"][WHEEL]["sha256"] == SHA256

@@ -1,5 +1,37 @@
 # Changelog
 
+## 4.0.0 — Unreleased
+
+### Upgrade notes
+
+- **Simulation results change.** Bake caches again. New domains use the
+  Multigrid pressure preconditioner.
+- Files saved before 4.0 keep Jacobi. On load the add-on writes Jacobi into
+  each such domain and stamps it with domain schema 4, so existing caches
+  still match. The Bake stage shows a notice with **Use Multigrid** and
+  **Keep Jacobi**; either choice dismisses it.
+- Warp 1.18.0 (CUDA 13 build) is the certified runtime and needs an NVIDIA
+  R580-series or newer driver. Warp 1.17 still loads and is reported as older
+  than certified. Press **Install Warp** in Add-on Preferences to update.
+
+### Changes
+
+- Multigrid is the default pressure preconditioner. Under Jacobi a 2 m column
+  settles about 6% below its true height; Multigrid holds it within 2%
+  (`tests/solver/test_hydrostatic_column.py`). At a tight tolerance both
+  converge to the same pressure (relative L2 at most 1e-4).
+- On Warp 1.18 the liquid surface is extracted from only the occupied tiles of
+  the grid. The surface span cap has no effect with sparse extraction and will
+  be removed in 4.1.
+- Disabling the add-on keeps unregistering the remaining classes when one
+  fails and prints a single summary line listing every class it left behind.
+
+### Corrections
+
+- An earlier known limitation said a deep column settles about a third low
+  under Jacobi. Measured for 4.0, a 2 m column settles about 6% low, and
+  Multigrid, now the default, holds it within 2%.
+
 ## 3.2.1 — Explicit Warp installation
 
 - **Warp is no longer bundled.** The extension zip does not contain NVIDIA

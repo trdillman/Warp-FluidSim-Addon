@@ -25,8 +25,8 @@ ROOT = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 REQUIRED_EXTENSION_ID = "fluidsim_warp"
 REQUIRED_LICENSE = ["SPDX:GPL-3.0-or-later"]
 REQUIRED_PLATFORMS = ("windows-x64", "linux-x64")
-REQUIRED_WARP_VERSION = "1.17.0"
-REQUIRED_WARP_DISTRIBUTION = "1.17.0+cu12"
+REQUIRED_WARP_VERSION = "1.18.0"
+REQUIRED_WARP_DISTRIBUTION = "1.18.0+cu13"
 REQUIRED_BLENDER_MIN = "5.2.0"
 # Blender 5.2 ``scripts/addons_core/bl_pkg/cli/blender_ext.py``:
 # ``TERSE_DESCRIPTION_MAX_LENGTH = 64``, enforced by

@@ -51,11 +51,11 @@ def test_extract_and_clear_owned_warp_with_long_paths(tmp_path):
     from fluidSim_warp_blender51 import warp_installer
 
     destination = tmp_path / ("extension-profile-" * 7) / ".local"
-    member = "warp_lang-1.17.0.dist-info/licenses/licenses/reproducible_floating_sums-LICENSE.txt"
+    member = "warp_lang-1.18.0.dist-info/licenses/licenses/reproducible_floating_sums-LICENSE.txt"
     assert len(str(destination / member)) > 260
     wheel = tmp_path / "test.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
-        archive.writestr("warp/__init__.py", "__version__ = '1.17.0'\n")
+        archive.writestr("warp/__init__.py", "__version__ = '1.18.0'\n")
         archive.writestr(member, "license evidence")
     warp_installer._extract_wheel(wheel, destination)
     extended = pathlib.Path("\\\\?\\" + str(destination.resolve()))
@@ -64,7 +64,7 @@ def test_extract_and_clear_owned_warp_with_long_paths(tmp_path):
     unrelated.write_text("preserve")
     warp_installer._clear_owned_warp(destination)
     assert not (extended / "warp").exists()
-    assert not (extended / "warp_lang-1.17.0.dist-info").exists()
+    assert not (extended / "warp_lang-1.18.0.dist-info").exists()
     assert unrelated.read_text() == "preserve"
 
 
@@ -94,14 +94,14 @@ def test_install_result_dataclass():
     """Verify InstallResult dataclass works correctly."""
     from fluidSim_warp_blender51.warp_installer import InstallResult
 
-    result = InstallResult(success=True, message="OK", version="1.17.0")
+    result = InstallResult(success=True, message="OK", version="1.18.0")
     assert result.success is True
     assert result.message == "OK"
-    assert result.version == "1.17.0"
+    assert result.version == "1.18.0"
     assert result.already_installed is False
 
     result2 = InstallResult(
-        success=True, message="Already installed", version="1.17.0", already_installed=True
+        success=True, message="Already installed", version="1.18.0", already_installed=True
     )
     assert result2.already_installed is True
 
@@ -134,10 +134,10 @@ def _snapshot(root: pathlib.Path) -> dict[str, bytes]:
 
 
 def test_install_warp_returns_already_installed_when_certified(tmp_path, monkeypatch):
-    """An owned 1.17.0 copy is success and does not download or write."""
+    """An owned 1.18.0 copy is success and does not download or write."""
     from fluidSim_warp_blender51 import warp_installer
 
-    _seed_owned_warp(tmp_path, "1.17.0")
+    _seed_owned_warp(tmp_path, "1.18.0")
     before = _snapshot(tmp_path)
     _isolate_install(
         monkeypatch,
@@ -163,18 +163,18 @@ def test_install_warp_repairs_a_corrupted_owned_certified_copy(tmp_path, monkeyp
     """A repair leaves loaded files untouched, then applies before the next import."""
     from fluidSim_warp_blender51 import warp_installer
 
-    _seed_owned_warp(tmp_path, "1.17.0")
+    _seed_owned_warp(tmp_path, "1.18.0")
     (tmp_path / "warp" / "__init__.py").write_text(
         'raise RuntimeError("corrupted runtime")\n',
         encoding="utf-8",
     )
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
-        archive.writestr("warp/__init__.py", '__version__ = "1.17.0"\n')
-        archive.writestr("warp_lang-1.17.0.dist-info/METADATA", "Name: warp-lang\n")
+        archive.writestr("warp/__init__.py", '__version__ = "1.18.0"\n')
+        archive.writestr("warp_lang-1.18.0.dist-info/METADATA", "Name: warp-lang\n")
     wheel_bytes = payload.getvalue()
     info = mock.Mock(
-        filename="warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl",
+        filename="warp_lang-1.18.0-py3-none-manylinux_2_28_x86_64.whl",
         sha256=hashlib.sha256(wheel_bytes).hexdigest(),
         size=len(wheel_bytes),
         url="https://files.pythonhosted.org/packages/locked/warp.whl",
@@ -206,7 +206,7 @@ def test_install_warp_repairs_a_corrupted_owned_certified_copy(tmp_path, monkeyp
 
     assert result.success is True
     assert result.already_installed is False
-    assert result.version == "1.17.0"
+    assert result.version == "1.18.0"
     assert "Restart Blender" in result.message
     clear_owned.assert_not_called()
     assert "corrupted runtime" in (tmp_path / "warp" / "__init__.py").read_text(
@@ -225,7 +225,7 @@ def test_install_warp_repairs_a_corrupted_owned_certified_copy(tmp_path, monkeyp
     clear_owned.assert_called_once_with(tmp_path)
     assert not warp_installer._pending_repair_path(tmp_path).exists()
     assert (tmp_path / "warp" / "__init__.py").read_text(encoding="utf-8") == (
-        '__version__ = "1.17.0"\n'
+        '__version__ = "1.18.0"\n'
     )
 
 
@@ -234,11 +234,11 @@ def test_loaded_owned_warp_with_missing_metadata_is_staged(tmp_path, monkeypatch
     """Damaged version metadata must never allow writes over loaded native code."""
     from fluidSim_warp_blender51 import warp_installer
 
-    _seed_owned_warp(tmp_path, "1.17.0")
+    _seed_owned_warp(tmp_path, "1.18.0")
     init = tmp_path / "warp" / "__init__.py"
     (tmp_path / "warp" / "native.dll").write_bytes(b"loaded-native-code")
     if missing == "dist-info":
-        (tmp_path / "warp_lang-1.17.0.dist-info").rmdir()
+        (tmp_path / "warp_lang-1.18.0.dist-info").rmdir()
     else:
         init.unlink()
     before = _snapshot(tmp_path)
@@ -280,7 +280,7 @@ def test_pending_repair_rejects_tampering_before_deleting_owned_files(
     """Fresh startup re-verifies a staged wheel before touching the old runtime."""
     from fluidSim_warp_blender51 import warp_installer
 
-    _seed_owned_warp(tmp_path, "1.17.0")
+    _seed_owned_warp(tmp_path, "1.18.0")
     original = _snapshot(tmp_path)
     wheel = tmp_path / "source.whl"
     wheel.write_bytes(b"certified-wheel")
@@ -311,17 +311,17 @@ def test_pending_repair_extracts_outside_a_deep_owned_path(tmp_path, monkeypatch
     from fluidSim_warp_blender51 import warp_installer
 
     owned = tmp_path / ("deep-extension-path-" * 5) / ("repository-name-" * 4) / ".local"
-    _seed_owned_warp(owned, "1.17.0")
+    _seed_owned_warp(owned, "1.18.0")
     wheel = tmp_path / "certified.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
-        archive.writestr("warp/__init__.py", '__version__ = "1.17.0"\n')
+        archive.writestr("warp/__init__.py", '__version__ = "1.18.0"\n')
         archive.writestr(
             "warp/examples/benchmarks/benchmark_tile_matmul_pipelined.py",
             "# installed\n",
         )
-        archive.writestr("warp_lang-1.17.0.dist-info/METADATA", "Name: warp-lang\n")
+        archive.writestr("warp_lang-1.18.0.dist-info/METADATA", "Name: warp-lang\n")
         archive.writestr(
-            "warp_lang-1.17.0.dist-info/licenses/licenses/reproducible_floating_sums-LICENSE.txt",
+            "warp_lang-1.18.0.dist-info/licenses/licenses/reproducible_floating_sums-LICENSE.txt",
             "license evidence",
         )
     info = mock.Mock(
@@ -356,7 +356,7 @@ def test_pending_repair_extracts_outside_a_deep_owned_path(tmp_path, monkeypatch
     assert not warp_installer._pending_repair_path(owned).exists()
     license_path = (
         warp_installer._filesystem_path(owned)
-        / "warp_lang-1.17.0.dist-info/licenses/licenses/reproducible_floating_sums-LICENSE.txt"
+        / "warp_lang-1.18.0.dist-info/licenses/licenses/reproducible_floating_sums-LICENSE.txt"
     )
     assert license_path.read_text() == "license evidence"
     warp_installer._clear_owned_warp(owned)
@@ -479,11 +479,11 @@ def test_install_warp_replaces_only_an_older_copy_in_the_owned_directory(tmp_pat
     _seed_owned_warp(tmp_path, "1.16.0")
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
-        archive.writestr("warp/__init__.py", '__version__ = "1.17.0"\n')
-        archive.writestr("warp_lang-1.17.0.dist-info/METADATA", "Name: warp-lang\n")
+        archive.writestr("warp/__init__.py", '__version__ = "1.18.0"\n')
+        archive.writestr("warp_lang-1.18.0.dist-info/METADATA", "Name: warp-lang\n")
     wheel_bytes = payload.getvalue()
     info = mock.Mock(
-        filename="warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl",
+        filename="warp_lang-1.18.0-py3-none-manylinux_2_28_x86_64.whl",
         sha256=hashlib.sha256(wheel_bytes).hexdigest(),
         size=len(wheel_bytes),
         url="https://files.pythonhosted.org/packages/locked/warp.whl",
@@ -504,8 +504,8 @@ def test_install_warp_replaces_only_an_older_copy_in_the_owned_directory(tmp_pat
 
     assert result.success is True
     assert result.already_installed is False
-    assert result.version == "1.17.0"
-    assert (tmp_path / "warp_lang-1.17.0.dist-info").is_dir()
+    assert result.version == "1.18.0"
+    assert (tmp_path / "warp_lang-1.18.0.dist-info").is_dir()
     assert not (tmp_path / "warp_lang-1.16.0.dist-info").exists()
 
 
@@ -608,7 +608,7 @@ def test_shipped_wheel_lock_matches_the_release_lock():
     shipped = json.loads((ROOT / "warp_wheels.lock.json").read_text(encoding="utf-8"))
     release = json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(encoding="utf-8"))
     assert shipped == release
-    assert shipped["warp_version"] == "1.17.0"
+    assert shipped["warp_version"] == "1.18.0"
 
 
 def test_preferences_register_the_install_warp_button():
@@ -689,7 +689,7 @@ def test_install_warp_button_operator_second_press_writes_nothing(tmp_path, monk
     """Invoking the button operator again reports success and does not write."""
     from fluidSim_warp_blender51 import warp_installer
 
-    _seed_owned_warp(tmp_path, "1.17.0")
+    _seed_owned_warp(tmp_path, "1.18.0")
     before = _snapshot(tmp_path)
     _preferences, operator = _operator(monkeypatch)
     _isolate_install(monkeypatch, tmp_path)
@@ -714,7 +714,7 @@ def test_preferences_offer_repair_for_a_failed_owned_certified_runtime(monkeypat
     monkeypatch.setattr(
         preferences,
         "get_installed_warp_info",
-        lambda: (True, "Warp 1.17.0 (certified)"),
+        lambda: (True, "Warp 1.18.0 (certified)"),
     )
     monkeypatch.setattr(preferences, "owned_install_status", lambda: "certified")
     monkeypatch.setattr(
@@ -723,7 +723,7 @@ def test_preferences_offer_repair_for_a_failed_owned_certified_runtime(monkeypat
         lambda: SimpleNamespace(
             last_error="RuntimeError: corrupted runtime",
             module_file="",
-            warp_version="1.17.0",
+            warp_version="1.18.0",
         ),
     )
     monkeypatch.setattr(preferences, "configured_device", lambda: "cuda:0")
@@ -831,7 +831,7 @@ def test_shared_extensions_local_is_not_treated_as_owned(tmp_path, monkeypatch):
 
     shared_extensions = tmp_path / "extensions"
     shared_local = shared_extensions / ".local"
-    _seed_owned_warp(shared_local, "1.17.0")
+    _seed_owned_warp(shared_local, "1.18.0")
 
     # Set up bpy stand-in with user_resource returning shared_extensions
     # but extension_path_user failing or returning None
@@ -854,12 +854,12 @@ def test_shared_extensions_local_is_not_treated_as_owned(tmp_path, monkeypatch):
 
 
 def test_shared_extensions_local_warp_does_not_count_as_fluidsim_installed(tmp_path, monkeypatch):
-    """Another add-on's Warp 1.17.0 in shared extensions/.local does not count as installed for FluidSim."""
+    """Another add-on's Warp 1.18.0 in shared extensions/.local does not count as installed for FluidSim."""
     from fluidSim_warp_blender51 import warp_installer
 
     shared_extensions = tmp_path / "extensions"
     shared_local = shared_extensions / ".local"
-    _seed_owned_warp(shared_local, "1.17.0")
+    _seed_owned_warp(shared_local, "1.18.0")
 
     fluidsim_own_dir = shared_extensions / ".user" / "user_default" / "fluidsim_warp" / ".local"
 
@@ -871,7 +871,7 @@ def test_shared_extensions_local_warp_does_not_count_as_fluidsim_installed(tmp_p
     monkeypatch.setitem(sys.modules, "bpy", bpy)
     monkeypatch.setattr(warp_installer, "__package__", "bl_ext.user_default.fluidsim_warp")
 
-    # FluidSim's own directory is empty, but shared .local has Warp 1.17.0.
+    # FluidSim's own directory is empty, but shared .local has Warp 1.18.0.
     # On the old buggy behavior, _owned_candidates() appended shared_local,
     # making is_certified_warp_installed() return True!
     # Under fixed behavior, it MUST return False and owned_install_status() must be None.
@@ -905,7 +905,7 @@ def test_warp_loaded_from_shared_extensions_local_is_flagged_as_foreign(tmp_path
 
     shared_extensions = tmp_path / "extensions"
     shared_local = shared_extensions / ".local"
-    _seed_owned_warp(shared_local, "1.17.0")
+    _seed_owned_warp(shared_local, "1.18.0")
 
     fluidsim_own_dir = shared_extensions / ".user" / "user_default" / "fluidsim_warp" / ".local"
 
@@ -943,7 +943,7 @@ def test_preferences_external_override_requires_authorized_loaded_path(
     external = tmp_path / "external"
     (external / "warp").mkdir(parents=True)
     init = external / "warp" / "__init__.py"
-    init.write_text("__version__ = '1.17.0'\n", encoding="utf-8")
+    init.write_text("__version__ = '1.18.0'\n", encoding="utf-8")
     monkeypatch.setenv("FLUIDSIM_ALLOW_EXTERNAL_WARP", "1" if authorized else "0")
     # Apply through the real developer entry point, including the authorization check.
     monkeypatch.setattr(sys, "path", list(sys.path))
@@ -955,7 +955,7 @@ def test_preferences_external_override_requires_authorized_loaded_path(
                         lambda: "Warp loaded from a directory which FluidSim does not own")
     monkeypatch.setattr(preferences, "get_installed_warp_info", lambda: (False, ""))
     monkeypatch.setattr(preferences, "owned_install_status", lambda: None)
-    probe = SimpleNamespace(last_error="", module_file=loaded.__file__, warp_version="1.17.0")
+    probe = SimpleNamespace(last_error="", module_file=loaded.__file__, warp_version="1.18.0")
     monkeypatch.setattr(preferences, "probe_runtime", lambda: probe)
     monkeypatch.setattr(preferences, "configured_device", lambda: "cuda:0")
     monkeypatch.setattr(preferences, "runtime_status_for_device",

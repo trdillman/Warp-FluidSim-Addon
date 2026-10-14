@@ -51,7 +51,7 @@ def test_production_bake_resumes_an_existing_incomplete_manifest(tmp_path):
     assert state.destructive is False
 
 
-@pytest.mark.parametrize("solver_version", ["3.0.0", "3.1.0", "3.2.0", "3.2.1"])
+@pytest.mark.parametrize("solver_version", ["3.0.0", "3.1.0", "3.2.0", "3.2.1", "4.0.0"])
 @pytest.mark.parametrize("complete", [False, True])
 def test_cache_controls_match_backend_resume_policy(
     tmp_path, solver_version, complete
@@ -88,7 +88,7 @@ def test_cache_controls_match_backend_resume_policy(
     backend_allows_resume = resumable_solver_version(solver_version, VERSION_STRING)
     assert (state.action == "RESUME") == (backend_allows_resume and not complete)
     assert state.destructive == (state.action == "RESTART")
-    if solver_version in {"3.0.0", "3.1.0"}:
+    if not backend_allows_resume:
         assert state.warning is True
         assert "remain playable" in state.message
         assert "cannot resume" in state.message

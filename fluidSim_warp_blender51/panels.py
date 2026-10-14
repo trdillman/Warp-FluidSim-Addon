@@ -172,9 +172,7 @@ def register():
 
 
 def unregister():
+    from .unregister_guard import unregister_classes
+
     # One class that will not unregister must not leave every later class registered.
-    for cls in reversed(CLASSES):
-        try:
-            bpy.utils.unregister_class(cls)
-        except Exception as exc:  # noqa: BLE001 - report and keep walking
-            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")
+    unregister_classes(CLASSES)

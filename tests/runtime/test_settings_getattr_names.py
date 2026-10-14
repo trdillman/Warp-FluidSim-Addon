@@ -15,7 +15,7 @@ PKG = pathlib.Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 SETTINGS_NAMES = {"fs", "settings", "scene_fs", "domain_fs", "ds", "dfs",
                   "domain_settings", "sfs", "src_fs"}
 # Non-field attributes read defensively on those objects.
-NON_FIELD_ATTRIBUTES = {"__dataclass_fields__", "bl_rna"}
+NON_FIELD_ATTRIBUTES = {"__dataclass_fields__", "bl_rna", "id_data"}
 
 
 def _annotated_fields(path, predicate):

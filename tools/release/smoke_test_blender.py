@@ -688,7 +688,7 @@ def main() -> None:
     )
 
     # In smoke test (--offline-mode), invoking install_warp operator when certified
-    # Warp 1.17.0 is already installed reports success and writes nothing.
+    # Warp is already installed reports success and writes nothing.
     install_res = bpy.ops.fluidsim.install_warp()
     if install_res != {"FINISHED"}:
         raise AssertionError(

@@ -425,6 +425,7 @@ class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
         if active_domain_settings(scene) is None:
             layout.label(text="Set up a liquid domain first to bake.", icon="INFO")
             return
+        file_compat.draw_kept_jacobi_notice(layout, active_domain_settings(scene))
 
         if _playback_only():
             # No solver here: load a cache, play it, export from it. Baking and
@@ -522,8 +523,6 @@ def register():
 
 
 def unregister():
-    for cls in reversed(STAGE_PANEL_CLASSES):
-        try:
-            bpy.utils.unregister_class(cls)
-        except Exception as exc:  # noqa: BLE001 - report and keep walking
-            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")
+    from ..unregister_guard import unregister_classes
+
+    unregister_classes(STAGE_PANEL_CLASSES)

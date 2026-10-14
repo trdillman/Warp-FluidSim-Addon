@@ -448,6 +448,23 @@ def test_multigrid_velocity_agrees_with_jacobi(problem, record_property):
     assert rel <= VELOCITY_REL_L2, f"velocity rel L2 {rel:.3e} > {VELOCITY_REL_L2:.0e}"
 
 
+def test_multigrid_pressure_agrees_with_jacobi_at_a_tight_tolerance(problem, record_property):
+    # 4.0 makes Multigrid the default (docs/specs/4.0/SPEC-defaults-4.md,
+    # trap 3): it changes the iterates, not the converged answer. With the
+    # production tolerance tightened 100x both solves land on one pressure.
+    tight = CONVERGE_TOL / 100.0
+    m = problem.fluid_mask
+    pressures = {}
+    for preconditioner, every in (("JACOBI", 25), ("MULTIGRID", 5)):
+        case = problem.new_case(preconditioner)
+        status = case.solver.solve_pcg(case.vtw, 4000, tight, check_every=every)
+        assert status["converged"], (preconditioner, status)
+        pressures[preconditioner] = case.solver.pressure.numpy()[m].astype(np.float64)
+    rel = _norm(pressures["MULTIGRID"] - pressures["JACOBI"]) / _norm(pressures["JACOBI"])
+    record_property("pressure_rel_l2", rel)
+    assert rel <= 1.0e-4, f"pressure rel L2 {rel:.3e} > 1e-4"
+
+
 # ---------------------------------------------------------------------------
 # 6b. Production entry and graph-key isolation
 # ---------------------------------------------------------------------------

@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
-from ..version import CERTIFIED_WARP_VERSION, MIN_WARP_VERSION
+from ..version import (
+    CERTIFIED_DRIVER_LABEL,
+    CERTIFIED_DRIVER_MIN,
+    CERTIFIED_WARP_VERSION,
+    MIN_WARP_VERSION,
+)
 
 EXPECTED_WARP_VERSION = CERTIFIED_WARP_VERSION
 _UNAVAILABLE_DEVICE_ID = "__unavailable__"
@@ -37,6 +42,8 @@ class RuntimeProbe:
     cuda_devices: tuple[DeviceRecord, ...] = ()
     last_error: str = ""
     warning: str = ""
+    # Non-empty when the CUDA driver is older than the certified Warp needs.
+    driver_floor_reason: str = ""
 
 
 def parse_warp_version(text: str) -> tuple[int, int, int] | None:
@@ -61,9 +68,9 @@ def parse_warp_version(text: str) -> tuple[int, int, int] | None:
 def warp_version_support(version: str) -> tuple[str, str]:
     """Classify a loaded Warp version against the certified range.
 
-    Returns ``("certified" | "untested" | "unsupported", message)``. Versions
-    below the floor or on another major line are unsupported; newer 1.x
-    releases load with a warning because they have not been certified.
+    Returns ``("certified" | "older" | "untested" | "unsupported", message)``.
+    Versions below the floor or on another major line are unsupported. Older
+    releases from the floor up, and newer 1.x releases, load with a warning.
     """
     loaded = parse_warp_version(version)
     floor = parse_warp_version(MIN_WARP_VERSION)
@@ -88,6 +95,12 @@ def warp_version_support(version: str) -> tuple[str, str]:
             f"Warp {version} is newer than the certified {CERTIFIED_WARP_VERSION} "
             "and has not been tested with FluidSim.",
         )
+    if loaded < certified:
+        return (
+            "older",
+            f"Warp {version} is older than the certified {CERTIFIED_WARP_VERSION}. "
+            "It still works; Install Warp in Add-on Preferences upgrades it.",
+        )
     return "certified", ""
 
 
@@ -98,6 +111,47 @@ def _cuda_version_int(value: Any) -> int:
             return 0
         return int(value[0]) * 1000 + int(value[1]) * 10
     return int(value)
+
+
+def _format_cuda_version(value: int) -> str:
+    return f"{value // 1000}.{(value % 1000) // 10}"
+
+
+def cuda_driver_floor_reason(driver_version: int) -> str:
+    """Name the driver floor when ``driver_version`` is below it, else ``""``.
+
+    ``driver_version`` uses the ``cuDriverGetVersion`` encoding (13000 is
+    CUDA 13.0). Zero means unknown and never blocks.
+    """
+    floor = _cuda_version_int(CERTIFIED_DRIVER_MIN)
+    if driver_version <= 0 or driver_version >= floor:
+        return ""
+    return (
+        f"Warp {CERTIFIED_WARP_VERSION} needs an {CERTIFIED_DRIVER_LABEL} or newer "
+        f"NVIDIA driver (CUDA {_format_cuda_version(floor)}); this driver supports "
+        f"CUDA {_format_cuda_version(driver_version)}. Update the NVIDIA driver, or "
+        f"keep using Warp {MIN_WARP_VERSION}, which FluidSim still loads."
+    )
+
+
+def query_cuda_driver_version() -> int:
+    """Ask the CUDA driver library for its version without importing Warp.
+
+    Returns the ``cuDriverGetVersion`` integer, or 0 when no driver library
+    can be loaded or the call fails.
+    """
+    import ctypes
+
+    names = ("nvcuda.dll",) if sys.platform == "win32" else ("libcuda.so.1", "libcuda.so")
+    for name in names:
+        try:
+            library = ctypes.CDLL(name)
+            value = ctypes.c_int(0)
+            if library.cuDriverGetVersion(ctypes.byref(value)) == 0:
+                return int(value.value)
+        except (OSError, AttributeError):
+            continue
+    return 0
 
 
 def ensure_host_streams() -> None:
@@ -181,18 +235,22 @@ def _cached_probe() -> RuntimeProbe:
         )
         driver = _safe_int_call(wp, "get_cuda_driver_version")
         toolkit = _safe_int_call(wp, "get_cuda_toolkit_version")
+        floor_reason = cuda_driver_floor_reason(driver)
         if not devices:
             return RuntimeProbe(
                 available=False,
-                message=(
+                message=floor_reason or (
                     "Warp loaded, but no CUDA device is available. Check the NVIDIA "
                     "GPU, driver, and whether Blender can access the device."
                 ),
+                driver_floor_reason=floor_reason,
                 warp_version=version,
                 module_file=module_file,
                 cuda_driver_version=driver,
                 cuda_toolkit_version=toolkit,
             )
+        if support == "older" and floor_reason:
+            support_message = f"{support_message} {floor_reason}"
         return RuntimeProbe(
             available=True,
             message=" ".join(
@@ -206,6 +264,7 @@ def _cached_probe() -> RuntimeProbe:
             cuda_toolkit_version=toolkit,
             cuda_devices=devices,
             warning=support_message,
+            driver_floor_reason=floor_reason,
         )
     except ImportError as exc:
         error = f"{type(exc).__name__}: {exc}"
@@ -258,7 +317,10 @@ def runtime_status_for_device(
     memory = device.total_memory / 1024**3
     status = f"Warp {state.warp_version} — {device.alias}: {device.name} ({memory:.1f} GiB)"
     if state.warning:
-        status += " (untested Warp version)"
+        older = parse_warp_version(state.warp_version) or (0, 0, 0)
+        certified = parse_warp_version(CERTIFIED_WARP_VERSION) or (0, 0, 0)
+        status += (" (older than certified Warp)" if older < certified
+                   else " (untested Warp version)")
     return True, status
 
 

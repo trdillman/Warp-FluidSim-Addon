@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from tools.release import build_extension
 
-LINUX_WHEEL = "warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl"
-WINDOWS_WHEEL = "warp_lang-1.17.0-py3-none-win_amd64.whl"
+LINUX_WHEEL = "warp_lang-1.18.0-py3-none-manylinux_2_28_x86_64.whl"
+WINDOWS_WHEEL = "warp_lang-1.18.0-py3-none-win_amd64.whl"
 WHEELS = {
     "linux-x64": (LINUX_WHEEL, b"linux-wheel-payload"),
     "windows-x64": (WINDOWS_WHEEL, b"windows-wheel-payload"),
@@ -62,8 +62,8 @@ def _write_project(root: Path) -> None:
     (root / "blender_manifest.toml").write_text(_manifest(), encoding="utf-8")
     (root / "version.py").write_text(
         'VERSION = (1, 0, 255)\nEXTENSION_ID = "fluidsim_warp"\n'
-        'BLENDER_MIN_VERSION = (5, 2, 0)\nCERTIFIED_WARP_VERSION = "1.17.0"\n'
-        'CERTIFIED_WARP_DISTRIBUTION = "1.17.0+cu12"\n',
+        'BLENDER_MIN_VERSION = (5, 2, 0)\nCERTIFIED_WARP_VERSION = "1.18.0"\n'
+        'CERTIFIED_WARP_DISTRIBUTION = "1.18.0+cu13"\n',
         encoding="utf-8",
     )
     (root / "__init__.py").write_text(
@@ -72,7 +72,7 @@ def _write_project(root: Path) -> None:
     )
     (root / "LICENSE").write_text("GPL-3.0-or-later\n", encoding="utf-8")
     (root / "THIRD_PARTY_NOTICES.md").write_text(
-        "NVIDIA Warp 1.17.0 — Apache License, Version 2.0 — "
+        "NVIDIA Warp 1.18.0 — Apache License, Version 2.0 — "
         "libmathdx-LICENSE.txt — nvrtc-LICENSE.txt\n",
         encoding="utf-8",
     )
@@ -100,8 +100,8 @@ def _write_project(root: Path) -> None:
     (tool_root / "wheels.lock.json").write_text(
         json.dumps(
             {
-                "warp_version": "1.17.0",
-                "distribution_version": "1.17.0+cu12",
+                "warp_version": "1.18.0",
+                "distribution_version": "1.18.0+cu13",
                 "files": {
                     name: {
                         "platform": platform,
@@ -169,7 +169,7 @@ def _write_package(
         archive.writestr("LICENSE", "GPL-3.0-or-later\n")
         archive.writestr(
             "THIRD_PARTY_NOTICES.md",
-            "NVIDIA Warp 1.17.0 — Apache License, Version 2.0 — "
+            "NVIDIA Warp 1.18.0 — Apache License, Version 2.0 — "
             "libmathdx-LICENSE.txt — nvrtc-LICENSE.txt\n",
         )
         archive.writestr("release/__init__.py", "\n")
@@ -268,7 +268,7 @@ def test_verify_source_tree_rejects_warp_identity_drift(tmp_path: Path):
     _write_project(tmp_path)
     version = tmp_path / "version.py"
     version.write_text(
-        version.read_text(encoding="utf-8").replace('"1.17.0"', '"1.16.0"'),
+        version.read_text(encoding="utf-8").replace('"1.18.0"', '"1.16.0"'),
         encoding="utf-8",
     )
     with pytest.raises(RuntimeError, match="CERTIFIED_WARP_VERSION"):

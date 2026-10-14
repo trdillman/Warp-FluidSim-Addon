@@ -34,6 +34,20 @@ from .fields import (
 )
 from .registry import register_fn
 
+try:  # Warp >= 1.18: sparse marching cubes over a caller-supplied cell list.
+    from warp.geometry import (
+        sparse_marching_cubes_from_cells as _sparse_mc_from_cells,
+    )
+except ImportError:  # Warp 1.17: only the dense ``wp.MarchingCubes`` exists.
+    _sparse_mc_from_cells = None
+try:  # Warp >= 1.18 replacement for the deprecated ``wp.MarchingCubes``.
+    from warp.geometry import IsoSurfaceMarchingCubes as _DenseMarchingCubes
+except ImportError:
+    _DenseMarchingCubes = None
+
+SPARSE_MARCHING_CUBES_AVAILABLE = _sparse_mc_from_cells is not None
+SURFACE_EXTRACTOR_BACKENDS = ("auto", "sparse", "dense")
+
 
 # --- particle-SDF splat modes -------------------------------------------------
 #
@@ -1267,27 +1281,54 @@ register_fn(k_expand_shift_axis_velocity_in_collider,
 
 
 class SurfaceExtractor:
-    """Extracts a triangle mesh from the liquid surface SDF using
-    warp's built-in marching cubes on a dense sub-grid.
+    """Extracts a triangle mesh from the liquid surface SDF.
 
-    The dense region is bounded by the axis-aligned bounding box of the
-    active leaves (plus a small background margin) instead of the whole
-    domain, so extraction cost scales with the liquid extent. Sub-grid
-    dimensions are padded to multiples of ``_PAD`` and grow monotonically
-    within a session to avoid reallocating the marching cubes buffers
-    every frame.
+    Two backends produce the same mesh for the same SDF (pinned by
+    ``tests/surface/test_surface_extractor_parity.py``):
+
+    ``sparse`` (Warp >= 1.18)
+        Enumerates the marching-cubes cells around each active leaf, keeps the
+        ones whose corners straddle the iso value, and hands that list with
+        its corner samples to ``warp.geometry.sparse_marching_cubes_from_cells``.
+        No dense allocation, so cost scales with the surface, and
+        ``max_dense_dim`` has no effect.  Cells are emitted in leaf-slot order
+        and a fixed per-leaf order, so the mesh bytes are repeatable.
+
+    ``dense`` (Warp 1.17 fallback)
+        Copies the axis-aligned bounding box of the active leaves (plus a
+        small background margin) into a dense sub-grid and runs dense marching
+        cubes on it.  Sub-grid dimensions are padded to multiples of ``_PAD``
+        and grow monotonically within a session to avoid reallocating the
+        marching cubes buffers every frame.
+
+    ``backend="auto"`` picks ``sparse`` whenever the installed Warp has it.
     """
 
     _PAD = 32
 
-    def __init__(self, grid, device, max_dense_dim=512):
+    def __init__(self, grid, device, max_dense_dim=512, backend="auto"):
         self.grid = grid
         self.device = device
         self.max_dense_dim = int(max_dense_dim)
+        if backend not in SURFACE_EXTRACTOR_BACKENDS:
+            raise ValueError(
+                f"unknown surface extractor backend {backend!r}; "
+                f"expected one of {SURFACE_EXTRACTOR_BACKENDS}")
+        if backend == "auto":
+            backend = "sparse" if SPARSE_MARCHING_CUBES_AVAILABLE else "dense"
+        if backend == "sparse" and not SPARSE_MARCHING_CUBES_AVAILABLE:
+            raise RuntimeError(
+                "FluidSim: the sparse surface extractor needs Warp >= 1.18")
+        self.backend = backend
         self._mc = None
         self._dense = None
         self._dense_dim = None
         self._bounds = wp.zeros(6, dtype=wp.int32, device=device)
+        # Sparse backend scratch, grown monotonically within a session.
+        self._cell_flags = None
+        self._cell_offsets = None
+        self._cells = None
+        self._corner_values = None
 
     def _ensure_dense(self, dims):
         nx, ny, nz = dims
@@ -1295,18 +1336,25 @@ class SurfaceExtractor:
             return
         self._dense = wp.zeros((nx, ny, nz), dtype=float, device=self.device)
         self._dense_dim = (nx, ny, nz)
-        self._mc = wp.MarchingCubes(
-            nx=nx, ny=ny, nz=nz,
-            max_verts=nx * ny * nz,
-            max_tris=2 * nx * ny * nz,
-            device=self.device,
-        )
+        if _DenseMarchingCubes is not None:
+            self._mc = _DenseMarchingCubes(nx=nx, ny=ny, nz=nz)
+        else:
+            self._mc = wp.MarchingCubes(
+                nx=nx, ny=ny, nz=nz,
+                max_verts=nx * ny * nz,
+                max_tris=2 * nx * ny * nz,
+                device=self.device,
+            )
 
     def reset_buffers(self):
         """Release cached dense extraction buffers after a simulation reset."""
         self._mc = None
         self._dense = None
         self._dense_dim = None
+        self._cell_flags = None
+        self._cell_offsets = None
+        self._cells = None
+        self._corner_values = None
 
     def _empty(self):
         return (np.zeros((0, 3), dtype=np.float32),
@@ -1337,6 +1385,62 @@ class SurfaceExtractor:
         return lo, hi
 
     def extract(self, sdf_field, iso=0.0):
+        """Return ``(verts world float32 Nx3, tris int32 Mx3)``."""
+        if self.backend == "sparse":
+            return self._extract_sparse(sdf_field, iso)
+        return self._extract_dense(sdf_field, iso)
+
+    def _extract_sparse(self, sdf_field, iso):
+        g = self.grid
+        n_leaves = int(getattr(g, "active_leaf_count", 0))
+        if n_leaves <= 0:
+            return self._empty()
+        n_candidates = n_leaves * _CELLS_PER_LEAF
+        if self._cell_flags is None or self._cell_flags.shape[0] < n_candidates:
+            self._cell_flags = wp.zeros(n_candidates, dtype=wp.int32,
+                                        device=self.device)
+            self._cell_offsets = wp.zeros(n_candidates, dtype=wp.int32,
+                                          device=self.device)
+        flags = self._cell_flags[:n_candidates]
+        offsets = self._cell_offsets[:n_candidates]
+        background = 4.0 * g.voxel_size
+        fast_launch(
+            k_mark_surface_cells, dim=n_candidates,
+            inputs=[sdf_field.data, g.leaf_table, g.leaf_coords,
+                    g.voxels_dim, g.leaves_dim, float(iso), background],
+            outputs=[flags], device=self.device,
+        )
+        wp.utils.array_scan(flags, offsets, inclusive=False)
+        # Exclusive scan: total = last offset + last flag.
+        last_offset = offsets[n_candidates - 1:n_candidates].numpy()
+        last_flag = flags[n_candidates - 1:n_candidates].numpy()
+        n_cells = int(last_offset[0]) + int(last_flag[0])
+        if n_cells == 0:
+            return self._empty()
+        if self._cells is None or self._cells.shape[0] < n_cells:
+            self._cells = wp.zeros(n_cells, dtype=wp.vec3i, device=self.device)
+            self._corner_values = wp.zeros(8 * n_cells, dtype=wp.float32,
+                                           device=self.device)
+        cells = self._cells[:n_cells]
+        values = self._corner_values[:8 * n_cells]
+        fast_launch(
+            k_compact_surface_cells, dim=n_candidates,
+            inputs=[sdf_field.data, g.leaf_table, g.leaf_coords,
+                    g.voxels_dim, g.leaves_dim, background, flags, offsets],
+            outputs=[cells, values], device=self.device,
+        )
+        vs = float(g.voxel_size)
+        o = np.asarray(g.origin, dtype=np.float64) + 0.5 * vs
+        verts, indices = _sparse_mc_from_cells(
+            cells, values,
+            origin=wp.vec3(float(o[0]), float(o[1]), float(o[2])),
+            cell_width=vs, threshold=float(iso), device=self.device,
+        )
+        verts = np.asarray(verts.numpy(), dtype=np.float32).reshape(-1, 3)
+        tris = np.asarray(indices.numpy(), dtype=np.int32).reshape(-1, 3)
+        return verts, tris
+
+    def _extract_dense(self, sdf_field, iso):
         g = self.grid
         box = self._active_voxel_box()
         if box is None:
@@ -1392,6 +1496,131 @@ class SurfaceExtractor:
         verts *= vs
         verts += offset
         return verts, tris
+
+
+# Marching-cubes cells owned by one leaf: every cell whose minimum corner lies
+# in [leaf_lo - 1, leaf_lo + LEAF_DIM - 1] on each axis, i.e. every cell that
+# touches a voxel of the leaf.
+_CELL_SPAN = C.LEAF_DIM + 1
+_CELLS_PER_LEAF = _CELL_SPAN * _CELL_SPAN * _CELL_SPAN
+
+
+@wp.func
+def _cell_corner(c: wp.vec3i, corner: int) -> wp.vec3i:
+    # warp.geometry corner order: z=0 face (0,0,0) (1,0,0) (1,1,0) (0,1,0),
+    # then the same four on the z=1 face.
+    q = corner % 4
+    dx = 0
+    dy = 0
+    if q == 1 or q == 2:
+        dx = 1
+    if q == 2 or q == 3:
+        dy = 1
+    return wp.vec3i(c[0] + dx, c[1] + dy, c[2] + corner // 4)
+
+
+@wp.func
+def _candidate_cell(leaf_coords: wp.array(dtype=wp.vec3i), tid: int) -> wp.vec3i:
+    leaf = tid // _CELLS_PER_LEAF
+    local = tid - leaf * _CELLS_PER_LEAF
+    lz = local // (_CELL_SPAN * _CELL_SPAN)
+    rem = local - lz * (_CELL_SPAN * _CELL_SPAN)
+    ly = rem // _CELL_SPAN
+    lx = rem - ly * _CELL_SPAN
+    lc = leaf_coords[leaf]
+    return wp.vec3i(lc[0] * C.LEAF_DIM - 1 + lx,
+                    lc[1] * C.LEAF_DIM - 1 + ly,
+                    lc[2] * C.LEAF_DIM - 1 + lz)
+
+
+@wp.func
+def _surface_cell_mask(
+    src: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    iso: float,
+    background: float,
+    tid: int,
+) -> int:
+    """1 when candidate ``tid`` is a straddling cell this leaf owns, else 0.
+
+    The dense path samples voxel centres inside the domain only, so a cell
+    with a corner outside the domain is never a dense cell either.  A cell
+    touching several active leaves is owned by the leaf of its first active
+    corner in corner order, so each cell is emitted exactly once.
+    """
+    c = _candidate_cell(leaf_coords, tid)
+    if c[0] < 0 or c[1] < 0 or c[2] < 0:
+        return 0
+    if (c[0] + 1 >= voxels_dim[0] or c[1] + 1 >= voxels_dim[1]
+            or c[2] + 1 >= voxels_dim[2]):
+        return 0
+    leaf = leaf_coords[tid // _CELLS_PER_LEAF]
+    owner_found = int(0)
+    owned = int(1)
+    n_below = int(0)
+    for corner in range(8):
+        ijk = _cell_corner(c, corner)
+        flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+        val = background
+        if flat >= 0:
+            val = src[flat]
+            if owner_found == 0:
+                owner_found = 1
+                lc = leaf_coord_of_voxel(ijk)
+                if lc[0] != leaf[0] or lc[1] != leaf[1] or lc[2] != leaf[2]:
+                    owned = 0
+        if val < iso:
+            n_below += 1
+    if owned == 0 or n_below == 0 or n_below == 8:
+        return 0
+    return 1
+
+
+@wp.kernel
+def k_mark_surface_cells(
+    src: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    iso: float,
+    background: float,
+    flags: wp.array(dtype=wp.int32),
+):
+    tid = wp.tid()
+    flags[tid] = _surface_cell_mask(src, leaf_table, leaf_coords, voxels_dim,
+                                    leaves_dim, iso, background, tid)
+
+
+@wp.kernel
+def k_compact_surface_cells(
+    src: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    background: float,
+    flags: wp.array(dtype=wp.int32),
+    offsets: wp.array(dtype=wp.int32),
+    cells: wp.array(dtype=wp.vec3i),
+    values: wp.array(dtype=wp.float32),
+):
+    tid = wp.tid()
+    if flags[tid] == 0:
+        return
+    out = offsets[tid]
+    c = _candidate_cell(leaf_coords, tid)
+    cells[out] = c
+    for corner in range(8):
+        flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim,
+                                _cell_corner(c, corner))
+        val = background
+        if flat >= 0:
+            val = src[flat]
+        values[out * 8 + corner] = val
 
 
 @wp.kernel

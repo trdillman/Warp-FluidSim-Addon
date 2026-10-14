@@ -77,7 +77,7 @@ class SolverSettings:
     pressure_tolerance: float = C.DEFAULT_PRESSURE_TOLERANCE
     pressure_threshold: float = 0.0
     # "JACOBI" or "MULTIGRID" (sim.pressure.PRECONDITIONER_*); PCG only.
-    pressure_preconditioner: str = "JACOBI"
+    pressure_preconditioner: str = "MULTIGRID"
 
     viscosity_enabled: bool = False
     viscosity_solver: int = int(ViscositySolverEnum.PCG)

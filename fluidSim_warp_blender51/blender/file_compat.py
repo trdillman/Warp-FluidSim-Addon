@@ -99,8 +99,14 @@ def draw_pre_bridge_warning(layout, scene) -> None:
 # 2.x (default voxel 0.05) or from 3.0 (default 64 divisions): nothing in the
 # file tells them apart, so it keeps the 3.0 default (decision B62). The stamp
 # lets the next change to a default migrate untouched domains exactly.
+# 4 = Multigrid is the default pressure preconditioner (4.0). A domain saved
+# under an earlier schema that never stored a preconditioner ran Jacobi, so it
+# keeps Jacobi on load and the Bake stage offers the switch once.
 DOMAIN_SCHEMA_KEY = "domain_schema_version"
-CURRENT_DOMAIN_SCHEMA = 3
+CURRENT_DOMAIN_SCHEMA = 4
+MULTIGRID_DEFAULT_SCHEMA = 4
+# Raw flag left by migrate_domain_preconditioner; cleared by either notice button.
+KEPT_JACOBI_KEY = "kept_jacobi_preconditioner"
 
 
 def _writable_domain_group(obj):
@@ -119,12 +125,10 @@ def _writable_domain_group(obj):
         return None
 
 
-def stamp_domain_schema(objects=None, scenes=None) -> int:
-    """Stamp every local domain object with :data:`CURRENT_DOMAIN_SCHEMA`.
+def _local_domain_objects(objects=None, scenes=None) -> list:
+    """Each scene's designated domain plus every object storing a domain group.
 
-    Covers each scene's designated domain, even one whose group was never
-    written, and any object that stores a domain group. Linked library data
-    belongs to its own file and is left alone. Returns the number stamped.
+    Linked library data belongs to its own file and is left out.
     """
     from .scene_access import active_domain_object
 
@@ -138,8 +142,18 @@ def stamp_domain_schema(objects=None, scenes=None) -> int:
         if obj is not None and getattr(obj, "library", None) is None:
             pointer = getattr(obj, "as_pointer", None)
             candidates[pointer() if callable(pointer) else id(obj)] = obj
+    return list(candidates.values())
+
+
+def stamp_domain_schema(objects=None, scenes=None) -> int:
+    """Stamp every local domain object with :data:`CURRENT_DOMAIN_SCHEMA`.
+
+    Covers each scene's designated domain, even one whose group was never
+    written, and any object that stores a domain group. Linked library data
+    belongs to its own file and is left alone. Returns the number stamped.
+    """
     stamped = 0
-    for obj in candidates.values():
+    for obj in _local_domain_objects(objects, scenes):
         group = _writable_domain_group(obj)
         if group is None or group.get(DOMAIN_SCHEMA_KEY) == CURRENT_DOMAIN_SCHEMA:
             continue
@@ -203,6 +217,79 @@ def migrate_domain_resolution(objects=None, scenes=None, *, _evaluate_views=True
     return len(pending)
 
 
+def migrate_domain_preconditioner(objects=None, scenes=None) -> int:
+    """Keep Jacobi on a domain saved before Multigrid became the default.
+
+    A domain stamped below :data:`MULTIGRID_DEFAULT_SCHEMA` (or unstamped) that
+    never stored ``pressure_preconditioner`` ran the old Jacobi default. It is
+    given Jacobi explicitly, so its results do not change on open, and is
+    flagged for the one-time Bake-stage notice. A stored choice is kept.
+    Idempotent: the explicit value is stored. Returns the number changed.
+    """
+    from contextlib import ExitStack
+
+    from . import pending_settings
+
+    pending = []
+    for obj in _local_domain_objects(objects, scenes):
+        stored = _stored_scene_group(obj, "fluidsim_domain")
+        try:
+            if stored is not None and (
+                    "pressure_preconditioner" in stored
+                    or int(stored.get(DOMAIN_SCHEMA_KEY, 0) or 0)
+                    >= MULTIGRID_DEFAULT_SCHEMA):
+                continue
+        except (AttributeError, TypeError, ValueError):
+            continue
+        group = getattr(obj, "fluidsim_domain", None)
+        if group is not None:
+            pending.append((obj, group))
+    with ExitStack() as stack:
+        seen = set()
+        for obj, _group in pending:
+            for scene in getattr(obj, "users_scene", ()) or ():
+                if id(scene) not in seen:
+                    seen.add(id(scene))
+                    stack.enter_context(pending_settings.suppress_callbacks(scene))
+        for obj, group in pending:
+            group.pressure_preconditioner = "JACOBI"
+            raw = _writable_domain_group(obj)
+            if raw is not None:
+                raw[KEPT_JACOBI_KEY] = 1
+    return len(pending)
+
+
+def shows_kept_jacobi_notice(settings) -> bool:
+    """True while a migrated domain still runs the Jacobi it was given."""
+    if settings is None:
+        return False
+    stored = _stored_scene_group(getattr(settings, "id_data", None), "fluidsim_domain")
+    try:
+        flagged = stored is not None and bool(stored.get(KEPT_JACOBI_KEY))
+    except (AttributeError, TypeError):
+        return False
+    return flagged and getattr(settings, "pressure_preconditioner", "") == "JACOBI"
+
+
+def clear_kept_jacobi_notice(settings) -> None:
+    raw = _writable_domain_group(getattr(settings, "id_data", None))
+    if raw is not None and raw.get(KEPT_JACOBI_KEY) is not None:
+        del raw[KEPT_JACOBI_KEY]
+
+
+def draw_kept_jacobi_notice(layout, settings) -> None:
+    if not shows_kept_jacobi_notice(settings):
+        return
+    box = layout.box()
+    box.label(text="4.0 default is Multigrid; this file keeps Jacobi", icon="INFO")
+    box.label(text="Multigrid holds deep liquid at its true height.")
+    row = box.row(align=True)
+    switch = row.operator("fluidsim.preconditioner_notice", text="Use Multigrid")
+    switch.action = "MULTIGRID"
+    keep = row.operator("fluidsim.preconditioner_notice", text="Keep Jacobi")
+    keep.action = "KEEP"
+
+
 def migrate_removed_particle_color_mode(scenes=None) -> int:
     """Send a scene that stored the removed Time Offset particle colour mode to ``NONE``.
 
@@ -236,6 +323,7 @@ def migrate_removed_particle_color_mode(scenes=None) -> int:
 @persistent
 def _on_load_post(_arg):
     migrate_domain_resolution()
+    migrate_domain_preconditioner()
     for scene in getattr(getattr(bpy, "data", None), "scenes", ()):
         if has_unmigrated_snippets(scene):
             print(f"FluidSim: scene {scene.name!r}: {UNMIGRATED_SNIPPETS_MESSAGE}")
@@ -276,6 +364,7 @@ def _on_blend_import_post(context):
         from . import sources
 
         migrate_domain_resolution(objects=objects, scenes=scenes)
+        migrate_domain_preconditioner(objects=objects, scenes=imported_scenes)
         migrate_removed_particle_color_mode(scenes=imported_scenes)
         sources.migrate_source_schema(objects=objects, scenes=scenes)
 
@@ -333,6 +422,9 @@ def register_handlers():
     try:
         # The file that is already open; sources migrate it on their own.
         migrate_domain_resolution()
+        # Only a file read from disk: a domain made in this session is new.
+        if getattr(getattr(bpy, "data", None), "filepath", ""):
+            migrate_domain_preconditioner()
         migrate_removed_particle_color_mode()
     except (AttributeError, RuntimeError):  # bpy.data is restricted during enable
         pass

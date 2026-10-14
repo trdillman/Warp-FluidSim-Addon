@@ -12,7 +12,7 @@ class FakeDevice:
 
 
 class FakeWarp:
-    __version__ = "1.17.0"
+    __version__ = "1.18.0"
     __file__ = "/extension/site-packages/warp/__init__.py"
 
     @staticmethod
@@ -55,7 +55,7 @@ def test_probe_reports_cuda_devices(monkeypatch):
     monkeypatch.setattr(warp_runtime, "_import_warp", lambda: FakeWarp)
     probe = warp_runtime.probe_runtime(force=True)
     assert probe.available is True
-    assert probe.warp_version == "1.17.0"
+    assert probe.warp_version == "1.18.0"
     assert probe.module_file == "/extension/site-packages/warp/__init__.py"
     assert probe.cuda_driver_version == 12090
     assert probe.cuda_toolkit_version == 12090
@@ -81,10 +81,15 @@ def test_probe_reports_no_cuda_without_losing_warp_identity(monkeypatch):
         def get_devices():
             return [FakeDevice("cpu", "CPU", False, 0)]
 
+        @staticmethod
+        def get_cuda_driver_version():
+            # New enough for the certified CUDA 13 build: only the device is missing.
+            return 13030
+
     monkeypatch.setattr(warp_runtime, "_import_warp", lambda: CpuOnlyWarp)
     probe = warp_runtime.probe_runtime(force=True)
     assert probe.available is False
-    assert probe.warp_version == "1.17.0"
+    assert probe.warp_version == "1.18.0"
     assert probe.module_file.endswith("warp/__init__.py")
     assert "no CUDA device" in probe.message
 
@@ -94,7 +99,7 @@ def test_selected_device_gate_is_actionable(monkeypatch):
     probe = warp_runtime.probe_runtime(force=True)
     assert warp_runtime.runtime_status_for_device("cuda:0", probe=probe) == (
         True,
-        "Warp 1.17.0 — cuda:0: RTX Test (24.0 GiB)",
+        "Warp 1.18.0 — cuda:0: RTX Test (24.0 GiB)",
     )
     ready, message = warp_runtime.runtime_status_for_device("cuda:1", probe=probe)
     assert ready is False
@@ -129,12 +134,12 @@ def test_probe_rejects_warp_below_the_floor(monkeypatch):
 
 def test_probe_loads_newer_untested_warp_with_a_warning(monkeypatch):
     class NewerWarp(FakeWarp):
-        __version__ = "1.18.2"
+        __version__ = "1.19.2"
 
     monkeypatch.setattr(warp_runtime, "_import_warp", lambda: NewerWarp)
     probe = warp_runtime.probe_runtime(force=True)
     assert probe.available is True
-    assert "newer than the certified 1.17.0" in probe.warning
+    assert "newer than the certified 1.18.0" in probe.warning
     ready, status = warp_runtime.runtime_status_for_device("cuda:0", probe=probe)
     assert ready is True
     assert status.endswith("(untested Warp version)")
@@ -146,9 +151,12 @@ import pytest  # noqa: E402
 @pytest.mark.parametrize(
     ("version", "expected"),
     [
-        ("1.17.0", "certified"),
-        ("1.17.0+cu12", "certified"),
-        ("1.17.3", "untested"),
+        ("1.18.0", "certified"),
+        ("1.18.0+cu13", "certified"),
+        ("1.17.0", "older"),
+        ("1.17.0+cu12", "older"),
+        ("1.17.3", "older"),
+        ("1.18.3", "untested"),
         ("1.20.0.dev1", "untested"),
         ("1.16.9", "unsupported"),
         ("2.0.0", "unsupported"),

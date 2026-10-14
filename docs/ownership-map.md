@@ -164,7 +164,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `pressure_solver` | LIVE | domain | domain | - | domain | domain | 0 | OK |
 | `pressure_iterations` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `pressure_tolerance` | LIVE | domain | domain | - | - | domain | 0 | OK |
-| `pressure_preconditioner` | LIVE | domain | domain | - | - | domain | 0 | OK |
+| `pressure_preconditioner` | LIVE | domain | domain | domain | - | domain | 1 | OK |
 | `pressure_threshold` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `viscosity_enabled` | LIVE | domain | domain | - | domain | domain | 1 | OK |
 | `viscosity_solver` | LIVE | domain | domain | - | domain | domain | 0 | OK |

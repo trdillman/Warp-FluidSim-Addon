@@ -232,7 +232,7 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
                 box.label(
                     text=(
                         f"Downloads certified NVIDIA Warp {CERTIFIED_WARP_VERSION} "
-                        "(CUDA 12) from PyPI."
+                        "(CUDA 13; needs an NVIDIA R580 or newer driver) from PyPI."
                     )
                 )
             else:
@@ -297,8 +297,6 @@ def register():
 
 
 def unregister():
-    for cls in reversed(CLASSES):
-        try:
-            bpy.utils.unregister_class(cls)
-        except Exception as exc:  # noqa: BLE001 - report and keep walking
-            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")
+    from .unregister_guard import unregister_classes
+
+    unregister_classes(CLASSES)

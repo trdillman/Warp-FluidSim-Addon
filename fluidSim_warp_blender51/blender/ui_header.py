@@ -178,14 +178,12 @@ def register():
 
 
 def unregister():
+    from ..unregister_guard import unregister_classes
+
     header = _header_type()
     if header is not None:
         try:
             header.remove(draw_header_button)
         except (ValueError, RuntimeError):
             pass
-    for cls in reversed(CLASSES):
-        try:
-            bpy.utils.unregister_class(cls)
-        except Exception as exc:  # noqa: BLE001 - report and keep walking
-            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")
+    unregister_classes(CLASSES)

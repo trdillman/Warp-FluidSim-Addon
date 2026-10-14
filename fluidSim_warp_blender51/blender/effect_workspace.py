@@ -926,10 +926,8 @@ def register():
 
 
 def unregister():
+    from ..unregister_guard import unregister_classes
+
     # D9: session edit-trust never outlives the add-on; drop it on reload.
     _SESSION_TRUST.clear()
-    for cls in reversed(CLASSES):
-        try:
-            bpy.utils.unregister_class(cls)
-        except Exception as exc:  # noqa: BLE001 - report and keep walking
-            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")
+    unregister_classes(CLASSES)

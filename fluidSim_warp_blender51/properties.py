@@ -1351,16 +1351,16 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         name="Tolerance", default=1.0e-5, min=0.0, precision=8,
         update=_request_live,
         description="Set the pressure residual required for early convergence; lower values demand a more accurate solve and may take longer, while higher values stop sooner")
-    # Default is JACOBI, not the spec's MULTIGRID: the multigrid speed targets are
-    # unmeasured and the demo hash must hold until the beta re-baseline. See
-    # docs/specs/3.0/SPEC-multigrid-pressure.md, "Settings".
+    # Default is MULTIGRID since 4.0: Jacobi settles a 2 m column about 6% low
+    # (tests/solver/test_hydrostatic_column.py). Files saved earlier keep
+    # Jacobi; see blender/file_compat.py, migrate_domain_preconditioner.
     pressure_preconditioner: EnumProperty(
         name="Preconditioner",
         items=[
             ("JACOBI", "Jacobi", "Use the diagonal preconditioner; the cheapest per iteration, but it needs more iterations on large or finely resolved domains"),
             ("MULTIGRID", "Multigrid", "Use a multigrid V-cycle preconditioner; each iteration costs more but far fewer are needed on large or finely resolved domains"),
         ],
-        default="JACOBI", update=_request_live,
+        default="MULTIGRID", update=_request_live,
         description="Choose the preconditioner for the PCG pressure solver; Multigrid can converge in fewer iterations on large domains, while Jacobi is cheaper per iteration. Used only by the PCG solver")
     pressure_threshold: FloatProperty(
         name="Threshold", default=0.0, min=0.0, max=1.0,
@@ -1476,7 +1476,8 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_surface_refresh,
         description=(
             "Cap the marching-cubes dense extraction span on any axis, in surface voxels. "
-            "Higher values allow larger active surfaces but can sharply increase VRAM and extraction time; lower values fail surface extraction sooner when the liquid span exceeds the cap"))
+            "Higher values allow larger active surfaces but can sharply increase VRAM and extraction time; lower values fail surface extraction sooner when the liquid span exceeds the cap. "
+            "No effect with sparse extraction (Warp 1.18 or newer), which has no span cap; this setting is removed in 4.1"))
     surface_update_cadence: EnumProperty(
         name="Update Cadence", items=_items(SurfaceUpdateCadence),
         default="FRAME", update=_request_surface_refresh,
@@ -1764,14 +1765,12 @@ def register():
 
 
 def unregister():
+    from .unregister_guard import unregister_classes
+
     if hasattr(bpy.types.Object, "fluidsim_domain"):
         del bpy.types.Object.fluidsim_domain
     if hasattr(bpy.types.Object, "fluidsim"):
         del bpy.types.Object.fluidsim
     if hasattr(bpy.types.Scene, "fluidsim"):
         del bpy.types.Scene.fluidsim
-    for cls in reversed(CLASSES):
-        try:
-            bpy.utils.unregister_class(cls)
-        except Exception as exc:  # noqa: BLE001 - report and keep walking
-            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")
+    unregister_classes(CLASSES)

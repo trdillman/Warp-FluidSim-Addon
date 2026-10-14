@@ -100,6 +100,43 @@ class FLUIDSIM_OT_apply_product_preset(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class FLUIDSIM_OT_preconditioner_notice(bpy.types.Operator):
+    """Answer the 4.0 notice on a file that kept the Jacobi preconditioner"""
+
+    bl_idname = "fluidsim.preconditioner_notice"
+    bl_label = "Pressure Preconditioner"
+    bl_options = {"REGISTER", "UNDO"}
+
+    action: EnumProperty(
+        name="Action",
+        items=[
+            ("MULTIGRID", "Use Multigrid", "Switch this domain to the 4.0 default, which holds deep liquid at its true height"),
+            ("KEEP", "Keep Jacobi", "Keep the Jacobi preconditioner this file was made with and hide the notice"),
+        ],
+        default="MULTIGRID",
+        description="Choose whether this domain switches to Multigrid or keeps Jacobi",
+    )
+
+    @classmethod
+    def poll(cls, context):
+        from ..blender.scene_access import active_domain_settings
+
+        return active_domain_settings(context.scene) is not None
+
+    def execute(self, context):
+        from ..blender import file_compat
+        from ..blender.scene_access import active_domain_settings
+
+        settings = active_domain_settings(context.scene)
+        if settings is None:
+            return {"CANCELLED"}
+        if self.action == "MULTIGRID":
+            # A normal assignment, so the live session picks it up.
+            settings.pressure_preconditioner = "MULTIGRID"
+        file_compat.clear_kept_jacobi_notice(settings)
+        return {"FINISHED"}
+
+
 class FLUIDSIM_OT_save_product_preset(bpy.types.Operator):
     """Capture allow-listed scene settings as an atomic user preset"""
 

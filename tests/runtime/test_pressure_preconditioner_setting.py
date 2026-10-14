@@ -27,19 +27,19 @@ def _rna_call():
     raise AssertionError("FLUIDSIM_PG_domain declares no pressure_preconditioner")
 
 
-def test_rna_enum_has_exactly_the_two_kinds_and_defaults_to_jacobi():
+def test_rna_enum_has_exactly_the_two_kinds_and_defaults_to_multigrid():
     call = _rna_call()
     keywords = {kw.arg: kw.value for kw in call.keywords}
     items = ast.literal_eval(keywords["items"])
     assert [item[0] for item in items] == [
         pressure.PRECONDITIONER_JACOBI, pressure.PRECONDITIONER_MULTIGRID]
-    assert ast.literal_eval(keywords["default"]) == pressure.PRECONDITIONER_JACOBI
+    assert ast.literal_eval(keywords["default"]) == pressure.PRECONDITIONER_MULTIGRID
     assert "update" in keywords  # live: wired to the same request as the other pressure fields
     assert ast.literal_eval(keywords["description"]).strip()
 
 
 def test_solver_default_equals_rna_default():
-    assert SolverSettings().pressure_preconditioner == pressure.PRECONDITIONER_JACOBI
+    assert SolverSettings().pressure_preconditioner == pressure.PRECONDITIONER_MULTIGRID
 
 
 def test_build_settings_projects_the_preconditioner(monkeypatch):

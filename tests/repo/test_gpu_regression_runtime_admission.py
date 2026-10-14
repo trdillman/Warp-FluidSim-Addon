@@ -15,7 +15,7 @@ def test_gpu_verifier_admits_runtime_before_loading_validation(monkeypatch):
     main = namespace["main"]
     state = {"admitted": False}
     probe = SimpleNamespace(
-        warp_version="1.17.0", available=True,
+        warp_version="1.18.0", available=True,
         cuda_devices=[SimpleNamespace(alias="cuda:0")])
     def admit(**kwargs):
         state["admitted"] = True

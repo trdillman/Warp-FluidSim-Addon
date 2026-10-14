@@ -27,7 +27,7 @@ def test_manifest_matches_runtime_version_and_identity():
     assert manifest["license"] == ["SPDX:GPL-3.0-or-later"]
     assert manifest["platforms"] == ["windows-x64", "linux-x64"]
     assert manifest["blender_version_min"] == ".".join(map(str, blender_min)) == "5.2.0"
-    assert version == (3, 2, 1)
+    assert version == (4, 0, 0)
     assert _assigned_value(ROOT / "version.py", "BUILD_CHANNEL") == "stable"
 
 
@@ -53,8 +53,8 @@ def test_distribution_contains_license_notices_and_changelog():
     assert "Version 3" in license_text
     notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
     assert "NVIDIA Warp" in notices
-    assert "warp-lang 1.17.0" in notices
-    assert "CUDA 12" in notices
+    assert "warp-lang 1.18.0" in notices
+    assert "CUDA 13" in notices
     assert "Apache License, Version 2.0" in notices
     assert "libmathdx-LICENSE.txt" in notices
     assert "nvrtc-LICENSE.txt" in notices
@@ -83,7 +83,7 @@ def test_user_guide_declares_certified_support_matrix():
         "Windows x64",
         "Linux x64",
         "NVIDIA CUDA",
-        "NVIDIA Warp 1.17.0",
+        "NVIDIA Warp 1.18.0",
         "Install Warp",
         "Cache v1 (1.0.x) is refused",
     ):

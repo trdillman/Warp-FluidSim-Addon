@@ -21,8 +21,8 @@ PACKAGE_NAME = "fluidSim_warp_blender51"
 # re-pinned when lane J added narrow_band_enabled/narrow_band_voxels (every
 # SolverSettings field is part of the signature, so existing caches re-bake),
 # and again when owner decision D1 (2026-10-12) took the compute device out
-# of cache identity.
-PINNED_SIGNATURE = "6d5bb730f1b3c7c26485c54a49e3e85582d7d0d72903a68d3877e63df05c3012"
+# of cache identity, and again for the 4.0 Multigrid preconditioner default.
+PINNED_SIGNATURE = "68ae7f9ab91f2190c3d4f68374d7cc5177f2eb6fae80f370062c411d9b868308"
 # The device-hashing value caches written before D1 carry. They must still
 # match the same scene, or every 3.0/3.1 cache would be refused.
 PRE_D1_SIGNATURE = "f812a312f5c45196d3e4709a368d9e6df192b633115c652e13a205d8c9d1f606"
@@ -36,7 +36,7 @@ import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-package, tests_dir, mask = sys.argv[1:4]
+package, tests_dir, mask, preconditioner = sys.argv[1:5]
 
 
 class BlockWarp(importlib.abc.MetaPathFinder):
@@ -66,7 +66,7 @@ cache_identity = importlib.import_module(package + ".blender.cache_identity")
 scene = SimpleNamespace(
     fluidsim=split_settings(full_settings(
         domain_object=None, quality="PREVIEW", use_scene_gravity=False,
-        gravity=[0.0, 0.0, -9.81])),
+        gravity=[0.0, 0.0, -9.81], pressure_preconditioner=preconditioner)),
     render=SimpleNamespace(fps=24, fps_base=1.0),
     use_gravity=True, gravity=[0.0, 0.0, -9.81],
 )
@@ -79,13 +79,13 @@ print(json.dumps({
 '''
 
 
-def _run(mask: bool) -> dict:
+def _run(mask: bool, preconditioner: str = "MULTIGRID") -> dict:
     env = dict(
         os.environ, PYTHONNOUSERSITE="1",
         PYTHONPATH=os.pathsep.join([str(REPO), os.environ.get("PYTHONPATH", "")]))
     done = subprocess.run(
         [sys.executable, "-c", _SCRIPT, PACKAGE_NAME,
-         str(REPO / "tests" / "support"), "1" if mask else "0"],
+         str(REPO / "tests" / "support"), "1" if mask else "0", preconditioner],
         capture_output=True, text=True, env=env, cwd=str(REPO), timeout=120)
     assert done.returncode == 0, done.stderr[-2000:]
     return json.loads(done.stdout.strip().splitlines()[-1])
@@ -94,7 +94,10 @@ def _run(mask: bool) -> dict:
 def test_settings_signature_value_is_pinned():
     result = _run(mask=False)
     assert result["signature"] == PINNED_SIGNATURE
-    assert PRE_D1_SIGNATURE in result["legacy"]
+    # A pre-D1 cache was baked under the 3.x Jacobi default; the load
+    # migration gives that file Jacobi explicitly, so its cache still matches.
+    assert PRE_D1_SIGNATURE in _run(mask=False, preconditioner="JACOBI")["legacy"]
+    assert PRE_D1_SIGNATURE not in result["legacy"]
 
 
 def test_settings_signature_needs_no_warp_and_is_unchanged_by_the_mask():

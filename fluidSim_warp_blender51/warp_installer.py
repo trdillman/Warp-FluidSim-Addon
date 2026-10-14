@@ -16,7 +16,7 @@ The only directory it creates is the one Blender assigns to this extension
 via ``bpy.utils.extension_path_user`` (see the 5.2 manual, "Add-ons"):
 ``<extensions>/.user/<repository>/<extension id>/.local``. The wheel
 is extracted into that directory the same way Blender extracts a wheel,
-without pip. A second press when that owned copy is already Warp 1.17.0
+without pip. A second press when that owned copy is already the certified Warp
 reports success and does not download or write.
 """
 
@@ -36,7 +36,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import urlopen
 
-from .runtime.warp_runtime import warp_version_support
+from .runtime.warp_runtime import (
+    cuda_driver_floor_reason,
+    query_cuda_driver_version,
+    warp_version_support,
+)
 from .version import CERTIFIED_WARP_VERSION
 
 _CHUNK_SIZE = 1024 * 1024
@@ -517,7 +521,7 @@ def is_warp_installed() -> bool:
 
 
 def is_certified_warp_installed() -> bool:
-    """Return whether this extension's own directory holds Warp 1.17.0."""
+    """Return whether this extension's own directory holds the certified Warp."""
     return owned_install_status() == "certified"
 
 
@@ -534,6 +538,8 @@ def get_installed_warp_info() -> tuple[bool, str]:
                 return True, f"Warp {version} (certified)"
             if status == "untested":
                 return True, f"Warp {version} (newer than certified {CERTIFIED_WARP_VERSION})"
+            if status == "older":
+                return True, f"Warp {version} (older than certified {CERTIFIED_WARP_VERSION})"
             return True, f"Warp {version} (incompatible; certified is {CERTIFIED_WARP_VERSION})"
     return False, "Warp is not installed"
 
@@ -592,6 +598,20 @@ def install_warp(
     online = _online_access_block_reason()
     if online:
         return InstallResult(success=False, message=online)
+
+    # The certified wheel is a CUDA 13 build: check the driver before the
+    # download so an older driver keeps its working Warp instead of
+    # receiving one it cannot run.
+    floor_reason = cuda_driver_floor_reason(query_cuda_driver_version())
+    if floor_reason:
+        if owned_version and warp_version_support(owned_version)[0] == "older":
+            return InstallResult(
+                success=True,
+                message=f"Kept Warp {owned_version}. {floor_reason}",
+                version=owned_version,
+                already_installed=True,
+            )
+        return InstallResult(success=False, message=floor_reason)
 
     wheel_info = get_wheel_info_for_platform()
     if wheel_info is None:

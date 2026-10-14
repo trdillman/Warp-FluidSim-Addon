@@ -1466,10 +1466,8 @@ def register():
 
 
 def unregister():
+    from ..unregister_guard import unregister_classes
+
     if hasattr(bpy.types.Scene, "fluidsim_effects"):
         del bpy.types.Scene.fluidsim_effects
-    for cls in reversed(CLASSES):
-        try:
-            bpy.utils.unregister_class(cls)
-        except Exception as exc:  # noqa: BLE001 - report and keep walking
-            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")
+    unregister_classes(CLASSES)
