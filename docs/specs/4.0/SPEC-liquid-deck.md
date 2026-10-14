@@ -69,7 +69,7 @@ off for older files); scene flag `deck_shown`. No Deck state is saved per object
 
 ## Reference mockup
 
-`docs/design/liquid_deck_mockup.html` (https://claude.ai/artifact/5jjwB1o9BEDnYjseufEe1V) simulates every component above.
+`docs/specs/4.0/liquid_deck_mockup.html` (https://claude.ai/artifact/5jjwB1o9BEDnYjseufEe1V) simulates every component above.
 Its guided tour is the reference interaction script, and the GUI gate Deck lane follows
 its first five steps:
 

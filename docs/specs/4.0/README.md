@@ -2,7 +2,7 @@
 
 Each spec exists to prevent one or more concrete traps, names the real symbols it
 touches, and defines acceptance. Plan: `docs/RELEASE_4_0_PLAN.md`. Interactive UI reference:
-`docs/design/liquid_deck_mockup.html` (https://claude.ai/artifact/5jjwB1o9BEDnYjseufEe1V).
+`docs/specs/4.0/liquid_deck_mockup.html` (https://claude.ai/artifact/5jjwB1o9BEDnYjseufEe1V).
 
 | Spec | Plan item | Lane |
 |---|---|---|

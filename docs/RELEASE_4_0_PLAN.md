@@ -100,7 +100,7 @@ the same property as its panel twin; the GUI gate adds one Deck lane (open demo,
 the emitter velocity gizmo, confirm the pending chip and the applied value); Deck off
 leaves the UI operator/panel behaviour tests byte-identical. Spec: `SPEC-liquid-deck.md`.
 
-**Reference mockup.** `docs/design/liquid_deck_mockup.html` (published at
+**Reference mockup.** `docs/specs/4.0/liquid_deck_mockup.html` (published at
 https://claude.ai/artifact/5jjwB1o9BEDnYjseufEe1V, private to the owner until shared) is the interaction reference for
 lanes K and V. Open it, press **Play guided tour**, and build to what it shows. It is a
 reference for layout, states and behaviour, not code to port: it is a 2D canvas with fake

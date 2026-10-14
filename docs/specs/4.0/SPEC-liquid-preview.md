@@ -63,7 +63,7 @@ draw nothing, and keep the PointCloud visible. Never raise inside a draw handler
 
 ## Reference mockup
 
-The Liquid Preview toggle in `docs/design/liquid_deck_mockup.html` (https://claude.ai/artifact/5jjwB1o9BEDnYjseufEe1V) shows
+The Liquid Preview toggle in `docs/specs/4.0/liquid_deck_mockup.html` (https://claude.ai/artifact/5jjwB1o9BEDnYjseufEe1V) shows
 the intended look and the UI contract: one Deck toggle and an `L` hotkey, the viewport
 corner label switches to "Liquid Preview", thin regions get a bright Fresnel rim, thick
 regions darken toward the absorption colour, and the densest regions read as foam. The
