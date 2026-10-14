@@ -87,6 +87,7 @@ def _install_bpy_stub(monkeypatch):
     )
     fake_bpy.props = SimpleNamespace(
         BoolProperty=lambda **kwargs: _prop(**kwargs),
+        BoolVectorProperty=lambda **kwargs: _prop(**kwargs),
         CollectionProperty=lambda **kwargs: _prop(**kwargs),
         EnumProperty=lambda **kwargs: _prop(**kwargs),
         FloatProperty=lambda **kwargs: _prop(**kwargs),

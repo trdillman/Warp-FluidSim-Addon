@@ -770,6 +770,11 @@ def _read_v3_frame(base_dir: str, frame: int) -> dict | None:
         raise ValueError(
             f"cache-v3 frame {frame} whitewater_count mismatch: manifest "
             f"{entry.whitewater_count}, payload {counts['whitewater']['whitewater']}")
+    # Cache v3.1: the Dynamic collider poses live in the manifest entry (a
+    # tuple of RigidBodyRecord). Frames without one (every 3.0 frame) keep
+    # their 3.0 shape: readers use ``.get("rigid_bodies", ())``.
+    if entry.rigid_bodies:
+        result["rigid_bodies"] = entry.rigid_bodies
     return result
 
 

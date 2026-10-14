@@ -238,11 +238,29 @@ class FLUIDSIM_PT_object_collider(FluidSimObjectPanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
+        settings = _settings(context)
+        dynamic = bool(getattr(settings, "collider_dynamic", False))
         draw_property_grid(
             layout,
-            _settings(context),
-            ("collider_friction", "collider_restitution", "transfer_velocity"),
+            settings,
+            ("collider_friction", "collider_restitution", "collider_dynamic")
+            + (() if dynamic else ("transfer_velocity",)),
         )
+        if dynamic:
+            # Two-way rigid coupling: the liquid moves this collider.
+            draw_property_grid(
+                layout, settings, ("collider_density", "collider_drag"))
+            layout.prop(settings, "collider_initial_velocity")
+            locks = layout.column(heading="Lock")
+            row = locks.row(align=True)
+            for index, label in enumerate(("X", "Y", "Z")):
+                row.prop(settings, "collider_lock_axes", index=index,
+                         text=label, toggle=True)
+            locks.label(text="Rotation")
+            row = locks.row(align=True)
+            for index, label in enumerate(("X", "Y", "Z")):
+                row.prop(settings, "collider_lock_axes", index=3 + index,
+                         text=label, toggle=True)
 
 
 class FLUIDSIM_PT_object_force(FluidSimObjectPanel, bpy.types.Panel):

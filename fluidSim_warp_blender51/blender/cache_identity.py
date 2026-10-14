@@ -40,6 +40,14 @@ def _matrix_record(matrix) -> tuple[tuple[float, ...], ...]:
     return tuple(tuple(float(component) for component in row) for row in matrix)
 
 
+def _authored(obj):
+    """World matrix as authored: published Dynamic collider poses are solver
+    output, so they never change the scene identity."""
+    from .rigid_publication import authored_world
+
+    return authored_world(obj)
+
+
 def _scene_object_records(scene) -> tuple[dict, ...]:
     records = []
     for obj in scene.objects:
@@ -49,7 +57,7 @@ def _scene_object_records(scene) -> tuple[dict, ...]:
         records.append({
             "name": obj.name,
             "properties": _rna_record(group),
-            "matrix_world": tuple(tuple(row) for row in obj.matrix_world),
+            "matrix_world": tuple(tuple(row) for row in _authored(obj)),
             "vertex_count": len(
                 getattr(getattr(obj, "data", None), "vertices", ())),
         })
@@ -117,7 +125,7 @@ def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
             "role": role,
             "properties": _rna_record(
                 group, ignored=_SOURCE_SIGNATURE_IGNORED_RNA),
-            "matrix_world": _matrix_record(obj.matrix_world),
+            "matrix_world": _matrix_record(_authored(obj)),
             "geometry": _geometry_record(obj, depsgraph),
         })
     return tuple(records)

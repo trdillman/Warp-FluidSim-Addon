@@ -125,7 +125,7 @@ def install_deck_bpy(monkeypatch, *, deck_mode=None, refuse=()):
     )
     bpy.props = SimpleNamespace(**{
         name: (lambda **kwargs: _prop(**kwargs)) for name in (
-            "BoolProperty", "EnumProperty", "FloatProperty", "FloatVectorProperty",
+            "BoolProperty", "BoolVectorProperty", "EnumProperty", "FloatProperty", "FloatVectorProperty",
             "IntProperty", "StringProperty", "PointerProperty", "CollectionProperty")
     })
     bpy.utils = SimpleNamespace(register_class=register_class,

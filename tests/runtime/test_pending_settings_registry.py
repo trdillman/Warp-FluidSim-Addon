@@ -41,6 +41,7 @@ def _modules(monkeypatch):
     bpy.props = types.ModuleType("bpy.props")
     for name in (
         "BoolProperty",
+        "BoolVectorProperty",
         "CollectionProperty",
         "EnumProperty",
         "FloatProperty",

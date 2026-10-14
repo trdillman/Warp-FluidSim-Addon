@@ -43,6 +43,14 @@ DEFAULT_SCENES = ("dam_break", "crown_splash")
 DAM_BREAK_WHITEWATER_CHURN_GAIN = 2.0
 CROWN_SPLASH_WW_CHURN_THRESHOLD = 0.05
 CROWN_SPLASH_WW_EMISSION_RATE = 200.0
+# 4.0 two-way rigid coupling: a cork (density ratio 0.3) floats in the crown
+# pool away from the impact and is pushed by the splash. Its centre sits so a
+# 30% draft starts at rest. FLUIDSIM_CROWN_CORK=0 builds without it (the
+# per-frame budget A/B only; the shipped scene always has the cork).
+CROWN_CORK_NAME = "Crown Cork"
+CROWN_CORK_SIZE = 0.06
+CROWN_CORK_DENSITY = 300.0
+CROWN_CORK_CENTER = (0.62, 0.40, 0.05 + CROWN_CORK_SIZE * (0.5 - 0.3))
 
 
 def log(msg):
@@ -522,6 +530,25 @@ def build_dam_break():
 # Scene 2: crown splash
 # ---------------------------------------------------------------------------
 
+def add_crown_cork(scene):
+    """Author the crown_splash Dynamic collider (None when opted out)."""
+    if os.environ.get("FLUIDSIM_CROWN_CORK", "1").strip() == "0":
+        log("crown_splash: building WITHOUT the cork (budget A/B)")
+        return None
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+
+    bpy.ops.mesh.primitive_cube_add(size=CROWN_CORK_SIZE, location=CROWN_CORK_CENTER)
+    cork = bpy.context.active_object
+    cork.name = CROWN_CORK_NAME
+    _colliders.tag_collider(cork, friction=0.0, restitution=0.0,
+                            transfer_velocity=False)
+    cork.fluidsim.enabled = True
+    cork.fluidsim.collider_dynamic = True
+    cork.fluidsim.collider_density = CROWN_CORK_DENSITY
+    bpy.context.view_layer.update()
+    return cork
+
+
 def build_crown_splash():
     scene = fresh_scene()
     from fluidSim_warp_blender51.blender.scene_bridge import session
@@ -550,11 +577,19 @@ def build_crown_splash():
     fs.particle_display_fraction = 1.0
     scene.frame_start = 1
     scene.frame_end = 120
+    cork = add_crown_cork(scene)
     scene.frame_set(1)
     bpy.ops.fluidsim.initialize()
     sess = session()
     pool_depth = 0.05
     pool = lattice((0.0, 0.0, 0.0), (0.8, 0.8, pool_depth), 0.005)
+    if cork is not None:
+        # No liquid seeded inside the cork's authored volume.
+        half = CROWN_CORK_SIZE * 0.5
+        inside = np.all(
+            np.abs(pool - np.asarray(CROWN_CORK_CENTER, dtype=pool.dtype)) < half,
+            axis=1)
+        pool = pool[~inside]
     n_pool = admitted_total(
         sess.solver.inject_particles(pool), label="crown_splash pool")
     drop_center = (0.4, 0.4, 0.2)
@@ -586,6 +621,13 @@ def build_crown_splash():
         "fps": FPS,
         "pool_particles": int(n_pool),
         "total_particles": int(n_all),
+        "dynamic_collider": None if cork is None else {
+            "name": CROWN_CORK_NAME,
+            "size": CROWN_CORK_SIZE,
+            "density": CROWN_CORK_DENSITY,
+            "density_ratio": CROWN_CORK_DENSITY / 1000.0,
+            "center": list(CROWN_CORK_CENTER),
+        },
         "whitewater": {
             "churn_gain": 2.0,
             "churn_threshold": CROWN_SPLASH_WW_CHURN_THRESHOLD,

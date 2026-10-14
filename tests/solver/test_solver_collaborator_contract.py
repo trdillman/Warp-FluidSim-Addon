@@ -14,8 +14,11 @@ from pathlib import Path
 PACKAGE = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 
 # Solver internals the sub-solvers still read: the voxel count, the point-dimension
-# helper, the profiling phase scope, and the host position gather.
+# helper, the profiling phase scope, and the host position gather. Rigid coupling
+# (4.0) reads the per-voxel collider owner (which body a solid voxel belongs to)
+# and the CFL speed limit that caps a Dynamic body's per-substep velocity change.
 ALLOWED_PRIVATE_READS = {
+    "sim/rigid_coupling.py": {"_cfl_speed_limit", "_collision_owner"},
     "sim/surface.py": {"_np_dim", "_nvox", "_phase", "_surface_positions"},
     "sim/surface_tension.py": {"_nvox", "_phase"},
 }

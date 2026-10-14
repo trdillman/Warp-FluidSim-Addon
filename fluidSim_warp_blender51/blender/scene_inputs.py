@@ -430,8 +430,12 @@ class SceneInputs:
                 del self._evaluated_mesh_cache[cache_key]
 
     def _evaluated_mesh(self, obj, depsgraph, cache_key, *, force_refresh=False,
-                        sync_generation=None, strict_degenerate=True):
-        """Return one validated, triangulated world-space Warp mesh cache entry."""
+                        sync_generation=None, strict_degenerate=True,
+                        matrix_override=None):
+        """Return one validated, triangulated world-space Warp mesh cache entry.
+
+        ``matrix_override`` replaces the object's world matrix (a Dynamic
+        collider is built from its authored pose, not its published one)."""
         import warp as wp
 
         object_id = _object_identity(obj)
@@ -439,7 +443,8 @@ class SceneInputs:
         updated_ids = _depsgraph_updates(depsgraph)
         frame = getattr(getattr(depsgraph, "scene", None), "frame_current", None)
         entry = self._evaluated_mesh_cache.get(cache_key)
-        matrix_world = obj.matrix_world
+        matrix_world = (
+            obj.matrix_world if matrix_override is None else matrix_override)
         matrix = np.asarray(matrix_world, dtype=np.float32)
         matrix_signature = _array_signature(matrix)
         # ``updates`` is filled only inside an update handler; a bake syncs
@@ -462,7 +467,9 @@ class SceneInputs:
             return entry, ""
 
         evaluated = obj.evaluated_get(depsgraph)
-        matrix_world = evaluated.matrix_world
+        matrix_world = (
+            evaluated.matrix_world if matrix_override is None
+            else matrix_override)
         matrix = np.asarray(matrix_world, dtype=np.float32)
         matrix_signature = _array_signature(matrix)
         mesh = evaluated.to_mesh()
@@ -1230,8 +1237,10 @@ class SceneInputs:
 
     def gather_colliders(self, scene, depsgraph=None, *, sync_generation=None):
         import bpy
+        from ..sim import rigid_scene
         from ..sim.enums import MeshEvaluationMode
         from ..sim.solver import ColliderDesc
+        from . import rigid_publication
 
         depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
         sync_generation = sync_generation or self.begin_sync()
@@ -1246,9 +1255,13 @@ class SceneInputs:
                 "EVALUATED_MESH", object_id,
                 MeshEvaluationMode.EVERY_SIM_FRAME.name)
             collider_cache_keys.add(cache_key)
+            dynamic = rigid_scene.is_dynamic_collider(obj)
+            authored = (
+                rigid_publication.authored_world(obj) if dynamic else None)
             entry, error = self._evaluated_mesh(
                 obj, depsgraph, cache_key, force_refresh=False,
-                sync_generation=sync_generation, strict_degenerate=False)
+                sync_generation=sync_generation, strict_degenerate=False,
+                matrix_override=authored)
             if entry is None:
                 self._evaluated_mesh_cache.pop(cache_key, None)
                 _set_mesh_error(obj.fluidsim, error)
@@ -1257,14 +1270,25 @@ class SceneInputs:
             warp_mesh = entry["mesh"]
             aabb_min, aabb_max = entry["aabb_min"], entry["aabb_max"]
             evaluated = obj.evaluated_get(depsgraph)
-            matrix_world = evaluated.matrix_world
+            matrix_world = authored if dynamic else evaluated.matrix_world
             desc = ColliderDesc()
             desc.mesh, desc.aabb_min, desc.aabb_max = warp_mesh, tuple(map(float, aabb_min)), tuple(map(float, aabb_max))
             center = matrix_world.translation
             desc.center = (center.x, center.y, center.z)
             desc.friction = float(obj.fluidsim.collider_friction)
             desc.restitution = float(obj.fluidsim.collider_restitution)
-            if obj.fluidsim.transfer_velocity:
+            if dynamic:
+                # The solver owns this body's motion; it starts from the
+                # authored pose with the authored initial velocity.
+                desc.dynamic = True
+                desc.object_uid = persistent_source_key(obj)
+                desc.density = float(obj.fluidsim.collider_density)
+                desc.drag = float(obj.fluidsim.collider_drag)
+                desc.initial_velocity = tuple(
+                    float(v) for v in obj.fluidsim.collider_initial_velocity)
+                desc.lock_axes = tuple(
+                    bool(v) for v in obj.fluidsim.collider_lock_axes)
+            elif obj.fluidsim.transfer_velocity:
                 desc.linear_velocity = self.object_velocity(evaluated, scene)
                 desc.angular_velocity = self.object_angular_velocity(evaluated, scene)
             descriptors.append(desc)

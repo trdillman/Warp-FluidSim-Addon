@@ -59,7 +59,7 @@ def _install_bpy_stub(monkeypatch):
     fake.props = SimpleNamespace(**{
         name: (lambda **kwargs: _prop(**kwargs))
         for name in (
-            "BoolProperty", "CollectionProperty", "EnumProperty", "FloatProperty",
+            "BoolProperty", "BoolVectorProperty", "CollectionProperty", "EnumProperty", "FloatProperty",
             "FloatVectorProperty", "IntProperty", "PointerProperty", "StringProperty")
     })
     fake.path = SimpleNamespace(abspath=lambda value: value)

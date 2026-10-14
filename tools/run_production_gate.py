@@ -133,6 +133,7 @@ BACKGROUND_ACCEPTANCE = (
      "HEADLESS-BAKE-CLI-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_demo_gallery_acceptance.py", "DEMO-GALLERY-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_cache_v3_stamp_acceptance.py", "CACHE-V3-STAMP-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_rigid_publication_acceptance.py", "RIGID_PUBLICATION_OK"),
 )
 # Acceptance scripts that take --json-out: (label, script, report path, marker).
 REPORT_ACCEPTANCE = (

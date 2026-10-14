@@ -20,7 +20,8 @@ from .scene_access import (
 )
 from ..sim.effects.runtime import EffectExecutionError
 from .scene_inputs import SceneInputs
-from .simulation_admission import capacity_blocking_message, narrow_band_refusal
+from .simulation_admission import (
+    capacity_blocking_message, narrow_band_refusal, rigid_refusal)
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
@@ -315,6 +316,7 @@ class Session:
         # refusal is reported until the conflict is removed or Reset re-admits.
         refusal = narrow_band_refusal(
             self.solver.settings, getattr(scene, "objects", ()))
+        refusal = refusal or rigid_refusal(getattr(scene, "objects", ()))
         if refusal:
             self.sync_refusal = refusal
             self.set_error(scene, refusal)

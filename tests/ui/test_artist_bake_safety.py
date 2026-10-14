@@ -381,6 +381,10 @@ def _install_bpy_stub(monkeypatch):
         "fluidSim_warp_blender51.operator_domains.common",
     ):
         sys.modules.pop(name, None)
+    # ``from . import common`` returns the package attribute when one exists,
+    # so popping sys.modules alone keeps a ``common`` bound to an earlier test's
+    # bpy stub. Importing it by name first rebinds the attribute to this stub.
+    importlib.import_module("fluidSim_warp_blender51.operator_domains.common")
     return fake_bpy, importlib.import_module(
         "fluidSim_warp_blender51.operator_domains.cache"
     )

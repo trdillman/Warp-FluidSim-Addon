@@ -61,6 +61,15 @@ def _entry(frame: int, **overrides) -> FrameEntry:
     return FrameEntry(**values)
 
 
+def _entry_dict(entry: FrameEntry) -> dict:
+    """``asdict`` of an entry, minus the v3.1 ``rigid_bodies`` key when empty:
+    a frame without Dynamic colliders is written exactly as 3.0 wrote it."""
+    value = asdict(entry)
+    if not value["rigid_bodies"]:
+        del value["rigid_bodies"]
+    return value
+
+
 def _reference_bytes(manifest: CacheManifestV3) -> bytes:
     """The pre-P07 writer: validate, asdict twice, stream through json.dump."""
     manifest.validate()
@@ -68,7 +77,8 @@ def _reference_bytes(manifest: CacheManifestV3) -> bytes:
     payload = asdict(manifest)
     payload["effect_inventory"] = [dict(item) for item in manifest.effect_inventory]
     payload["frames"] = {
-        str(frame): asdict(manifest.frames[frame]) for frame in sorted(manifest.frames)}
+        str(frame): _entry_dict(manifest.frames[frame])
+        for frame in sorted(manifest.frames)}
     handle = io.StringIO(newline="\n")
     json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
     handle.write("\n")
@@ -88,7 +98,8 @@ def test_to_dict_matches_asdict():
     manifest = _manifest(5)
     expected = asdict(manifest)
     expected["effect_inventory"] = [dict(item) for item in manifest.effect_inventory]
-    expected["frames"] = {str(f): asdict(manifest.frames[f]) for f in sorted(manifest.frames)}
+    expected["frames"] = {str(f): _entry_dict(manifest.frames[f])
+                          for f in sorted(manifest.frames)}
     assert manifest.to_dict() == expected
 
 

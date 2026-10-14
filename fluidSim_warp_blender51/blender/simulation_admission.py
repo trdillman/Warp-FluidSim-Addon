@@ -64,6 +64,19 @@ def narrow_band_refusal(settings, scene_objects):
     return narrow_band.refusal_message(reasons) if reasons else ""
 
 
+def rigid_refusal(scene_objects):
+    """The Dynamic collider admission refusal for a scene, or "".
+
+    A Dynamic collider cannot also be (or carry) a source or sink, cannot be
+    animated by the user, and a scene holds at most ``MAX_BODIES`` of them
+    (docs/specs/4.0/SPEC-rigid-coupling.md).
+    """
+    from ..sim import rigid_scene
+
+    reasons = rigid_scene.scene_blocking_reasons(scene_objects or ())
+    return rigid_scene.refusal_message(reasons) if reasons else ""
+
+
 def reset_memory_blocking_message(capacity_plan):
     estimate = int(getattr(capacity_plan, "estimated_bytes", 0))
     budget = int(getattr(capacity_plan, "budget_bytes", 0))
@@ -73,6 +86,15 @@ def reset_memory_blocking_message(capacity_plan):
         f"GiB, safe budget {budget / 1024**3:.1f} GiB). The live solver was "
         "preserved; review capacity options or Reinitialize explicitly."
     )
+
+
+def _begin_rigid_run(scene):
+    """A new run clears published Dynamic collider poses (Reset contract)."""
+    if not hasattr(scene, "objects"):
+        return
+    from . import rigid_publication
+
+    rigid_publication.begin_run(scene)
 
 
 def _pointer(value):
@@ -438,7 +460,9 @@ class SimulationAdmission:
                 if hasattr(applied_allocation, name) and hasattr(settings, name)}
             if preserved:
                 settings = replace(settings, **preserved)
-        refusal = narrow_band_refusal(settings, getattr(scene, "objects", ()))
+        refusal = (
+            narrow_band_refusal(settings, getattr(scene, "objects", ()))
+            or rigid_refusal(getattr(scene, "objects", ())))
         if refusal:
             raise RuntimeError(refusal)
         if runtime_capacity is not None:
@@ -707,6 +731,7 @@ class SimulationAdmission:
                     snapshot, "frame_start", getattr(scene, "frame_start", 1))),
                 reported_growth_capacity=(
                     None if initial_growth is None else initial_growth[1]))
+            _begin_rigid_run(scene)
             self._prepare_outputs(scene)
             fs = scene.fluidsim
             if initial_growth is not None:
@@ -764,6 +789,7 @@ class SimulationAdmission:
                     None if replacement_growth is None
                     else replacement_growth[1]))
             self.session.clear_error(scene)
+            _begin_rigid_run(scene)
             from . import output_publication
 
             publication = output_publication.update_outputs(scene, self.session)
