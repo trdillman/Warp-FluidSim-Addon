@@ -1,5 +1,14 @@
 # Changelog
 
+### Unreleased (4.0)
+
+- **Liquid Preview** (Look stage toggle, `L` in the 3D View): a screen-space
+  fluid look drawn from the published particles, with refraction-tinted
+  thickness, a Fresnel rim and optional whitewater. Viewport only; it adds no
+  GPU-to-CPU readback, and nothing is drawn or registered while it is off.
+- Added the Liquid Preview pixel references
+  (`tests/references/liquid_preview/`, synthetic seeded sphere + sheet).
+
 ## 3.2.1 — Explicit Warp installation
 
 - **Warp is no longer bundled.** The extension zip does not contain NVIDIA
