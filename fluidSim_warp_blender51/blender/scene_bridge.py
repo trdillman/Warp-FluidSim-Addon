@@ -470,6 +470,8 @@ class Session:
             getattr(stats, "surface_tension_message", ""))
         fs.stat_native_solver_message = str(
             getattr(stats, "native_solver_message", ""))
+        fs.stat_learned_guess_message = str(
+            getattr(stats, "learned_guess_message", ""))
         growth = getattr(self.solver, "last_particle_growth", None)
         if (growth is not None and getattr(growth, "grew", False)
                 and int(growth.current) != self.last_reported_growth_capacity):

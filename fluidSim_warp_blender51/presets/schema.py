@@ -181,6 +181,7 @@ SCENE_OWNED_SETTINGS = frozenset({
     "stat_surface_tension_temporary_bytes",
     "stat_surface_tension_submission_ms", "stat_surface_tension_status",
     "stat_surface_tension_message", "stat_native_solver_message",
+    "stat_learned_guess_message",
 })
 
 _TOP_LEVEL_KEYS = {

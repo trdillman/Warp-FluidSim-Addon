@@ -80,6 +80,7 @@ def _fake_solver(preconditioner):
         stats=SimpleNamespace(),
         _cfl_speed_limit=lambda dt: 1.0,
         _native_solver_message=lambda: "",
+        _learned_guess_message=lambda: "",
     )
     return fake, seen
 

@@ -31,6 +31,13 @@
   be removed in 4.1.
 - Disabling the add-on keeps unregistering the remaining classes when one
   fails and prints a single summary line listing every class it left behind.
+- Experimental learned pressure initial guess, **hidden and off**. It did not
+  meet its ship gate: even a perfect one-value-per-tile guess saves at most
+  1.2x PCG iterations on the four demos, against the required 2x. No weights
+  ship; turned on (scripting only), it reports "Learned guess: off (weights
+  missing)" in the Live Readout. Off, results and cache identity are
+  unchanged. Training tools are in `tools/learned_guess/`; numbers are in
+  `docs/RELEASE_4_0_STATUS.md`.
 
 ### Corrections
 

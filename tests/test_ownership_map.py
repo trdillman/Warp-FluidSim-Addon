@@ -39,7 +39,9 @@ GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 # Resolution Divisions added ``resolution_divisions`` (213 -> 214).
 # Liquid Preview added five scene display settings (217 -> 222);
 # Liquid Deck added deck_shown and deck_stage (222 -> 224).
-EXPECTED_FIELD_COUNT = 224
+# The hidden learned pressure guess added pressure_learned_guess and
+# stat_learned_guess_message (224 -> 226).
+EXPECTED_FIELD_COUNT = 226
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested

@@ -514,6 +514,7 @@ def play_cache_frame(sess, scene, frame=None):
     fs.stat_surface_tension_status = "CACHE_PLAYBACK"
     fs.stat_surface_tension_message = ""
     fs.stat_native_solver_message = ""
+    fs.stat_learned_guess_message = ""
     fs.status = f"Cache frame {frame}: {fs.stat_particles:,} particles"
     warning = str(getattr(publication, "warning", "") or "")
     if warning:

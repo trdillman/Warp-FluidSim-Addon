@@ -1167,6 +1167,9 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     stat_native_solver_message: StringProperty(
         default="",
         description="Why a pressure or viscosity solve fell back from CUDA graphs to a slower host loop, if it did")
+    stat_learned_guess_message: StringProperty(
+        default="",
+        description="Learned pressure guess state: empty while the setting is off, otherwise on, or off with the reason")
 
 
 # Domain-level settings
@@ -1428,6 +1431,13 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         ],
         default="MULTIGRID", update=_request_live,
         description="Choose the preconditioner for the PCG pressure solver; Multigrid can converge in fewer iterations on large domains, while Jacobi is cheaper per iteration. Used only by the PCG solver")
+    # Hidden and off in 4.0: no trained weights ship because the ship gate
+    # (docs/specs/4.0/SPEC-learned-pressure-guess.md) was not met. Not drawn
+    # in any panel; see docs/RELEASE_4_0_STATUS.md for the measured numbers.
+    pressure_learned_guess: BoolProperty(
+        name="Learned Pressure Guess", default=False, update=_request_reset,
+        options={'HIDDEN'},
+        description="Start each PCG pressure solve from a guess predicted by a small trained network instead of from zero; the solve still runs to the same tolerance, falls back to zero silently when no valid weights file is installed, and changing it resets the solver")
     pressure_threshold: FloatProperty(
         name="Threshold", default=0.0, min=0.0, max=1.0,
         update=_request_live,
