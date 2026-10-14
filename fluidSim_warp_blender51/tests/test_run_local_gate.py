@@ -128,3 +128,11 @@ def test_local_gate_rejects_head_changed_during_checks(tmp_path, monkeypatch):
     monkeypatch.setattr(run_local_gate, "run", mutate)
     assert run_local_gate.main(["--checks-only", "--output", str(tmp_path)]) == 1
     assert not (tmp_path / "local-gate-report.json").exists()
+
+
+def test_local_gate_accepts_certified_blender_lts_banner(tmp_path, monkeypatch):
+    blender = tmp_path / "blender"
+    blender.write_bytes(b"binary")
+    expected = ".".join(map(str, version.CERTIFIED_BLENDER_VERSION))
+    monkeypatch.setattr(run_local_gate.subprocess, "check_output", lambda command, **kwargs: f"Blender {expected} LTS\n")
+    assert run_local_gate.check_blender_version(blender) == expected

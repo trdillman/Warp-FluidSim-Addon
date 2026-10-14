@@ -75,7 +75,7 @@ def check_blender_version(blender: Path) -> str:
     certified = runpy.run_path(str(ADDON / "version.py"))["CERTIFIED_BLENDER_VERSION"]
     expected = ".".join(str(part) for part in certified)
     first_line = subprocess.check_output([str(blender), "--version"], text=True).splitlines()[0]
-    if first_line != f"Blender {expected}":
+    if first_line not in (f"Blender {expected}", f"Blender {expected} LTS"):
         raise RuntimeError(f"Expected Blender {expected}, got {first_line}")
     return expected
 
