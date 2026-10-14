@@ -115,7 +115,7 @@ def _validate(path: Path, module_name: str) -> dict[str, object]:
             return getattr(ds if name in ds.bl_rna.properties else fs, name)
 
         if not setting("whitewater_enabled") or setting("cache_format") != "V2":
-            raise AssertionError("whitewater resume example lost whitewater/cache-v2 settings")
+            raise AssertionError("whitewater resume example lost whitewater/resumable-cache settings")
         if (not setting("whitewater_attribute_type")
                 or setting("whitewater_output_mode") != "BOTH"):
             raise AssertionError("whitewater example lost typed combined/separate output settings")

@@ -642,9 +642,7 @@ def install_warp(
 
         report("Installing Warp...")
         try:
-            if repairing_certified or (
-                owned_version and _owned_warp_is_loaded(destination)
-            ):
+            if repairing_certified or _owned_warp_is_loaded(destination):
                 _stage_pending_repair(wheel_path, destination, wheel_info)
                 return InstallResult(
                     success=True,

@@ -18,8 +18,9 @@ from .scene_access import (
     scene_identity,
     scene_set,
 )
+from ..sim.effects.runtime import EffectExecutionError
 from .scene_inputs import SceneInputs
-from .simulation_admission import capacity_blocking_message
+from .simulation_admission import capacity_blocking_message, narrow_band_refusal
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
@@ -44,6 +45,9 @@ class Session:
         self.benchmark_result = None
         self.benchmark_compare = None
         self.error = ""
+        # The narrow-band refusal the last scene sync reported, so the sync
+        # that finds the conflict removed can retire exactly that error.
+        self.sync_refusal = ""
         self.device = None
         self.capacity_plan = None
         self.capacity_plan_memory_bypassed = False
@@ -213,6 +217,7 @@ class Session:
         self.device = None
         self.bind_scene(None, "")
         self.admitted_effects = ()
+        self.sync_refusal = ""
         self._clear_capacity_plan()
         self.particle_capacity_notice_scene_identity = None
         del solver
@@ -303,19 +308,40 @@ class Session:
             return
         self.scene_inputs.device = self.solver.device
         sync_generation = self.scene_inputs.begin_sync()
-        self.solver.set_source_batch(
-            self.scene_inputs.gather_sources(
-                scene, depsgraph, capture_first_mesh=capture_first_mesh,
-                sync_generation=sync_generation),
-            self.scene_inputs.gather_source_plans(scene, depsgraph))
+        # A narrow-band run was admitted without features that keep
+        # per-particle interior state. Playback syncs every frame, so a
+        # source edit admission would refuse (a Scalar field source) must not
+        # reach the solver here: the admitted sources stay installed and the
+        # refusal is reported until the conflict is removed or Reset re-admits.
+        refusal = narrow_band_refusal(
+            self.solver.settings, getattr(scene, "objects", ()))
+        if refusal:
+            self.sync_refusal = refusal
+            self.set_error(scene, refusal)
+            scene.fluidsim.status = f"Scene sync refused: {refusal}"
+        else:
+            if self.sync_refusal:
+                if self.current_error(scene) == self.sync_refusal:
+                    self.clear_error(scene)
+                self.sync_refusal = ""
+            self.solver.set_source_batch(
+                self.scene_inputs.gather_sources(
+                    scene, depsgraph, capture_first_mesh=capture_first_mesh,
+                    sync_generation=sync_generation),
+                self.scene_inputs.gather_source_plans(scene, depsgraph))
         self.solver.set_colliders(self.scene_inputs.gather_colliders(
             scene, depsgraph, sync_generation=sync_generation))
         self.solver.set_force_fields(
             self.scene_inputs.gather_force_fields(scene))
         self.solver.set_height_source(self.scene_inputs.gather_height_source(scene))
 
-    def prepare_step(self, scene, *, refresh_pending=False):
-        """Reconcile pending signatures and live settings before every step."""
+    def prepare_step(self, scene, *, refresh_pending=False, apply_live=True):
+        """Reconcile pending signatures and live settings before every step.
+
+        Production Bake passes ``apply_live=False``: its solver keeps the
+        settings it was admitted with, which are the cache's identity, so an
+        edit made mid-bake cannot change later frames under that identity.
+        """
         if not self.owns_scene(scene):
             return False
         # Playback reuses snapshots refreshed by RNA/depsgraph/undo handlers.
@@ -326,6 +352,8 @@ class Session:
 
         pending_settings.refresh_pending_state(
             scene, self, use_cached=not refresh_pending)
+        if not apply_live:
+            return True
         return pending_settings.apply_live_settings_safely(scene, self)
 
     def step(self, scene, *, write_cache=True, timeline_frame=None,
@@ -334,7 +362,26 @@ class Session:
         if not self.owns_scene(scene):
             return None
         fs = scene.fluidsim
-        stats = self.solver.step_frame()
+        # Custom Effect frame windows are authored in timeline frames; tell the
+        # solver which one this step produces so preview and bake (whose solver
+        # frame counters start from different origins) agree (decision D6).
+        self.solver.effect_frame = int(
+            scene.frame_current if timeline_frame is None else timeline_frame)
+        effects = None
+        if hasattr(bpy, "props") and getattr(scene, "fluidsim_effects", None) is not None:
+            from . import effects  # animated effect values (B66, lane E)
+
+            effects.sync_animated_effect_bindings(scene, self)
+        try:
+            stats = self.solver.step_frame()
+        except EffectExecutionError as exc:
+            if effects is not None:
+                # Before any caller releases the solver and its runtime error.
+                effects.publish_runtime_error(scene, exc)
+            raise
+        if effects is not None:
+            effects.publish_runtime_telemetry(
+                scene, getattr(stats, "custom_effects", None) or ())
         sourcing = getattr(self.solver, "sourcing", None)
         apply_result = (getattr(sourcing, "last_apply_result", {})
                         if sourcing is not None else {})
@@ -378,6 +425,7 @@ class Session:
             self.frame_stats.pop(0)
         fs.stat_particles = stats.active_particles
         fs.stat_voxels = stats.active_voxels
+        fs.stat_liquid_voxels = int(getattr(stats, "liquid_voxels", 0))
         fs.stat_whitewater = stats.whitewater_particles
         fs.stat_whitewater_foam = int(getattr(stats, "whitewater_foam", 0))
         fs.stat_whitewater_bubbles = int(
@@ -527,15 +575,17 @@ def sync_scene_to_solver(scene, sess: Session | None = None, depsgraph=None):
 def step_frame(
         scene, sess: Session | None = None, *, write_cache: bool = True,
         refresh_pending: bool = True, timeline_frame=None,
-        publish_outputs: bool = True):
+        publish_outputs: bool = True, apply_live_settings: bool = True):
     """Reconcile live RNA, then advance through the authoritative step seam.
 
     Direct callers conservatively refresh pending signatures. Interactive
     playback passes ``refresh_pending=False`` because persistent RNA/depsgraph
-    handlers already refreshed the per-scene snapshot.
+    handlers already refreshed the per-scene snapshot. Production Bake passes
+    ``apply_live_settings=False`` (see ``Session.prepare_step``).
     """
     sess = sess or session()
-    reconciled = sess.prepare_step(scene, refresh_pending=refresh_pending)
+    reconciled = sess.prepare_step(
+        scene, refresh_pending=refresh_pending, apply_live=apply_live_settings)
     result = sess.step(
         scene, write_cache=write_cache, timeline_frame=timeline_frame,
         publish_outputs=publish_outputs)

@@ -109,12 +109,14 @@ def test_guided_workflow_exposes_complete_artist_preview_actions():
     launcher = (ROOT / "panels.py").read_text(encoding="utf-8")
     operator = (ROOT / "operator_domains" / "session.py").read_text(encoding="utf-8")
     guide = (ROOT / "docs" / "user_guide.md").read_text(encoding="utf-8")
-    assert "Set Up & Preview…" in scene_ui
+    assert "Set Up & Play…" in scene_ui
     assert "Set Up Only…" in scene_ui
     # Transport has one home: the pinned launcher strip, not the Scene tab.
     assert "fluidsim.preview_start" not in scene_ui
     assert "fluidsim.preview_pause" in launcher
-    assert "fluidsim.preview_start" in launcher
+    # Play is Blender's own timeline play; there is no separate Preview gate.
+    assert "screen.animation_play" in launcher
+    assert "fluidsim.preview_start" not in launcher
     assert "fluidsim.apply_changes" in launcher
     assert 'bl_idname = "fluidsim.preview_start"' in operator
     assert "starts Blender timeline playback" in guide

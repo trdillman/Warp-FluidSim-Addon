@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from fluidsim_testpkg.blender.production_bake import BakeController, BakeStatus
-from fluidsim_testpkg.io.cache_schema import CacheManifestV2, ResumeDecision
+from fluidsim_testpkg.io.cache_schema import CacheManifestV3, ResumeDecision
 
 
 class FakeBackend:
@@ -14,13 +14,22 @@ class FakeBackend:
         self.events: list[str] = []
         self.fail_frame = fail_frame
         self.base_dir = "/cache"
-        self.manifest = CacheManifestV2.new(
-            solver_version="1.0.248",
+        self.manifest = CacheManifestV3.new(
+            solver_version="3.0.0",
             scene_key="scene",
             settings_signature="settings",
             source_signature="sources",
             frame_start=1,
             frame_end=5,
+            source_schema_version=1,
+            transfer_mode="FLIP",
+            grid_spec={
+                "resolution_divisions": 64, "voxel_size": 0.0625,
+                "domain_size": [4.0, 4.0, 4.0], "leaf_dim": 8},
+            narrow_band={"enabled": False, "band_voxels": 0.0},
+            platform={
+                "os": "Windows-11", "gpu_name": "NVIDIA RTX",
+                "driver": "560.94", "warp": "1.17.0"},
         )
 
     def initialize(self, scene, start, end, *, resume=False, restart=False):

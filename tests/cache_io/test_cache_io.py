@@ -98,7 +98,7 @@ def test_directory_without_a_cache_reads_nothing(tmp_path):
 def test_the_cache_module_no_longer_writes_format_1():
     from fluidSim_warp_blender51.io import cache
 
-    assert cache.CACHE_FORMAT_VERSION == 2
+    assert cache.CACHE_FORMAT_VERSION == 3
     for name in ("write_frame", "write_sequence_metadata", "compact_settings_segments"):
         assert not hasattr(cache, name), name
 
@@ -143,3 +143,64 @@ def test_settings_record_encodes_nonfinite_values_as_standard_json():
         "negative": {"__fluidsim_nonfinite_float__": "-Infinity"},
         "positive": {"__fluidsim_nonfinite_float__": "Infinity"},
     }
+
+
+def _pre_d1_signature(settings):
+    """The settings signature exactly as caches before owner decision D1 wrote
+    it: every public field, the compute device included."""
+    import hashlib
+    from dataclasses import fields
+
+    from fluidSim_warp_blender51.io.cache import _jsonable_setting
+
+    values = {f.name: _jsonable_setting(getattr(settings, f.name))
+              for f in fields(settings)
+              if not f.name.startswith("_")
+              and f.name != "live_surface_publish_cadence"}
+    encoded = json.dumps(values, sort_keys=True, separators=(",", ":"),
+                         allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def test_cache_identity_does_not_depend_on_the_compute_device():
+    # Review item B16, owner decision D1: changing the GPU preference (or
+    # playing on another machine) rejected every cached frame.
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+
+    on_0 = settings_record(SolverSettings(device="cuda:0"))
+    on_1 = settings_record(SolverSettings(device="cuda:1"))
+    assert "device" not in on_0["settings"]
+    assert on_0["signature"] == on_1["signature"]
+
+
+def test_caches_baked_before_d1_still_match_their_settings():
+    from fluidSim_warp_blender51.io.cache import settings_signature_matches
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+
+    baked = _pre_d1_signature(SolverSettings(device="cuda:0"))
+    assert settings_signature_matches(SolverSettings(device="cuda:0"), baked)
+    assert settings_signature_matches(SolverSettings(device="cuda:1"), baked)
+    assert not settings_signature_matches(
+        SolverSettings(device="cuda:0", cfl=SolverSettings().cfl + 1.0), baked)
+
+
+def test_resume_can_rebuild_a_pre_d1_identity_bundle():
+    import hashlib
+
+    from fluidSim_warp_blender51.io.cache import (
+        SCENE_KEY_VERSION,
+        legacy_signature_bundles,
+        signature_bundle_from_records,
+    )
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+
+    settings = SolverSettings(device="cuda:1")
+    current = signature_bundle_from_records(settings, ())
+    old_settings = _pre_d1_signature(settings)
+    old_key = hashlib.sha256(
+        f"scene-key={SCENE_KEY_VERSION}|settings={old_settings}|"
+        f"sources={current['source_signature']}".encode("utf-8")).hexdigest()
+
+    assert {"scene_key": old_key, "settings_signature": old_settings,
+            "source_signature": current["source_signature"]} in (
+        legacy_signature_bundles(current, settings))

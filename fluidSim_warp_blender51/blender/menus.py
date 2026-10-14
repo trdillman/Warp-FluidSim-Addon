@@ -52,6 +52,9 @@ def create_domain_object(scene):
     mesh.from_pydata(verts, [], faces)
     mesh.update()
     obj = bpy.data.objects.new("FluidSim Domain", mesh)
+    from .setup_wizard import present_as_domain
+
+    present_as_domain(obj)
     scene.collection.objects.link(obj)
     fs.domain_object = obj
     return obj
@@ -107,5 +110,11 @@ def register():
 def unregister():
     add_menu = getattr(bpy.types, "VIEW3D_MT_add", None)
     if add_menu is not None:
-        add_menu.remove(draw_add_menu)
-    bpy.utils.unregister_class(FLUIDSIM_OT_add_domain)
+        try:
+            add_menu.remove(draw_add_menu)
+        except Exception as exc:  # noqa: BLE001 - report and keep walking
+            print(f"FluidSim: could not remove the Add menu entry: {exc!r}")
+    try:
+        bpy.utils.unregister_class(FLUIDSIM_OT_add_domain)
+    except Exception as exc:  # noqa: BLE001 - report and keep walking
+        print(f"FluidSim: could not unregister FLUIDSIM_OT_add_domain: {exc!r}")

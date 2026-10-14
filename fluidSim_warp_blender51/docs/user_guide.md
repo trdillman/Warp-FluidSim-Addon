@@ -1,12 +1,12 @@
 # FluidSim Warp — User Guide
 
-FluidSim Warp 2.2.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
+FluidSim Warp 3.2.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 5.2.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
   and look development. It is responsive but not an authoritative production
   transaction log.
-- **Production Bake** advances every frame sequentially and commits cache-v2
+- **Production Bake** advances every frame sequentially and commits cache-v3
   frame output plus a deterministic restart checkpoint before the manifest
   exposes that frame as playable or resumable.
 
@@ -14,13 +14,13 @@ FluidSim Warp 2.2.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 | Area | Target |
 |---|---|
-| FluidSim | 2.2.0 |
+| FluidSim | 3.2.0 |
 | Blender | Blender 5.2.0 LTS or newer 5.2.x |
 | Operating systems | Windows x64 and Linux x64 |
 | GPU-gate certified | Windows 11 x64 on an NVIDIA GeForce RTX 4080 SUPER. Linux x64 is packaged from the same source but not certified |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
 | Warp dependency | NVIDIA Warp 1.17.0 (CUDA 12 build), installed via preferences button |
-| Cache compatibility | Cache v2 write/playback/resume; Cache v1 (1.0.x) is refused: bake again |
+| Cache compatibility | Cache v3 write/playback/resume; Cache v1 (1.0.x) is refused, and so are caches from 2.x: bake again (see [Migrating to 3.0](migrating_to_3_0.md)) |
 
 Install the extension ZIP for your platform. On first run, open **Edit →
 Preferences → Add-ons → FluidSim Warp** and press the **Install Warp** button.
@@ -64,13 +64,15 @@ first: 2.0 opens only files saved by 1.1.0 or later.
 
 After selecting one or more mesh objects, the shortest workflow is:
 
-1. Open **Scene Properties → Setup**, click **Set Up & Preview…**, choose
+1. Open **Scene Properties → Setup**, click **Set Up & Play…**, choose
    **Quick Liquid** and a product preset, then confirm.
 2. FluidSim performs runtime and capacity preflight, prepares the solver and
    outputs, and starts Blender timeline playback.
 
-The compact **3D View → FluidSim** status panel exposes Preview, Pause/Resume,
-Apply Changes, and Restart shortcuts. Below it, the Setup, Simulate, Look and
+The compact **3D View → FluidSim** status panel exposes Play/Pause,
+Apply Changes, and Restart shortcuts. Play is Blender's own timeline play: the
+spacebar or the Timeline's play button starts and resumes the simulation
+directly, with no separate Preview step. Below it, the Setup, Simulate, Look and
 Bake & Export stages hold the controls for each step (see *3D View FluidSim workflow* in section 3). Object roles and per-input controls remain
 in **Object Properties** and also appear contextually in **Physics Properties**.
 
@@ -105,7 +107,7 @@ the existing domain.
 | Preset | Purpose | Relative cost |
 |---|---|---|
 | Preview Water | Coarse interactive blocking; whitewater off | Low |
-| Production Water | General final-quality liquid and cache-v2 defaults | Medium/high |
+| Production Water | General final-quality liquid and cache-v3 defaults | Medium/high |
 | Splash + Whitewater | Energetic shots with larger whitewater budgets | High |
 | Honey | Implicit high-viscosity liquid | High |
 | Thick Liquid | Stylized medium/high viscosity | Medium/high |
@@ -134,7 +136,7 @@ Manual setup remains available for authored pipelines:
    values describe the active object.
 4. Choose a product preset under **Scene Properties → Setup → Product Presets**
    or edit Simulation Physics directly.
-5. Review **Capacity & Safety**, then use **Preview** or Production Bake as
+5. Review **Capacity & Safety**, then press **Play** or use Production Bake as
    appropriate.
 
 Guided and manual workflows use the same object roles and solver settings; the
@@ -154,13 +156,21 @@ needed. Inapplicable values are hidden rather than shown as inert controls.
 
 The root panels appear in this fixed order.
 
+Since 3.0 the Scene tab holds only scene-owned panels. Domain & Particles,
+Initial Liquid — Height Fill, Simulation Physics, Surface Reconstruction and
+Whitewater (with their children), and the domain's attribute and profiling
+panels, are drawn on the **Physics** tab under **FluidSim**, from the same
+panel code. **Open Full Settings** buttons open the Physics tab when a domain is
+active. The section names below are unchanged.
+
 #### Session & Status
 
 Shows one derived activity state: **Idle**, **Live Preview**, **Cache Playback**,
 or **Production Bake**. It also shows runtime/device readiness and the actions
 valid for the current state. Pause, Resume, Restart, Cancel, and Clear Error
-remain available when relevant. Manual Initialize, Release, Reset, and stepping
-controls are retained in the default-closed **Advanced > Lifecycle** panel.
+remain available when relevant. Manual Initialize, Release, Reset, stepping
+controls, and **Live Timeline Recovery** (which owns the bounded catch-up frame limit)
+are retained in the default-closed **Advanced > Lifecycle** panel.
 
 Children:
 
@@ -170,18 +180,30 @@ Children:
   destructive valid transition and confirms only when progress will be lost.
 - **Runtime Statistics** appears when this scene owns the solver or its cache
   playback is active.
-- **Live Timeline Recovery** owns the bounded catch-up frame limit.
 
 #### Setup
 
-**Set Up & Preview…** configures the selected objects and starts real timeline
+**Set Up & Play…** configures the selected objects and starts real timeline
 playback. **Set Up Only…** stops after configuration. **Product Presets** applies
 built-in or user presets and reports the active preset identity.
 
 #### Domain & Particles
 
-This is the sole owner of Domain object, Voxel Size, Liquid Sampling, Maximum
-Particles, automatic particle growth, topology expansion, and open boundaries.
+This is the sole owner of Domain object, Resolution Divisions, Liquid Sampling,
+Maximum Particles, automatic particle growth, topology expansion, and open
+boundaries.
+
+**Resolution Divisions** is the number of simulation-grid cells along the
+longest domain axis (default 64, minimum 8). The cell size is derived:
+longest domain axis ÷ Resolution Divisions. Because the count is fixed, scaling
+the domain changes the cell size and not the cell count. Read-only lines under
+the control show the effective **Cell size** and the padded **Grid** in cells:
+the solver pads each axis to whole 8 × 8 × 8 leaves, so the grid can be larger
+than the division count. If a very large count would need a cell smaller than
+the minimum cell size, a line says the resolution was capped. Changing it needs
+a Reinitialize. The Quality tier still scales the effective cell size
+(Draft coarser, Final finer) without changing the stored divisions. Files
+saved before 3.0 are converted on load; see `migrating_to_3_0.md`.
 **Capacity & Safety** contains sparse-leaf and whitewater capacities, growth
 failure policy, current peak-memory estimate, and verified safe alternatives.
 
@@ -195,17 +217,51 @@ not repeated here; it is inherited from Domain & Particles.
 
 The root summarizes active solver features. Children are:
 
-- **Time & Transfer** — time scale, CFL, substep limits, PIC/FLIP transfer,
-  tracing, and count stiffness.
+- **Time & Transfer** — time scale, CFL, substep limits, PIC/FLIP/APIC
+  transfer, tracing, and count stiffness. See **Transfer** below.
 - **Gravity** — scene gravity or an authored vector.
-- **Pressure** — solver, iterations, threshold, and PCG-only tolerance.
+- **Pressure** — solver, iterations, threshold, and PCG-only preconditioner
+  and tolerance. See **Preconditioner** below.
 - **Viscosity** — enablement, constant/particle source, solver, iterations, and
   PCG-only tolerance.
 - **Surface Tension** — Phase-5 coefficient, density, force band, safety, normal
   smoothing, stable capillary timestep preview, and runtime curvature/force
   diagnostics.
 - **Particle Relaxation**, **Velocity Limits**, **Global Forces**,
-  **Dissipation**, **Attraction**, and **Spatiotemporal Processing**.
+  **Dissipation**, and **Attraction**.
+
+##### Transfer
+
+**Transfer** chooses how velocity moves between particles and the grid:
+
+- **PIC** — smooth and dissipative.
+- **FLIP** (default) — keeps motion and can be noisier. **FLIP Ratio** appears
+  only for FLIP and blends PIC and FLIP updates.
+- **APIC** — each particle also carries a 3 × 3 affine matrix (its local
+  rotation and shear), so swirl and spin survive the trip through the grid
+  instead of being averaged away.
+
+APIC uses its own transfer kernels, so choosing PIC or FLIP runs exactly the
+code it ran before APIC existed. The affine matrices cost **72 bytes per
+particle, only while APIC is selected**; the peak-memory estimate in Capacity &
+Safety includes them. You can switch between FLIP and APIC while a simulation is
+loaded. A checkpoint from the other mode is imported without error: leaving APIC
+drops the matrices, and entering it starts them at zero. The bake manifest
+records the transfer mode that was used.
+
+On the engineering test (a spinning disc over 100 frames) the fraction of angular
+momentum kept was PIC 0.596, FLIP 0.940 and APIC 0.939. APIC matches FLIP there,
+not better, because most of the loss is in the free-surface handling that all
+three share. Try APIC on your own scene before relying on it.
+
+##### Preconditioner
+
+For the PCG pressure solver, **Preconditioner** chooses **Jacobi** (default) or
+**Multigrid**. It is opt-in in this build. Multigrid applies one multigrid
+V-cycle per iteration: each iteration costs more, and far fewer are needed on
+large or finely resolved domains (13 against 123 iterations on a 32³ obstacle
+test). Whether it is faster per frame depends on the scene, so measure your own
+before changing it for a bake. It is a live setting. Adding Multigrid did not change the Jacobi path.
 
 #### Custom Effects
 
@@ -216,8 +272,9 @@ of Scene Properties. The root contains four groups:
    remove.
 2. **Selected Effect** — artist-facing description, typed parameters, controller
    objects, frame window, and cadence.
-3. **Preview / Apply Changes** — prepares eligible draft effects through the
-   production admission path without a separate compile step.
+3. **Play / Apply Changes** — Play runs the simulation; Apply Changes prepares
+   eligible draft effects through the production admission path without a
+   separate compile step. Drafts also apply on rewind to the start frame.
 4. **Status** — trust, current draft/applied divergence, production admission,
    compile evidence, and the applied SHA-256 identity.
 
@@ -263,8 +320,8 @@ in Advanced mode. Hidden compatibility aliases do not appear.
 
 The root owns the resolved Cache Path. Children are:
 
-- **Playback** — Preview, Pause, or Resume Cache; this starts the actual Blender
-  timeline and does not allocate a live solver.
+- **Playback** — Play Cache starts the actual Blender timeline from the cache
+  and does not allocate a live solver; Pause and Play (or the spacebar) resume it.
 - **Shared Playback / Export Range** — optional playback/export range.
 - **Storage** — compression and checkpoint interval.
 - **Production Bake** — authored bake range, progress, one mutually exclusive
@@ -319,22 +376,32 @@ appear in scene panels.
 ### 3D View FluidSim workflow
 
 The **3D View → FluidSim** sidebar tab follows the order you work in. A pinned
-strip at the top shows activity, runtime readiness, Preview / Pause / Resume /
+strip at the top shows activity, runtime readiness, Play / Pause /
 Restart and Apply Changes; below it four stages hold the settings:
 
-1. **Setup** — interface level, Quality, presets, Domain, voxel size, sampling.
+1. **Setup** — interface level, Quality, presets, Domain, Resolution Divisions,
+   sampling.
 2. **Simulate** — flip ratio, viscosity, surface tension, scene gravity, and the
    live readout.
 3. **Look** — view mode, surface, whitewater, particle display and Materials.
-4. **Bake & Export** — cache folder, Preview Cache, Production Bake and Export
-   Current Frame, with **Storage & Range** and **Manage Cache** shelves.
+4. **Bake & Export** — cache folder, Play Cache, Production Bake, Export
+   Current Frame and Export Surface as Alembic, with **Storage & Range** and
+   **Manage Cache** shelves.
 
 Each control has one home, and every stage edits the same `Scene.fluidsim` /
 domain-object owners as Scene and Physics Properties.
 
+**Demo Gallery.** A collapsed **Demo Gallery** shelf above the stages lists the
+four demos (Dam Break, Crown Splash, Paddle Stir, Chromatic Vortex). Hover a
+button for what the demo shows; click it to append that demo as a new scene and
+switch to it. Your current scene stays in the file, untouched (switch back with
+the scene selector in the top bar), and any running preview on it is released
+first. The demo files ship inside the extension, so the shelf works in an
+installed build as well as in a repository checkout.
+
 **FluidSim header popover.** The 3D View header carries a **FluidSim** button.
-It opens a floating panel with the live loop — the status line, Preview / Pause /
-Resume / Restart, Apply Changes when an edit is waiting, Quality and the
+It opens a floating panel with the live loop — the status line, Play / Pause /
+Restart, Apply Changes when an edit is waiting, Quality and the
 physics you tune while watching (flip ratio, viscosity, surface tension, scene
 gravity). It draws the same functions as the sidebar, so the two never differ.
 With no domain yet it offers Guided Setup instead. Use it when the sidebar is
@@ -369,7 +436,7 @@ FluidSim has two deliberately separate attribute paths.
 
 ### Persistent production attributes
 
-Enabled channels are written to live Blender outputs, cache-v2 frames, and—when
+Enabled channels are written to live Blender outputs, cache-v3 frames, and—when
 restart-critical—solver checkpoints. Blender publication validates data type,
 domain, length, and finite values before mutating an output datablock. An old
 attribute with a conflicting type or domain is recreated rather than silently
@@ -398,9 +465,9 @@ values assigned monotonically at committed emission transactions.
 New cache frames carry an ordered attribute-inventory schema and transfer-method
 identifier. Declared-but-missing, misaligned, wrong-type, non-finite, duplicate
 UID, or unsupported data fails closed. Phase-4 frames require one aligned int32
-whitewater type value per point. Phase-3 cache-v2 frames remain readable, but whitewater with no recorded type is published as legacy
-unclassified (`-1`) only on the combined output; FluidSim does not invent a
-physical classification.
+whitewater type value per point. Caches from builds before 3.0 are refused, so
+every cache frame 3.0 reads records its whitewater types; FluidSim does not
+invent a physical classification.
 
 ### Production whitewater types
 
@@ -470,10 +537,11 @@ levels:
 
 1. Click **Add Effect** and select **Vortex Force**.
 2. Move the created Vortex controller and adjust Strength, Radius, and Falloff.
-3. Click **Preview**. FluidSim prepares the draft effect, solver, and outputs,
-   then starts timeline playback.
-4. Use **Apply Changes** after later edits; it confirms only when the required
-   transition discards current preview progress.
+3. Press **Play** (or the spacebar). FluidSim prepares the draft effect, solver,
+   and outputs as timeline playback starts.
+4. Later edits never pause playback. They apply on the next Play when nothing
+   would be lost, on rewind to the start frame, or through **Apply Changes**,
+   which confirms only when the transition discards current progress.
 
 The Advanced-only Test Draft action performs static validation, forces real
 Warp JIT compilation, runs
@@ -490,7 +558,7 @@ change marks the stack different from the applied identity. Production Bake is
 blocked until the exact draft is tested and applied.
 
 The effective stack follows enabled/mute/solo rules. Its canonical SHA-256 and
-ordered inventory are written to cache-v2 frames, checkpoints, manifests,
+ordered inventory are written to cache-v3 frames, checkpoints, manifests,
 reports, and headless output. Resume rejects mismatches with
 `EFFECT_SIGNATURE_MISMATCH` before solver mutation.
 
@@ -538,7 +606,7 @@ tracks and device memory metadata.
 
 ## 7. Validation
 
-**Validation / Benchmarks → Run Validation Suite** runs 21 registered tests
+**Validation / Benchmarks → Run Validation Suite** runs 20 registered tests
 on the selected certified CUDA device:
 
 1. Sparse tiled leaf-grid coordinate/index roundtrip
@@ -556,12 +624,11 @@ on the selected certified CUDA device:
 13. Viscosity stability
 14. Whitewater churn/emission/advection behavior
 15. Benchmark/profile schema compatibility
-16. ST-FLIP jitter, phase, and residual bounds
-17. Surface-tension static-droplet boundedness and volume proxy
-18. Surface-tension droplet-oscillation trend oracle
-19. Surface-tension zero-coefficient solver equivalence
-20. Surface-tension capillary timestep constraint
-21. Surface-tension finite-energy and diagnostic guard
+16. Surface-tension static-droplet boundedness and volume proxy
+17. Surface-tension droplet-oscillation trend oracle
+18. Surface-tension zero-coefficient solver equivalence
+19. Surface-tension capillary timestep constraint
+20. Surface-tension finite-energy and diagnostic guard
 
 Every result includes pass/fail, detail, and elapsed time. The five P5 entries
 are mandatory CUDA release gates. The supplied-package CPU validator is a
@@ -586,11 +653,11 @@ The benchmark implements the synthesized `BENCHMARK_FIELDS` schema
 
 ---
 
-## 9. Production Bake, cache v2, and headless execution
+## 9. Production Bake, cache v3, and headless execution
 
 ### Transaction authority
 
-Each cache-v2 frame uses this commit order:
+Each cache-v3 frame uses this commit order:
 
 1. Advance the solver exactly one frame with Blender frame handlers suppressed.
 2. Write and fsync frame output to a temporary NPZ, then atomically replace the
@@ -621,15 +688,26 @@ Cache layout:
 
 **Resume** restores only the last verified committed checkpoint, then starts at
 the next frame. Scene, solver-setting, source/evaluated-geometry, domain,
-capacity, and ST-FLIP compatibility signatures are checked before live state is
+and capacity compatibility signatures are checked before live state is
 replaced. Solver-affecting changes are rejected with a structured reason;
 render-only display/material changes remain resume-safe. **Restart** explicitly
-removes the prior v2 transaction set and begins at the authored start frame.
+removes the prior transaction set and begins at the authored start frame.
+
+Every committed frame also records a **source stamp**: a hash of each source's
+and collider's world matrix and evaluated geometry as they were at that frame
+(not panel settings, names or roles). Resume checks the stamp of every committed
+frame, which costs one frame change per baked frame, and refuses at the first
+frame whose current stamp differs, so a cache never mixes two animations. The
+Bake stage names that frame and offers **Re-bake from Frame N**, which keeps the
+frames before N (after confirming that they still match) and bakes N onward.
+Restart discards the whole cache instead. A cache written by 2.x is refused with
+a message that says to re-bake; the Bake stage shows it and Restart replaces the
+old cache.
 
 Checkpointed state includes liquid and whitewater particles, sparse topology
 and persistent active fields, source one-shot/accumulation/RNG state, whitewater
-RNG, ST-FLIP temporal/RNG/reference-mass state, solver frame, and simulation
-time. Transient bins and scratch fields are rebuilt after restore.
+RNG, solver frame, and simulation time. Transient bins and scratch fields are
+rebuilt after restore.
 
 ### Cache management
 
@@ -641,16 +719,49 @@ time. Transient bins and scratch fields are rebuilt after restore.
 - **Rename** accepts only a leaf directory name.
 - **Open Folder** uses path APIs rather than shell-string interpolation.
 
-A cache written by FluidSim 1.0.x (`fluidsim_sequence.json` plus NPZ frames)
-is refused rather than played: free it and bake again. **Export Current Frame**
-continues to write OBJ/PLY output.
+A cache written by FluidSim 1.0.x (`fluidsim_sequence.json` plus NPZ frames) or
+2.x (manifest format 2) is refused rather than played: free it and bake again.
+Nothing is migrated. **Export Current Frame** continues to write OBJ/PLY output.
 
-Older cache-v2 frames remain playable under their recorded attribute/type
-schema. Production resume is deliberately stricter than playback: a Phase-4
-manifest/checkpoint does not acquire a Phase-5 settings signature merely
-because surface tension is disabled, and a pre-1.0.251 cache has no authoritative
-Custom Effects identity. Rebake with 1.0.251 before relying on restartable
-production work in this release.
+Cache frames remain playable under their recorded attribute/type schema.
+Production resume is deliberately stricter than playback: a manifest/checkpoint
+does not acquire a Phase-5 settings signature merely because surface tension is
+disabled.
+
+### Export Surface as Alembic
+
+**Export Surface as Alembic…** in the Bake & Export stage writes the liquid
+surface of a baked cache as an Alembic (`.abc`) mesh sequence. It reads the
+cache, not the solver, and drives Blender's own Alembic exporter: the export
+turns Cache Playback and Live on, selects only the surface object, and walks the
+frame range so each frame is published from the cache. When it finishes, it
+restores Live, Cache Playback, the current frame, the selection and the surface
+object's visibility.
+
+Limits:
+
+- **It exports the surface mesh only.** Liquid particles and whitewater are not
+  exported: Blender 5.2's Alembic exporter writes only an empty transform for a
+  point cloud.
+- **It needs a verified, contiguous cache** and a FluidSim surface object, which
+  appears when the surface output is enabled and a cached frame has been
+  played. It refuses, with the reason, when there is no cache, the cache is
+  unverified or has gaps, the cache is from 2.x, a production bake is running,
+  or there is no surface object.
+- The range defaults to the whole cache, narrowed by **Storage & Range** when a
+  custom range is on.
+- It does not need a CUDA GPU (see Playback-only mode).
+
+### Playback-only mode
+
+When Warp loads but no CUDA device is available, FluidSim enables itself in
+**Playback only** mode. The status strip reads "Playback only — CUDA
+unavailable" and shows the runtime probe's reason. The Simulate stage is drawn
+but disabled, and the Bake stage offers only what needs no solver: loading a
+cache, playing it, and exporting from it as Alembic. Baking and Export
+Current Frame are not offered, and Live Preview cannot start, because they need
+a CUDA GPU. Kernel prewarm is
+skipped. Use this mode to review or deliver a cache baked on another machine.
 
 ### Headless command
 
@@ -708,7 +819,7 @@ preserving the initialized solver. No partial source batch is committed.
 
 The compact **3D View → FluidSim** launcher remains reachable without becoming
 a second settings surface. It shows solver activity, runtime readiness, the
-valid Preview, Pause/Resume, Apply Changes, or Restart action, pending-change
+valid Play/Pause, Apply Changes, or Restart action, pending-change
 count, and a shortcut to Scene Properties. The viewport overlay remains
 informational only.
 
@@ -716,8 +827,8 @@ informational only.
 
 ## 11. Tips
 
-- **Start coarse.** Use a large Voxel Size (e.g. 0.08) while iterating, then
-  refine. Resolution scales cubically.
+- **Start coarse.** Use a low Resolution Divisions (for example 32) while
+  iterating, then refine. Resolution scales cubically.
 - **Keep timestep limits sane.** CFL and capillary stability both contribute
   to the selected substep count. Fast impacts, fine voxels, or high surface
   tension may require more Max Substeps.
@@ -738,20 +849,6 @@ Frame cadence builds once after simulation substeps; Manual builds lazily when
 the mesh is requested. Keep the simulation surface field enabled when using
 whitewater or snippets that consume `surface_sdf`.
 
-## ST-FLIP (Experimental)
-
-Enable **Simulation > Spatiotemporal Processing > Enable ST-FLIP
-(Experimental)** to test spatiotemporal sampling at large time steps. The
-implementation includes temporal residuals, space-time P2G, phase-field
-activation, optional variable pressure, local trajectory substepping, and
-render-surface re-synchronization. It is experimental because it has not yet
-passed multi-scene reference-error and long-run conservation gates; keep it
-off for production scenes. **Variable Projection (Experimental)** is off by
-default since 2.0; turn it on only to evaluate density-weighted pressure. With automatic reference mass, the solver
-runs the Monte Carlo calibration for the current ST seed. Liquid Sampling is a
-Reset-tier rest-density contract, so changing it stages Reset rather than
-rescaling the active ST-FLIP reference mass in place.
-
 ## Safe Settings recovery
 
 Before allocating solver arrays, FluidSim estimates peak VRAM against the
@@ -769,7 +866,7 @@ do not guarantee immunity from arbitrary CUDA failures.
 The recommendation samples current VRAM and GPU utilization through Warp and
 the NVIDIA driver, plus Windows CPU and RAM pressure. It stays as close as
 possible to the scene configuration while adjusting the largest cost drivers:
-leaf capacity, voxel size, particle and whitewater capacities, particles per
+leaf capacity, Resolution Divisions, particle and whitewater capacities, particles per
 voxel, topology expansion, and secondary surface-grid settings.
 ---
 
@@ -777,9 +874,11 @@ voxel, topology expansion, and secondary surface-grid settings.
 
 Release 2.0.0 passed the GUI-inclusive production gate on Windows 11 with
 Blender 5.2.0 LTS and NVIDIA Warp 1.17.0 on an NVIDIA GeForce RTX 4080
-SUPER. Release 2.2.0 installs that same Warp build from the preferences
-button instead of shipping the wheel inside the extension. The gate runs the CUDA pytest regressions, the CUDA self-validations, the GUI
-acceptance checks, saved-demo timeline playback, cache-v2 production bake,
+SUPER. The current 3.2.0 candidate installs that same Warp build from the
+preferences button instead of shipping the wheel inside the extension; this
+historical gate does not qualify the installer change. The gate runs the CUDA
+pytest regressions, the CUDA self-validations, the GUI
+acceptance checks, saved-demo timeline playback, cache production bake,
 export and resume, handler save/reopen, the release validators and the bounded
 demo-analysis checks for all four demos. A clean-profile install of the
 Windows package passed its smoke test and the installed GPU regression.

@@ -18,7 +18,6 @@ PACKAGE = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 ALLOWED_PRIVATE_READS = {
     "sim/surface.py": {"_np_dim", "_nvox", "_phase", "_surface_positions"},
     "sim/surface_tension.py": {"_nvox", "_phase"},
-    "sim/validation.py": {"_nvox"},
 }
 
 

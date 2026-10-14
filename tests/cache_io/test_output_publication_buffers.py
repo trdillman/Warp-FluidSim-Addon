@@ -103,6 +103,94 @@ def test_invalid_triangle_indices_are_rejected_before_unsigned_upload(bad_index)
     assert not mesh.loops.values
 
 
+class _PointAttribute:
+    def __init__(self, name, data_type, capacity, components):
+        self.name = name
+        self.data_type = data_type
+        self.domain = "POINT"
+        self.uploads = []
+        self.data = self
+        self._shape = (capacity,) if components == 1 else (capacity, components)
+
+    def foreach_set(self, _prop, values):
+        array = np.asarray(values)
+        self.uploads.append((array.__array_interface__["data"][0], array.copy()))
+
+
+class _PointCloud:
+    users = 1
+
+    def __init__(self, capacity):
+        self.points = [None] * capacity
+        self.attributes = _PointAttributes({
+            "position": _PointAttribute("position", "FLOAT_VECTOR", capacity, 3),
+            "radius": _PointAttribute("radius", "FLOAT", capacity, 1),
+            output.COLOR_ATTR: _PointAttribute(
+                output.COLOR_ATTR, "FLOAT_COLOR", capacity, 4),
+        })
+
+    def resize(self, _count):
+        raise AssertionError("steady-state frames must not reallocate")
+
+    def update_tag(self):
+        pass
+
+
+class _PointAttributes(dict):
+    def __iter__(self):
+        return iter(self.values())
+
+
+def test_point_publication_reuses_zero_padded_scratch_across_frames(monkeypatch):
+    """P18: capacity-sized scratch is reused, and the padding stays zero when
+    the live count drops (equivalent to a fresh np.zeros every frame)."""
+    scratch = getattr(output, "_SCRATCH", None)
+    if scratch is not None:
+        scratch.clear()
+    capacity = output._point_capacity_for(1000)
+    allocations = []
+
+    class _CountingNumpy:
+        def __getattr__(self, name):
+            return getattr(np, name)
+
+        @staticmethod
+        def zeros(shape, *args, **kwargs):
+            first = shape[0] if isinstance(shape, tuple) else shape
+            if first == capacity:
+                allocations.append(shape)
+            return np.zeros(shape, *args, **kwargs)
+
+    monkeypatch.setattr(output, "np", _CountingNumpy())
+    cloud = _PointCloud(capacity)
+    obj = type("Obj", (dict,), {})()
+    obj.type = "POINTCLOUD"
+    obj.data = cloud
+    obj.name = "FluidSim Particles"
+    rng = np.random.default_rng(3)
+
+    for frame, n in enumerate((1000, 800, 900)):
+        if frame == 1:
+            allocations.clear()  # the first frame may allocate the scratch
+        positions = rng.random((n, 3), dtype=np.float32)
+        colors = rng.random((n, 4), dtype=np.float32)
+        output._swap_points(obj, positions, 0.25, colors)
+        expected_coords = np.zeros((capacity, 3), np.float32)
+        expected_coords[:n] = positions
+        expected_radii = np.zeros(capacity, np.float32)
+        expected_radii[:n] = 0.25
+        expected_colors = np.zeros((capacity, 4), np.float32)
+        expected_colors[:n] = colors
+        for name, expected in (("position", expected_coords),
+                               ("radius", expected_radii),
+                               (output.COLOR_ATTR, expected_colors)):
+            np.testing.assert_array_equal(
+                cloud.attributes[name].uploads[-1][1], expected.ravel(), err_msg=name)
+        assert obj[output.POINT_COUNT_TAG] == n
+
+    assert allocations == [], "steady-state frames allocated capacity-sized scratch"
+
+
 def test_float_attribute_keeps_its_bulk_buffer_and_padding():
     mesh = Mesh()
     mesh.vertices.add(3)

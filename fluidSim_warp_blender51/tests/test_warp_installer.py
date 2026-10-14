@@ -206,6 +206,50 @@ def test_install_warp_repairs_a_corrupted_owned_certified_copy(tmp_path, monkeyp
     )
 
 
+@pytest.mark.parametrize("missing", ["dist-info", "init"])
+def test_loaded_owned_warp_with_missing_metadata_is_staged(tmp_path, monkeypatch, missing):
+    """Damaged version metadata must never allow writes over loaded native code."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    _seed_owned_warp(tmp_path, "1.17.0")
+    init = tmp_path / "warp" / "__init__.py"
+    (tmp_path / "warp" / "native.dll").write_bytes(b"loaded-native-code")
+    if missing == "dist-info":
+        (tmp_path / "warp_lang-1.17.0.dist-info").rmdir()
+    else:
+        init.unlink()
+    before = _snapshot(tmp_path)
+    _isolate_install(monkeypatch, tmp_path, importable=init.resolve())
+    monkeypatch.setitem(sys.modules, "warp", SimpleNamespace(__file__=str(init)))
+    assert warp_installer._owned_distribution_version(tmp_path) is None
+    payload = b"certified-locked-test-wheel"
+    info = mock.Mock(
+        filename="certified.whl", size=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        url="https://files.pythonhosted.org/packages/locked/warp.whl",
+    )
+    monkeypatch.setattr(warp_installer, "get_wheel_info_for_platform", lambda platform=None: info)
+    monkeypatch.setattr(
+        warp_installer, "_download_wheel",
+        lambda _url, destination, **_kwargs: destination.write_bytes(payload),
+    )
+    monkeypatch.setattr(warp_installer, "_online_access_block_reason", lambda: None)
+    extract = mock.Mock()
+    clear = mock.Mock()
+    monkeypatch.setattr(warp_installer, "_extract_wheel", extract)
+    monkeypatch.setattr(warp_installer, "_clear_owned_warp", clear)
+
+    result = warp_installer.install_warp(force_reinstall=True)
+
+    assert result.success is True
+    assert "Restart Blender" in result.message
+    extract.assert_not_called()
+    clear.assert_not_called()
+    for relative, content in before.items():
+        assert (tmp_path / relative).read_bytes() == content
+    assert warp_installer._pending_repair_path(tmp_path).read_bytes() == payload
+
+
 def test_pending_repair_rejects_tampering_before_deleting_owned_files(
     tmp_path,
     monkeypatch,

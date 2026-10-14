@@ -92,9 +92,8 @@ def _text_area(context):
 
 
 def _generate_kernel_boilerplate(kernel, item) -> str:
-    param_keys = [k.strip() for k in getattr(kernel, "parameter_keys_csv", "").split(",") if k.strip()]
-    if not param_keys:
-        param_keys = [p.key for p in item.parameters]
+    # Same resolver as execution, so the header lists what the kernel binds.
+    param_keys = effects.bound_parameter_keys(item, kernel)
     param_map = {p.key: p for p in item.parameters}
 
     header = [
@@ -105,6 +104,8 @@ def _generate_kernel_boilerplate(kernel, item) -> str:
         "# AVAILABLE CONSTANTS:",
         "#   voxel_size (float), frame (int), time (float), real_time_step (float),",
         "#   solver_time_step (float), time_scale (float), substeps (int)",
+        "#   real_time_step = simulated seconds per frame (time_scale / fps);",
+        "#   solver_time_step = simulated seconds per substep.",
         "#",
     ]
     if kernel.domain == "PARTICLES":
@@ -930,5 +931,5 @@ def unregister():
     for cls in reversed(CLASSES):
         try:
             bpy.utils.unregister_class(cls)
-        except (RuntimeError, ValueError):
-            pass
+        except Exception as exc:  # noqa: BLE001 - report and keep walking
+            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")

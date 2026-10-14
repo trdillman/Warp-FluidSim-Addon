@@ -3,13 +3,13 @@ import pytest
 
 warp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim.enums import (
+from fluidSim_warp_blender51.sim.enums import (  # noqa: E402
     SourceEvaluationCadence, SourceLifecycle, SourceOperation, SourcePayloadKind,
 )
-from fluidSim_warp_blender51.sim.source_regions import (
+from fluidSim_warp_blender51.sim.source_regions import (  # noqa: E402
     CompileContext, PayloadPlan, PointRegionPlan, SourceCompiler, SourceKey, SourcePlan,
 )
-from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
+from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings  # noqa: E402
 
 
 def context():

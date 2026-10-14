@@ -1,8 +1,10 @@
 """Curated example Custom Effects bundled as package templates for FluidSim.
 
 These 10 custom effect examples demonstrate various physical behaviors,
-domains (PARTICLES and ACTIVE_VOXELS), stages (AFTER_PARTICLE_TRANSFER, BEFORE_PRESSURE,
-AFTER_PARTICLE_UPDATE), and controller-driven spatial falloffs.
+domains (PARTICLES and ACTIVE_VOXELS), stages (BEFORE_EMISSION, AFTER_PARTICLE_TRANSFER,
+BEFORE_PRESSURE, AFTER_PARTICLE_UPDATE), and controller-driven spatial falloffs.
+Particle-velocity forces run at BEFORE_EMISSION, before particle-to-grid
+transfer, so every transfer mode (PIC, FLIP, APIC) keeps them.
 """
 
 from __future__ import annotations
@@ -119,7 +121,7 @@ EXAMPLE_EFFECT_DEFINITIONS: tuple[EffectDefinitionV2, ...] = (
                 kernel_id="thermal_updraft",
                 label="Apply Thermal Updraft",
                 domain=EffectDomain.PARTICLES,
-                stage=EffectStage.AFTER_PARTICLE_TRANSFER,
+                stage=EffectStage.BEFORE_EMISSION,
                 cadence=EffectCadence.EVERY_SUBSTEP,
                 source="""dir_len = wp.length(up_direction)
 if dir_len > 1.0e-6:
@@ -161,7 +163,7 @@ if dir_len > 1.0e-6:
                 kernel_id="point_attractor",
                 label="Apply Point Attractor",
                 domain=EffectDomain.PARTICLES,
-                stage=EffectStage.AFTER_PARTICLE_TRANSFER,
+                stage=EffectStage.BEFORE_EMISSION,
                 cadence=EffectCadence.EVERY_SUBSTEP,
                 source="""offset = controller - position
 dist = wp.length(offset)
@@ -204,7 +206,7 @@ if dist < radius and dist > 1.0e-6:
                 kernel_id="helical_vortex",
                 label="Apply Helical Vortex",
                 domain=EffectDomain.PARTICLES,
-                stage=EffectStage.AFTER_PARTICLE_TRANSFER,
+                stage=EffectStage.BEFORE_EMISSION,
                 cadence=EffectCadence.EVERY_SUBSTEP,
                 source="""axis_len = wp.length(axis)
 if axis_len > 1.0e-6:
@@ -253,7 +255,7 @@ if axis_len > 1.0e-6:
                 kernel_id="directional_wind",
                 label="Apply Directional Wind",
                 domain=EffectDomain.PARTICLES,
-                stage=EffectStage.AFTER_PARTICLE_TRANSFER,
+                stage=EffectStage.BEFORE_EMISSION,
                 cadence=EffectCadence.EVERY_SUBSTEP,
                 source="""dir_len = wp.length(direction)
 offset = position - controller
@@ -298,7 +300,7 @@ if dir_len > 1.0e-6 and dist < influence_radius:
                 kernel_id="centrifugal_spinner",
                 label="Apply Centrifugal Force",
                 domain=EffectDomain.PARTICLES,
-                stage=EffectStage.AFTER_PARTICLE_TRANSFER,
+                stage=EffectStage.BEFORE_EMISSION,
                 cadence=EffectCadence.EVERY_SUBSTEP,
                 source="""axis_len = wp.length(axis)
 offset = position - controller
@@ -430,7 +432,7 @@ if speed > speed_threshold:
                 kernel_id="periodic_ripples",
                 label="Apply Periodic Ripples",
                 domain=EffectDomain.PARTICLES,
-                stage=EffectStage.AFTER_PARTICLE_TRANSFER,
+                stage=EffectStage.BEFORE_EMISSION,
                 cadence=EffectCadence.EVERY_SUBSTEP,
                 source="""offset = position - controller
 dist = wp.length(offset)
@@ -471,7 +473,7 @@ if dist < radius and dist > 1.0e-6:
                 kernel_id="bounding_box_confinement",
                 label="Apply Box Confinement",
                 domain=EffectDomain.PARTICLES,
-                stage=EffectStage.AFTER_PARTICLE_TRANSFER,
+                stage=EffectStage.BEFORE_EMISSION,
                 cadence=EffectCadence.EVERY_SUBSTEP,
                 source="""rel_pos = position - controller
 ax = wp.abs(rel_pos[0])

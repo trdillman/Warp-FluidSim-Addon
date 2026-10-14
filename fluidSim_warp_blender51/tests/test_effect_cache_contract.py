@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from fluidsim_testpkg.io.cache_schema import CacheManifestV2
+from fluidsim_testpkg.io.cache_schema import CacheManifestV3
 from fluidsim_testpkg.io.checkpoint import (
     CheckpointPayload,
     read_checkpoint,
     write_checkpoint_atomic,
+)
+
+# The cache-v3 manifest fields that are not about effects.
+V3_FIELDS = dict(
+    source_schema_version=1,
+    transfer_mode="FLIP",
+    grid_spec={
+        "resolution_divisions": 64, "voxel_size": 0.0625,
+        "domain_size": [4.0, 4.0, 4.0], "leaf_dim": 8},
+    narrow_band={"enabled": False, "band_voxels": 0.0},
+    platform={
+        "os": "Windows-11", "gpu_name": "NVIDIA RTX", "driver": "560.94",
+        "warp": "1.17.0"},
 )
 
 SIG = "a" * 64
@@ -22,8 +35,8 @@ INVENTORY = (
 
 
 def test_manifest_effect_identity_round_trip_and_legacy_defaults():
-    manifest = CacheManifestV2.new(
-        solver_version="1.0.251",
+    manifest = CacheManifestV3.new(
+        solver_version="3.0.0",
         scene_key="scene",
         settings_signature="settings",
         source_signature="sources",
@@ -31,23 +44,24 @@ def test_manifest_effect_identity_round_trip_and_legacy_defaults():
         effect_inventory=INVENTORY,
         frame_start=1,
         frame_end=2,
+        **V3_FIELDS,
     )
-    restored = CacheManifestV2.from_dict(manifest.to_dict())
+    restored = CacheManifestV3.from_dict(manifest.to_dict())
     assert restored.effect_signature == SIG
     assert restored.effect_inventory == INVENTORY
 
     legacy = manifest.to_dict()
     legacy.pop("effect_signature")
     legacy.pop("effect_inventory")
-    restored_legacy = CacheManifestV2.from_dict(legacy)
+    restored_legacy = CacheManifestV3.from_dict(legacy)
     assert restored_legacy.effect_signature == ""
     assert restored_legacy.effect_inventory == ()
 
 
 def test_manifest_rejects_inventory_without_signature():
     with pytest.raises(ValueError, match="effect inventory requires"):
-        CacheManifestV2.new(
-            solver_version="1.0.251",
+        CacheManifestV3.new(
+            solver_version="3.0.0",
             scene_key="scene",
             settings_signature="settings",
             source_signature="sources",
@@ -55,6 +69,7 @@ def test_manifest_rejects_inventory_without_signature():
             effect_inventory=INVENTORY,
             frame_start=1,
             frame_end=2,
+            **V3_FIELDS,
         )
 
 
@@ -112,7 +127,7 @@ def test_production_bake_binds_effect_identity_to_every_transaction_surface():
         assert token in source
 
 
-def test_cache_v2_frame_payload_carries_effect_identity():
+def test_cache_frame_payload_carries_effect_identity():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]

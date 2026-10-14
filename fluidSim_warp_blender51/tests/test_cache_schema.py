@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from fluidsim_testpkg.io.cache_schema import (
-    CacheManifestV2,
+    CacheManifestV3,
     FrameEntry,
     load_manifest,
     sha256_file,
@@ -15,15 +15,24 @@ from fluidsim_testpkg.io.cache_schema import (
 )
 
 
-def _manifest() -> CacheManifestV2:
-    return CacheManifestV2.new(
-        solver_version="1.0.248",
+def _manifest() -> CacheManifestV3:
+    return CacheManifestV3.new(
+        solver_version="3.0.0",
         scene_key="scene",
         settings_signature="settings",
         source_signature="sources",
         frame_start=1,
         frame_end=10,
         checkpoint_interval=1,
+        source_schema_version=1,
+        transfer_mode="FLIP",
+        grid_spec={
+            "resolution_divisions": 64, "voxel_size": 0.0625,
+            "domain_size": [4.0, 4.0, 4.0], "leaf_dim": 8},
+        narrow_band={"enabled": False, "band_voxels": 0.0},
+        platform={
+            "os": "Windows-11", "gpu_name": "NVIDIA RTX", "driver": "560.94",
+            "warp": "1.17.0"},
         timestamp="2026-08-12T10:00:00Z",
     )
 
@@ -42,6 +51,9 @@ def _entry(frame: int = 1, **changes) -> FrameEntry:
         simulation_time=frame / 24.0,
         settings_signature="settings",
         source_signature="sources",
+        source_frame_stamp="c" * 64,
+        whitewater_count=0,
+        particle_count=3,
     )
     values.update(changes)
     return FrameEntry(**values)

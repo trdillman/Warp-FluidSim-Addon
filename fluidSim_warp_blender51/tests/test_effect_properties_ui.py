@@ -38,7 +38,8 @@ def test_artist_workflow_is_primary_and_engineering_actions_are_not_drawn():
         "_draw_status",
     ):
         assert section in block
-    assert 'operator("fluidsim.preview_start", text="Preview"' in block
+    assert 'operator("screen.animation_play", text="Play"' in block
+    assert "fluidsim.preview_start" not in block
     assert 'operator("fluidsim.apply_changes", text="Apply Changes"' in block
     assert "_draw_effect_workflow" not in block
 

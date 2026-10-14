@@ -45,7 +45,7 @@ def test_phase5_solver_settings_and_projection_are_declared():
         "surface_tension_safety",
         "surface_tension_smoothing_iterations",
     }
-    assert fields <= _class_annotations(ROOT / "sim" / "solver.py", "SolverSettings")
+    assert fields <= _class_annotations(ROOT / "sim" / "solver_settings_model.py", "SolverSettings")
     assert fields <= set(solver_settings.DIRECT_SETTING_FIELDS)
     tree = ast.parse((ROOT / "blender" / "pending_settings.py").read_text(encoding="utf-8"))
     assignments = {}
@@ -89,7 +89,7 @@ def test_frame_stats_source_guards_json_against_infinity():
 
 def test_validation_inventory_includes_all_five_phase5_gates():
     names = _assignment_literal(ROOT / "sim" / "validation.py", "VALIDATION_TESTS")
-    assert len(names) == 20
+    assert len(names) == 19
     phase5 = names[-5:]
     assert all("surface-tension" in name for name in phase5)
     assert any("static droplet" in name for name in phase5)
@@ -139,15 +139,11 @@ def test_zero_time_scale_particle_sanitizer_uses_a_safe_denominator():
     assert "/ safe_dt" in method
 
 
-def test_release_workflow_and_package_include_phase5_gates():
-    workflow = (ROOT.parent / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+def test_local_release_gate_and_package_include_phase5_gates():
     gate = (ROOT.parent / "tools/run_production_gate.py").read_text(encoding="utf-8")
     manifest = (ROOT / "blender_manifest.toml").read_text(encoding="utf-8")
     build = (TOOLS_RELEASE / "build_extension.py").read_text(encoding="utf-8")
     smoke = (TOOLS_RELEASE / "smoke_test_blender.py").read_text(encoding="utf-8")
-    # Hosted CI runs the kernels on Warp CPU; the release gate runs them on CUDA.
-    cpu_step = workflow[workflow.index("tools/release/validate_phase5_warp.py"):]
-    assert "--device cpu" in cpu_step.split("\n      - ", 1)[0]
     assert '"phase5"' in gate[gate.index("RELEASE_WARP_VALIDATORS = "):].split("\n", 1)[0]
     assert '"--device", "cuda:0"' in gate
     assert (TOOLS_RELEASE / "validate_phase5_blender.py").is_file()
@@ -218,11 +214,13 @@ def test_solver_sdf_expands_for_surface_tension_support():
 def test_frame_topology_expands_for_the_capillary_sdf_support():
     source = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
     assert "def _surface_tension_topology_expand" in source
+    assert "capillary_expand = self._surface_tension_topology_expand()" in source
     frame_start = source.index("frame_topology_expand = max")
     frame_end = source.index("self.whitewater.reset_frame_diagnostics", frame_start)
-    assert "self._surface_tension_topology_expand()" in source[
-        frame_start:frame_end
-    ]
+    block = source[frame_start:frame_end]
+    # Both the frame-level and the per-substep expansion carry the halo (B37).
+    assert "capillary_expand," in block
+    assert "substep_topology_expand = max(int(s.topology_expand), capillary_expand)" in block
 
 
 def test_solver_capillary_halo_respects_authored_surface_splat_radius():
@@ -238,7 +236,10 @@ def test_phase5_blender_validator_tracks_native_properties_panel_identity():
     source = (TOOLS_RELEASE / "validate_phase5_blender.py").read_text(
         encoding="utf-8"
     )
-    assert '"FLUIDSIM_PT_sim_surface_tension"' in source
+    # The Scene tab registers no domain panels, so the validator must require the
+    # Scene id to be absent and the Physics mirror to be the registered home.
+    assert '"FLUIDSIM_PT_sim_surface_tension", None) is not None' in source
+    assert '"FLUIDSIM_PT_physics_domain_sim_surface_tension"' in source
     assert '"FLUIDSIM_PT_surface_tension"' not in source
     assert 'bl_space_type != "PROPERTIES"' in source
-    assert 'bl_context != "scene"' in source
+    assert 'bl_context != "physics"' in source

@@ -1,4 +1,4 @@
-"""Preview and cache playback policy for Blender timeline events.
+"""Live and cache playback policy for Blender timeline events.
 
 This module owns timeline interpretation, live/cache selection, pre-playback
 admission, re-entry and render-restore suppression, and the two persistent
@@ -24,6 +24,12 @@ _SUPPRESS_FRAME_HANDLERS = 0
 _RENDER_RESTORE_FRAME = None
 _IN_MODE_TRANSITION = False
 _CACHE_CURSORS = {}
+
+# The Solver Session is a process singleton, so a bake in one scene owns it
+# for every scene: Live in any other scene must not admit, step or reset it.
+_BAKE_ELSEWHERE_MESSAGE = (
+    "A Production Bake is running in another scene - Live Playback is "
+    "unavailable until it finishes")
 
 _ACTIVE_BAKE_STATUSES = frozenset({
     "PREFLIGHT",
@@ -221,13 +227,59 @@ def prepare_live_preview(scene, *, depsgraph=None, allow_restart=False):
         raise
 
 
-def pause_preview_for_changes(scene):
-    """Stop this scene's advancement after an incompatible authoring edit."""
-    fs = scene.fluidsim
-    if not fs.live or getattr(fs, "cache_playback_enabled", False):
+def arm_timeline_playback(scene, *, depsgraph=None):
+    """Make Blender's own Play the preview: arm, admit, and apply safe edits.
+
+    There is no separate Preview step.  Pressing Play (spacebar, timeline, or
+    the panel's Play button) on a scene with a domain or an armed cache drives
+    the simulation.  Edits that would discard progress stay pending and apply
+    on rewind or through Apply Changes; everything else applies here.
+    """
+    from . import pending_settings, production_bake
+    from .scene_access import active_domain_object
+
+    fs = getattr(scene, "fluidsim", None) if scene is not None else None
+    if fs is None or production_bake.bake_is_active(scene):
         return
-    fs.live = False
-    fs.status = "Preview paused: apply changes or resume to prepare the edited effects"
+    cache_mode = bool(getattr(fs, "cache_playback_enabled", False))
+    if not fs.live:
+        if not cache_mode and active_domain_object(scene) is None:
+            return
+        sess = _bridge().session()
+        if not cache_mode and sess.active and not sess.owns_scene(scene):
+            fs.status = "Another scene owns the solver; release it from that scene first"
+            return
+        with suppress_mode_transitions():
+            fs.live = True
+        fs.status = "Playing"
+    if cache_mode:
+        return
+    ensure_session_before_frames(scene, "playback")
+    sess = _bridge().session()
+    if not sess.owns_scene(scene):
+        return
+    try:
+        if pending_settings.changes_require_restart(scene):
+            fs.status = "Edits pending: rewind to the start frame or Apply Changes to use them"
+            return
+        pending_settings.apply_changes(scene, depsgraph=depsgraph)
+    except Exception as exc:  # noqa: BLE001 - never break playback
+        sess.set_error(scene, repr(exc))
+        fs.status = f"Pending changes could not apply: {exc}"
+
+
+def stop_revoked_effects(scene):
+    """Stop the solver running effect code whose trust was just revoked.
+
+    Ordinary effect edits never pause playback; revoked trust is the exception
+    because the admitted stack would keep executing that code.  Releasing the
+    session means the next Play re-admits, and admission refuses untrusted
+    effects with an actionable message.
+    """
+    sess = _bridge().session()
+    fs = scene.fluidsim
+    if not sess.owns_scene(scene) or getattr(fs, "cache_playback_enabled", False):
+        return
     manager = getattr(bpy.context, "window_manager", None)
     for window in getattr(manager, "windows", ()):
         if window.scene == scene and window.screen.is_animation_playing:
@@ -235,7 +287,12 @@ def pause_preview_for_changes(scene):
                 with bpy.context.temp_override(window=window, screen=window.screen):
                     bpy.ops.screen.animation_cancel(restore_frame=False)
             except RuntimeError as exc:
-                fs.status = f"Simulation paused; timeline could not pause: {exc}"
+                print(f"FluidSim: timeline could not pause: {exc}")
+    with suppress_mode_transitions():
+        fs.live = False
+    sess.release(scene)
+    fs.status = ("Stopped: a running effect is no longer trusted. "
+                 "Trust or remove it, then press Play")
 
 
 def prepare_cache_preview(scene):
@@ -293,6 +350,14 @@ def set_live_enabled(scene, enabled: bool):
         if getattr(fs, "cache_playback_enabled", False):
             fs.status = "Cache playback enabled - press play"
         elif not sess.owns_scene(scene):
+            if production_bake.any_bake_active():
+                _IN_MODE_TRANSITION = True
+                try:
+                    fs.live = False
+                finally:
+                    _IN_MODE_TRANSITION = False
+                fs.status = _BAKE_ELSEWHERE_MESSAGE
+                return False
             from ..runtime.warp_runtime import prewarm_simulation_kernels
 
             prewarm_simulation_kernels()
@@ -371,9 +436,10 @@ def _check_cache_scene_key(scene, frame_data):
     if not baked:
         return
     current = cache_identity.settings_signature(scene)
-    if baked != current:
-        raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(
-            frame=frame, baked=baked[:12], current=current[:12]))
+    if baked == current or baked in cache_identity.legacy_settings_signatures(scene):
+        return
+    raise ValueError(_CACHE_SCENE_KEY_MESSAGE.format(
+        frame=frame, baked=baked[:12], current=current[:12]))
 
 
 def play_cache_frame(sess, scene, frame=None):
@@ -432,6 +498,7 @@ def play_cache_frame(sess, scene, frame=None):
         fs.stat_whitewater_invalid_types = int(np.count_nonzero(
             (values < 0) | (values > 2)))
     fs.stat_voxels = 0
+    fs.stat_liquid_voxels = 0
     fs.stat_step_ms = 0.0
     fs.stat_substeps = 0
     fs.stat_cfl_clamped = False
@@ -468,6 +535,11 @@ def ensure_session_before_frames(scene, reason):
     sess = bridge.session()
     if sess.owns_scene(scene):
         return
+    from . import production_bake
+
+    if production_bake.any_bake_active():
+        fs.status = _BAKE_ELSEWHERE_MESSAGE
+        return
     try:
         from ..runtime.warp_runtime import (
             is_kernels_prewarmed,
@@ -503,6 +575,13 @@ def handle_frame_change(sess, scene, depsgraph):
             sess.set_error(scene, repr(exc))
             fs.status = f"Cache playback error: {exc}"
             print(f"fluidSim cache playback failed: {exc!r}")
+        return
+    from . import production_bake
+
+    if production_bake.any_bake_active():
+        # The baking scene has Live off, so this is another scene: stepping,
+        # resetting or re-admitting here would move the bake's solver.
+        fs.status = _BAKE_ELSEWHERE_MESSAGE
         return
     if frame == sess.last_frame:
         return
@@ -544,7 +623,10 @@ def handle_frame_change(sess, scene, depsgraph):
         fs.status = f"Solver desync: {message}"
         return
 
-    previous_last_frame = sess.last_frame
+    # The timeline frame the solver state represents: catch-up frames that
+    # stepped before a failure stay stepped, so a refused frame must not roll
+    # the bookkeeping back past them (a retry would step them twice).
+    advanced_to = sess.last_frame
     sess.last_frame = frame
     try:
         for offset in range(gap - 1, -1, -1):
@@ -553,11 +635,12 @@ def handle_frame_change(sess, scene, depsgraph):
                 scene, sess, refresh_pending=False,
                 timeline_frame=frame - offset,
                 publish_outputs=(offset == 0))
+            advanced_to = frame - offset
     except Exception as exc:  # noqa: BLE001 - never break playback
         from ..sim.fields import TopologyCapacityError
 
         if isinstance(exc, TopologyCapacityError):
-            sess.last_frame = previous_last_frame
+            sess.last_frame = advanced_to
             sess.set_error(scene, repr(exc))
             fs.live = False
             fs.status = (
@@ -580,7 +663,10 @@ def arm_render_frame_restore(frame):
 
 @persistent
 def _on_playback_pre(scene, *_args):
-    ensure_session_before_frames(scene, "playback")
+    try:
+        arm_timeline_playback(scene)
+    except Exception as exc:  # noqa: BLE001 - never break playback
+        print(f"FluidSim playback arm failed: {exc!r}")
 
 
 @persistent
@@ -592,12 +678,15 @@ def _on_frame_change(scene, depsgraph):
             and scene.frame_current == restore_frame):
         if getattr(getattr(scene, "fluidsim", None),
                    "cache_playback_enabled", False):
-            _CACHE_CURSORS[scene_identity(scene)] = restore_frame
+            # The outputs still hold the last rendered frame. Publishing a
+            # cached frame steps nothing, so republish the restored frame
+            # instead of marking it as already shown.
+            _CACHE_CURSORS.pop(scene_identity(scene), None)
         else:
             sess = _bridge().session()
             if sess.owns_scene(scene):
                 sess.last_frame = restore_frame
-        return
+            return
     if _IN_FRAME_HANDLER or _SUPPRESS_FRAME_HANDLERS:
         return
     _IN_FRAME_HANDLER = True

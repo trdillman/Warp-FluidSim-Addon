@@ -1,4 +1,16 @@
-"""Shared quantitative Blender Phase 2 source acceptance implementation."""
+"""Shared quantitative Blender Phase 2 source acceptance implementation.
+
+Importing this module has no side effects: it does not touch ``sys.path`` or
+``sys.modules`` and it imports neither Blender nor the add-on. A wrapper script
+calls ``setup()`` once and then ``main(capability)``. ``setup()`` puts the
+source tree on ``sys.path``, drops any add-on modules already loaded (so the
+tree under test is the one imported, not an installed copy), then imports
+Blender, Warp and the add-on and publishes the names the helpers below use as
+module globals (see ``_import_runtime``). Calling a helper before ``setup()``
+raises ``NameError``; ``main`` says so in plain words.
+"""
+# ruff: noqa: F821 - setup() publishes the runtime names (bpy, wp, the add-on
+# classes) as module globals; see the docstring and _import_runtime.
 from __future__ import annotations
 
 import argparse
@@ -6,30 +18,98 @@ import importlib
 import json
 import statistics
 import sys
-import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
-from _test_device import script_device  # noqa: E402
-for _name in list(sys.modules):
-    if _name == "fluidSim_warp_blender51" or _name.startswith("fluidSim_warp_blender51."):
-        del sys.modules[_name]
-
-import bpy
 import numpy as np
-import warp as wp
-from mathutils import Matrix
 
-import fluidSim_warp_blender51 as addon
-from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
-from fluidSim_warp_blender51.sim.enums import *
-from fluidSim_warp_blender51.sim.source_regions import *
-from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
-from tools.gate.validate_source_acceptance_report import validate
+ROOT = Path(__file__).resolve().parents[2]
+ADDON_PACKAGE = "fluidSim_warp_blender51"
+
+_runtime_ready = False
+
+
+def purge_addon_modules(modules=None):
+    """Delete the add-on package and its submodules from ``modules``.
+
+    ``modules`` defaults to ``sys.modules``. Returns the names removed. A module
+    that only shares the prefix (``fluidSim_warp_blender51_other``) is kept.
+    """
+    modules = sys.modules if modules is None else modules
+    purged = [
+        name for name in modules
+        if name == ADDON_PACKAGE or name.startswith(ADDON_PACKAGE + ".")
+    ]
+    for name in purged:
+        del modules[name]
+    return purged
+
+
+def _prepend_paths():
+    """Front of ``sys.path``: support, this folder, the repo root (in that order)."""
+    for path in (ROOT, Path(__file__).resolve().parent, ROOT / "tests" / "support"):
+        text = str(path)
+        while text in sys.path:
+            sys.path.remove(text)
+        sys.path.insert(0, text)
+
+
+def _import_runtime():
+    """Import Blender, Warp and the add-on; return the names the helpers use."""
+    from _test_device import script_device
+    import bpy
+    import warp as wp
+    from mathutils import Matrix
+
+    import fluidSim_warp_blender51 as addon
+    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
+    from fluidSim_warp_blender51.sim.enums import (
+        SourceEvaluationCadence,
+        SourceLifecycle,
+        SourceOperation,
+        SourcePayloadKind,
+        SourceShapeShape,
+    )
+    from fluidSim_warp_blender51.sim.source_regions import (
+        AnalyticRegionPlan,
+        CompileContext,
+        MeshRegionPlan,
+        PayloadPlan,
+        PointRegionPlan,
+        SourceCompiler,
+        SourceKey,
+        SourcePlan,
+        VolumeRegionPlan,
+    )
+    from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
+    from tools.gate.validate_source_acceptance_report import validate
+
+    return {
+        "script_device": script_device, "bpy": bpy, "wp": wp, "Matrix": Matrix,
+        "addon": addon, "SceneInputs": SceneInputs,
+        "SourceEvaluationCadence": SourceEvaluationCadence,
+        "SourceLifecycle": SourceLifecycle, "SourceOperation": SourceOperation,
+        "SourcePayloadKind": SourcePayloadKind, "SourceShapeShape": SourceShapeShape,
+        "AnalyticRegionPlan": AnalyticRegionPlan, "CompileContext": CompileContext,
+        "MeshRegionPlan": MeshRegionPlan, "PayloadPlan": PayloadPlan,
+        "PointRegionPlan": PointRegionPlan, "SourceCompiler": SourceCompiler,
+        "SourceKey": SourceKey, "SourcePlan": SourcePlan,
+        "VolumeRegionPlan": VolumeRegionPlan,
+        "FluidSolver": FluidSolver, "SolverSettings": SolverSettings,
+        "validate": validate,
+    }
+
+
+def setup():
+    """Make the acceptance helpers usable; call once, before ``main``."""
+    global _runtime_ready
+    if _runtime_ready:
+        return
+    _prepend_paths()
+    purge_addon_modules()
+    globals().update(_import_runtime())
+    _runtime_ready = True
+
 
 MARKERS = {
     "source_region": "SOURCE-REGION-ACCEPTANCE-PASS",
@@ -58,8 +138,11 @@ def context(frame=1):
                           (0, 0, 0), (2, 2, 2), upload=True)
 
 
-def source_plan(region, key="fixture", cadence=SourceEvaluationCadence.STATIC,
-                lifecycle=SourceLifecycle.TOP_UP, payload=None):
+def source_plan(region, key="fixture", cadence=None, lifecycle=None, payload=None):
+    # ``None`` means STATIC / TOP_UP; the enums only exist after ``setup()``, so
+    # they cannot be default arguments (those run when the module is imported).
+    cadence = SourceEvaluationCadence.STATIC if cadence is None else cadence
+    lifecycle = SourceLifecycle.TOP_UP if lifecycle is None else lifecycle
     payload = payload or PayloadPlan(
         kind=SourcePayloadKind.LIQUID_ATTRIBUTES,
         velocity=(0, 0, 0), temperature=4, viscosity=5, density=6,
@@ -141,6 +224,10 @@ def point_attribute_checks(solver, expected):
 
 
 def main(capability):
+    if not _runtime_ready:
+        raise RuntimeError(
+            "call setup() before main(): importing this module deliberately loads "
+            "neither Blender nor the add-on")
     parser = argparse.ArgumentParser()
     parser.add_argument("--json-out", required=True)
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
@@ -182,20 +269,28 @@ def main(capability):
                            "volume_source.vdb").resolve())
         grids = []
         for name in ("density", "surface", "temperature", "vel_x", "vel_y", "vel_z"):
-            grid = openvdb.FloatGrid(); grid.name = name
+            grid = openvdb.FloatGrid()
+            grid.name = name
             accessor = grid.getAccessor()
             for x in range(4):
                 for y in range(4):
                     for z in range(4):
-                        if name == "density": value = 1.0
-                        elif name == "surface": value = float(x) - 2.0
-                        elif name == "temperature": value = float(x + y + z)
-                        elif name == "vel_x": value = float(x)
-                        elif name == "vel_y": value = float(y * 2)
-                        else: value = float(z * 3)
+                        if name == "density":
+                            value = 1.0
+                        elif name == "surface":
+                            value = float(x) - 2.0
+                        elif name == "temperature":
+                            value = float(x + y + z)
+                        elif name == "vel_x":
+                            value = float(x)
+                        elif name == "vel_y":
+                            value = float(y * 2)
+                        else:
+                            value = float(z * 3)
                         accessor.setValueOn((x, y, z), value)
             grids.append(grid)
-        vector = openvdb.Vec3SGrid(); vector.name = "velocity"
+        vector = openvdb.Vec3SGrid()
+        vector.name = "velocity"
         vector_accessor = vector.getAccessor()
         for x in range(4):
             for y in range(4):
@@ -223,7 +318,8 @@ def main(capability):
         source_object = bpy.data.objects.new("AnimatedSourceAdapterProbe", None)
         scene.collection.objects.link(source_object)
         source_object.matrix_world = Matrix.Translation((.65, 1.0, 1.0))
-        inputs = SceneInputs(); scene.frame_set(1)
+        inputs = SceneInputs()
+        scene.frame_set(1)
         inputs.object_velocity(source_object, scene)
         stable_key = (f"session:{inputs._session_generation}:object:"
                       f"{source_object.as_pointer()}")
@@ -269,7 +365,9 @@ def main(capability):
         emitted_particles = first_count
         solver_four, _, _ = step_solver((plan,), frames=1, substeps=4)
         four_substep_count = solver_four.particles.host_count
-        solver.reset(); solver.set_source_batch(native_plans=(plan,)); solver.step_frame()
+        solver.reset()
+        solver.set_source_batch(native_plans=(plan,))
+        solver.step_frame()
         reset_count = solver.particles.host_count
         reopened, _, _ = step_solver((plan,), frames=1)
         reopened_count = reopened.particles.host_count
@@ -280,7 +378,8 @@ def main(capability):
         rename_key = f"session:{scene_inputs._session_generation}:object:{pointer}"
         identity_obj.name = "LifecycleIdentityProbeRenamed"
         renamed_key = f"session:{scene_inputs._session_generation}:object:{identity_obj.as_pointer()}"
-        duplicate = identity_obj.copy(); bpy.context.scene.collection.objects.link(duplicate)
+        duplicate = identity_obj.copy()
+        bpy.context.scene.collection.objects.link(duplicate)
         duplicate_key = f"session:{scene_inputs._session_generation}:object:{duplicate.as_pointer()}"
         details.update(first_emitted=first_emitted,
                        second_emitted=second_emitted,
@@ -291,7 +390,8 @@ def main(capability):
                        reopen_fresh_count=reopened_count,
                        rename_key_stable=rename_key == renamed_key,
                        duplicate_key_distinct=rename_key != duplicate_key)
-        solver_four.release(); reopened.release()
+        solver_four.release()
+        reopened.release()
     else:
         solver, stats, step_samples = step_solver((plan,), frames=1)
         emitted_particles = solver.particles.host_count
@@ -334,7 +434,8 @@ def main(capability):
             "control_velocity_max": control_velocity_max,
             "projected_velocity_delta": pressure_velocity_max - control_velocity_max,
         }
-        pressure_solver.release(); control_solver.release()
+        pressure_solver.release()
+        control_solver.release()
 
         staggered_plan = SourcePlan(
             SourceKey("staggered-runtime"), SourceOperation.STAGGERED_VELOCITY,
@@ -445,13 +546,17 @@ def main(capability):
         try:
             PointRegionPlan([[0,0,0]], velocities=[[1,0,0],[2,0,0]])
         except ValueError as exc:
-            invalid = None; rejected = True; invalid_message = str(exc)
+            invalid = None
+            rejected = True
+            invalid_message = str(exc)
         invalid_case = "point_attribute_length_mismatch"
     elif capability == "source_lifecycle":
         try:
             source_plan(AnalyticRegionPlan(), key="")
         except ValueError as exc:
-            invalid = None; rejected = True; invalid_message = str(exc)
+            invalid = None
+            rejected = True
+            invalid_message = str(exc)
         invalid_case = "empty_runtime_source_identity"
     else:
         huge_triangles = np.tile(cube()[1], (4167, 1))[:50000]

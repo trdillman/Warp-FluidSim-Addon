@@ -1,5 +1,10 @@
 # Preserved measured Windows demo inputs
 
+> 3.0 note: these rows describe the 2.1 inputs. The 3.0 Resolution Divisions tree
+> rebuilt `crown_splash.blend` and `dam_break.blend` in `fb530b6`. The gate rebuilds
+> them on every run and the compressed bytes differ between runs, so the 3.0 release
+> commits the blends produced by its qualifying gate run.
+
 This integration adopts the four exact generated inputs used by the frozen
 `9947db954abe64d3f0dd6d6feb2ed96866b56a7d` Windows qualification. They were
 intentional dirty inputs in that measured checkout, not new simulation results.

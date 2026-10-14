@@ -59,16 +59,50 @@ def _object_identity(obj):
     as_pointer = getattr(obj, "as_pointer", None)
     return int(as_pointer()) if as_pointer is not None else id(obj)
 
+_PERSISTENT_ID = "fluidsim_persistent_id"
+# Name of the object the stored identity was issued to. Duplicating an object
+# (Shift+D) copies both custom properties; the copy then carries another
+# object's name here, which is how it is told apart from a rename.
+_PERSISTENT_OWNER = "fluidsim_persistent_owner"
+
+
+def _object_named(name):
+    try:
+        import bpy
+
+        return bpy.data.objects.get(name)
+    except (ImportError, AttributeError, TypeError):
+        return None
+
+
 def persistent_source_key(obj) -> str:
     """Return a process-independent source identity stored with the object.
 
     Local objects receive a UUID custom property that survives save/reopen.
     Read-only linked objects fall back to their library path and full name.
+    A duplicate whose identity still belongs to its original is re-issued
+    its own identity; a renamed object keeps its identity.
     """
     try:
-        existing = str(obj.get("fluidsim_persistent_id", "") or "")
+        existing = str(obj.get(_PERSISTENT_ID, "") or "")
+        owner = str(obj.get(_PERSISTENT_OWNER, "") or "")
     except (AttributeError, TypeError):
-        existing = ""
+        existing = owner = ""
+    name = str(getattr(obj, "name_full", getattr(obj, "name", "object")))
+    if existing and owner != name:
+        original = _object_named(owner) if owner else None
+        try:
+            duplicate = (original is not None and original is not obj
+                         and str(original.get(_PERSISTENT_ID, "") or "") == existing)
+        except (AttributeError, TypeError):
+            duplicate = False
+        if duplicate:
+            existing = ""
+        else:
+            try:
+                obj[_PERSISTENT_OWNER] = name
+            except (AttributeError, TypeError, RuntimeError):
+                pass
     if existing:
         return existing
     name = str(getattr(obj, "name_full", getattr(obj, "name", "object")))
@@ -86,7 +120,8 @@ def persistent_source_key(obj) -> str:
         basis = f"local:{blend_path}:{name}:{data_name}"
     value = f"object:{hashlib.sha256(basis.encode('utf-8')).hexdigest()}"
     try:
-        obj["fluidsim_persistent_id"] = value
+        obj[_PERSISTENT_ID] = value
+        obj[_PERSISTENT_OWNER] = name
         return value
     except (AttributeError, TypeError, RuntimeError):
         return f"object-name:{getattr(obj, 'name_full', getattr(obj, 'name', 'object'))}"
@@ -115,6 +150,65 @@ def _array_signature(array):
 def _cache_signature(object_id, device, verts, tris, matrix_world):
     return (object_id, device, _array_signature(verts), _array_signature(tris),
             _array_signature(np.ascontiguousarray(matrix_world, dtype=np.float32)))
+
+
+def _referenced_bounds(world_verts, tris):
+    """Bounds of the vertices the triangles reference.
+
+    Equal to ``world_verts[np.unique(tris)].min/max(axis=0)``: a boolean
+    mask selects the same rows in the same (ascending) order, without the
+    sort/hash, which cost ~24 ms per call at 200k triangles and ran twice on
+    every rebuild of a moving collider.
+    """
+    used = np.zeros(len(world_verts), dtype=bool)
+    used[tris.reshape(-1)] = True
+    points = world_verts[used]
+    return points.min(axis=0), points.max(axis=0)
+
+
+def _height_profile(pixels, width, height, scale):
+    """Transposed Rec. 709 luminance of RGBA pixels, times ``scale``.
+
+    Bit for bit ``((r*0.2126 + g*0.7152) + b*0.0722).T * scale`` in float32,
+    as a C-contiguous ``(width, height)`` array: the same float32 operations
+    on every pixel, in the same order. Working through bands of rows keeps
+    each band in cache and writes it straight into its transposed place; the
+    whole-image temporaries and the cache-hostile 16 MiB transposing copy
+    cost ~95 ms per sync for a 2048^2 image.
+    """
+    rgba = pixels.reshape(height, width, 4)
+    profile = np.empty((width, height), dtype=np.float32)
+    for start in range(0, height, _HEIGHT_PROFILE_BAND_ROWS):
+        band = rgba[start:start + _HEIGHT_PROFILE_BAND_ROWS]
+        luminance = np.multiply(band[..., 0], 0.2126)
+        term = np.multiply(band[..., 1], 0.7152)
+        luminance += term
+        np.multiply(band[..., 2], 0.0722, out=term)
+        luminance += term
+        luminance *= scale
+        profile[:, start:start + _HEIGHT_PROFILE_BAND_ROWS] = luminance.T
+    return profile
+
+
+_HEIGHT_PROFILE_BAND_ROWS = 16
+
+
+class StagedMesh:
+    """Identity stand-in for a collider/source mesh during admission staging.
+
+    Admission gathers evaluated geometry on the CPU only to plan capacity and
+    bind descriptors; no BVH is queried until the committed replacement
+    materializes real meshes on its device. Building a CPU ``wp.Mesh`` here
+    cost ~140 ms per 200k triangles on every Initialize/Reset/plan refresh,
+    for a BVH that was then discarded. Descriptors hold this object until
+    :meth:`SceneInputs.materialize_device_meshes` swaps in the real mesh by
+    identity. It has no ``id``, so any premature query fails loudly.
+    """
+
+    __slots__ = ("__weakref__",)
+
+    def __repr__(self):
+        return "<StagedMesh: not materialized>"
 
 
 def _watertight_triangles(tris):
@@ -164,6 +258,36 @@ def _set_source_status(pg, severity="", code="", message=""):
         pass
 
 
+_SOURCE_STATUS_TEXT = (
+    "source_status_severity", "source_status_code", "source_status_message")
+_SOURCE_STATUS_FIELDS = _SOURCE_STATUS_TEXT + (
+    "source_status_emitted", "source_status_capacity_limited")
+
+
+def _feeds_simulation(pg):
+    """A tagged role or an auto-injected seed; not a camera, light or output."""
+    return (getattr(pg, "role", "NONE") != "NONE"
+            or bool(getattr(pg, "auto_inject_seed", False)))
+
+
+def _source_status_values(pg):
+    return {name: getattr(pg, name, None) for name in _SOURCE_STATUS_FIELDS}
+
+
+def _write_changed_status(pg, values):
+    """Write only the status fields whose value differs from what is stored.
+
+    An RNA write tags the object for re-evaluation even when the value is the
+    same, and this runs after every live step.
+    """
+    for name, value in values.items():
+        try:
+            if getattr(pg, name, None) != value:
+                setattr(pg, name, value)
+        except (AttributeError, TypeError):
+            pass
+
+
 def _scene_contains_object(scene, obj):
     getter = getattr(scene.objects, "get", None)
     if getter is not None:
@@ -199,11 +323,57 @@ def _guide_control_points(obj, matrix, direction):
     return tuple(points)
 
 
+# The source UI schema new source/sink/field objects are stamped with
+# (``source_ui_schema_version``): from 3 the runtime reads the Emission/Removal
+# Region kinds, from 4 the Source Fill Target sampling controls, and from 5
+# First Sim Frame freezes point/volume/field inputs (B47). Files below 5 are
+# migrated once on load by ``sources.migrate_source_schema``.
+CURRENT_SOURCE_UI_SCHEMA = 5
+
+
+def legacy_region_kinds(pg) -> tuple[str, str]:
+    """``(source, sink)`` region kinds a pre-schema-3 object is simulated with.
+
+    Before schema 3 the region kinds were not read; the legacy geometry mode
+    (and sink region mode) decided the mesh region instead.
+    """
+    mesh = getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
+    source = "MESH_SHELL" if mesh else "ANALYTIC"
+    sink = ("MESH_SOLID" if mesh and getattr(pg, "sink_region_mode", "SOLID") == "SOLID"
+            else "MESH_SHELL" if mesh else "ANALYTIC")
+    return source, sink
+
+
+def uses_native_source_plan(pg) -> bool:
+    """True when ``pg`` is a point, volume or field input.
+
+    Those are translated by :meth:`SceneInputs.gather_source_plans` into
+    native source plans whose evaluation cadence is ``mesh_evaluation_mode``;
+    analytic and mesh sources/sinks remain legacy descriptors. Below source UI
+    schema 3 the runtime ignores the region kinds, so only fields qualify.
+    """
+    role = getattr(pg, "role", "NONE")
+    if role == "FIELD" or (
+            role == "SOURCE"
+            and getattr(pg, "source_mode", "PARTICLES") == "FIELD"):
+        return True
+    if int(getattr(pg, "source_ui_schema_version", 0) or 0) < 3:
+        return False
+    if role == "SOURCE":
+        return getattr(pg, "source_region_kind", "ANALYTIC") in {"POINTS", "VOLUME_GRID"}
+    if role == "SINK":
+        return getattr(pg, "sink_region_kind", "ANALYTIC") == "VOLUME_GRID"
+    return False
+
+
 class SceneInputs:
     """Own animated-object history and reusable collider mesh state."""
 
     def __init__(self):
         self.device = "cuda:0"
+        # Admission sets this while it stages inputs on the CPU: meshes are
+        # then StagedMesh stand-ins until materialize_device_meshes.
+        self.stage_meshes = False
         self.clear()
 
     def clear(self):
@@ -238,6 +408,10 @@ class SceneInputs:
         self._mesh_consumers = []
         self._source_mesh_cache_keys = set()
         self._collider_mesh_cache_keys = set()
+        # First Sim Frame point/volume/field inputs captured for this
+        # lifecycle; see _native_plan_input.
+        self._native_plan_inputs = {}
+        self._native_plan_regions = {}
         self._sync_generation = 0
         # Compatibility alias for older diagnostics/tests.
         self._collider_mesh_cache = self._evaluated_mesh_cache
@@ -263,18 +437,27 @@ class SceneInputs:
         object_id = _object_identity(obj)
         data_id = _data_identity(obj)
         updated_ids = _depsgraph_updates(depsgraph)
+        frame = getattr(getattr(depsgraph, "scene", None), "frame_current", None)
         entry = self._evaluated_mesh_cache.get(cache_key)
         matrix_world = obj.matrix_world
         matrix = np.asarray(matrix_world, dtype=np.float32)
         matrix_signature = _array_signature(matrix)
+        # ``updates`` is filled only inside an update handler; a bake syncs
+        # after frame_set from evaluated_depsgraph_get(), where it is always
+        # empty. A frame change always tags the scene, so an empty list on a
+        # new frame means "unknown", not "nothing moved": re-read the mesh
+        # (the signature check below still reuses an unchanged upload). B30.
+        updates_known = bool(updated_ids) or entry is None or entry.get("frame") == frame
         if (not force_refresh and entry is not None
                 and entry["device"] == self.device
                 and entry["data_id"] == data_id
                 and entry["matrix_signature"] == matrix_signature
                 and (entry.get("sync_generation") == sync_generation
-                     or (object_id not in updated_ids and data_id not in updated_ids))):
+                     or (updates_known and object_id not in updated_ids
+                         and data_id not in updated_ids))):
             if strict_degenerate and entry.get("had_degenerate", False):
                 return None, "evaluated mesh contains degenerate triangles"
+            entry["frame"] = frame
             self.collider_mesh_cache_stats["reuses"] += 1
             return entry, ""
 
@@ -299,9 +482,8 @@ class SceneInputs:
                 verts @ matrix[:3, :3].T + matrix[:3, 3],
                 dtype=np.float32,
             )
-            triangle_points = world_verts[np.unique(tris)]
-            diagonal = float(np.linalg.norm(
-                triangle_points.max(axis=0) - triangle_points.min(axis=0)))
+            aabb_min, aabb_max = _referenced_bounds(world_verts, tris)
+            diagonal = float(np.linalg.norm(aabb_max - aabb_min))
             edges_a = world_verts[tris[:, 1]] - world_verts[tris[:, 0]]
             edges_b = world_verts[tris[:, 2]] - world_verts[tris[:, 0]]
             area2 = np.linalg.norm(np.cross(edges_a, edges_b), axis=1)
@@ -313,8 +495,9 @@ class SceneInputs:
                 return None, "evaluated mesh contains only degenerate triangles"
             if had_degenerate:
                 tris = tris[valid]
+                # Dropped triangles can leave vertices unreferenced.
+                aabb_min, aabb_max = _referenced_bounds(world_verts, tris)
             tris = np.ascontiguousarray(tris, dtype=np.int32)
-            triangle_points = world_verts[np.unique(tris)]
         finally:
             evaluated.to_mesh_clear()
 
@@ -322,27 +505,34 @@ class SceneInputs:
             object_id, self.device, verts, tris, matrix)
         if entry is not None and entry["signature"] == signature:
             entry["sync_generation"] = sync_generation
+            entry["frame"] = frame
             self.collider_mesh_cache_stats["reuses"] += 1
             return entry, ""
 
-        points = wp.array(world_verts, dtype=wp.vec3, device=self.device)
-        indices = wp.array(
-            tris.reshape(-1), dtype=wp.int32, device=self.device)
-        warp_mesh = wp.Mesh(points=points, indices=indices)
+        if self.stage_meshes:
+            # Admission staging: nothing queries a BVH before the committed
+            # replacement materializes its own on the solver device.
+            warp_mesh = StagedMesh()
+        else:
+            points = wp.array(world_verts, dtype=wp.vec3, device=self.device)
+            indices = wp.array(
+                tris.reshape(-1), dtype=wp.int32, device=self.device)
+            warp_mesh = wp.Mesh(points=points, indices=indices)
         entry = {
             "signature": signature,
             "device": self.device,
             "data_id": data_id,
             "matrix_signature": matrix_signature,
             "sync_generation": sync_generation,
+            "frame": frame,
             "had_degenerate": had_degenerate,
             "mesh": warp_mesh,
             # Owned immutable adapter values for Phase 2 plans. No evaluated
             # mesh or mathutils proxy survives to persistent solver state.
             "vertices": np.ascontiguousarray(world_verts, dtype=np.float32),
             "triangles": np.ascontiguousarray(tris, dtype=np.int32),
-            "aabb_min": triangle_points.min(axis=0),
-            "aabb_max": triangle_points.max(axis=0),
+            "aabb_min": aabb_min,
+            "aabb_max": aabb_max,
             "force_center": tuple(float(value) for value in matrix[:3, 3]),
             # Deferred: computed on first SOLID-sink read via
             # _entry_is_watertight(). None means "not evaluated yet".
@@ -367,7 +557,10 @@ class SceneInputs:
         replacements = {}
         for entry in self._evaluated_mesh_cache.values():
             previous = entry.get("mesh")
-            if entry.get("device") == device and previous is not None:
+            # While staging, a same-device call only registers consumers.
+            if (entry.get("device") == device and previous is not None
+                    and (self.stage_meshes
+                         or not isinstance(previous, StagedMesh))):
                 continue
             points = wp.array(
                 entry["vertices"], dtype=wp.vec3, device=device)
@@ -415,10 +608,15 @@ class SceneInputs:
         if previous is None or frame <= previous[1]:
             return (0.0, 0.0, 0.0)
         dt = (frame - previous[1]) / fps
-        delta = previous[0].rotation_difference(current)
-        # rotation_difference is conj(prev) * current with no hemisphere
-        # normalization, and Quaternion.angle is 2 * acos(w) over [0, 2 * pi]
-        # rather than the shortest arc.  matrix_world.to_quaternion() hands back
+        # The solver consumes omega in world space (k_rasterize_collider_material
+        # and _update_moving_colliders), so take the world-frame delta
+        # current * conj(prev). rotation_difference is conj(prev) * current,
+        # the delta in the previous body frame: for a tilted collider its axis
+        # is rotated away from the true spin axis.
+        delta = current @ previous[0].conjugated()
+        # The product carries no hemisphere normalization, and Quaternion.angle
+        # is 2 * acos(w) over [0, 2 * pi] rather than the shortest arc.
+        # matrix_world.to_quaternion() hands back
         # the canonical w >= 0 representative, so consecutive samples straddling
         # a half-turn (where w = cos(z / 2) changes sign) land in opposite
         # hemispheres and the delta comes back negated -- the long way round,
@@ -449,16 +647,11 @@ class SceneInputs:
             legacy_field = (role == "SOURCE"
                             and getattr(pg, "source_mode", "PARTICLES") == "FIELD")
             schema_version = int(getattr(pg, "source_ui_schema_version", 0) or 0)
-            source_region = (getattr(pg, "source_region_kind", "ANALYTIC")
-                             if schema_version >= 3 else
-                             ("MESH_SHELL" if getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
-                              else "ANALYTIC"))
-            sink_region = (getattr(pg, "sink_region_kind", "ANALYTIC")
-                           if schema_version >= 3 else
-                           ("MESH_SOLID" if getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
-                            and getattr(pg, "sink_region_mode", "SOLID") == "SOLID"
-                            else "MESH_SHELL" if getattr(pg, "geometry_mode", "ANALYTIC") == "MESH"
-                            else "ANALYTIC"))
+            if schema_version >= 3:
+                source_region = getattr(pg, "source_region_kind", "ANALYTIC")
+                sink_region = getattr(pg, "sink_region_kind", "ANALYTIC")
+            else:
+                source_region, sink_region = legacy_region_kinds(pg)
             direct_plan_role = (legacy_field or role == "FIELD"
                                 or (role == "SOURCE" and source_region in {"POINTS", "VOLUME_GRID"})
                                 or (role == "SINK" and sink_region == "VOLUME_GRID"))
@@ -595,15 +788,12 @@ class SceneInputs:
         return f"session:{self._session_generation}:object:{_object_identity(obj)}"
 
     @staticmethod
-    def _analytic_region_plan(obj, pg):
-        from ..sim.enums import SourceShapeShape
-        from ..sim.source_regions import AnalyticRegionPlan
-
+    def _analytic_placement(obj):
+        """The frame-dependent part of an analytic region: the object's pose."""
         location = obj.matrix_world.to_translation()
         rotation = obj.matrix_world.to_quaternion()
         dimensions = obj.dimensions
-        return AnalyticRegionPlan(
-            shape=SourceShapeShape[pg.shape],
+        return dict(
             position=(location.x, location.y, location.z),
             rotation=(rotation.x, rotation.y, rotation.z, rotation.w),
             half_extents=tuple(max(float(v), 1.0e-4) / 2.0 for v in
@@ -611,15 +801,34 @@ class SceneInputs:
             radius=max(float(dimensions.x), float(dimensions.y),
                        float(dimensions.z)) / 2.0,
             height=max(float(dimensions.z), 1.0e-4) / 2.0,
+        )
+
+    @classmethod
+    def _analytic_region_plan(cls, obj, pg, *, placement=None):
+        from ..sim.enums import SourceShapeShape
+        from ..sim.source_regions import AnalyticRegionPlan
+
+        placement = cls._analytic_placement(obj) if placement is None else placement
+        return AnalyticRegionPlan(
+            shape=SourceShapeShape[pg.shape],
             feather=float(pg.feather),
+            **placement,
         )
 
     @staticmethod
-    def _volume_region_plan(obj, pg, *, include_field_payload=False):
-        import bpy
-        from ..sim.source_regions import VolumeRegionPlan
+    def _volume_input_object(obj, pg):
+        return getattr(pg, "volume_input_object", None) or obj
 
-        volume_obj = getattr(pg, "volume_input_object", None) or obj
+    @classmethod
+    def _volume_placement(cls, obj, pg):
+        """The frame-dependent part of a volume region: VDB path and transform.
+
+        An animated VDB sequence reports a different ``frame_filepath`` on
+        every frame, and the object may be animated as well.
+        """
+        import bpy
+
+        volume_obj = cls._volume_input_object(obj, pg)
         if getattr(volume_obj, "type", None) != "VOLUME":
             raise ValueError("Choose a Blender Volume object")
         data = getattr(volume_obj, "data", None)
@@ -629,6 +838,16 @@ class SceneInputs:
         filepath = bpy.path.abspath(filepath) if filepath else ""
         if not filepath:
             raise ValueError("The selected Volume has no VDB filepath")
+        return (filepath, tuple(float(value) for value in
+                                np.asarray(volume_obj.matrix_world).reshape(-1)))
+
+    @classmethod
+    def _volume_region_plan(cls, obj, pg, *, include_field_payload=False,
+                            placement=None):
+        from ..sim.source_regions import VolumeRegionPlan
+
+        filepath, transform = (cls._volume_placement(obj, pg)
+                               if placement is None else placement)
         use_sdf = getattr(pg, "volume_grid_type", "FOG") == "SDF"
         scalar_grid = (getattr(pg, "volume_scalar_grid", "")
                        if include_field_payload else "")
@@ -649,10 +868,37 @@ class SceneInputs:
             vector_x_grid=vector_x,
             vector_y_grid=vector_y,
             vector_z_grid=vector_z,
-            transform=tuple(float(value) for value in
-                            np.asarray(volume_obj.matrix_world).reshape(-1)),
+            transform=transform,
             fog_threshold=float(getattr(pg, "volume_fog_threshold", 0.0)),
         )
+
+    def _native_plan_input(self, cache_key, frozen, capture):
+        """Return one native plan's frame-dependent input.
+
+        ``mesh_evaluation_mode`` is the evaluation cadence of every source
+        input, not only of meshes. With First Sim Frame the input (point
+        coordinates, VDB path and transform, or field placement) is captured
+        the first time it is gathered and kept until ``clear()``, which
+        Initialize/Reset/load perform. Re-gathering it every frame, as before,
+        changed the compiler cache key, so a "first frame" plan recompiled and
+        followed the animation. A failed capture stores nothing and retries.
+        """
+        self._native_plan_keys.add(cache_key)
+        if not frozen:
+            self._native_plan_inputs.pop(cache_key, None)
+            return capture()
+        entry = self._native_plan_inputs.get(cache_key)
+        if entry is None:
+            entry = self._native_plan_inputs[cache_key] = capture()
+        return entry
+
+    def _prune_native_plan_inputs(self):
+        for cache_key in list(self._native_plan_inputs):
+            if cache_key not in self._native_plan_keys:
+                del self._native_plan_inputs[cache_key]
+        for cache_key in list(self._native_plan_regions):
+            if cache_key not in self._native_plan_keys:
+                del self._native_plan_regions[cache_key]
 
     def gather_source_plans(self, scene, depsgraph=None):
         """Translate P3-only Point/Volume/Field workflows to frozen plans.
@@ -673,42 +919,63 @@ class SceneInputs:
 
         depsgraph = depsgraph or __import__("bpy").context.evaluated_depsgraph_get()
         plans = []
+        self._native_plan_keys = set()
         for obj in scene.objects:
             pg = getattr(obj, "fluidsim", None)
             if pg is None or not getattr(pg, "enabled", False) or obj.hide_viewport:
                 continue
+            if not uses_native_source_plan(pg):
+                continue
             role = getattr(pg, "role", "NONE")
             schema_version = int(getattr(pg, "source_ui_schema_version", 0) or 0)
-            legacy_field = (role == "SOURCE"
-                            and getattr(pg, "source_mode", "PARTICLES") == "FIELD")
-            presentation_role = "FIELD" if legacy_field else role
             source_region = (getattr(pg, "source_region_kind", "ANALYTIC")
                              if schema_version >= 3 else "ANALYTIC")
             sink_region = (getattr(pg, "sink_region_kind", "ANALYTIC")
                            if schema_version >= 3 else "ANALYTIC")
-            needs_plan = (presentation_role == "FIELD"
-                          or (role == "SOURCE" and source_region in {"POINTS", "VOLUME_GRID"})
-                          or (role == "SINK" and sink_region == "VOLUME_GRID"))
-            if not needs_plan:
-                continue
             _set_source_status(pg)
-            key = SourceKey(persistent_source_key(obj))
-            cadence = (SourceEvaluationCadence.EVERY_SIM_FRAME
-                       if getattr(pg, "mesh_evaluation_mode", "FIRST_SIM_FRAME")
-                       == "EVERY_SIM_FRAME" else SourceEvaluationCadence.FIRST_SIM_FRAME)
+            identity = persistent_source_key(obj)
+            key = SourceKey(identity)
+            frozen = (getattr(pg, "mesh_evaluation_mode", "FIRST_SIM_FRAME")
+                      != "EVERY_SIM_FRAME")
+            cadence = (SourceEvaluationCadence.FIRST_SIM_FRAME if frozen
+                       else SourceEvaluationCadence.EVERY_SIM_FRAME)
+            volume_key = (identity, "VOLUME", _object_identity(
+                self._volume_input_object(obj, pg)))
+
+            def volume_placement(obj=obj, pg=pg, volume_key=volume_key):
+                return self._native_plan_input(
+                    volume_key, frozen,
+                    lambda: self._volume_placement(obj, pg))
+
             try:
                 if role == "SOURCE" and source_region == "POINTS":
                     point_obj = getattr(pg, "point_input_object", None) or obj
-                    positions = source_inputs.object_points_world(point_obj, depsgraph)
-                    if not len(positions):
-                        raise ValueError(
-                            "Point input must provide mesh vertices, PointCloud points, or a particle system")
+                    point_key = (identity, "POINTS", _object_identity(point_obj))
+
+                    def capture_points(point_obj=point_obj):
+                        positions = np.array(
+                            source_inputs.object_points_world(point_obj, depsgraph),
+                            dtype=np.float32, copy=True)
+                        if not len(positions):
+                            raise ValueError(
+                                "Point input must provide mesh vertices, PointCloud points, or a particle system")
+                        positions.setflags(write=False)
+                        return positions
+
+                    positions = self._native_plan_input(point_key, frozen, capture_points)
                     direct = getattr(pg, "point_source_representation", "DIRECT_APPEND") == "DIRECT_APPEND"
-                    region = PointRegionPlan(
-                        positions,
-                        rasterize_radius=(0.0 if direct else float(
-                            getattr(pg, "point_rasterize_radius", 0.1))),
-                    )
+                    radius = 0.0 if direct else float(
+                        getattr(pg, "point_rasterize_radius", 0.1))
+                    reused = self._native_plan_regions.get(point_key) if frozen else None
+                    if (reused is not None and reused[0] is positions
+                            and reused[1] == radius):
+                        # Same frozen object: the compiler's digest memo hits.
+                        region = reused[2]
+                    else:
+                        region = PointRegionPlan(positions, rasterize_radius=radius)
+                        if frozen:
+                            self._native_plan_regions[point_key] = (
+                                positions, radius, region)
                     lifecycle = (SourceLifecycle.DIRECT_APPEND if direct else
                                  (SourceLifecycle.ONCE
                                   if pg.emission_mode == SourceEmissionMode.INITIAL_FILL.name
@@ -716,14 +983,16 @@ class SceneInputs:
                     operation = SourceOperation.LIQUID
                     payload_kind = SourcePayloadKind.LIQUID_ATTRIBUTES
                 elif role == "SOURCE" and source_region == "VOLUME_GRID":
-                    region = self._volume_region_plan(obj, pg)
+                    region = self._volume_region_plan(
+                        obj, pg, placement=volume_placement())
                     lifecycle = (SourceLifecycle.ONCE
                                  if pg.emission_mode == SourceEmissionMode.INITIAL_FILL.name
                                  else SourceLifecycle.TOP_UP)
                     operation = SourceOperation.LIQUID
                     payload_kind = SourcePayloadKind.LIQUID_ATTRIBUTES
                 elif role == "SINK" and sink_region == "VOLUME_GRID":
-                    region = self._volume_region_plan(obj, pg)
+                    region = self._volume_region_plan(
+                        obj, pg, placement=volume_placement())
                     lifecycle = SourceLifecycle.EVERY_FRAME
                     operation = SourceOperation.SINK
                     payload_kind = SourcePayloadKind.MASK
@@ -738,8 +1007,12 @@ class SceneInputs:
                     use_volume = (getattr(pg, "field_region_kind", "ANALYTIC") == "VOLUME_GRID"
                                   or getattr(pg, "field_value_source", "CONSTANT") == "VOLUME_GRID")
                     region = (self._volume_region_plan(
-                        obj, pg, include_field_payload=True) if use_volume
-                        else self._analytic_region_plan(obj, pg))
+                        obj, pg, include_field_payload=True,
+                        placement=volume_placement()) if use_volume
+                        else self._analytic_region_plan(
+                            obj, pg, placement=self._native_plan_input(
+                                (identity, "ANALYTIC", _object_identity(obj)),
+                                frozen, lambda: self._analytic_placement(obj))))
                     lifecycle = SourceLifecycle.EVERY_FRAME
                     payload_kind = {
                         SourceOperation.PRESSURE: SourcePayloadKind.PRESSURE,
@@ -777,49 +1050,56 @@ class SceneInputs:
                 ))
             except Exception as exc:
                 _set_source_status(pg, "ERROR", "SOURCE_INPUT_INVALID", str(exc))
+        self._prune_native_plan_inputs()
         return plans
 
     def update_source_status(self, scene, diagnostics, apply_result=None):
-        """Copy compiler/runtime results to bounded RNA status snapshots."""
+        """Copy compiler/runtime results to bounded RNA status snapshots.
+
+        Runs after every live step, so it visits only simulation inputs (a
+        tagged role or an auto-injected seed: every Blender object carries a
+        FluidSim group) and writes a status field only when its value changes.
+        """
         objects = {}
+        status = {}
         for obj in scene.objects:
             pg = getattr(obj, "fluidsim", None)
-            if pg is None:
+            if pg is None or not _feeds_simulation(pg):
                 continue
             objects[self._runtime_source_key(obj)] = pg
             objects[persistent_source_key(obj)] = pg
-            if getattr(pg, "source_status_code", "") != "SOURCE_INPUT_INVALID":
-                _set_source_status(pg)
-            try:
-                pg.source_status_emitted = 0
-                pg.source_status_capacity_limited = False
-            except (AttributeError, TypeError):
-                pass
+            current = _source_status_values(pg)
+            if current["source_status_code"] == "SOURCE_INPUT_INVALID":
+                # Set while gathering inputs this step; keep its message.
+                cleared = dict(current)
+            else:
+                cleared = dict.fromkeys(_SOURCE_STATUS_TEXT, "")
+            cleared["source_status_emitted"] = 0
+            cleared["source_status_capacity_limited"] = False
+            status[id(pg)] = (pg, cleared)
         for diagnostic in diagnostics or ():
             pg = objects.get(str(getattr(diagnostic, "stable_id", "")))
             if pg is not None:
-                _set_source_status(
-                    pg, getattr(diagnostic, "severity", ""),
-                    getattr(diagnostic, "code", ""),
-                    getattr(diagnostic, "message", ""))
+                status[id(pg)][1].update(
+                    source_status_severity=str(getattr(diagnostic, "severity", "")),
+                    source_status_code=str(getattr(diagnostic, "code", "")),
+                    source_status_message=str(getattr(diagnostic, "message", "")))
         if apply_result:
             # SourcePipeline currently reports one aggregate transaction. It is
             # truthful to attribute that count only when exactly one liquid
             # source is active; broadcasting it to every source/field panel
             # would present scene-global telemetry as per-object truth.
-            unique_objects = {id(pg): pg for pg in objects.values()}
-            active_liquid = [pg for pg in unique_objects.values()
+            active_liquid = [pg for pg, _values in status.values()
                              if getattr(pg, "role", "NONE") == "SOURCE"
                              and getattr(pg, "source_mode", "PARTICLES") != "FIELD"
                              and getattr(pg, "enabled", False)]
             if len(active_liquid) == 1:
-                pg = active_liquid[0]
-                try:
-                    pg.source_status_emitted = int(apply_result.get("emitted", 0))
-                    pg.source_status_capacity_limited = bool(
-                        apply_result.get("capacity_limited", False))
-                except (AttributeError, TypeError):
-                    pass
+                status[id(active_liquid[0])][1].update(
+                    source_status_emitted=int(apply_result.get("emitted", 0)),
+                    source_status_capacity_limited=bool(
+                        apply_result.get("capacity_limited", False)))
+        for pg, values in status.values():
+            _write_changed_status(pg, values)
 
     def gather_force_fields(self, scene, depsgraph=None):
         """Translate native Blender force-field objects into GPU proxies."""
@@ -1026,12 +1306,9 @@ class SceneInputs:
                 foreach_get(pixels)
             else:
                 pixels[:] = np.asarray(image.pixels, dtype=np.float32)
-            rgba = pixels.reshape(height, width, 4)
-            profile = np.ascontiguousarray(
-                (rgba[..., 0] * 0.2126 + rgba[..., 1] * 0.7152
-                 + rgba[..., 2] * 0.0722).T
-                * float(getattr(fs, "height_profile_scale", 1.0)),
-                dtype=np.float32)
+            profile = _height_profile(
+                pixels, width, height,
+                float(getattr(fs, "height_profile_scale", 1.0)))
         fs.height_error = ""
         desc = HeightSourceDesc()
         desc.enabled = True

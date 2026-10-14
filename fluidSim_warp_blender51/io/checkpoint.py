@@ -1,9 +1,17 @@
-"""Versioned solver checkpoint payloads with atomic, pickle-free NPZ I/O."""
+"""Versioned solver checkpoint payloads with atomic, pickle-free NPZ I/O.
+
+Format 2 (FluidSim 3.0) reserves two array slots that later 3.0 work fills:
+``particle_affine`` (per-particle 3x3 APIC matrix, ``(N, 9)`` float32) and
+``narrow_band_seed_state`` (``(M,)`` uint32 RNG state for narrow-band seeding).
+Until then they are written empty, and a file without them is rejected. A
+format-1 checkpoint is refused, never migrated.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import io
 import json
 import math
 import os
@@ -14,8 +22,14 @@ import zipfile
 
 import numpy as np
 
-CHECKPOINT_FORMAT_VERSION = 1
+CHECKPOINT_FORMAT_VERSION = 2
 _META_KEY = "__fluidsim_checkpoint_metadata__"
+
+# name -> (dtype, shape of the empty slot). Empty means "this feature is off".
+RESERVED_EMPTY_SLOTS: dict[str, tuple[str, tuple[int, ...]]] = {
+    "particle_affine": ("float32", (0, 9)),
+    "narrow_band_seed_state": ("uint32", (0,)),
+}
 
 
 def _json_safe(value: Any, path: str = "value") -> Any:
@@ -67,6 +81,8 @@ def _validate_channel_alignment(arrays: Mapping[str, np.ndarray]) -> None:
             value = arrays[name]
             if value.ndim == 0:
                 raise ValueError(f"{name} must have a {label} dimension")
+            if name == "particle_affine" and value.shape[0] == 0:
+                continue  # empty = transfer mode without affine state
             lengths[name] = int(value.shape[0])
         if lengths and len(set(lengths.values())) != 1:
             raise ValueError(f"unaligned {label} checkpoint channels: {lengths}")
@@ -130,6 +146,9 @@ class CheckpointPayload:
         }
         if any(not name or name == _META_KEY for name in arrays):
             raise ValueError("checkpoint array names must be non-empty and reserved-key safe")
+        for name, (dtype, shape) in RESERVED_EMPTY_SLOTS.items():
+            if name not in arrays:
+                arrays[name] = np.zeros(shape, dtype=dtype)
         _validate_channel_alignment(arrays)
         if "whitewater_type" in arrays:
             from ..sim.whitewater_types import validate_type_values
@@ -199,6 +218,7 @@ def write_checkpoint_atomic(path: Path | str, payload: CheckpointPayload) -> str
     temp = Path(temp_name)
     try:
         with os.fdopen(descriptor, "w+b") as handle:
+            descriptor = None  # the handle owns and closes it now
             metadata = json.dumps(
                 _metadata(payload), sort_keys=True, separators=(",", ":"), allow_nan=False
             )
@@ -213,10 +233,11 @@ def write_checkpoint_atomic(path: Path | str, payload: CheckpointPayload) -> str
         _fsync_directory(path.parent)
         return digest
     except Exception:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         try:
             temp.unlink()
         except FileNotFoundError:
@@ -239,10 +260,18 @@ def read_checkpoint(
         raise ValueError(f"checkpoint is missing: {path}")
     if expected_size is not None and path.stat().st_size != int(expected_size):
         raise ValueError("checkpoint size mismatch")
-    if expected_sha256 is not None and _sha256(path) != expected_sha256:
-        raise ValueError("checkpoint checksum mismatch")
+    source: Path | io.BytesIO = path
+    if expected_sha256 is not None:
+        # Hash and parse the same bytes, read once: the file is not read a
+        # second time, and what is parsed is exactly what was verified.
+        raw = path.read_bytes()
+        if expected_size is not None and len(raw) != int(expected_size):
+            raise ValueError("checkpoint size mismatch")
+        if hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise ValueError("checkpoint checksum mismatch")
+        source = io.BytesIO(raw)
     try:
-        loaded = np.load(path, allow_pickle=False)
+        loaded = np.load(source, allow_pickle=False)
     except (OSError, EOFError, ValueError, zipfile.BadZipFile) as exc:
         raise ValueError(f"checkpoint could not be read: {exc}") from exc
     with loaded as data:
@@ -270,9 +299,19 @@ def read_checkpoint(
         arrays_meta = metadata["arrays"]
         if not isinstance(arrays_meta, dict):
             raise ValueError("checkpoint array metadata must be an object")
+        stored_version = metadata["checkpoint_format_version"]
+        if stored_version != CHECKPOINT_FORMAT_VERSION:
+            raise ValueError(
+                f"unsupported checkpoint format {stored_version}; "
+                f"expected {CHECKPOINT_FORMAT_VERSION}")
         array_names = set(data.files) - {_META_KEY}
         if array_names != set(arrays_meta):
             raise ValueError("checkpoint array inventory does not match metadata")
+        absent = sorted(set(RESERVED_EMPTY_SLOTS) - array_names)
+        if absent:
+            # A 3.0 writer always stores the reserved slots; their absence
+            # means the file was not written by a format-2 writer.
+            raise ValueError(f"checkpoint is missing reserved arrays {absent}")
         arrays: dict[str, np.ndarray] = {}
         for name in sorted(array_names):
             value = _normalized_array(name, data[name])

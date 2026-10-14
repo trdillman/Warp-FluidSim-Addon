@@ -33,6 +33,11 @@ REQUIRED_BLENDER_MIN = "5.2.0"
 # ``pkg_manifest_validate_terse_description_or_error`` for permission reasons.
 PERMISSION_REASON_MAX_LENGTH = 64
 BUNDLED_WHEEL_DIR = "wheels"
+# The repo keeps the demos at <repo>/demos (gate, benchmarks and tests read
+# them there); builds copy them into this ignored add-on directory, which the
+# Demo Gallery searches in installed builds.
+BUNDLED_DEMO_DIR = "resources/demos"
+DEMO_IDS = ("dam_break", "crown_splash", "paddle_stir", "chromatic_vortex")
 RELEASE_ONLY_FILES = {"pyproject.toml", "requirements-dev.txt"}
 RELEASE_ONLY_RELATIVE_PATHS: set[str] = set()
 RELEASE_ONLY_PATHS = {
@@ -62,12 +67,12 @@ def _looks_like_blender_file(payload: bytes) -> bool:
 
 @dataclass(frozen=True)
 class SourceVerification:
-    """Result of verifying release metadata and bundled runtime locks."""
+    """Result of verifying release metadata and runtime download locks."""
 
     extension_id: str
     version: str
     platforms: tuple[str, ...]
-    bundled_warp_wheels: tuple[str, ...]
+    locked_warp_wheels: tuple[str, ...]
     wheel_platforms: tuple[tuple[str, str], ...] = ()
     wheel_sha256: tuple[tuple[str, str], ...] = ()
 
@@ -99,7 +104,10 @@ class ArtifactRecord:
 
 
 def _run(command: list[str], cwd: Path, *, env: Mapping[str, str] | None = None) -> None:
-    subprocess.run(command, cwd=cwd, env=env, check=True)
+    subprocess.run(
+        command, cwd=cwd, env=env, check=True,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
 
 
 def _blender_process_environment(
@@ -418,7 +426,7 @@ def verify_source_tree(root: Path) -> SourceVerification:
         extension_id=str(extension_id),
         version=version_string,
         platforms=platforms,
-        bundled_warp_wheels=tuple(sorted(files)),
+        locked_warp_wheels=tuple(sorted(files)),
         wheel_platforms=tuple(
             (name, str(files[name].get("platform", ""))) for name in sorted(files)
         ),
@@ -533,9 +541,15 @@ def _validate_required_package_content(
         "resources/examples/custom_effects/renders/06_custom_effects_stack.png",
         "resources/examples/custom_effects/renders/07_warp_code_authoring.png",
     }
+    required.update(f"{BUNDLED_DEMO_DIR}/{demo_id}.blend" for demo_id in DEMO_IDS)
     missing = sorted(required - set(names))
     if missing:
         raise RuntimeError(f"package {package.name} is missing files: {missing}")
+    for demo_id in DEMO_IDS:
+        demo_name = names[f"{BUNDLED_DEMO_DIR}/{demo_id}.blend"]
+        with archive.open(demo_name) as handle:
+            if not _looks_like_blender_file(handle.read(7)):
+                raise RuntimeError(f"invalid demo {demo_id}.blend in {package.name}")
     for relative, stale_sha256 in collision_guard.items():
         archive_name = names.get(relative)
         if stale_sha256 is None:
@@ -775,6 +789,30 @@ def _provision_smoke_warp(target: Path) -> None:
         archive.extractall(target)
 
 
+def stage_demo_assets(root: Path, source: Path | None = None) -> list[Path]:
+    """Copy the demo .blend files into the add-on so the package ships them.
+
+    The target directory is rebuilt from scratch so a stale or renamed demo
+    never rides along. Only the .blend files are copied; preview renders and
+    .blend1 backups next to them are untracked local leftovers.
+    """
+    root = Path(root).resolve()
+    source = Path(source) if source is not None else root.parent / "demos"
+    target = root / BUNDLED_DEMO_DIR
+    sources = [source / f"{demo_id}.blend" for demo_id in DEMO_IDS]
+    missing = [str(path) for path in sources if not path.is_file()]
+    if missing:
+        raise RuntimeError(f"demo files to bundle are missing: {missing}")
+    for path in sources:
+        with path.open("rb") as handle:
+            if not _looks_like_blender_file(handle.read(7)):
+                raise RuntimeError(f"demo file is not a Blender file: {path}")
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
+    return [Path(shutil.copy2(path, target / path.name)) for path in sources]
+
+
 def build(
     root: Path,
     blender: Path,
@@ -784,8 +822,9 @@ def build(
     run_python_checks: bool = True,
     run_lint: bool = True,
     fetcher: Callable[[Path], object] | None = None,
+    demo_source: Path | None = None,
 ) -> list[Path]:
-    """Run static gates, Blender validation, split build, and archive inspection.
+    """Stage demos, run static gates, Blender validation and archive inspection.
 
     Note: wheels are not fetched or bundled. Users install Warp via the
     preferences button which downloads from PyPI.
@@ -793,6 +832,7 @@ def build(
     root = Path(root).resolve()
     blender = Path(blender)
     output = Path(output).resolve()
+    stage_demo_assets(root, demo_source)
     source = verify_source_tree(root)
     output.mkdir(parents=True, exist_ok=True)
     for path in output.glob(f"{source.extension_id}-{source.version}-*.zip"):

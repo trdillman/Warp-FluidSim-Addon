@@ -12,7 +12,7 @@ from __future__ import annotations
 import bpy
 
 from . import file_compat, output_publication, ui_object, ui_scene
-from .scene_access import active_domain_object, active_domain_settings
+from .scene_access import active_domain_object
 from .ui_common import FluidSimObjectPanel, active_object_role
 
 
@@ -65,14 +65,22 @@ def _physics_id(group: str, source_id: str) -> str:
     return f"FLUIDSIM_PT_physics_{group}_{suffix}"
 
 
-def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[str],
-                        owner_redirect: bool = False):
+def _make_panel_mirrors(
+    source_panels,
+    *,
+    group: str,
+    accepted_kinds: frozenset[str],
+    kinds_by_panel=None,
+):
     """Mirror existing panels under the Physics root without copying state.
 
-    ``owner_redirect`` marks mirrors of panels that edit the domain group. The
-    source panels resolve that group themselves (``ui_scene._domain_owner``), so
-    the mirror only hides them while no domain object is designated.
+    The source panels resolve their settings group themselves (the domain
+    panels through ``ui_scene._domain_owner``), and the DOMAIN kind already
+    means a domain object is designated, so a mirror needs no redirect.
+    ``kinds_by_panel`` narrows individual source panels to fewer kinds than
+    the group accepts.
     """
+    kinds_by_panel = dict(kinds_by_panel or {})
     source_panels = tuple(source_panels)
     id_map = {
         str(source_panel.bl_idname): _physics_id(group, str(source_panel.bl_idname))
@@ -81,28 +89,18 @@ def _make_panel_mirrors(source_panels, *, group: str, accepted_kinds: frozenset[
     classes = []
 
     def draw_for(source_panel):
-        if not owner_redirect:
-            def draw(self, context):
-                return source_panel.draw(self, context)
-            return draw
-
         def draw(self, context):
-            # poll() already hides a redirected mirror without a domain; a
-            # direct draw() has no domain group to draw either.
-            if active_domain_settings(getattr(context, "scene", None)) is None:
-                return None
             return source_panel.draw(self, context)
         return draw
 
     def poll_for(source_panel):
+        kinds = kinds_by_panel.get(source_panel, accepted_kinds)
+
         @classmethod
         def poll(cls, context):
             if not FluidSimPhysicsPanel.poll(context):
                 return False
-            if physics_object_kind(context) not in accepted_kinds:
-                return False
-            if owner_redirect and active_domain_settings(
-                    getattr(context, "scene", None)) is None:
+            if physics_object_kind(context) not in kinds:
                 return False
             source_poll = getattr(source_panel, "poll", None)
             return bool(source_panel.poll(context)) if callable(source_poll) else True
@@ -164,7 +162,9 @@ class FLUIDSIM_PT_physics_root(FluidSimPhysicsPanel, bpy.types.Panel):
 
         layout.operator(
             "fluidsim.open_scene_properties",
-            text="Open Full FluidSim Settings",
+            # The Scene tab holds scene-level state only (status, presets,
+            # outputs, diagnostics); the domain settings are in this tab.
+            text="Open Scene FluidSim Settings",
             icon="PROPERTIES",
         )
         if (
@@ -216,9 +216,17 @@ INPUT_PANEL_CLASSES = _make_panel_mirrors(
     accepted_kinds=frozenset({"NONE", "INPUT"}),
 )
 
+# The Scene tab no longer registers any of these (``ui_scene.SCENE_PANEL_CLASSES``
+# keeps only scene-owned panels), so this list is the only registered home of
+# the domain controls besides the staged sidebar. Height Fill, Persistent
+# Attributes and Profiling were Scene-tab-only before; they are mirrored here so
+# no domain control loses its only UI. Persistent Attributes and Profiling were
+# children of Scene panels that stay in the Scene tab, so the mirror makes them
+# top-level domain panels.
 DOMAIN_SOURCE_PANELS = (
     ui_scene.FLUIDSIM_PT_scene_domain,
     ui_scene.FLUIDSIM_PT_scene_capacity,
+    ui_scene.FLUIDSIM_PT_scene_height,
     ui_scene.FLUIDSIM_PT_scene_simulation,
     ui_scene.FLUIDSIM_PT_sim_time,
     ui_scene.FLUIDSIM_PT_sim_gravity,
@@ -231,13 +239,16 @@ DOMAIN_SOURCE_PANELS = (
     ui_scene.FLUIDSIM_PT_sim_forces,
     ui_scene.FLUIDSIM_PT_sim_dissipation,
     ui_scene.FLUIDSIM_PT_sim_attraction,
-    ui_scene.FLUIDSIM_PT_sim_spacetime,
+    ui_scene.FLUIDSIM_PT_output_attributes,
+    ui_scene.FLUIDSIM_PT_attrs_surface,
+    ui_scene.FLUIDSIM_PT_attrs_particles,
+    ui_scene.FLUIDSIM_PT_attrs_whitewater,
+    ui_scene.FLUIDSIM_PT_diagnostics_profiling,
 )
 DOMAIN_PANEL_CLASSES = _make_panel_mirrors(
     DOMAIN_SOURCE_PANELS,
     group="domain",
     accepted_kinds=frozenset({"DOMAIN"}),
-    owner_redirect=True,
 )
 
 SURFACE_SOURCE_PANELS = (
@@ -262,10 +273,17 @@ WHITEWATER_SOURCE_PANELS = (
     ui_scene.FLUIDSIM_PT_whitewater_life,
     ui_scene.FLUIDSIM_PT_whitewater_dynamics,
 )
+# Emission, classification and lifetime are common to every whitewater stream,
+# so SEPARATE-mode Foam/Bubbles/Spray outputs keep them (the combined shell is
+# hidden in that mode). Per-stream dynamics stay on the combined output only:
+# each separate output already draws its own stream's dynamics.
 WHITEWATER_PANEL_CLASSES = _make_panel_mirrors(
     WHITEWATER_SOURCE_PANELS,
     group="whitewater",
-    accepted_kinds=frozenset({"WHITEWATER"}),
+    accepted_kinds=frozenset({"WHITEWATER", "FOAM", "BUBBLES", "SPRAY"}),
+    kinds_by_panel={
+        ui_scene.FLUIDSIM_PT_whitewater_dynamics: frozenset({"WHITEWATER"}),
+    },
 )
 
 
@@ -446,6 +464,6 @@ def unregister():
     for cls in reversed(PHYSICS_PANEL_CLASSES):
         try:
             bpy.utils.unregister_class(cls)
-        except (RuntimeError, ValueError):
-            pass
+        except Exception as exc:  # noqa: BLE001 - report and keep walking
+            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")
 

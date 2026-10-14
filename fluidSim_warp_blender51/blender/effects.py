@@ -55,8 +55,10 @@ _STATUS_ITEMS = tuple((item.value, item.name.replace("_", " ").title(), "") for 
 _TRUST_ITEMS = tuple((item.value, item.name.replace("_", " ").title(), "") for item in TrustState)
 _DOMAIN_ITEMS = (("PARTICLES", "Particles", "Run over live liquid particles"), ("ACTIVE_VOXELS", "Active Voxels", "Run over active sparse-grid voxels"))
 _STAGE_ITEMS = (
-    ("BEFORE_EMISSION", "Before Emission", "Before sources emit this substep"),
-    ("AFTER_PARTICLE_TRANSFER", "After Particle Transfer", "After particle-to-grid transfer"),
+    ("BEFORE_EMISSION", "Before Emission",
+     "Start of the substep, before emission and particle-to-grid transfer; use for particle velocity forces"),
+    ("AFTER_PARTICLE_TRANSFER", "After Particle Transfer",
+     "After particle-to-grid transfer; edit grid fields here (the grid transfer replaces particle velocity edits)"),
     ("BEFORE_PRESSURE", "Before Pressure", "Immediately before pressure projection"),
     ("AFTER_PARTICLE_UPDATE", "After Particle Update", "After advection and lifecycle"),
 )
@@ -368,6 +370,16 @@ def _kernel_parameter_keys(kernel_pg, base: KernelDefinitionV2 | None) -> tuple[
         # The PG is authoritative once authored, so an emptied field really unbinds.
         return tuple(k.strip() for k in csv.split(",") if k.strip())
     return base.parameter_keys  # .blend saved before the field existed
+
+
+def bound_parameter_keys(pg, kernel_pg) -> tuple[str, ...]:
+    """The parameter keys execution binds for ``kernel_pg`` of effect ``pg``."""
+    base = None
+    if pg.definition_json:
+        definition = EffectDefinitionV2.from_dict(json.loads(pg.definition_json))
+        base = next((kernel for kernel in definition.kernels
+                     if kernel.kernel_id == kernel_pg.kernel_id), None)
+    return _kernel_parameter_keys(kernel_pg, base)
 
 
 def unbind_parameter_key(pg, key: str) -> None:
@@ -747,8 +759,13 @@ def _try_live_parameter_update(scene) -> bool:
     stack = scene.fluidsim_effects
     if not stack.applied_signature:
         return False
-    from . import scene_bridge
+    from . import production_bake, scene_bridge
 
+    if production_bake.any_bake_active():
+        # Held: the baking solver keeps the effect parameters its cache
+        # identity was recorded with (decision D2). The restored preview
+        # reads them at its next step.
+        return False
     session = scene_bridge.session()
     if not session.active or not session.owns_scene(scene):
         return False
@@ -760,6 +777,282 @@ def _try_live_parameter_update(scene) -> bool:
         return False
     _publish_applied_state(scene, instances)
     return True
+
+
+def _live_bindable_values(pg, applied: EffectInstanceV2, *,
+                          animated_only: frozenset[str] | None = None) -> EffectInstanceV2:
+    """``applied`` with its runtime-bindable values re-read from the scene.
+
+    F-curve/driver evaluation and controller-object motion change these
+    values without an RNA update callback, so they are read every step.
+    Non-bindable values keep their applied snapshot. With ``animated_only``
+    (a Production Bake) only those keyframed or driven keys and the motion of
+    the admitted controller objects are read; any other edit stays held.
+    """
+    by_key = {str(item.key): item for item in pg.parameters}
+    values = dict(applied.parameter_values)
+    controllers = dict(applied.controller_bindings)
+    for definition in applied.definition.parameters:
+        item = by_key.get(definition.key)
+        if item is None or not definition.runtime_bindable:
+            continue
+        if definition.kind is ParameterKind.OBJECT:
+            snapshot = _controller_snapshot(item)
+            if animated_only is not None and (
+                    snapshot.get("object_name")
+                    != controllers.get(definition.key, {}).get("object_name")):
+                continue  # a different controller object is an edit, not motion
+            values[definition.key] = _parameter_value(item)
+            if snapshot:
+                controllers[definition.key] = snapshot
+            else:
+                controllers.pop(definition.key, None)
+        elif animated_only is None or definition.key in animated_only:
+            values[definition.key] = _parameter_value(item)
+    return replace(applied, parameter_values=values, controller_bindings=controllers)
+
+
+# The value property each parameter kind stores; F-curves and drivers name it.
+_PARAMETER_VALUE_PROPS = {
+    ParameterKind.FLOAT.value: "float_value",
+    ParameterKind.INT.value: "int_value",
+    ParameterKind.BOOL.value: "bool_value",
+    ParameterKind.VECTOR.value: "vector_value",
+    ParameterKind.COLOR.value: "color_value",
+    ParameterKind.ENUM.value: "enum_value",
+}
+
+
+def _action_data_paths(action, slot=None) -> set[str]:
+    """F-curve data paths of ``action`` for ``slot`` (all slots when unknown)."""
+    paths = set()
+    legacy = getattr(action, "fcurves", None)  # pre-slotted Action API
+    if legacy is not None:
+        paths.update(str(fcurve.data_path) for fcurve in legacy)
+    handle = getattr(slot, "handle", None)
+    for layer in getattr(action, "layers", ()) or ():
+        for strip in getattr(layer, "strips", ()) or ():
+            for bag in getattr(strip, "channelbags", ()) or ():
+                bag_handle = getattr(bag, "slot_handle", None)
+                if handle is not None and bag_handle is not None and bag_handle != handle:
+                    continue
+                paths.update(str(fcurve.data_path) for fcurve in bag.fcurves)
+    return paths
+
+
+def _animated_effect_paths(scene) -> frozenset[str]:
+    """Effect data paths on ``scene`` that an F-curve, NLA strip or driver sets."""
+    anim = getattr(scene, "animation_data", None)
+    if anim is None:
+        return frozenset()
+    paths = set()
+    action = getattr(anim, "action", None)
+    if action is not None:
+        paths |= _action_data_paths(action, getattr(anim, "action_slot", None))
+    for track in getattr(anim, "nla_tracks", ()) or ():
+        if getattr(track, "mute", False):
+            continue
+        for strip in getattr(track, "strips", ()) or ():
+            if getattr(strip, "action", None) is not None and not getattr(strip, "mute", False):
+                paths |= _action_data_paths(
+                    strip.action, getattr(strip, "action_slot", None))
+    paths.update(str(driver.data_path) for driver in getattr(anim, "drivers", ()) or ())
+    return frozenset(path for path in paths if path.startswith("fluidsim_effects."))
+
+
+def animated_parameter_keys(scene) -> dict[str, frozenset[str]]:
+    """Per instance id, the parameter keys a keyframe or driver sets."""
+    stack = getattr(scene, "fluidsim_effects", None)
+    paths = _animated_effect_paths(scene) if stack is not None else frozenset()
+    if not paths:
+        return {}
+    result = {}
+    for index, pg in enumerate(stack.items):
+        keys = frozenset(
+            str(item.key) for slot, item in enumerate(pg.parameters)
+            if f"fluidsim_effects.items[{index}].parameters[{slot}]."
+               f"{_PARAMETER_VALUE_PROPS.get(str(item.kind), '')}" in paths)
+        if keys:
+            result[str(pg.instance_id)] = keys
+    return result
+
+
+def effect_frame_stamp(scene) -> str:
+    """Digest of the running effect values animation can change at this frame.
+
+    Covers keyframed/driven parameter values and controller object transforms
+    of the effects that execute. ``""`` when there are none, so a scene without
+    animated effects keeps the per-frame cache stamp it always had.
+    """
+    stack = getattr(scene, "fluidsim_effects", None)
+    if stack is None or not len(stack.items):
+        return ""
+    from ..sim.effects.fingerprint import sha256_hex
+
+    try:
+        running = {instance.instance_id for instance in
+                   effective_stack_instances(scene_effect_instances(scene))}
+    except (RuntimeError, ValueError):
+        return ""
+    animated = animated_parameter_keys(scene)
+    parts = []
+    for pg in stack.items:
+        instance_id = str(pg.instance_id)
+        if instance_id not in running:
+            continue
+        keys = animated.get(instance_id, frozenset())
+        for item in pg.parameters:
+            if str(item.key) in keys:
+                parts.append([instance_id, str(item.key), _parameter_value(item)])
+            elif (getattr(item, "kind", "") == ParameterKind.OBJECT.value
+                  and getattr(item, "object_value", None) is not None):
+                parts.append([instance_id, str(item.key), _controller_snapshot(item)])
+    return sha256_hex(parts) if parts else ""
+
+
+def _effect_values_may_change(scene, stack) -> bool:
+    """Cheap gate: can an effect value change without an update callback?
+
+    Effect parameters live on the Scene, so their F-curves, NLA strips and
+    drivers are on the Scene's animation data; controllers are objects that
+    can move. With neither, a step reads nothing else.
+    """
+    anim = getattr(scene, "animation_data", None)
+    if anim is not None and (
+            getattr(anim, "action", None) is not None
+            or len(getattr(anim, "drivers", ()) or ())
+            or len(getattr(anim, "nla_tracks", ()) or ())):
+        return True
+    return any(
+        getattr(item, "object_value", None) is not None
+        for pg in stack.items
+        for item in pg.parameters
+        if getattr(item, "kind", "") == ParameterKind.OBJECT.value)
+
+
+def sync_animated_effect_bindings(scene, session) -> bool:
+    """Rebind animated or moved runtime-bindable effect values before a step.
+
+    Preview follows every runtime-bindable value. A Production Bake follows
+    only keyframed/driven values and the motion of its controller objects, and
+    holds any other edit (decision D2); its cache identity is taken at the bake
+    start frame and these per-frame values go into each frame's stamp
+    (:func:`effect_frame_stamp`), so it publishes nothing. Costs no rebinding
+    unless a value actually changed since the last step.
+    """
+    stack = getattr(scene, "fluidsim_effects", None)
+    if stack is None or not stack.applied_signature:
+        return False
+    runtime = getattr(getattr(session.solver, "features", None), "effects", None)
+    if runtime is None or not runtime.has_any():
+        return False
+    from . import production_bake
+
+    if not _effect_values_may_change(scene, stack):
+        return False
+    baking = production_bake.any_bake_active()
+    animated = animated_parameter_keys(scene) if baking else None
+    by_id = {str(pg.instance_id): pg for pg in stack.items}
+    applied = runtime.applied_instances()
+    updated = []
+    try:
+        for instance in applied:
+            pg = by_id.get(instance.instance_id)
+            live = instance if pg is None else _live_bindable_values(
+                pg, instance, animated_only=None if animated is None
+                else animated.get(instance.instance_id, frozenset()))
+            updated.append(live)
+    except (ReferenceError, ValueError):
+        # A deleted controller or an animated value outside its limits keeps
+        # the applied values; the next apply reports the authoring problem.
+        return False
+    if all(live is instance or (
+            live.parameter_values == instance.parameter_values
+            and live.controller_bindings == instance.controller_bindings)
+           for live, instance in zip(updated, applied, strict=True)):
+        return False
+    if not runtime.update_runtime_bindings(tuple(updated)):
+        return False
+    if baking:
+        return True
+    try:
+        instances = scene_effect_instances(scene)
+    except (RuntimeError, ValueError):
+        return True
+    if execution_stack_fingerprint(instances)[0] == runtime.applied_signature:
+        # The draft matches what now runs: keep the published applied state
+        # (status, cache identity) in step with the animated values.
+        _publish_applied_state(scene, instances)
+    return True
+
+
+def _set_if_changed(pg, name, value) -> None:
+    # An RNA write tags the scene for re-evaluation even when the value is equal.
+    if getattr(pg, name) != value:
+        setattr(pg, name, value)
+
+
+def publish_runtime_telemetry(scene, records) -> None:
+    """Show each effect's work for the frame just stepped.
+
+    ``records`` is the solver's per-kernel ``custom_effects`` frame snapshot;
+    an effect's calls, elements and submission time are summed over its kernels.
+    """
+    stack = getattr(scene, "fluidsim_effects", None)
+    if stack is None or not records:
+        return
+    totals = {}
+    for record in records:
+        calls, elements, seconds = totals.get(str(record.get("instanceId", "")), (0, 0, 0.0))
+        totals[str(record.get("instanceId", ""))] = (
+            calls + int(record.get("calls", 0)),
+            elements + int(record.get("elements", 0)),
+            seconds + float(record.get("submissionSeconds", 0.0)))
+    for pg in stack.items:
+        total = totals.get(str(pg.instance_id))
+        if total is None:
+            continue
+        _set_if_changed(pg, "calls", total[0])
+        _set_if_changed(pg, "elements", total[1])
+        _set_if_changed(pg, "submission_ms", round(total[2] * 1000.0, 6))
+
+
+def publish_runtime_error(scene, error) -> None:
+    """Mark the effect whose launch failed; Test or Compile & Apply clears it."""
+    stack = getattr(scene, "fluidsim_effects", None)
+    runtime_error = getattr(error, "runtime_error", None)
+    if stack is None or runtime_error is None:
+        return
+    message = (f"{runtime_error.kernel_id} at {runtime_error.stage}, frame "
+               f"{runtime_error.frame}, substep {runtime_error.substep_index}: "
+               f"{runtime_error.message}")
+    for pg in stack.items:
+        if str(pg.instance_id) == str(runtime_error.instance_id):
+            _set_if_changed(pg, "runtime_error", message)
+    refresh_stack_state(scene)
+
+
+def _running_effect_trust_revoked(stack, store) -> bool:
+    """Is code the solver may be running no longer trusted?
+
+    Judged on the applied snapshot, not the draft: an edited draft has a new
+    content digest (an edited built-in is no longer the built-in) and so reads
+    untrusted, yet the solver still runs the applied code, which was trusted
+    when it was admitted. Only a trust change to that applied code revokes it.
+    An unreadable snapshot behind an applied stack fails closed.
+    """
+    if not getattr(stack, "applied_signature", ""):
+        return False
+    try:
+        payload = json.loads(getattr(stack, "applied_snapshot_json", "") or "[]")
+        applied = tuple(EffectInstanceV2.from_dict(item) for item in payload)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return True
+    trusted = {TrustState.BUILT_IN_TRUSTED, TrustState.LOCAL_TRUSTED}
+    return any(
+        store.status(content_trust_digest(instance.definition),
+                     built_in=instance.definition.built_in) not in trusted
+        for instance in effective_stack_instances(applied))
 
 
 def refresh_stack_state(scene):
@@ -807,10 +1100,12 @@ def refresh_stack_state(scene):
             else "DIRTY" if stack.applied_signature else "DRAFT"
         )
         stack.blocking_reason = "; ".join(blocking)
-        if signature != stack.applied_signature or blocking:
-            from .playback import pause_preview_for_changes
+        # Playback keeps running the admitted stack: drafts apply on rewind or
+        # Apply Changes. Only revoked trust in running code stops the solver.
+        if _running_effect_trust_revoked(stack, store):
+            from .playback import stop_revoked_effects
 
-            pause_preview_for_changes(scene)
+            stop_revoked_effects(scene)
         return signature, inventory
     except Exception as exc:
         stack.status = "INVALID"
@@ -853,6 +1148,8 @@ def _mirror_issues(stack, issues):
         diagnostic.line = issue.line
         diagnostic.column = issue.column
         diagnostic.hint = issue.hint
+        if issue.severity != "ERROR":
+            continue  # advisory: shown, but neither blocks nor marks the code line
         for kernel in pg.kernels:
             if kernel.kernel_id == issue.kernel_id:
                 kernel.error_line = issue.line
@@ -882,6 +1179,8 @@ def test_draft(scene, *, device: str) -> CandidateBuildResult:
             pg.status = "TESTED"
         else:
             pg.status = "DISABLED"
+    # A successful candidate carries only advisory warnings; show them.
+    _mirror_issues(stack, candidate.issues)
     compile_seconds = 0.0
     sandbox_seconds = 0.0
     warp_version = ""
@@ -933,15 +1232,15 @@ def apply_stack(scene, *, device: str) -> CandidateBuildResult:
         stack.applied_inventory_json = previous_inventory
         stack.applied_snapshot_json = previous_snapshot
         return candidate
-    try:
-        from . import scene_bridge
+    from . import scene_bridge
 
-        session = scene_bridge.session()
-        if session.active and session.owns_scene(scene):
-            if not session.solver.set_custom_effect_candidate(candidate):
-                raise RuntimeError("live solver rejected the complete candidate stack")
-    except AttributeError:
-        pass
+    session = scene_bridge.session()
+    if session.active and session.owns_scene(scene):
+        # Test for the method, not ``except AttributeError``: an error raised
+        # inside installation must not publish the stack as APPLIED.
+        install = getattr(session.solver, "set_custom_effect_candidate", None)
+        if install is not None and not install(candidate):
+            raise RuntimeError("live solver rejected the complete candidate stack")
     instances = scene_effect_instances(scene)
     _publish_applied_state(scene, instances)
     return candidate
@@ -984,7 +1283,15 @@ def effect_identity(scene) -> tuple[str, tuple[dict[str, object], ...]]:
         return "", ()
     if not stack.applied_signature:
         raise ValueError("enabled Custom Effects have not been compiled and applied")
+    # Keyframed/driven values and controller motion legitimately differ from
+    # the applied snapshot, which was published at some other frame: compare
+    # with those taken from the snapshot. The identity returned is still the
+    # scene's own, so a bake records it at its start frame.
+    compared_signature, compared_inventory = current_signature, current_inventory
     if current_signature != stack.applied_signature:
+        compared_signature, compared_inventory = execution_stack_fingerprint(
+            _with_applied_frame_values(scene, stack))
+    if compared_signature != stack.applied_signature:
         raise ValueError(
             "Custom Effects source, parameters, controllers, timing, or stack order "
             "differ from the applied stack"
@@ -995,9 +1302,43 @@ def effect_identity(scene) -> tuple[str, tuple[dict[str, object], ...]]:
         )
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("applied Custom Effects inventory is invalid") from exc
-    if applied_inventory != current_inventory:
+    if applied_inventory != compared_inventory:
         raise ValueError("Custom Effects applied inventory differs from the executable stack")
     return current_signature, current_inventory
+
+
+def _with_applied_frame_values(scene, stack) -> tuple[EffectInstanceV2, ...]:
+    """The draft, with its per-frame values replaced by the applied snapshot's.
+
+    Per-frame values are keyframed/driven parameters and the transform of a
+    controller object that is still the applied one. Anything else (code,
+    other values, a different controller object) is left as drafted.
+    """
+    try:
+        payload = json.loads(getattr(stack, "applied_snapshot_json", "") or "[]")
+        applied = {item.instance_id: item for item in
+                   (EffectInstanceV2.from_dict(entry) for entry in payload)}
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return scene_effect_instances(scene)
+    animated = animated_parameter_keys(scene)
+    aligned = []
+    for instance in scene_effect_instances(scene):
+        old = applied.get(instance.instance_id)
+        if old is None:
+            aligned.append(instance)
+            continue
+        values = dict(instance.parameter_values)
+        for key in animated.get(instance.instance_id, ()):
+            if key in old.parameter_values:
+                values[key] = old.parameter_values[key]
+        controllers = dict(instance.controller_bindings)
+        for key, binding in instance.controller_bindings.items():
+            previous = old.controller_bindings.get(key)
+            if previous and previous.get("object_name") == binding.get("object_name"):
+                controllers[key] = previous
+        aligned.append(replace(
+            instance, parameter_values=values, controller_bindings=controllers))
+    return tuple(aligned)
 
 
 def production_blocking_reason(scene) -> str:
@@ -1130,5 +1471,5 @@ def unregister():
     for cls in reversed(CLASSES):
         try:
             bpy.utils.unregister_class(cls)
-        except (RuntimeError, ValueError):
-            pass
+        except Exception as exc:  # noqa: BLE001 - report and keep walking
+            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")

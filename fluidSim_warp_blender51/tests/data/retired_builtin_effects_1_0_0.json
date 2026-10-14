@@ -1,0 +1,858 @@
+[
+ {
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Forces",
+  "cost_hint": "LOW",
+  "description": "Adds controlled tangential motion around a chosen axis, with optional suction and lift. Use the owned controller Empty to place the vortex directly in the Blender scene.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.vortex_force",
+  "kernels": [
+   {
+    "cadence": "EVERY_SUBSTEP",
+    "description": "Adds bounded tangential, radial, and axial acceleration to live liquid particles.",
+    "domain": "PARTICLES",
+    "fields": [
+     {
+      "access": "READ_WRITE_CURRENT",
+      "field": "particle_velocity"
+     }
+    ],
+    "frame_end": 0,
+    "frame_start": 0,
+    "frame_step": 1,
+    "kernel_id": "vortex_force",
+    "label": "Apply Vortex",
+    "parameter_keys": [
+     "controller",
+     "axis",
+     "strength",
+     "radius",
+     "suction",
+     "lift"
+    ],
+    "prerequisites": [],
+    "safe_mode": true,
+    "source": "offset = position - controller\naxis_length = wp.length(axis)\ndistance = wp.length(offset)\nif axis_length > 1.0e-6 and distance < radius:\n    axis_n = axis / axis_length\n    radial = offset - axis_n * wp.dot(offset, axis_n)\n    radial_length = wp.length(radial)\n    if radial_length > 1.0e-6:\n        influence = wp.clamp(1.0 - radial_length / radius, 0.0, 1.0)\n        tangent = wp.normalize(wp.cross(axis_n, radial))\n        updated = particle_velocity[particle_index]\n        updated = updated + tangent * (strength * influence * solver_time_step)\n        updated = updated - radial * (suction * influence * solver_time_step)\n        updated = updated + axis_n * (lift * influence * solver_time_step)\n        particle_velocity[particle_index] = updated",
+    "stage": "AFTER_PARTICLE_TRANSFER"
+   }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Vortex Force",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+   {
+    "animatable": false,
+    "default": "",
+    "description": "Scene object whose origin places the vortex center.",
+    "enum_items": [],
+    "key": "controller",
+    "kind": "OBJECT",
+    "label": "Controller",
+    "maximum": null,
+    "minimum": null,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "OBJECT"
+   },
+   {
+    "animatable": true,
+    "default": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "description": "Local swirl axis in world space.",
+    "enum_items": [],
+    "key": "axis",
+    "kind": "VECTOR",
+    "label": "Axis",
+    "maximum": null,
+    "minimum": null,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "DIRECTION"
+   },
+   {
+    "animatable": true,
+    "default": 4.0,
+    "description": "Tangential acceleration at the controller center.",
+    "enum_items": [],
+    "key": "strength",
+    "kind": "FLOAT",
+    "label": "Strength",
+    "maximum": 100.0,
+    "minimum": -100.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "m/s²"
+   },
+   {
+    "animatable": true,
+    "default": 2.0,
+    "description": "Maximum radial influence distance.",
+    "enum_items": [],
+    "key": "radius",
+    "kind": "FLOAT",
+    "label": "Radius",
+    "maximum": 1000.0,
+    "minimum": 0.001,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "m"
+   },
+   {
+    "animatable": true,
+    "default": 0.0,
+    "description": "Radial pull toward the vortex axis.",
+    "enum_items": [],
+    "key": "suction",
+    "kind": "FLOAT",
+    "label": "Suction",
+    "maximum": 100.0,
+    "minimum": -100.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "1/s²"
+   },
+   {
+    "animatable": true,
+    "default": 0.0,
+    "description": "Acceleration along the vortex axis.",
+    "enum_items": [],
+    "key": "lift",
+    "kind": "FLOAT",
+    "label": "Lift",
+    "maximum": 100.0,
+    "minimum": -100.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "m/s²"
+   }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Swirl liquid around an artist-positioned controller with radial falloff.",
+  "tags": [
+   "controller",
+   "force",
+   "swirl"
+  ],
+  "version": "1.0.0"
+ },
+ {
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Forces",
+  "cost_hint": "LOW",
+  "description": "Applies a smooth trigonometric curl-style velocity perturbation. The effect is deterministic for a given seed, position, time, and stack order and requires no topology rebuild.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.curl_turbulence",
+  "kernels": [
+   {
+    "cadence": "EVERY_SUBSTEP",
+    "description": "Adds deterministic spatially varying motion without changing particle positions directly.",
+    "domain": "PARTICLES",
+    "fields": [
+     {
+      "access": "READ_WRITE_CURRENT",
+      "field": "particle_velocity"
+     }
+    ],
+    "frame_end": 0,
+    "frame_start": 0,
+    "frame_step": 1,
+    "kernel_id": "curl_turbulence",
+    "label": "Apply Turbulence",
+    "parameter_keys": [
+     "strength",
+     "frequency",
+     "drift",
+     "seed"
+    ],
+    "prerequisites": [],
+    "safe_mode": true,
+    "source": "sample = position * frequency + wp.vec3(seed, seed * 1.37, seed * 2.11)\nphase = time * drift\nnoise = wp.vec3(\n    wp.sin(sample[1] + phase) - wp.sin(sample[2] - phase),\n    wp.sin(sample[2] + phase * 1.17) - wp.sin(sample[0] - phase),\n    wp.sin(sample[0] + phase * 0.73) - wp.sin(sample[1] - phase * 1.31),\n)\nparticle_velocity[particle_index] = particle_velocity[particle_index] + noise * (strength * solver_time_step)",
+    "stage": "AFTER_PARTICLE_TRANSFER"
+   }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Curl Turbulence",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+   {
+    "animatable": true,
+    "default": 1.0,
+    "description": "Magnitude of the turbulent acceleration.",
+    "enum_items": [],
+    "key": "strength",
+    "kind": "FLOAT",
+    "label": "Strength",
+    "maximum": 100.0,
+    "minimum": 0.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "m/s²"
+   },
+   {
+    "animatable": true,
+    "default": 1.5,
+    "description": "Spatial frequency of turbulent features.",
+    "enum_items": [],
+    "key": "frequency",
+    "kind": "FLOAT",
+    "label": "Frequency",
+    "maximum": 1000.0,
+    "minimum": 0.001,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "1/m"
+   },
+   {
+    "animatable": true,
+    "default": 0.5,
+    "description": "Animation rate of the turbulence pattern.",
+    "enum_items": [],
+    "key": "drift",
+    "kind": "FLOAT",
+    "label": "Drift",
+    "maximum": 100.0,
+    "minimum": -100.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "1/s"
+   },
+   {
+    "animatable": true,
+    "default": 17.0,
+    "description": "Deterministic phase offset.",
+    "enum_items": [],
+    "key": "seed",
+    "kind": "FLOAT",
+    "label": "Seed",
+    "maximum": 100000.0,
+    "minimum": -100000.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "NONE"
+   }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Add deterministic, animated divergence-like turbulent motion to particles.",
+  "tags": [
+   "force",
+   "noise",
+   "turbulence"
+  ],
+  "version": "1.0.0"
+ },
+ {
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Forces",
+  "cost_hint": "LOW",
+  "description": "Creates a controllable spherical impulse field around an owned Empty. Positive strength pushes outward; negative strength pulls inward, with a smooth linear falloff to the radius.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.radial_pulse",
+  "kernels": [
+   {
+    "cadence": "EVERY_SUBSTEP",
+    "description": "Applies a bounded radial acceleration around the controller origin.",
+    "domain": "PARTICLES",
+    "fields": [
+     {
+      "access": "READ_WRITE_CURRENT",
+      "field": "particle_velocity"
+     }
+    ],
+    "frame_end": 0,
+    "frame_start": 0,
+    "frame_step": 1,
+    "kernel_id": "radial_pulse",
+    "label": "Apply Pulse",
+    "parameter_keys": [
+     "controller",
+     "strength",
+     "radius"
+    ],
+    "prerequisites": [],
+    "safe_mode": true,
+    "source": "offset = position - controller\ndistance = wp.length(offset)\nif distance > 1.0e-6 and distance < radius:\n    influence = wp.clamp(1.0 - distance / radius, 0.0, 1.0)\n    direction = offset / distance\n    particle_velocity[particle_index] = particle_velocity[particle_index] + direction * (strength * influence * solver_time_step)",
+    "stage": "AFTER_PARTICLE_TRANSFER"
+   }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Radial Pulse",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+   {
+    "animatable": false,
+    "default": "",
+    "description": "Scene object whose origin places the pulse center.",
+    "enum_items": [],
+    "key": "controller",
+    "kind": "OBJECT",
+    "label": "Controller",
+    "maximum": null,
+    "minimum": null,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "OBJECT"
+   },
+   {
+    "animatable": true,
+    "default": 6.0,
+    "description": "Outward or inward radial acceleration.",
+    "enum_items": [],
+    "key": "strength",
+    "kind": "FLOAT",
+    "label": "Strength",
+    "maximum": 100.0,
+    "minimum": -100.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "m/s²"
+   },
+   {
+    "animatable": true,
+    "default": 2.5,
+    "description": "Maximum pulse influence distance.",
+    "enum_items": [],
+    "key": "radius",
+    "kind": "FLOAT",
+    "label": "Radius",
+    "maximum": 1000.0,
+    "minimum": 0.001,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "m"
+   }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Push or pull liquid radially from a controller with a finite radius.",
+  "tags": [
+   "burst",
+   "controller",
+   "force"
+  ],
+  "version": "1.0.0"
+ },
+ {
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Forces",
+  "cost_hint": "LOW",
+  "description": "Uses a controller origin and world-space normal to push particles away from a plane. The finite width makes the effect easy to art-direct without global scene impact.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.planar_split",
+  "kernels": [
+   {
+    "cadence": "EVERY_SUBSTEP",
+    "description": "Pushes current particles to opposing sides of the configured plane.",
+    "domain": "PARTICLES",
+    "fields": [
+     {
+      "access": "READ_WRITE_CURRENT",
+      "field": "particle_velocity"
+     }
+    ],
+    "frame_end": 0,
+    "frame_start": 0,
+    "frame_step": 1,
+    "kernel_id": "planar_split",
+    "label": "Apply Split",
+    "parameter_keys": [
+     "controller",
+     "normal",
+     "strength",
+     "width"
+    ],
+    "prerequisites": [],
+    "safe_mode": true,
+    "source": "normal_length = wp.length(normal)\nif normal_length > 1.0e-6:\n    normal_n = normal / normal_length\n    signed_distance = wp.dot(position - controller, normal_n)\n    absolute_distance = wp.abs(signed_distance)\n    if absolute_distance < width:\n        side = 1.0\n        if signed_distance < 0.0:\n            side = -1.0\n        influence = wp.clamp(1.0 - absolute_distance / width, 0.0, 1.0)\n        particle_velocity[particle_index] = particle_velocity[particle_index] + normal_n * (side * strength * influence * solver_time_step)",
+    "stage": "AFTER_PARTICLE_TRANSFER"
+   }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Planar Split",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+   {
+    "animatable": false,
+    "default": "",
+    "description": "Scene object whose origin places the split plane.",
+    "enum_items": [],
+    "key": "controller",
+    "kind": "OBJECT",
+    "label": "Controller",
+    "maximum": null,
+    "minimum": null,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "OBJECT"
+   },
+   {
+    "animatable": true,
+    "default": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "description": "World-space normal of the split plane.",
+    "enum_items": [],
+    "key": "normal",
+    "kind": "VECTOR",
+    "label": "Plane Normal",
+    "maximum": null,
+    "minimum": null,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "DIRECTION"
+   },
+   {
+    "animatable": true,
+    "default": 3.0,
+    "description": "Acceleration away from the plane.",
+    "enum_items": [],
+    "key": "strength",
+    "kind": "FLOAT",
+    "label": "Strength",
+    "maximum": 100.0,
+    "minimum": -100.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "m/s²"
+   },
+   {
+    "animatable": true,
+    "default": 1.0,
+    "description": "Half-width of the plane influence band.",
+    "enum_items": [],
+    "key": "width",
+    "kind": "FLOAT",
+    "label": "Width",
+    "maximum": 1000.0,
+    "minimum": 0.001,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "m"
+   }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Separate liquid to opposite sides of an artist-positioned plane.",
+  "tags": [
+   "controller",
+   "plane",
+   "separation"
+  ],
+  "version": "1.0.0"
+ },
+ {
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Utilities",
+  "cost_hint": "LOW",
+  "description": "Applies stable per-substep velocity damping to the current liquid particle. Use it to settle motion, tame injected energy, or create a localized viscous-looking art direction layer.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.velocity_damping",
+  "kernels": [
+   {
+    "cadence": "EVERY_SUBSTEP",
+    "description": "Scales each current particle velocity by a bounded timestep-aware factor.",
+    "domain": "PARTICLES",
+    "fields": [
+     {
+      "access": "READ_WRITE_CURRENT",
+      "field": "particle_velocity"
+     }
+    ],
+    "frame_end": 0,
+    "frame_start": 0,
+    "frame_step": 1,
+    "kernel_id": "velocity_damping",
+    "label": "Damp Velocity",
+    "parameter_keys": [
+     "damping"
+    ],
+    "prerequisites": [],
+    "safe_mode": true,
+    "source": "factor = wp.clamp(1.0 - damping * solver_time_step, 0.0, 1.0)\nparticle_velocity[particle_index] = particle_velocity[particle_index] * factor",
+    "stage": "AFTER_PARTICLE_TRANSFER"
+   }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Velocity Damping",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+   {
+    "animatable": true,
+    "default": 1.0,
+    "description": "Fractional velocity reduction rate.",
+    "enum_items": [],
+    "key": "damping",
+    "kind": "FLOAT",
+    "label": "Damping",
+    "maximum": 1000.0,
+    "minimum": 0.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "1/s"
+   }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Reduce particle velocity smoothly without changing solver topology.",
+  "tags": [
+   "damping",
+   "stability",
+   "utility"
+  ],
+  "version": "1.0.0"
+ },
+ {
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Thermal",
+  "cost_hint": "MEDIUM",
+  "description": "A two-kernel effect: the first applies lift after particle-to-grid transfer; the second cools temperature after particle update. It demonstrates one artist effect spanning two solver stages.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.temperature_lift",
+  "kernels": [
+   {
+    "cadence": "EVERY_SUBSTEP",
+    "description": "Converts excess particle temperature into directional acceleration.",
+    "domain": "PARTICLES",
+    "fields": [
+     {
+      "access": "READ",
+      "field": "particle_temperature"
+     },
+     {
+      "access": "READ_WRITE_CURRENT",
+      "field": "particle_velocity"
+     }
+    ],
+    "frame_end": 0,
+    "frame_start": 0,
+    "frame_step": 1,
+    "kernel_id": "temperature_lift",
+    "label": "Apply Thermal Lift",
+    "parameter_keys": [
+     "direction",
+     "ambient",
+     "buoyancy"
+    ],
+    "prerequisites": [],
+    "safe_mode": true,
+    "source": "direction_length = wp.length(direction)\nif direction_length > 1.0e-6:\n    direction_n = direction / direction_length\n    excess = particle_temperature[particle_index] - ambient\n    particle_velocity[particle_index] = particle_velocity[particle_index] + direction_n * (excess * buoyancy * solver_time_step)",
+    "stage": "AFTER_PARTICLE_TRANSFER"
+   },
+   {
+    "cadence": "EVERY_SUBSTEP",
+    "description": "Returns particle temperature toward ambient after advection.",
+    "domain": "PARTICLES",
+    "fields": [
+     {
+      "access": "READ_WRITE_CURRENT",
+      "field": "particle_temperature"
+     }
+    ],
+    "frame_end": 0,
+    "frame_start": 0,
+    "frame_step": 1,
+    "kernel_id": "temperature_cooling",
+    "label": "Cool Particle Temperature",
+    "parameter_keys": [
+     "ambient",
+     "cooling"
+    ],
+    "prerequisites": [],
+    "safe_mode": true,
+    "source": "factor = wp.clamp(1.0 - cooling * solver_time_step, 0.0, 1.0)\nparticle_temperature[particle_index] = ambient + (particle_temperature[particle_index] - ambient) * factor",
+    "stage": "AFTER_PARTICLE_UPDATE"
+   }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Temperature Lift",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+   {
+    "animatable": true,
+    "default": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "description": "World-space lift direction.",
+    "enum_items": [],
+    "key": "direction",
+    "kind": "VECTOR",
+    "label": "Lift Direction",
+    "maximum": null,
+    "minimum": null,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "DIRECTION"
+   },
+   {
+    "animatable": true,
+    "default": 0.0,
+    "description": "Temperature with zero lift.",
+    "enum_items": [],
+    "key": "ambient",
+    "kind": "FLOAT",
+    "label": "Ambient",
+    "maximum": 10000.0,
+    "minimum": -10000.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "TEMPERATURE"
+   },
+   {
+    "animatable": true,
+    "default": 0.5,
+    "description": "Acceleration per temperature unit above ambient.",
+    "enum_items": [],
+    "key": "buoyancy",
+    "kind": "FLOAT",
+    "label": "Buoyancy",
+    "maximum": 100.0,
+    "minimum": -100.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "m/s²/K"
+   },
+   {
+    "animatable": true,
+    "default": 0.25,
+    "description": "Rate at which temperature returns to ambient.",
+    "enum_items": [],
+    "key": "cooling",
+    "kind": "FLOAT",
+    "label": "Cooling",
+    "maximum": 1000.0,
+    "minimum": 0.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "1/s"
+   }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Convert particle temperature into buoyant lift and cool it after advection.",
+  "tags": [
+   "buoyancy",
+   "multi-stage",
+   "temperature"
+  ],
+  "version": "1.0.0"
+ },
+ {
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Utilities",
+  "cost_hint": "LOW",
+  "description": "Limits the magnitude of each liquid particle velocity while preserving direction. This is a predictable utility for art direction and for guarding aggressive custom-force stacks.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.particle_speed_limit",
+  "kernels": [
+   {
+    "cadence": "EVERY_SUBSTEP",
+    "description": "Clamps current-particle speed without changing velocity direction.",
+    "domain": "PARTICLES",
+    "fields": [
+     {
+      "access": "READ_WRITE_CURRENT",
+      "field": "particle_velocity"
+     }
+    ],
+    "frame_end": 0,
+    "frame_start": 0,
+    "frame_step": 1,
+    "kernel_id": "particle_speed_limit",
+    "label": "Limit Speed",
+    "parameter_keys": [
+     "maximum_speed"
+    ],
+    "prerequisites": [],
+    "safe_mode": true,
+    "source": "current = particle_velocity[particle_index]\nspeed = wp.length(current)\nif speed > maximum_speed:\n    particle_velocity[particle_index] = current * (maximum_speed / speed)",
+    "stage": "AFTER_PARTICLE_TRANSFER"
+   }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Particle Speed Limit",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+   {
+    "animatable": true,
+    "default": 10.0,
+    "description": "Maximum allowed particle speed.",
+    "enum_items": [],
+    "key": "maximum_speed",
+    "kind": "FLOAT",
+    "label": "Maximum Speed",
+    "maximum": 10000.0,
+    "minimum": 0.001,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "m/s"
+   }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Clamp particle speeds to an explicit artist-controlled maximum.",
+  "tags": [
+   "clamp",
+   "stability",
+   "utility"
+  ],
+  "version": "1.0.0"
+ },
+ {
+  "author": "FluidSim",
+  "built_in": true,
+  "category": "Thermal",
+  "cost_hint": "MEDIUM",
+  "description": "Runs on active sparse voxels and therefore requests topology. It provides a clear example of a grid-domain effect whose cadence is once per frame rather than every solver substep.",
+  "effect_abi_version": 1,
+  "effect_api_version": 2,
+  "effect_id": "fluidsim.voxel_cooling",
+  "kernels": [
+   {
+    "cadence": "ONCE_PER_FRAME",
+    "description": "Relaxes temperature on active non-collision voxels once per display frame.",
+    "domain": "ACTIVE_VOXELS",
+    "fields": [
+     {
+      "access": "READ_WRITE_CURRENT",
+      "field": "temperature"
+     }
+    ],
+    "frame_end": 0,
+    "frame_start": 0,
+    "frame_step": 1,
+    "kernel_id": "voxel_cooling",
+    "label": "Cool Active Voxels",
+    "parameter_keys": [
+     "ambient",
+     "cooling"
+    ],
+    "prerequisites": [],
+    "safe_mode": true,
+    "source": "factor = wp.clamp(1.0 - cooling * real_time_step, 0.0, 1.0)\ntemperature[flat_voxel_index] = ambient + (temperature[flat_voxel_index] - ambient) * factor",
+    "stage": "AFTER_PARTICLE_TRANSFER"
+   }
+  ],
+  "license": "GPL-3.0-or-later",
+  "min_fluidsim_version": "1.0.251",
+  "name": "Voxel Cooling",
+  "package_origin": "builtin://fluidsim/1.0.251",
+  "parameters": [
+   {
+    "animatable": true,
+    "default": 0.0,
+    "description": "Target grid temperature.",
+    "enum_items": [],
+    "key": "ambient",
+    "kind": "FLOAT",
+    "label": "Ambient",
+    "maximum": 10000.0,
+    "minimum": -10000.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "TEMPERATURE"
+   },
+   {
+    "animatable": true,
+    "default": 0.5,
+    "description": "Grid temperature relaxation rate.",
+    "enum_items": [],
+    "key": "cooling",
+    "kind": "FLOAT",
+    "label": "Cooling",
+    "maximum": 1000.0,
+    "minimum": 0.0,
+    "precision": 3,
+    "runtime_bindable": true,
+    "soft_maximum": null,
+    "soft_minimum": null,
+    "unit": "1/s"
+   }
+  ],
+  "preview_asset": "",
+  "schema_version": 2,
+  "summary": "Relax active-grid temperature toward ambient once per frame.",
+  "tags": [
+   "cooling",
+   "grid",
+   "temperature"
+  ],
+  "version": "1.0.0"
+ }
+]

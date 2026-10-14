@@ -208,7 +208,7 @@ def _whitewater_resume(output: Path) -> dict[str, object]:
         scene,
         output,
         EXAMPLE_NAMES[3],
-        "Typed foam, bubble, and spray scene authored for cache-v2 bake/resume.",
+        "Typed foam, bubble, and spray scene authored for resumable-cache bake/resume.",
     )
 
 

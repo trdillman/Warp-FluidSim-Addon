@@ -6,11 +6,17 @@ def valid():
 
 def test_canonical_report_accepts_exact_types_and_all_passed(): assert validate(valid()) == []
 def test_report_rejects_nonempty_errors_and_failed_invariant():
- report=valid();report["errors"]=["bad"];report["invariants"][0]["passed"]=False
- errors=validate(report);assert any("errors" in e for e in errors);assert any("invariant" in e for e in errors)
+ report=valid()
+ report["errors"]=["bad"]
+ report["invariants"][0]["passed"]=False
+ errors=validate(report)
+ assert any("errors" in e for e in errors)
+ assert any("invariant" in e for e in errors)
 
 def test_report_rejects_false_or_empty_invalid_input_and_bad_details():
- report=valid(); report["invalid_input"]={"case":"","rejected":False,"message":""}; report["measurements"]["details"]=[]
+ report=valid()
+ report["invalid_input"]={"case":"","rejected":False,"message":""}
+ report["measurements"]["details"]=[]
  errors=validate(report)
  assert any("rejected" in e for e in errors)
  assert any("message" in e for e in errors)

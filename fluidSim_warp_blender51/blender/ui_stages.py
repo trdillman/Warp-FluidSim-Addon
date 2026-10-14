@@ -1,14 +1,14 @@
 """Staged workflow shelves for the 3D View sidebar: Setup, Simulate, Look, Bake.
 
 The status/transport strip (``FLUIDSIM_PT_viewport_status``) stays pinned at the
-top of the FluidSim tab with Preview/Pause and Apply Changes. Below it, one
+top of the FluidSim tab with Play/Pause and Apply Changes. Below it, one
 top-level panel per stage holds the handful of controls an artist reaches for at
 that point in the work, so the common loop happens beside the viewport instead of
 in the Scene Properties tree. Everything else stays one click away through the
 existing Scene Properties panels; nothing is duplicated into a deep sidebar tree.
 
-Every control is bound to the group that actually owns it
-(:func:`~.pending_settings.setting_owner`), so an edit made here is the value the
+Every control is bound to the group that declares it
+(:func:`~.pending_settings.declaring_group`), so an edit made here is the value the
 solver reads.
 
 The Bake stage is the only home of Cache & Production Bake: the Scene tab no
@@ -22,7 +22,9 @@ from __future__ import annotations
 import bpy
 
 from . import file_compat
-from .pending_settings import setting_owner
+from ..panels import PLAYBACK_ONLY_TEXT
+from ..sim import narrow_band
+from .pending_settings import declaring_group
 from .scene_access import active_domain_settings
 from .ui_common import (
     FluidSimView3DPanel,
@@ -34,11 +36,12 @@ from .ui_scene import (
     draw_cache_bake,
     draw_cache_manage,
     draw_cache_playback,
+    draw_resolution_readout,
 )
 
 # Stage controls, kept as data so the Blender validator can pin them without
 # re-deriving them from draw code.
-SETUP_DOMAIN_PROPS = ("voxel_size", "particles_per_voxel")
+SETUP_DOMAIN_PROPS = ("resolution_divisions", "particles_per_voxel")
 SIMULATE_PROPS = (
     "flip_ratio",
     "viscosity_enabled",
@@ -53,8 +56,21 @@ SIMULATE_READOUTS = (
     ("stat_substeps", "Substeps"),
     ("stat_particles", "Particles"),
     ("stat_voxels", "Voxels"),
+    ("stat_liquid_voxels", "Liquid voxels"),
     ("stat_cfl_clamped", "CFL clamped"),
 )
+# Only narrow-band mode counts liquid voxels; elsewhere the readout stays at 0.
+NARROW_BAND_READOUTS = frozenset({"stat_liquid_voxels"})
+
+
+def simulate_readouts(domain) -> tuple[tuple[str, str], ...]:
+    """The Live Readout rows for ``domain``; narrow-band rows only when it is on."""
+    if getattr(domain, "narrow_band_enabled", False):
+        return SIMULATE_READOUTS
+    return tuple(pair for pair in SIMULATE_READOUTS
+                 if pair[0] not in NARROW_BAND_READOUTS)
+
+
 LOOK_PROPS = (
     "liquid_view_mode",
     "surface_enabled",
@@ -81,6 +97,14 @@ _SURFACE_VIEW_MODES = frozenset({"SURFACE", "SURFACE_PARTICLES"})
 _PARTICLE_VIEW_MODES = frozenset({"PARTICLES", "SURFACE_PARTICLES"})
 
 
+def _playback_only() -> bool:
+    """True when Warp/CUDA cannot run, read through the probe the bake draws use."""
+    from . import ui_scene
+
+    probe = ui_scene._runtime_ui_state()[0]
+    return probe is not None and not probe.available
+
+
 class FluidSimStagePanel(FluidSimView3DPanel):
     """Base for the stage panels: any scene with FluidSim settings."""
 
@@ -98,14 +122,14 @@ def _layout(panel):
 
 
 def _prop(layout, scene, name, **kwargs):
-    """Draw ``name`` on the group that owns it; skip it when that group lacks it."""
-    return draw_property(layout, setting_owner(scene, name), name, **kwargs)
+    """Draw ``name`` on the group that declares it; skip it when there is no group."""
+    return draw_property(layout, declaring_group(scene, name), name, **kwargs)
 
 
 def _is_advanced(scene) -> bool:
     """Fail-open Basic/Advanced gate matching the Scene Properties panels."""
     fs = getattr(scene, "fluidsim", None)
-    return bool(fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
+    return bool(fs is None or fs.ui_mode == "ADVANCED")
 
 
 def draw_quality(layout, scene):
@@ -113,10 +137,30 @@ def draw_quality(layout, scene):
     return _prop(layout, scene, "quality")
 
 
+def draw_narrow_band(layout, scene, domain):
+    """The Narrow-Band Particles toggle, greyed with its reasons when blocked.
+
+    A toggle that is already on stays usable so a blocked setup can always be
+    switched back off.
+    """
+    if not hasattr(domain, "narrow_band_enabled"):
+        return
+    reasons = narrow_band.scene_blocking_reasons(
+        domain, getattr(scene, "objects", ()))
+    enabled = bool(domain.narrow_band_enabled)
+    column = layout.column(align=True)
+    column.enabled = enabled or not reasons
+    _prop(column, scene, "narrow_band_enabled")
+    if enabled:
+        _prop(column, scene, "narrow_band_voxels")
+    for reason in reasons:
+        layout.label(text=reason, icon="INFO")
+
+
 def draw_guided_setup_buttons(layout, *, primary_scale: float = 1.3):
     row = layout.row(align=True)
     row.scale_y = primary_scale
-    preview = row.operator("fluidsim.setup_scene", text="Set Up & Preview…", icon="PLAY")
+    preview = row.operator("fluidsim.setup_scene", text="Set Up & Play…", icon="PLAY")
     preview.start_preview = True
     only = layout.operator("fluidsim.setup_scene", text="Set Up Only…", icon="MOD_FLUIDSIM")
     only.start_preview = False
@@ -147,7 +191,11 @@ class FLUIDSIM_STAGE_PT_setup(FluidSimStagePanel, bpy.types.Panel):
 
         preset = layout.row(align=True)
         _prop(preset, scene, "product_preset", text="")
-        preset.operator("fluidsim.apply_product_preset", text="Apply", icon="PRESET")
+        apply_col = preset.row(align=True)
+        apply_col.enabled = fs.product_preset not in {"", "NONE"}
+        apply_col.operator("fluidsim.apply_product_preset", text="Apply", icon="PRESET")
+        if fs.active_preset_id:
+            layout.label(text=f"Applied: {fs.active_preset_id}", icon="CHECKMARK")
 
         if domain is None:
             return
@@ -156,6 +204,8 @@ class FLUIDSIM_STAGE_PT_setup(FluidSimStagePanel, bpy.types.Panel):
         column = layout.column(align=True)
         for name in SETUP_DOMAIN_PROPS:
             _prop(column, scene, name)
+        draw_resolution_readout(layout, scene)
+        draw_narrow_band(layout, scene, domain)
 
 
 class FLUIDSIM_STAGE_PT_setup_advanced(FluidSimStagePanel, bpy.types.Panel):
@@ -197,12 +247,12 @@ def draw_simulate_controls(layout, scene, domain):
     One drawing shared by the Simulate stage and the viewport-header popover, so
     both surfaces bind the same properties to the same owner.
     """
-    if getattr(domain, "sample_type", "FLIP") == "FLIP":
+    if domain.sample_type == "FLIP":
         _prop(layout, scene, "flip_ratio")
 
     viscosity = layout.column(align=True)
     _prop(viscosity, scene, "viscosity_enabled")
-    if domain.viscosity_enabled and not getattr(domain, "viscosity_from_particles", False):
+    if domain.viscosity_enabled and not domain.viscosity_from_particles:
         _prop(viscosity, scene, "viscosity_constant")
 
     tension = layout.column(align=True)
@@ -231,13 +281,20 @@ class FLUIDSIM_STAGE_PT_simulate(FluidSimStagePanel, bpy.types.Panel):
             layout.label(text="Set up a liquid domain first.", icon="INFO")
             return
 
-        draw_simulate_controls(layout, scene, domain)
+        body = layout
+        if _playback_only():
+            layout.label(text=PLAYBACK_ONLY_TEXT, icon="ERROR")
+            layout.label(text="Simulation needs a CUDA GPU; baked caches still play.")
+            body = layout.column()
+            body.enabled = False
 
-        layout.separator()
+        draw_simulate_controls(body, scene, domain)
+
+        body.separator()
         draw_readout_grid(
-            layout, scene.fluidsim, SIMULATE_READOUTS, title="Live Readout"
+            body, scene.fluidsim, simulate_readouts(domain), title="Live Readout"
         )
-        layout.operator(
+        body.operator(
             "fluidsim.open_scene_properties",
             text="All Simulation Settings…",
             icon="PROPERTIES",
@@ -314,6 +371,44 @@ class FLUIDSIM_STAGE_PT_look_materials(FluidSimStagePanel, bpy.types.Panel):
         )
 
 
+def draw_cache_refusal(layout, context) -> None:
+    """Say why the cache on disk cannot be played or resumed, and what to do.
+
+    Two cases: a cache baked by FluidSim 2.x (its format is not read by 3.0), and
+    a Resume that was refused because a source or collider animation no longer
+    matches the frames already baked, which offers "Re-bake from frame N" with N
+    the first frame that differs.
+    """
+    from ..io.cache import LEGACY_2X_CACHE_MESSAGE
+    from . import ui_scene
+    from .cache_bake import rebake_offer
+    from .production_bake import bake_is_active
+    from .ui_cache_state import cache_format_for_ui
+
+    scene = context.scene
+    if bake_is_active(scene):
+        return
+    directory = ui_scene._cache_directory(scene)
+    if directory is not None and cache_format_for_ui(directory) == 2:
+        ui_scene._draw_wrapped(layout, LEGACY_2X_CACHE_MESSAGE, icon="ERROR")
+        return
+    frame = rebake_offer(scene)
+    if frame is not None:
+        ui_scene._draw_wrapped(
+            layout,
+            f"A source or collider animation changed from frame {frame}. "
+            "Frames before it still match.",
+            icon="ERROR",
+        )
+        operator = layout.operator(
+            "fluidsim.bake_resume",
+            text=f"Re-bake from Frame {frame}…",
+            icon="FILE_REFRESH",
+        )
+        operator.rebake = True
+        operator.rebake_frame = frame
+
+
 class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
     """Stage 4: bake the cache, play it back, and export from it."""
 
@@ -331,19 +426,43 @@ class FLUIDSIM_STAGE_PT_bake(FluidSimStagePanel, bpy.types.Panel):
             layout.label(text="Set up a liquid domain first to bake.", icon="INFO")
             return
 
+        if _playback_only():
+            # No solver here: load a cache, play it, export from it. Baking and
+            # solver-driven export need CUDA, so they are not offered.
+            layout.separator()
+            layout.label(text=PLAYBACK_ONLY_TEXT, icon="ERROR")
+            draw_cache_refusal(layout, context)
+            draw_cache_playback(layout, context)
+            layout.separator()
+            layout.operator(
+                "fluidsim.export_alembic",
+                text="Export Surface as Alembic…", icon="EXPORT")
+            layout.operator(
+                "fluidsim.export_vdb",
+                text="Export Liquid Level Set as VDB...", icon="EXPORT")
+            return
+
         _prop(layout, scene, "export_attributes")
 
         # One shared drawing of the bake state machine (start / resume / restart /
         # cancel, progress, runtime readiness).
         layout.separator()
+        draw_cache_refusal(layout, context)
         draw_cache_playback(layout, context)
         layout.separator()
         draw_cache_bake(layout, context)
 
         layout.separator()
-        layout.operator(
+        export = layout.column(align=True)
+        export.operator(
             "fluidsim.export_frame", text="Export Current Frame…", icon="EXPORT"
         )
+        export.operator(
+            "fluidsim.export_alembic",
+            text="Export Surface as Alembic…", icon="EXPORT")
+        export.operator(
+            "fluidsim.export_vdb",
+            text="Export Liquid Level Set as VDB...", icon="EXPORT")
 
 
 class FLUIDSIM_STAGE_PT_bake_storage(FluidSimStagePanel, bpy.types.Panel):
@@ -406,5 +525,5 @@ def unregister():
     for cls in reversed(STAGE_PANEL_CLASSES):
         try:
             bpy.utils.unregister_class(cls)
-        except (RuntimeError, ValueError):
-            pass
+        except Exception as exc:  # noqa: BLE001 - report and keep walking
+            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")

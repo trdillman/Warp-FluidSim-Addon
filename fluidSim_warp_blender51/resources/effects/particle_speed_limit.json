@@ -29,7 +29,7 @@
       "prerequisites": [],
       "safe_mode": true,
       "source": "current = particle_velocity[particle_index]\nspeed = wp.length(current)\nif speed > maximum_speed:\n    particle_velocity[particle_index] = current * (maximum_speed / speed)",
-      "stage": "AFTER_PARTICLE_TRANSFER"
+      "stage": "BEFORE_EMISSION"
     }
   ],
   "license": "GPL-3.0-or-later",
@@ -62,5 +62,5 @@
     "stability",
     "utility"
   ],
-  "version": "1.0.0"
+  "version": "1.1.0"
 }

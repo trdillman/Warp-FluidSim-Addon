@@ -129,3 +129,222 @@ def test_setup_and_physics_panels_draw_the_warning():
     for name in ("ui_scene.py", "ui_physics.py"):
         assert "file_compat.draw_pre_bridge_warning(layout" in (
             blender / name).read_text(encoding="utf-8"), name
+
+
+def _particle_mode_scene(stored_index):
+    seen = {}
+
+    class _Group:
+        def __setattr__(self, name, value):
+            seen[name] = value
+
+    scene = SimpleNamespace(
+        name="Scene", fluidsim=_Group(),
+        bl_system_properties_get=lambda: {"fluidsim": {"particle_attribute_mode": stored_index}})
+    return scene, seen
+
+
+def test_removed_time_offset_particle_mode_falls_back_to_none(monkeypatch):
+    file_compat = _file_compat(monkeypatch)
+    from fluidSim_warp_blender51.properties import PARTICLE_ATTR_ITEMS
+
+    assert "TIME_OFFSET" not in [item[0] for item in PARTICLE_ATTR_ITEMS]
+    stale, stale_seen = _particle_mode_scene(len(PARTICLE_ATTR_ITEMS))
+    valid, valid_seen = _particle_mode_scene(len(PARTICLE_ATTR_ITEMS) - 1)
+    assert file_compat.migrate_removed_particle_color_mode([stale, valid]) == 1
+    assert stale_seen == {"particle_attribute_mode": "NONE"}
+    assert valid_seen == {}
+
+
+def _source_group(role, **overrides):
+    values = dict(
+        role=role, enabled=True, source_ui_schema_version=4,
+        source_mode="PARTICLES", source_region_kind="ANALYTIC",
+        sink_region_kind="ANALYTIC", field_region_kind="ANALYTIC",
+        mesh_evaluation_mode="FIRST_SIM_FRAME",
+        source_sampling_mode="INHERIT", source_sampling_multiplier=1.0)
+    values.update(overrides)
+    return SimpleNamespace(fluidsim=SimpleNamespace(**values), library=None)
+
+
+def _sources_module(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    return _reload_module("fluidSim_warp_blender51.blender.sources")
+
+
+def test_saved_native_sources_keep_animating_after_the_first_frame_fix(monkeypatch):
+    """B47: pre-fix point/volume/field sources stored First Sim Frame but animated.
+
+    First Sim Frame now really freezes those inputs, so a file saved before the
+    fix is switched once to Every Sim Frame, which is what it did in practice.
+    Mesh sources always froze and keep their mode; new sources keep theirs.
+    """
+    sources = _sources_module(monkeypatch)
+    points = _source_group("SOURCE", source_region_kind="POINTS")
+    volume = _source_group("SOURCE", source_region_kind="VOLUME_GRID")
+    volume_sink = _source_group("SINK", sink_region_kind="VOLUME_GRID")
+    field = _source_group("FIELD", source_ui_schema_version=0)
+    legacy_field = _source_group(
+        "SOURCE", source_ui_schema_version=2, source_mode="FIELD",
+        source_sampling_mode="INHERIT")
+    mesh = _source_group("SOURCE", source_region_kind="MESH_SOLID")
+    every = _source_group("SOURCE", source_region_kind="POINTS",
+                          mesh_evaluation_mode="EVERY_SIM_FRAME")
+    new = _source_group("SOURCE", source_region_kind="POINTS",
+                        source_ui_schema_version=sources.CURRENT_SOURCE_UI_SCHEMA)
+    untagged = _source_group("NONE", source_region_kind="POINTS")
+    scene = SimpleNamespace(objects=[
+        points, volume, volume_sink, field, legacy_field, mesh, every, new,
+        untagged])
+
+    assert sources.migrate_source_schema(scene) == 5
+
+    for obj in (points, volume, volume_sink, field, legacy_field, every):
+        assert obj.fluidsim.mesh_evaluation_mode == "EVERY_SIM_FRAME"
+    assert mesh.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+    assert new.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+    assert untagged.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+    for obj in (points, volume, volume_sink, field, legacy_field, mesh, every, new):
+        assert obj.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
+    assert untagged.fluidsim.source_ui_schema_version == 4
+    # The legacy field still went through the sampling migration first.
+    assert legacy_field.fluidsim.source_sampling_mode == "LEGACY_ABSOLUTE"
+
+    # Stamped: a user's later choice of First Sim Frame survives reloads.
+    points.fluidsim.mesh_evaluation_mode = "FIRST_SIM_FRAME"
+    assert sources.migrate_source_schema(scene) == 0
+    assert points.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+
+
+def test_cadence_migration_preserves_pre_region_schema_semantics(monkeypatch):
+    """Below schema 3 the runtime ignored region kinds; stamping must not revive them."""
+    sources = _sources_module(monkeypatch)
+    sink = _source_group("SINK", source_ui_schema_version=2,
+                         sink_region_kind="VOLUME_GRID")
+    mesh_sink = _source_group("SINK", source_ui_schema_version=0,
+                              sink_region_kind="ANALYTIC", geometry_mode="MESH",
+                              sink_region_mode="SURFACE")
+    scene = SimpleNamespace(objects=[sink, mesh_sink])
+
+    assert sources.migrate_source_schema(scene) == 0
+    assert sink.fluidsim.sink_region_kind == "ANALYTIC"
+    assert mesh_sink.fluidsim.sink_region_kind == "MESH_SHELL"
+    for obj in (sink, mesh_sink):
+        assert obj.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+        assert obj.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
+
+
+def test_source_schema_migration_runs_on_file_load(monkeypatch):
+    sources = _sources_module(monkeypatch)
+    points = _source_group("SOURCE", source_region_kind="POINTS")
+    monkeypatch.setattr(sources.bpy, "data", SimpleNamespace(objects=[points]),
+                        raising=False)
+
+    sources._on_load_post(None)
+
+    assert points.fluidsim.mesh_evaluation_mode == "EVERY_SIM_FRAME"
+    assert points.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
+
+
+@pytest.mark.parametrize("tag", ["tag_source", "tag_sink", "tag_field"])
+def test_newly_tagged_inputs_are_stamped_current(monkeypatch, tag):
+    sources = _sources_module(monkeypatch)
+    obj = _source_group("NONE", source_ui_schema_version=0)
+    getattr(sources, tag)(obj)
+    assert obj.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
+    assert obj.fluidsim.mesh_evaluation_mode == "FIRST_SIM_FRAME"
+
+
+class _RecordingGroup(SimpleNamespace):
+    """An object group that records whether callbacks were suppressed per write."""
+
+    def __setattr__(self, name, value):
+        import importlib
+
+        writes = self.__dict__.setdefault("_writes", [])
+        scene = self.__dict__.get("_scene")
+        if scene is not None:
+            pending = importlib.import_module(
+                "fluidSim_warp_blender51.blender.pending_settings")
+            writes.append((name, pending._interaction_state(scene).suppress_callbacks))
+        super().__setattr__(name, value)
+
+
+def test_sampling_migration_is_not_an_edit_and_skips_linked_sources(monkeypatch):
+    """The sampling step restores saved behaviour, like the step after it.
+
+    It wrote ``source_sampling_mode`` and ``source_sampling_multiplier`` with
+    their Reset callbacks live, so opening an old file with a running session
+    could flag a pending Reset, and it wrote into linked-library objects, whose
+    data is read-only and owned by the library file.
+    """
+    sources = _sources_module(monkeypatch)
+    local = _source_group("SOURCE", source_ui_schema_version=3,
+                          source_sampling_mode="INHERIT",
+                          source_sampling_multiplier=2.0)
+    linked = _source_group("SOURCE", source_ui_schema_version=3,
+                           source_sampling_mode="INHERIT",
+                           source_sampling_multiplier=2.0)
+    linked.library = SimpleNamespace(name="lib.blend")
+    scene = SimpleNamespace(name="Scene", objects=[local, linked])
+    local.fluidsim = _RecordingGroup(**vars(local.fluidsim))
+    local.fluidsim._scene = scene
+
+    assert sources.migrate_source_sampling_schema(scene) == 1
+
+    assert local.fluidsim.source_sampling_mode == "LEGACY_ABSOLUTE"
+    assert local.fluidsim.source_sampling_multiplier == 1.0
+    assert local.fluidsim.source_ui_schema_version == 4
+    sampling_writes = [(name, suppressed) for name, suppressed in local.fluidsim._writes
+                       if name.startswith("source_")]
+    assert sampling_writes and all(suppressed for _name, suppressed in sampling_writes)
+    assert linked.fluidsim.source_sampling_mode == "INHERIT"
+    assert linked.fluidsim.source_sampling_multiplier == 2.0
+    assert linked.fluidsim.source_ui_schema_version == 3
+
+
+def test_sampling_migration_keeps_a_pre_region_schema_mesh_source_a_mesh(monkeypatch):
+    """Lifting a liquid source past schema 3 must pin its legacy region kinds.
+
+    Below schema 3 the runtime simulates ``geometry_mode = 'MESH'`` as a
+    MESH_SHELL source (``legacy_region_kinds``). The sampling step lifted such
+    a source straight to schema 4, so the native step after it no longer saw
+    it as pre-region and the unread default ANALYTIC kind took over: an old
+    mesh source opened as an analytic box.
+    """
+    sources = _sources_module(monkeypatch)
+    mesh = _source_group("SOURCE", source_ui_schema_version=0,
+                         source_region_kind="ANALYTIC", geometry_mode="MESH")
+    analytic = _source_group("SOURCE", source_ui_schema_version=2,
+                             source_region_kind="POINTS", geometry_mode="ANALYTIC")
+    scene = SimpleNamespace(name="Scene", objects=[mesh, analytic])
+    simulated = [sources.legacy_region_kinds(obj.fluidsim)[0] for obj in (mesh, analytic)]
+
+    sources.migrate_source_schema(scene)
+
+    assert simulated == ["MESH_SHELL", "ANALYTIC"]
+    assert [obj.fluidsim.source_region_kind for obj in (mesh, analytic)] == simulated
+    for obj in (mesh, analytic):
+        assert obj.fluidsim.source_ui_schema_version == sources.CURRENT_SOURCE_UI_SCHEMA
+
+
+def test_enabling_the_addon_migrates_the_open_files_particle_colour_mode(monkeypatch):
+    """Load-time migrations also run for the file open when the add-on is enabled.
+
+    ``register_handlers`` ran the domain-resolution step for the already-open
+    file but not the removed Time Offset colour step, so a file opened before
+    enabling FluidSim kept the unreadable colour mode until it was reloaded.
+    """
+    file_compat = _file_compat(monkeypatch)
+    from fluidSim_warp_blender51.properties import PARTICLE_ATTR_ITEMS
+
+    stale, stale_seen = _particle_mode_scene(len(PARTICLE_ATTR_ITEMS))
+    monkeypatch.setattr(file_compat, "bpy", SimpleNamespace(
+        app=SimpleNamespace(handlers=SimpleNamespace(load_post=[])),
+        data=SimpleNamespace(objects=[], scenes=[stale])))
+
+    file_compat.register_handlers()
+    try:
+        assert stale_seen == {"particle_attribute_mode": "NONE"}
+    finally:
+        file_compat.unregister_handlers()

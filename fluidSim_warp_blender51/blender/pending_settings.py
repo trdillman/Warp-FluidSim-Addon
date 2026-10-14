@@ -14,6 +14,7 @@ from enum import Enum
 
 import bpy
 
+from ..presets.schema import SCENE_OWNED_SETTINGS
 from .scene_access import (
     active_domain_object,
     active_domain_settings,
@@ -78,13 +79,9 @@ _LIVE_REGISTRY_FIELDS = frozenset({
     "omnidirectional_force_radius", "force_diffusion", "dissipation_enabled",
     "dissipation_attribute", "dissipation_rate", "dissipation_target",
     "attraction_enabled", "attraction_strength", "attraction_max_distance",
-    "count_stiffness", "spacetime_jitter_strength",
-    "spacetime_adaptive_jitter", "spacetime_phase_eta",
-    "spacetime_phase_threshold", "spacetime_variable_projection",
-    "spacetime_liquid_density", "spacetime_gas_density",
-    "spacetime_min_density", "spacetime_local_cfl",
-    "spacetime_max_local_substeps", "pressure_solver",
+    "count_stiffness", "pressure_solver",
     "pressure_iterations", "pressure_tolerance", "pressure_threshold",
+    "pressure_preconditioner",
     "viscosity_enabled", "viscosity_solver", "viscosity_constant",
     "viscosity_from_particles", "viscosity_iterations",
     "viscosity_tolerance", "surface_tension_coefficient",
@@ -127,8 +124,8 @@ _SURFACE_REGISTRY_FIELDS = frozenset({
 })
 _RESET_REGISTRY_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
-    "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
     "surface_tension_enabled", "species_enabled",
+    "narrow_band_enabled", "narrow_band_voxels",
     "height_enabled", "height_base", "height_back_mode", "height_profile_image",
     "height_profile_scale", "height_emission_mode", "height_velocity",
     "height_emit_particles",
@@ -136,7 +133,8 @@ _RESET_REGISTRY_FIELDS = frozenset({
     "surface_attribute_velocity", "surface_attribute_speed", "surface_attribute_vorticity", "surface_attribute_age", "surface_attribute_lifetime", "surface_attribute_color", "surface_attribute_source_id", "surface_attribute_viscosity", "surface_attribute_density", "surface_attribute_motion", "particles_attribute_velocity", "particles_attribute_speed", "particles_attribute_vorticity", "particles_attribute_age", "particles_attribute_lifetime", "particles_attribute_color", "particles_attribute_source_id", "particles_attribute_uid", "particles_attribute_viscosity", "particles_attribute_density", "whitewater_attribute_velocity", "whitewater_attribute_speed", "whitewater_attribute_age", "whitewater_attribute_lifetime", "whitewater_attribute_type",
 })
 _REINITIALIZE_REGISTRY_FIELDS = frozenset({
-    "domain_object", "voxel_size", "leaf_capacity", "max_particles", "max_whitewater",
+    "domain_object", "voxel_size", "resolution_divisions", "leaf_capacity",
+    "max_particles", "max_whitewater",
     "profiling_enabled", "profiling_sync",
     # The scene-level Quality tier rescales solver knobs (voxel size, substeps,
     # iterations, particles), so a change re-derives grid allocation: rebuild.
@@ -144,7 +142,7 @@ _REINITIALIZE_REGISTRY_FIELDS = frozenset({
 })
 _AUTHORED_NEXT_RUN_FIELDS = frozenset({
     "report_path", "benchmark_frames",
-    "benchmark_baseline", "spacetime_resync_surface", "cache_enabled",
+    "benchmark_baseline", "cache_enabled",
     "cache_path", "cache_compress",
     "cache_use_custom_range", "cache_frame_start", "cache_frame_end",
     "active_preset_id", "product_preset", "setup_mode",
@@ -157,7 +155,8 @@ _PRESENTATION_FIELDS = frozenset({
     "ui_mode",
     "playback_advanced_expanded", "capacity_show_alternatives",
     "surface_advanced_expanded", "height_error", "status", "stat_particles",
-    "stat_voxels", "stat_whitewater", "stat_step_ms", "stat_substeps",
+    "stat_voxels", "stat_liquid_voxels", "stat_whitewater", "stat_step_ms",
+    "stat_substeps",
     "stat_cfl_clamped", "stat_whitewater_admitted",
     "stat_whitewater_dropped", "stat_whitewater_policy",
     "stat_whitewater_required", "stat_whitewater_status",
@@ -191,81 +190,34 @@ SETTING_TRANSITION_REGISTRY = {
     name: tier for tier, names in _TIER_FIELDS.items() for name in names
 }
 
-# Tiers whose fields must LAND on scene.fluidsim to take effect: display/output,
-# cache/bake authoring, UI-only adapter and presentation state, and SYNC (no
-# direct field). Their consumers -- the output publication and cache-bake
-# paths, the UI itself -- read scene.fluidsim unconditionally. Every other tier
-# is solver-relevant: build_settings() and friends read the active domain
-# settings, so a value only takes effect there.
-_SCENE_OWNED_TIERS = frozenset({
-    SettingTier.OUTPUT, SettingTier.AUTHORED_NEXT_RUN,
-    SettingTier.ADAPTER, SettingTier.PRESENTATION, SettingTier.SYNC,
-})
-
-# Individual fields whose consumer reads scene.fluidsim despite sitting in a
-# domain-owned tier. The tier partition is a good default but not a law, and
-# these two would be silently dropped without the override:
-#   quality        -- REINITIALIZE, but solver_settings.scene_quality_fidelity()
-#                     deliberately reads scene.fluidsim.quality (see its
-#                     docstring) so the read owner matches the UI write owner.
-#   domain_object  -- REINITIALIZE, but it is declared only on the scene group:
-#                     it names which object is the domain.
-#                     scene_access.active_domain_settings()
-#                     itself, solver_settings.domain_bounds/domain_transform, and
-#                     the rendering and session operators all read it from
-#                     scene.fluidsim.
-_SCENE_OWNED_FIELDS = frozenset({"quality", "domain_object"})
-
-# The mirror image: fields sitting in a scene-owned TIER whose every consumer
-# reads the DOMAIN group. Tier answers "what does changing this require?" and
-# ownership answers "which datablock holds it?"; the two are orthogonal, and
-# for these the tier default gives the wrong datablock:
-#   height_error              -- PRESENTATION (a status string; changing it
-#                                triggers no solver action, so the tier is
-#                                right). But scene_inputs.validate_height_source
-#                                writes it on the domain group (5 sites) and
-#                                ui_scene draws it from _domain_owner(context),
-#                                so nothing ever reads the scene copy.
-#   spacetime_resync_surface  -- AUTHORED_NEXT_RUN (correctly: the surface
-#                                refresh callback does not push it into a live
-#                                solver). But it is a domain solver setting:
-#                                ui_scene draws it on the domain group and
-#                                solver_settings.apply_scene_settings consumes
-#                                it from the group the caller passes, which is
-#                                always active_domain_settings.
-# Phase 1 repointed both sets of call sites without moving the declaration, so
-# until now setting_owner() disagreed with all 11 of them.
-_DOMAIN_OWNED_FIELDS = frozenset({"height_error", "spacetime_resync_surface"})
+# Which group holds a setting is not a lifecycle question, so the tier above
+# does not answer it. The class that declares a field owns it:
+# ``FLUIDSIM_PG_scene`` (``Scene.fluidsim``) declares ``SCENE_OWNED_SETTINGS`` and
+# ``FLUIDSIM_PG_domain`` (the designated domain object's ``fluidsim_domain``)
+# declares every other setting, never both. A write or read through the other
+# group raises instead of landing on a ghost.
 
 
-def _scene_owned(name):
-    """True when ``name`` lives on ``scene.fluidsim`` rather than the domain group."""
-    if name in _SCENE_OWNED_FIELDS:
-        return True
-    if name in _DOMAIN_OWNED_FIELDS:
-        return False
-    return SETTING_TRANSITION_REGISTRY.get(name) in _SCENE_OWNED_TIERS
+def _declaring_group(scene_fs, domain_fs, name):
+    """The already-resolved group that declares ``name``.
 
-
-def setting_owner(scene, name):
-    """The settings group a value for ``name`` must LAND on to take effect.
-
-    This answers the *effective owner* question: given a value produced outside
-    the UI (a preset, an operator), which datablock does the field's consumer
-    actually read it from? Callers outside this module -- notably the preset
-    operators in ``operator_domains/presets.py`` -- must resolve per-field
-    ownership through this function rather than reconstructing the tier
-    partition themselves, or a preset write lands on the frozen ghost and
-    silently no-ops (see AGENTS.md:L21).
-
-    Since the settings split this is also where the UI writes the field (see
-    ``_authoring_owner``). ``presets/schema.py`` restates the scene-owned subset
-    for the bpy-free preset layer; a test in
-    ``tests/test_pending_settings_registry.py`` pins the two in agreement.
+    Pending detection, applied-state capture and revert read through this so a
+    signature samples the datablock the user's edit actually landed on. It takes
+    the two groups resolved once, rather than once per field.
     """
-    if _scene_owned(name):
-        return getattr(scene, "fluidsim", None)
-    return active_domain_settings(scene)
+    return scene_fs if name in SCENE_OWNED_SETTINGS else domain_fs
+
+
+def declaring_group(scene, name):
+    """The settings group that declares ``name``: where its value lives.
+
+    ``scene.fluidsim`` for a scene-owned setting, otherwise the designated
+    domain object's ``fluidsim_domain`` (``None`` without one). Code that holds
+    a value produced outside a panel, such as the preset operators in
+    ``operator_domains/presets.py``, resolves the destination through this
+    function and not through a copy of the partition.
+    """
+    return _declaring_group(*_signature_owners(scene), name)
 
 
 def validate_transition_registry(declared_fields=None):
@@ -278,10 +230,6 @@ def validate_transition_registry(declared_fields=None):
     if overlap:
         raise ValueError("Conflicting Pending Settings tiers: "
                          + ", ".join(sorted(overlap)))
-    contested = _SCENE_OWNED_FIELDS & _DOMAIN_OWNED_FIELDS
-    if contested:
-        raise ValueError("Field claimed by both ownership overrides: "
-                         + ", ".join(sorted(contested)))
     if declared_fields is not None:
         declared = set(declared_fields)
         missing = declared - seen
@@ -314,15 +262,14 @@ _HOT_SETTING_FIELDS = frozenset({
     "force_diffusion", "dissipation_enabled", "dissipation_attribute",
     "dissipation_rate", "dissipation_target", "attraction_enabled",
     "attraction_strength", "attraction_max_distance", "count_stiffness",
-    "spacetime_jitter_strength", "spacetime_adaptive_jitter",
-    "spacetime_phase_eta", "spacetime_phase_threshold",
-    "spacetime_variable_projection", "spacetime_liquid_density",
-    "spacetime_gas_density", "spacetime_min_density",
-    "spacetime_local_cfl", "spacetime_max_local_substeps",
     "pressure_solver", "pressure_iterations", "pressure_tolerance",
-    "pressure_threshold", "viscosity_enabled", "viscosity_solver",
+    "pressure_threshold", "pressure_preconditioner",
+    "viscosity_enabled", "viscosity_solver",
     "viscosity_constant", "viscosity_from_particles",
     "viscosity_iterations", "viscosity_tolerance",
+    "surface_tension_coefficient", "surface_tension_density",
+    "surface_tension_band_voxels", "surface_tension_safety",
+    "surface_tension_smoothing_iterations", "species_mixing_rate",
     "ww_churn_decay", "ww_churn_gain", "ww_churn_threshold",
     "ww_emission_rate", "ww_min_speed", "ww_life_min", "ww_life_max",
     "ww_bubble_drag", "ww_spray_drag", "ww_surface_band", "ww_foam_band",
@@ -338,7 +285,8 @@ _LIVE_SETTING_FIELDS = _HOT_SETTING_FIELDS | _LIVE_REFRESH_SETTING_FIELDS
 
 _RESET_SETTING_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
-    "spacetime_enabled", "spacetime_reference_mass", "spacetime_seed",
+    "surface_tension_enabled", "species_enabled",
+    "narrow_band_enabled", "narrow_band_voxels",
     "export_attributes",
     "surface_attribute_velocity", "surface_attribute_speed", "surface_attribute_vorticity", "surface_attribute_age", "surface_attribute_lifetime", "surface_attribute_color", "surface_attribute_source_id", "surface_attribute_viscosity", "surface_attribute_density", "surface_attribute_motion", "particles_attribute_velocity", "particles_attribute_speed", "particles_attribute_vorticity", "particles_attribute_age", "particles_attribute_lifetime", "particles_attribute_color", "particles_attribute_source_id", "particles_attribute_uid", "particles_attribute_viscosity", "particles_attribute_density", "whitewater_attribute_velocity", "whitewater_attribute_speed", "whitewater_attribute_age", "whitewater_attribute_lifetime", "whitewater_attribute_type",
 })
@@ -359,8 +307,8 @@ _SURFACE_SETTING_FIELDS = frozenset({
 
 
 _REINIT_SETTING_FIELDS = frozenset({
-    "domain_object", "voxel_size", "leaf_capacity", "max_particles",
-    "max_whitewater", "profiling_enabled", "profiling_sync",
+    "domain_object", "voxel_size", "resolution_divisions", "leaf_capacity",
+    "max_particles", "max_whitewater", "profiling_enabled", "profiling_sync",
     # Scene-level Quality tier, authored and read on scene.fluidsim, so editing
     # it flags a pending rebuild.
     "quality",
@@ -373,6 +321,7 @@ _RESET_SCENE_FIELDS = _RESET_SETTING_FIELDS | frozenset({
 _RESET_OBJECT_FIELDS = frozenset({
     "role", "point_source_representation", "mesh_evaluation_mode",
     "emission_mode", "auto_inject_seed",
+    "emit_rate", "source_sampling_mode", "source_sampling_multiplier",
 })
 
 def _signature_owners(scene):
@@ -380,22 +329,6 @@ def _signature_owners(scene):
     resolve to. ``domain_fs`` is ``active_domain_settings``: the designated
     domain object's ``fluidsim_domain``, or ``None`` without one."""
     return getattr(scene, "fluidsim", None), active_domain_settings(scene)
-
-
-def _authoring_owner(scene_fs, domain_fs, name):
-    """The datablock the UI WRITES ``name`` to -- the *authoring* owner.
-
-    Pending detection, applied-state capture and revert read through this: a
-    signature must sample the datablock the user's edit actually landed on, or
-    it reads a group that lacks the field, gets ``None`` on both sides, and no
-    pending change is ever reported (defect #5).
-
-    Since the settings split each field exists only on the class that declares
-    it, so a panel can only write it there and this is the same partition as
-    ``setting_owner``. It takes the two groups already resolved so a signature
-    resolves them once rather than once per field.
-    """
-    return scene_fs if _scene_owned(name) else domain_fs
 
 
 @dataclass
@@ -479,17 +412,40 @@ def _configured_device():
     return str(configured_device())
 
 
+def _read_setting(owner, name):
+    """Read ``name`` straight off its owning settings group.
+
+    ``None`` only when there is no group to read from (a scene with no domain
+    object designated). A group that is present but does not declare the field
+    raises ``AttributeError``: that is a wrong-group read, and a default here
+    would hide it (defects #1, #3, #5).
+    """
+    return None if owner is None else getattr(owner, name)
+
+
+def _participates(pg):
+    """Whether an object's FluidSim group feeds the simulation.
+
+    Every Blender object carries the group, so cameras, lights, the domain and
+    FluidSim's own output objects all have one at role ``NONE``. Only a tagged
+    role or an auto-injected seed enters the reset signature: adding or
+    deleting a bystander is not a simulation change. A role change still is,
+    since it moves the object into or out of this set.
+    """
+    return pg.role != "NONE" or bool(pg.auto_inject_seed)
+
+
 def _reset_signature(scene):
     scene_fs, domain_fs = _signature_owners(scene)
-    values = [(name, _stable_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None)))
+    values = [(name, _stable_value(_read_setting(_declaring_group(scene_fs, domain_fs, name), name)))
               for name in sorted(_RESET_SCENE_FIELDS)]
     objects = []
     for obj in getattr(scene, "objects", ()) or ():
         pg = getattr(obj, "fluidsim", None)
-        if pg is None:
+        if pg is None or not _participates(pg):
             continue
         object_id = _stable_value(obj)
-        fields = tuple((name, _stable_value(getattr(pg, name, None)))
+        fields = tuple((name, _stable_value(getattr(pg, name)))
                        for name in sorted(_RESET_OBJECT_FIELDS))
         objects.append((object_id, fields))
     values.append(("objects", tuple(sorted(objects, key=repr))))
@@ -498,7 +454,7 @@ def _reset_signature(scene):
 
 def _reinit_signature(scene):
     scene_fs, domain_fs = _signature_owners(scene)
-    values = [(name, _stable_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None)))
+    values = [(name, _stable_value(_read_setting(_declaring_group(scene_fs, domain_fs, name), name)))
               for name in sorted(_REINIT_SETTING_FIELDS)]
     # domain_object is the scene-level identity pointer (excluded from migration),
     # so it is always read from scene.fluidsim.
@@ -568,18 +524,39 @@ def _action_presentation(action, count):
     }
 
 
+def _new_presentation_epoch():
+    import secrets
+
+    return secrets.token_hex(8)
+
+
+# Tags the cached pending properties with the session that wrote them. The
+# properties are scene custom properties, so they are saved into the .blend;
+# a new epoch on every file load (and per process) keeps a saved "pending"
+# badge from describing a solver session that no longer exists.
+_presentation_epoch = _new_presentation_epoch()
+
+
 def _cache_pending_presentation(scene, state):
     action = _pending_label(state.pending_action)
     scene_set(scene, "fluidsim_pending_action", action)
     scene_set(scene, "fluidsim_pending_count", len(state.pending_reasons))
     scene_set(scene, "fluidsim_pending_reasons", "\n".join(state.pending_reasons))
     scene_set(scene, "fluidsim_pending_blocked", state.blocked_reason)
+    scene_set(scene, "fluidsim_pending_epoch", _presentation_epoch)
 
 
 def pending_presentation(scene):
     """Return draw-safe cached pending data without inspecting RNA or geometry."""
     state = _INTERACTION_STATES.get(scene_identity(scene))
     if state is None:
+        if str(scene_get(scene, "fluidsim_pending_epoch", "")) != _presentation_epoch:
+            # Written by another session (a saved file): nothing is applied
+            # in this one, so nothing can be pending against it.
+            result = {"action": "NONE", "count": 0, "reasons": (),
+                      "blocked_reason": ""}
+            result.update(_action_presentation("NONE", 0))
+            return result
         reasons = tuple(filter(None, str(scene_get(
             scene, "fluidsim_pending_reasons", "")).splitlines()))
         action = str(scene_get(scene, "fluidsim_pending_action", "NONE"))
@@ -642,7 +619,7 @@ def _snapshot_object_reset_values(scene):
     for obj in getattr(scene, "objects", ()) or ():
         pg = getattr(obj, "fluidsim", None)
         if pg is not None:
-            result.append((obj, {name: _snapshot_value(getattr(pg, name, None))
+            result.append((obj, {name: _snapshot_value(getattr(pg, name))
                                  for name in _RESET_OBJECT_FIELDS}))
     return tuple(result)
 
@@ -655,13 +632,13 @@ def capture_applied_state(scene, sess=None, *, reset_only=False):
     state.current_reset_signature = reset_signature
     state.current_reinit_signature = reinit_signature
     state.reset_snapshot = {
-        name: _snapshot_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None))
+        name: _snapshot_value(_read_setting(_declaring_group(scene_fs, domain_fs, name), name))
         for name in _RESET_SCENE_FIELDS}
     state.object_reset_snapshot = _snapshot_object_reset_values(scene)
     if not reset_only:
         state.applied_reinit_signature = reinit_signature
         state.reinit_snapshot = {
-            name: _snapshot_value(getattr(_authoring_owner(scene_fs, domain_fs, name), name, None))
+            name: _snapshot_value(_read_setting(_declaring_group(scene_fs, domain_fs, name), name))
             for name in _REINIT_SETTING_FIELDS
         }
         domain = active_domain_object(scene)
@@ -703,7 +680,7 @@ def _setting_targets(fields):
 
 
 def _apply_realtime_solver_settings(scene, sess: Session | None = None):
-    """Atomically push live settings and refresh ST-FLIP derived state."""
+    """Atomically push live settings into the running solver."""
     sess = sess or session()
     if not sess.owns_scene(scene):
         return False
@@ -717,25 +694,32 @@ def _apply_realtime_solver_settings(scene, sess: Session | None = None):
         target: getattr(settings, target)
         for target in targets if hasattr(settings, target)
     }
-    old_ppv = getattr(settings, "particles_per_voxel", None)
-    spacetime = getattr(solver, "spacetime", None)
-    old_reference = getattr(spacetime, "reference_mass_cached", None)
-    if spacetime is not None:
-        spacetime.remember_calibration()
     try:
         _apply_scene_settings(fs, settings, _LIVE_SETTING_FIELDS,
                               quality_fidelity=_scene_quality_fidelity(scene))
         _apply_gravity(scene, settings)
-        new_ppv = getattr(settings, "particles_per_voxel", None)
-        if old_ppv != new_ppv and spacetime is not None:
-            spacetime.rescale_for_density()
+        _refuse_narrow_band_conflicts(scene, settings)
     except Exception:
         for target, value in previous.items():
             setattr(settings, target, value)
-        if old_reference is not None:
-            spacetime.reference_mass_cached = old_reference
         raise
     return True
+
+
+def _refuse_narrow_band_conflicts(scene, settings):
+    """Re-check the narrow-band admission refusal for an edit to a running solver.
+
+    Admission refuses narrow-band particles with features that keep
+    per-particle interior state. Some of those features are live (per-particle
+    viscosity) or synchronized (a Scalar field source), so an edit could
+    otherwise switch one on under an admitted narrow-band run, unchecked until
+    the next Reset. Raising here keeps the solver on its admitted values.
+    """
+    from .simulation_admission import narrow_band_refusal
+
+    refusal = narrow_band_refusal(settings, getattr(scene, "objects", ()))
+    if refusal:
+        raise RuntimeError(refusal)
 
 
 def apply_live_settings_safely(scene, sess: Session | None = None):
@@ -794,8 +778,26 @@ def _is_disposable_start(sess):
     return solver_frame <= 0 and sess.last_frame <= sess.start_frame
 
 
+_BAKE_HOLD_MESSAGE = "A Production Bake is running; changes apply when it ends"
+
+
+def _bake_refusal() -> str:
+    """Why the shared Solver Session must not be touched now, or ``""``.
+
+    Owner decision D2 (2026-10-12): while any Production Bake runs, edits
+    that would change the simulation are held, not applied to the baking
+    solver; the session is a process singleton, so this spans every scene.
+    """
+    from . import production_bake
+
+    return _BAKE_HOLD_MESSAGE if production_bake.any_bake_active() else ""
+
+
 def _apply_pending(scene, requested=None, *, depsgraph=None):
     """Apply a scene's pending transition, clearing it only after success."""
+    refusal = _bake_refusal()
+    if refusal:
+        raise RuntimeError(refusal)
     sess = session()
     state = refresh_pending_state(scene, sess)
     action = state.pending_action
@@ -865,11 +867,14 @@ def apply_changes(scene, *, allow_restart=False, depsgraph=None, force_restart=F
     """Apply one registry-selected transition, including a structural effect draft."""
     from . import playback, production_bake
 
-    if getattr(scene.fluidsim, "cache_playback_enabled", False):
+    if scene.fluidsim.cache_playback_enabled:
         raise RuntimeError("Cache Preview is selected; switch to Live Preview before applying simulation changes")
     sess = session()
     if production_bake.bake_is_active(scene):
         raise RuntimeError("Production Bake owns this scene")
+    refusal = _bake_refusal()
+    if refusal:
+        raise RuntimeError(refusal)
     if sess.active and not sess.owns_scene(scene):
         raise RuntimeError("Another scene owns the solver; release it from that scene first")
     state = refresh_pending_state(scene, sess)
@@ -907,6 +912,9 @@ def apply_changes(scene, *, allow_restart=False, depsgraph=None, force_restart=F
 def reinitialize_eligibility(scene):
     if getattr(scene, "fluidsim", None) is None:
         return False, "No FluidSim scene is active"
+    refusal = _bake_refusal()
+    if refusal:
+        return False, refusal
     if pending_presentation(scene)["action"] == "NONE":
         return False, "No pending settings to apply"
     sess = session()
@@ -916,6 +924,9 @@ def reinitialize_eligibility(scene):
 
 
 def reset_eligibility(scene):
+    refusal = _bake_refusal()
+    if refusal:
+        return False, refusal
     sess = session()
     if not sess.active:
         return False, "Initialize the solver first"
@@ -931,6 +942,9 @@ def reset_eligibility(scene):
 def revert_eligibility(scene):
     if getattr(scene, "fluidsim", None) is None:
         return False, "No FluidSim scene is active"
+    refusal = _bake_refusal()
+    if refusal:
+        return False, refusal
     if pending_presentation(scene)["count"] <= 0:
         return False, "No pending settings to revert"
     return True, ""
@@ -952,6 +966,37 @@ def apply_pending_on_rewind(scene, sess, *, depsgraph=None):
     return True
 
 
+def _revert_order(snapshot):
+    """Snapshot items in a fixed order, the authoritative divisions last.
+
+    ``voxel_size`` is derived from ``resolution_divisions`` and the domain's
+    size, so writing it after the divisions would re-derive them. Sorting also
+    keeps the restore independent of the string hash seed.
+    """
+    return sorted(snapshot.items(),
+                  key=lambda item: (item[0] == "resolution_divisions", item[0]))
+
+
+def _restore_applied_domain(scene, scene_fs, state):
+    """Put the applied run's domain back and return its settings group.
+
+    Returns ``None`` when that domain no longer exists (deleted since it was
+    applied): its values then have no owner, and writing them onto whichever
+    domain is selected now would overwrite that domain's own settings.
+    """
+    if "domain_object" not in state.reinit_snapshot or scene_fs is None:
+        return active_domain_settings(scene)
+    applied = state.reinit_snapshot["domain_object"]
+    try:
+        # Any attribute read of a deleted ID raises ReferenceError.
+        getattr(applied, "name", None)
+        if _stable_value(active_domain_object(scene)) != _stable_value(applied):
+            scene_fs.domain_object = applied
+    except ReferenceError:
+        return None
+    return active_domain_settings(scene)
+
+
 def revert_pending_values(scene):
     """Restore the successfully applied RNA snapshot without saving prefs."""
     state = _interaction_state(scene)
@@ -959,27 +1004,38 @@ def revert_pending_values(scene):
         return False
     state.suppress_callbacks = True
     try:
-        scene_fs, domain_fs = _signature_owners(scene)
+        scene_fs = getattr(scene, "fluidsim", None)
+        # The applied run's domain is restored first, and its values go to it:
+        # a domain selected since then keeps its own settings and transform.
+        domain_fs = _restore_applied_domain(scene, scene_fs, state)
+        domain = active_domain_object(scene) if domain_fs is not None else None
+        # The transform comes back before the resolution fields: ``voxel_size``
+        # is derived from ``resolution_divisions`` over the domain's size.
+        if domain is not None and state.domain_matrix_snapshot is not None:
+            domain.matrix_world = state.domain_matrix_snapshot
         # Restore each snapshot value to the datablock that AUTHORS it (matches
         # where capture_applied_state read it and where the UI writes it), so a
         # revert of a domain-authored edit targets obj.fluidsim_domain.
+        for name, value in _revert_order(state.reinit_snapshot):
+            if name == "domain_object":
+                continue
+            owner = _declaring_group(scene_fs, domain_fs, name)
+            if owner is not None:
+                setattr(owner, name, value)
         for name, value in state.reset_snapshot.items():
-            owner = _authoring_owner(scene_fs, domain_fs, name)
-            if owner is not None and hasattr(owner, name):
+            owner = _declaring_group(scene_fs, domain_fs, name)
+            if owner is not None:
                 setattr(owner, name, value)
         for obj, values in state.object_reset_snapshot:
-            pg = getattr(obj, "fluidsim", None)
-            if pg is not None:
-                for name, value in values.items():
-                    if hasattr(pg, name):
+            # An object deleted since the snapshot has nothing to restore;
+            # skip it and finish the rest of the revert.
+            try:
+                pg = getattr(obj, "fluidsim", None)
+                if pg is not None:
+                    for name, value in values.items():
                         setattr(pg, name, value)
-        for name, value in state.reinit_snapshot.items():
-            owner = _authoring_owner(scene_fs, domain_fs, name)
-            if owner is not None and hasattr(owner, name):
-                setattr(owner, name, value)
-        domain = active_domain_object(scene)
-        if domain is not None and state.domain_matrix_snapshot is not None:
-            domain.matrix_world = state.domain_matrix_snapshot
+            except ReferenceError:
+                continue
     finally:
         state.suppress_callbacks = False
     refresh_pending_state(scene, session())
@@ -1091,6 +1147,23 @@ def request_scene_update(scene, action: SceneUpdate):
     if state.suppress_callbacks:
         return
     reason = _SCENE_UPDATE_REASONS[action]
+    refusal = _bake_refusal()
+    if refusal and sess.owns_scene(scene):
+        # The baking solver keeps its admitted settings (its cache identity);
+        # the held edits reach the preview when the bake's restore
+        # re-initializes it from the authored settings.
+        # Output-only settings still refresh the existing objects, without
+        # reading the solver, as they do with no session.
+        try:
+            if action in {SceneUpdate.RESET, SceneUpdate.REBUILD}:
+                refresh_pending_state(scene, sess)
+            elif action in {SceneUpdate.OUTPUT, SceneUpdate.SURFACE,
+                            SceneUpdate.WHITEWATER}:
+                output_publication.refresh_existing_output_settings(scene)
+            scene.fluidsim.status = refusal
+        finally:
+            _tag_view3d_redraw()
+        return
     if not sess.owns_scene(scene):
         try:
             if action in {SceneUpdate.RESET, SceneUpdate.REBUILD}:
@@ -1135,7 +1208,13 @@ def request_scene_update(scene, action: SceneUpdate):
         # only a contained error replaces it with an actionable message.
         apply_live_settings_safely(scene, sess)
     elif action is SceneUpdate.SYNC:
-        sess.sync_scene(scene)
+        try:
+            _refuse_narrow_band_conflicts(scene, sess.solver.settings)
+        except RuntimeError as exc:
+            sess.set_error(scene, str(exc))
+            scene.fluidsim.status = f"Scene sync refused: {exc}"
+        else:
+            sess.sync_scene(scene)
     elif action is SceneUpdate.SURFACE:
         _apply_realtime_surface_settings(scene, sess)
         output_publication.prepare_outputs(scene)
@@ -1176,9 +1255,12 @@ def _on_interaction_state_update(*args):
 def _on_load_pre(_filepath):
     from . import playback
 
+    global _presentation_epoch
+
     playback.clear_cache_cursors()
     session().force_release()
     _INTERACTION_STATES.clear()
+    _presentation_epoch = _new_presentation_epoch()
 
 
 def register_handlers():

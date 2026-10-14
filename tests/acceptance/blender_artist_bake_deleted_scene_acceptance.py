@@ -1,6 +1,12 @@
 """Real GUI modal-bake cleanup when its disposable owner scene is deleted."""
 from __future__ import annotations
-import json, os, shutil, subprocess, tempfile, time, traceback
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import time
+import traceback
 from pathlib import Path
 import bpy
 STATE = {}

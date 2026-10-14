@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .enums import EffectCadence, EffectDomain, EffectStage
+from .enums import EffectCadence, EffectDomain, EffectStage, FieldAccess
 from .fields import FIELD_SPECS, requirements_for_bindings
 from .fingerprint import effective_stack_instances, execution_stack_fingerprint
 from .source import parameter_runtime_inputs
@@ -21,6 +21,9 @@ class EffectRuntimeRequirements:
     surface_sdf: bool = False
     collision: bool = False
     rebuild_topology_each_substep: bool = False
+    # A binding writes particle_position: products derived from particle
+    # positions (the solver SDF) are stale after the stage runs.
+    moves_particles: bool = False
 
     def merged(self, other: EffectRuntimeRequirements) -> EffectRuntimeRequirements:
         return EffectRuntimeRequirements(
@@ -31,6 +34,7 @@ class EffectRuntimeRequirements:
             rebuild_topology_each_substep=(
                 self.rebuild_topology_each_substep or other.rebuild_topology_each_substep
             ),
+            moves_particles=self.moves_particles or other.moves_particles,
         )
 
 
@@ -69,6 +73,10 @@ class EffectExecutionError(RuntimeError):
             f"{runtime_error.stage}, frame {runtime_error.frame}, "
             f"substep {runtime_error.substep_index}: {runtime_error.message}"
         )
+
+
+class EffectPrerequisiteError(RuntimeError):
+    """A solver product an effect reads could not be prepared this stage."""
 
 
 @dataclass(frozen=True)
@@ -129,12 +137,17 @@ def _requirements_for_entry(entry: EffectRuntimeEntry) -> EffectRuntimeRequireme
     topology = kernel.domain is EffectDomain.ACTIVE_VOXELS or "TOPOLOGY" in names
     surface_sdf = "SURFACE_SDF" in names
     collision = "COLLISION" in names
+    moves_particles = any(
+        str(getattr(binding, "field", "")) == "particle_position"
+        and getattr(binding, "access", FieldAccess.READ) != FieldAccess.READ
+        for binding in kernel.fields)
     return EffectRuntimeRequirements(
         particles=particles,
         topology=topology,
         surface_sdf=surface_sdf,
         collision=collision,
         rebuild_topology_each_substep=topology,
+        moves_particles=moves_particles,
     )
 
 
@@ -279,6 +292,14 @@ class EffectRuntimeManager:
         self._frame_baseline = {}
         return True
 
+    def applied_instances(self) -> tuple[Any, ...]:
+        """The installed effect instances, one per instance id, in stack order."""
+        seen: dict[str, Any] = {}
+        for entries in self.by_stage.values():
+            for entry in entries:
+                seen.setdefault(entry.instance.instance_id, entry.instance)
+        return tuple(sorted(seen.values(), key=lambda item: int(item.order)))
+
     def update_runtime_bindings(self, instances: Any) -> bool:
         """Update launch-time values without replacing compiled kernels or solver state.
 
@@ -378,6 +399,25 @@ class EffectRuntimeManager:
         kernel = entry.compiled_kernel.kernel_definition
         return bool(instance.active_on_frame(frame) and kernel.active_on_frame(frame))
 
+    def mark_initialized_through(self, frame: int) -> None:
+        """Record INITIALIZATION effects that already ran by ``frame``.
+
+        A checkpoint restores solver state those effects already modified, but
+        not this manager's cadence history, so without this a resumed bake
+        re-applied them. An entry counts as run when any frame up to ``frame``
+        was inside its window.
+        """
+        frame = int(frame)
+        for entries in self.by_stage.values():
+            for entry in entries:
+                kernel = entry.compiled_kernel.kernel_definition
+                if kernel.cadence is not EffectCadence.INITIALIZATION:
+                    continue
+                first = max(int(entry.instance.frame_start or 0),
+                            int(kernel.frame_start or 0))
+                if any(self._should_run(entry, f) for f in range(first, frame + 1)):
+                    self._initialized.add(entry.key)
+
     def _cadence_allows(self, entry: EffectRuntimeEntry, frame: int) -> bool:
         cadence = entry.compiled_kernel.kernel_definition.cadence
         key = entry.key
@@ -395,7 +435,17 @@ class EffectRuntimeManager:
             return True
         return False
 
-    def run(self, stage: EffectStage | str, solver: Any, time_ctx: dict[str, object]) -> None:
+    def run(
+            self,
+            stage: EffectStage | str,
+            solver: Any,
+            time_ctx: dict[str, object],
+            *,
+            surface_sdf_error: str | None = None,
+    ) -> None:
+        """Run one stage. ``surface_sdf_error`` set means the solver SDF could
+        not be refreshed: any entry that reads it fails closed instead of
+        sampling stale or zero-initialized storage."""
         if self.failed_error is not None:
             raise EffectExecutionError(self.failed_error)
         stage_enum = stage if isinstance(stage, EffectStage) else EffectStage(str(stage))
@@ -408,6 +458,11 @@ class EffectRuntimeManager:
                 continue
             stats = self.stats[entry.key]
             try:
+                if (surface_sdf_error is not None
+                        and _requirements_for_entry(entry).surface_sdf):
+                    raise EffectPrerequisiteError(
+                        "required surface SDF is unavailable: "
+                        f"{surface_sdf_error or 'refresh failed'}")
                 elements, duration = launch_compiled_kernel(
                     entry, solver, time_ctx, self.device
                 )
@@ -479,13 +534,16 @@ def launch_compiled_kernel(
     inputs: list[object]
     if kernel_definition.domain is EffectDomain.PARTICLES:
         particles = solver.particles
-        count = int(particles.refresh_host_count()) if hasattr(particles, "refresh_host_count") else int(
-            getattr(particles, "host_count", 0)
-        )
-        launch_dim = max(0, int(getattr(particles, "capacity", count)))
+        # The launch spans capacity and the generated prelude returns past
+        # count[0] on the device, so no host count readback is needed (P13).
+        launch_dim = max(0, int(getattr(
+            particles, "capacity", getattr(particles, "host_count", 0))))
         inputs = [particles.position, particles.velocity, particles.alive, particles.count]
     else:
         grid = solver.grid
+        # Normally free: the solver's topology rebuild already committed the
+        # count. It only reads back when a rebuilt candidate is still pending,
+        # which it must commit before voxel data is addressed.
         leaf_count = int(grid.refresh_topology_counts()) if hasattr(grid, "refresh_topology_counts") else int(
             getattr(grid, "host_leaf_count", 0)
         )
@@ -504,6 +562,24 @@ def launch_compiled_kernel(
         inputs.append(0.0)
     started = time.perf_counter()
     wp.launch(entry.compiled_kernel.kernel, dim=launch_dim, inputs=inputs, device=device)
-    wp.synchronize_device(device)
+    if _launch_needs_sync(entry):
+        wp.synchronize_device(device)
     duration = max(0.0, time.perf_counter() - started)
     return launch_dim, duration
+
+
+def _launch_needs_sync(entry: EffectRuntimeEntry) -> bool:
+    """Synchronize only after a kernel that can fault (P13).
+
+    Safe-mode kernels touch only the current element of capacity-sized
+    arrays behind the device-side count guard, so they cannot fault and
+    queue asynchronously like the solver's own kernels. Expert kernels may
+    index arbitrarily; a sync right after them makes a device fault surface
+    here, attributed to this effect, instead of at a later solver sync.
+    """
+    from .validation import effective_safe_mode
+
+    kernel = entry.compiled_kernel.kernel_definition
+    return not effective_safe_mode(entry.instance, kernel) or any(
+        binding.access in {FieldAccess.ATOMIC_SCATTER, FieldAccess.UNSAFE_ARBITRARY}
+        for binding in kernel.fields)

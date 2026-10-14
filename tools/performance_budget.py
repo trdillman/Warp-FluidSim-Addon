@@ -7,6 +7,7 @@ unverifiable reports and reduces valid evidence to one decision per demo.
 
 from __future__ import annotations
 
+import json
 import math
 import statistics
 from collections import defaultdict
@@ -42,8 +43,66 @@ PROTECTED_SETTINGS = (
 NEUTRAL_ABSENT_EFFECTIVE_SETTINGS = {
 	"species_enabled": False,
 	"species_mixing_rate": 8.0,
+	# 3.0: narrow band (off) and the explicit preconditioner (1.x pressure PCG
+	# was inverse-diagonal, i.e. Jacobi) are new; ST-FLIP's switch is removed.
+	"narrow_band_enabled": False,
+	"pressure_preconditioner": "JACOBI",
+	"spacetime_enabled": False,
 }
+# Settings that only one variant reports and that do nothing while their
+# switch holds the given value: field -> (switch, inert value). The switch
+# must itself be a neutral absence for the same variant.
+INERT_WHEN_SWITCHED_OFF = {
+	"narrow_band_voxels": ("narrow_band_enabled", False),
+	**{f"spacetime_{name}": ("spacetime_enabled", False) for name in (
+		"adaptive_jitter", "gas_density", "jitter_strength", "liquid_density",
+		"local_cfl", "max_local_substeps", "min_density", "phase_eta",
+		"phase_threshold", "reference_mass", "resync_surface", "seed",
+		"variable_projection")},
+}
+# resolved_quality keys that 3.0's Resolution Divisions lattice may snap
+# (owner decision 2026-10-09: compare per frame, record the difference).
+LATTICE_SNAP_KEYS = (
+	"unpadded_voxel_dimensions", "padded_voxel_dimensions", "leaf_dimensions",
+	"total_domain_leaf_cells")
 ATTRIBUTE_OUTPUT_KINDS = ("surface", "particles", "whitewater")
+
+
+def _lattice_snap(demo_runs):
+	"""Return ``(snap diagnostic or None, invalid reason or None)``.
+
+	Within a variant resolved_quality must be identical. Across variants only
+	the grid dimensions may differ, by at most one unpadded voxel per axis
+	(the Resolution Divisions lattice snap); everything else must match.
+	"""
+	per_label = {}
+	for run in demo_runs:
+		per_label.setdefault(run["label"], []).append(run["effectiveSettings"]["resolved_quality"])
+	for values in per_label.values():
+		if any(value != values[0] for value in values[1:]):
+			return None, "differs across trials"
+	firsts = {label: values[0] for label, values in per_label.items()}
+	if len({json.dumps(value, sort_keys=True) for value in firsts.values()}) == 1:
+		return None, None
+	if not all(isinstance(value, dict) for value in firsts.values()):
+		return None, "differs across variants or trials"
+	stripped = [{key: item for key, item in value.items() if key not in LATTICE_SNAP_KEYS}
+				for value in firsts.values()]
+	if any(value != stripped[0] for value in stripped[1:]):
+		return None, "differs across variants beyond the grid dimensions"
+	try:
+		dims = [list(value["unpadded_voxel_dimensions"]) for value in firsts.values()]
+		if any(len(dim) != 3 for dim in dims) or any(
+				abs(int(a) - int(b)) > 1 for a, b in zip(dims[0], dims[1])):
+			return None, "grid differs by more than a one-voxel lattice snap"
+	except (KeyError, TypeError, ValueError):
+		return None, "differs across variants or trials"
+	snap = {label: {key: value.get(key) for key in LATTICE_SNAP_KEYS}
+			for label, value in firsts.items()}
+	baseline_cells = math.prod(firsts["baseline"]["padded_voxel_dimensions"])
+	candidate_cells = math.prod(firsts["candidate"]["padded_voxel_dimensions"])
+	snap["candidatePaddedCellRatio"] = round(candidate_cells / baseline_cells, 4)
+	return snap, None
 
 
 def abba_schedule(trials=MIN_TRIALS_PER_VARIANT):
@@ -331,13 +390,20 @@ def evaluate_budget(runs):
 		common_effective = set.intersection(*effective_keys.values())
 		all_effective = set.union(*effective_keys.values())
 		neutral_absences = {}
+		lattice_snap = None
 		if not common_effective:
 			invalid_reasons.append(
 				f"{demo}: variants have no common effectiveSettings fields")
 		else:
 			for field in sorted(common_effective):
 				values = [run["effectiveSettings"][field] for run in demo_runs]
-				if any(value != values[0] for value in values[1:]):
+				if field == "resolved_quality":
+					snap, reason = _lattice_snap(demo_runs)
+					if reason:
+						invalid_reasons.append(f"{demo}: effectiveSettings.resolved_quality {reason}")
+					elif snap:
+						lattice_snap = snap
+				elif any(value != values[0] for value in values[1:]):
 					invalid_reasons.append(
 						f"{demo}: effectiveSettings.{field} differs across variants or trials")
 		for field in sorted(all_effective - common_effective):
@@ -348,12 +414,22 @@ def evaluate_budget(runs):
 				run["effectiveSettings"][field]
 				for run in demo_runs if field in run["effectiveSettings"]
 			]
+			switch, inert = INERT_WHEN_SWITCHED_OFF.get(field, (None, object()))
 			if (len(present_labels) == 1
 					and field in NEUTRAL_ABSENT_EFFECTIVE_SETTINGS
 					and all(value == neutral for value in present_values)):
 				neutral_absences[field] = {
 					"presentIn": present_labels[0],
 					"neutralValue": neutral,
+				}
+			elif (len(present_labels) == 1
+					and NEUTRAL_ABSENT_EFFECTIVE_SETTINGS.get(switch, object()) == inert
+					and switch not in common_effective
+					and all(run["effectiveSettings"].get(switch, object()) == inert
+							for run in demo_runs if field in run["effectiveSettings"])):
+				neutral_absences[field] = {
+					"presentIn": present_labels[0],
+					"inertWhile": {switch: inert},
 				}
 			else:
 				invalid_reasons.append(
@@ -362,6 +438,8 @@ def evaluate_budget(runs):
 			"commonFields": sorted(common_effective),
 			"neutralAbsentFields": neutral_absences,
 		}
+		if lattice_snap:
+			effective_settings_diagnostics[demo]["latticeSnap"] = lattice_snap
 		roots = {label: {run["root"] for run in demo_runs if run["label"] == label}
 				 for label in _LABELS}
 		if any(len(values) != 1 for values in roots.values()):

@@ -3,16 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import sys
 
 import bpy
-import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 FAILURES = []
 CHECKS = []
@@ -53,6 +51,7 @@ def main():
     from fluidSim_warp_blender51.blender import scene_bridge
     from fluidSim_warp_blender51.blender.menus import create_domain_object
     from fluidSim_warp_blender51.blender.scene_inputs import (
+        CURRENT_SOURCE_UI_SCHEMA,
         SceneInputs,
         persistent_source_key,
     )
@@ -84,7 +83,8 @@ def main():
     emitter = add_cube("P3_MeshSolid", (0, 0, 0))
     select_only(emitter)
     check("role-specific emitter operator", bpy.ops.fluidsim.tag_liquid_emitter() == {"FINISHED"})
-    check("new emitter schema/default", emitter.fluidsim.source_ui_schema_version == 4
+    check("new emitter schema/default",
+          emitter.fluidsim.source_ui_schema_version == CURRENT_SOURCE_UI_SCHEMA
           and emitter.fluidsim.emission_mode == "INITIAL_FILL"
           and emitter.fluidsim.source_sampling_mode == "INHERIT")
     emitter.fluidsim.source_region_kind = "MESH_SOLID"
@@ -101,13 +101,15 @@ def main():
     volume_path = ROOT / "artifacts" / "phase3_fixtures" / "ui_volume.vdb"
     volume_path.parent.mkdir(parents=True, exist_ok=True)
     import openvdb
-    density = openvdb.FloatGrid(); density.name = "density"
+    density = openvdb.FloatGrid()
+    density.name = "density"
     accessor = density.getAccessor()
     for x in range(3):
         for y in range(3):
             for z in range(3):
                 accessor.setValueOn((x, y, z), 1.0)
-    velocity = openvdb.Vec3SGrid(); velocity.name = "velocity"
+    velocity = openvdb.Vec3SGrid()
+    velocity.name = "velocity"
     velocity_accessor = velocity.getAccessor()
     for x in range(3):
         for y in range(3):
@@ -254,7 +256,7 @@ def main():
     select_only(invalid)
     bpy.ops.fluidsim.tag_liquid_emitter()
     invalid.fluidsim.source_region_kind = "VOLUME_GRID"
-    invalid_plans = inputs.gather_source_plans(scene)
+    inputs.gather_source_plans(scene)
     check("invalid input owns actionable diagnostic", invalid.fluidsim.source_status_code == "SOURCE_INPUT_INVALID"
           and "Volume" in invalid.fluidsim.source_status_message)
 
@@ -266,7 +268,7 @@ def main():
     reopened_legacy = bpy.data.objects["P3_LegacyShell"].fluidsim
     check("legacy values migrate without occupancy drift",
           reopened_legacy.geometry_mode == "MESH"
-          and reopened_legacy.source_ui_schema_version == 4
+          and reopened_legacy.source_ui_schema_version == CURRENT_SOURCE_UI_SCHEMA
           and reopened_legacy.source_sampling_mode == "LEGACY_ABSOLUTE"
           and reopened_legacy.emit_rate == 5.0)
 
@@ -293,7 +295,8 @@ def main():
         "checks": CHECKS,
         "errors": FAILURES,
     }
-    out = Path(args.json_out); out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(args.json_out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2), encoding="utf8")
     if FAILURES:
         raise SystemExit(f"PHASE3-SOURCE-UI-ACCEPTANCE-FAIL ({len(FAILURES)}): {FAILURES}")

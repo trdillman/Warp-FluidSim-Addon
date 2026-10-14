@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 wp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim import surface as SURF
-from fluidSim_warp_blender51.sim.fields import (
+from fluidSim_warp_blender51.sim import surface as SURF  # noqa: E402
+from fluidSim_warp_blender51.sim.fields import (  # noqa: E402
     ScalarField,
     SparseGrid,
     voxel_center_world,

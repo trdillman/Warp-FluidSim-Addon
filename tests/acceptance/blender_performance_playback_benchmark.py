@@ -358,7 +358,10 @@ def main(argv=None):
     owns_process = args.owned_process_pid == os.getpid()
     provenance = None
     inventory = None
-    instrumentation_restore = lambda: None
+    def _restore_nothing():
+        return None
+
+    instrumentation_restore = _restore_nothing
 
     def setup_failure(error, extra=None):
         def build(finalization_errors):
@@ -421,6 +424,9 @@ def main(argv=None):
             playback,
             scene_bridge,
         )
+        from fluidSim_warp_blender51.blender.scene_access import (
+            active_domain_settings,
+        )
         from fluidSim_warp_blender51.sim.attributes import (
             OUTPUT_ATTRIBUTE_KEYS,
             enabled_attribute_keys,
@@ -451,15 +457,19 @@ def main(argv=None):
             requested_attributes = ["velocity", "motion"]
         else:
             requested_attributes = list(OUTPUT_ATTRIBUTE_KEYS["surface"])
+        # The attribute toggles and the publish cadence are domain settings.
+        domain_settings = active_domain_settings(scene)
+        if domain_settings is None:
+            raise RuntimeError("the saved scene has no designated FluidSim domain")
         configured_attributes = list(enabled_attribute_keys(
-            scene.fluidsim, "surface"))
+            domain_settings, "surface"))
         if set(configured_attributes) != set(requested_attributes):
             raise RuntimeError(
                 "preconfigured surface attributes do not match requested profile: "
                 f"configured={configured_attributes}, "
                 f"requested={requested_attributes}")
 
-        surface_cadence = int(scene.fluidsim.live_surface_publish_cadence)
+        surface_cadence = int(domain_settings.live_surface_publish_cadence)
         timeline_budget = cadence_frame_budget(
             args.frames, args.frames, surface_cadence)
         start_frame = int(scene.frame_current)

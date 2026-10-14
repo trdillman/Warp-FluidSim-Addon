@@ -27,7 +27,7 @@ if REPO_ROOT not in sys.path:
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "support"))
 from _test_device import script_device  # noqa: E402
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 SCENES_DIR = Path(REPO_ROOT) / "fluidSim_warp_blender51" / "resources" / "examples" / "custom_effects" / "scenes"
 
@@ -61,7 +61,6 @@ def verify_scene(filename: str) -> None:
     bpy.ops.wm.open_mainfile(filepath=str(path))
     enable_repo_addon(REPO_ROOT, default_set=False, persistent=False)
 
-    from fluidSim_warp_blender51.blender import scene_bridge
     from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings, session
 
     scene = bpy.context.scene

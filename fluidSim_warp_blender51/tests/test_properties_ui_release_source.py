@@ -57,7 +57,7 @@ def test_installed_smoke_requires_the_new_ui_modules_and_panel_inventory():
         assert path in source
     for panel_id in (
         "FLUIDSIM_PT_scene_control",
-        "FLUIDSIM_PT_scene_domain",
+        "FLUIDSIM_PT_physics_domain_scene_domain",
         "FLUIDSIM_PT_object_role",
         "FLUIDSIM_PT_custom_effects",
         "FLUIDSIM_PT_effect_packages",

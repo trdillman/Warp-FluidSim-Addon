@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import traceback
 
 from ..sim import constants as C
+from ..sim import narrow_band
 from .scene_access import active_domain_settings
 from .scene_inputs import SceneInputs
 from .solver_settings import build_settings, domain_transform
@@ -48,6 +49,19 @@ def capacity_blocking_message(blockers):
         "No partial source emission was committed. Adjust settings or apply "
         "an explicit planner suggestion, then Initialize/Reset and retry."
     )
+
+
+def narrow_band_refusal(settings, scene_objects):
+    """The narrow-band admission refusal for ``settings`` in a scene, or "".
+
+    Initialize/Reset refuse narrow-band particles with features that keep
+    per-particle interior state. Edits that reach a running solver without a
+    new admission (live settings, scene sync) ask the same question here.
+    """
+    if not bool(getattr(settings, "narrow_band_enabled", False)):
+        return ""
+    reasons = narrow_band.scene_blocking_reasons(settings, scene_objects or ())
+    return narrow_band.refusal_message(reasons) if reasons else ""
 
 
 def reset_memory_blocking_message(capacity_plan):
@@ -136,6 +150,17 @@ class AdmissionSnapshot:
         return inputs
 
 
+# The allocation the running solver was admitted with. These are the solver
+# settings that reinitialize-class edits (voxel size / divisions / Quality,
+# domain object and bounds, leaf and whitewater storage, device) feed; a Reset
+# keeps them so a pending "Reinitialize" stays true. The particle pool is
+# carried separately as the runtime capacity.
+RESET_PRESERVED_ALLOCATION_FIELDS = (
+    "device", "voxel_size", "domain_min", "domain_max", "leaf_capacity",
+    "max_whitewater",
+)
+
+
 def _integrity_blockers(capacity_plan):
     return tuple(blocker for blocker in capacity_plan.blockers
                  if blocker.code != "MEMORY_ESTIMATE")
@@ -207,6 +232,8 @@ def capture_snapshot(
     # sampled for capacity only; its first allocation belongs to the committed
     # replacement after Cutover.
     inputs.device = "cpu"
+    # Nothing queries a mesh BVH before the replacement materializes its own.
+    inputs.stage_meshes = True
     compiler = SourceCompiler()
     try:
         sync_generation = inputs.begin_sync()
@@ -312,16 +339,22 @@ def capture_snapshot(
 
 def replan_snapshot(
         snapshot, settings, *, resources=None, additional_transaction_bytes=0):
-    """Reassess capacity from the original snapshot without a second gather."""
-    snapshot.settings = settings
-    snapshot.configured_device = str(settings.device)
-    if resources is not None:
-        snapshot.resources = resources
-    snapshot.capacity_plan = _plan_capacity(
-        settings, snapshot.footprints, snapshot.seeds,
-        snapshot.collider_footprints, snapshot.resources,
-        additional_transaction_bytes=additional_transaction_bytes)
-    return snapshot
+    """Reassess capacity from the original snapshot without a second gather.
+
+    Returns a new snapshot that shares the original's gathered inputs; the
+    original is left untouched so a rejected candidate can fall back to it.
+    """
+    resources = snapshot.resources if resources is None else resources
+    return replace(
+        snapshot,
+        settings=settings,
+        configured_device=str(settings.device),
+        resources=resources,
+        capacity_plan=_plan_capacity(
+            settings, snapshot.footprints, snapshot.seeds,
+            snapshot.collider_footprints, resources,
+            additional_transaction_bytes=additional_transaction_bytes),
+    )
 
 
 def discard_prepared_solver(solver):
@@ -389,7 +422,8 @@ class SimulationAdmission:
 
     def _preflight(self, scene, *, depsgraph=None, runtime_capacity=None,
                    ignore_memory_safeguard=False,
-                   defer_particle_growth=False, operation=None):
+                   defer_particle_growth=False, operation=None,
+                   applied_allocation=None):
         from ..sim.memory_safety import vram_snapshot
 
         if operation is None:
@@ -397,6 +431,16 @@ class SimulationAdmission:
                 "REINITIALIZE" if self._owns_scene(scene)
                 else "INITIALIZE")
         settings = build_settings(scene)
+        if applied_allocation is not None:
+            preserved = {
+                name: getattr(applied_allocation, name)
+                for name in RESET_PRESERVED_ALLOCATION_FIELDS
+                if hasattr(applied_allocation, name) and hasattr(settings, name)}
+            if preserved:
+                settings = replace(settings, **preserved)
+        refusal = narrow_band_refusal(settings, getattr(scene, "objects", ()))
+        if refusal:
+            raise RuntimeError(refusal)
         if runtime_capacity is not None:
             settings = replace(settings, max_particles=int(runtime_capacity))
         resources = vram_snapshot(settings.device)
@@ -527,6 +571,8 @@ class SimulationAdmission:
 
     def _configure_candidate(self, candidate, snapshot, scene):
         inputs = snapshot.scene_inputs
+        # Staging ends here: build real meshes even on a CPU solver device.
+        inputs.stage_meshes = False
         inputs.materialize_device_meshes(
             snapshot.descriptors, snapshot.colliders,
             snapshot.configured_device)
@@ -699,7 +745,9 @@ class SimulationAdmission:
         try:
             snapshot, replacement_growth = self._preflight(
                 scene, depsgraph=depsgraph,
-                runtime_capacity=runtime_capacity, operation="RESET")
+                runtime_capacity=runtime_capacity, operation="RESET",
+                applied_allocation=getattr(
+                    self.session.solver, "settings", None))
             settings = snapshot.settings
             candidate, _configuration_warnings = self._prepare_solver_replacement(
                 scene, settings, snapshot, self.session.profiler)
@@ -718,7 +766,7 @@ class SimulationAdmission:
             self.session.clear_error(scene)
             from . import output_publication
 
-            output_publication.update_outputs(scene, self.session)
+            publication = output_publication.update_outputs(scene, self.session)
             self._capture_applied_state(scene, self.session, reset_only=True)
             self._publish_effect_snapshot(scene, snapshot)
             if replacement_growth is None:
@@ -727,6 +775,11 @@ class SimulationAdmission:
                 scene.fluidsim.status = (
                     "Simulation reset — particle capacity grew "
                     f"{replacement_growth[0]:,} → {replacement_growth[1]:,}")
+            # Reported like a live step's publication warning (Session.step).
+            warning = str(getattr(publication, "warning", "") or "")
+            if warning:
+                self.session.set_error(scene, warning)
+                scene.fluidsim.status = f"{scene.fluidsim.status} — {warning}"
 
         except Exception as exc:
             self.session.set_error(scene, repr(exc))

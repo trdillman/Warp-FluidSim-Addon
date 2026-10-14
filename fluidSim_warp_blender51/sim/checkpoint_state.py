@@ -11,6 +11,23 @@ from . import constants as C
 from .whitewater_types import validate_type_values
 
 
+def host_prefix(array, count: int) -> np.ndarray:
+    """Host copy of the first ``count`` rows of a Warp array.
+
+    Equal in dtype, shape and bytes to ``array.numpy()[:count]``, but slices
+    on the device first so only the live prefix crosses the bus instead of
+    the whole allocated capacity. Warp cannot read back a zero-length CUDA
+    view, so an empty prefix is cut from a one-row readback instead.
+    """
+    length = int(array.shape[0])
+    count = max(0, min(int(count), length))
+    if count:
+        return array[:count].numpy()
+    if length:
+        return array[:1].numpy()[:0]
+    return array.numpy()
+
+
 @dataclass(frozen=True)
 class CheckpointSchema:
     """Runtime capacities and channel inventory required to validate a restore."""
@@ -37,8 +54,7 @@ class CheckpointSchema:
         required_scalars = {
             "frame", "sim_time", "leaf_count", "particle_count",
             "whitewater_count", "leaf_capacity", "particle_capacity",
-            "whitewater_capacity", "whitewater_emit_seed", "st_step_seed",
-            "st_previous_dt", "st_reference_mass_cached",
+            "whitewater_capacity", "whitewater_emit_seed",
             "whitewater_type_schema_version",
         }
         missing = required_scalars - set(scalars)
@@ -105,6 +121,13 @@ class CheckpointSchema:
         if np.asarray(arrays["grid_old_leaf_table"]).shape != (
                 self.leaf_table_cells,):
             raise ValueError("grid_old_leaf_table has the wrong shape")
+        if "particle_affine" in arrays:
+            # Optional: empty (0, 9) means "no affine state" (non-APIC writer).
+            affine = np.asarray(arrays["particle_affine"])
+            if affine.ndim != 2 or affine.shape[1] != 9 or affine.shape[0] not in (
+                    0, counts["particle_count"]):
+                raise ValueError(
+                    "particle_affine shape does not match particle_count")
         active_voxels = counts["leaf_count"] * C.LEAF_VOLUME
         for dotted_name in self.field_names:
             key = f"field_{dotted_name.replace('.', '_')}"

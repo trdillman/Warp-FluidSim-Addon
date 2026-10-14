@@ -17,13 +17,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "support"))
 from _test_device import script_device  # noqa: E402
 
-import warp as wp
+import warp as wp  # noqa: E402
 
-from fluidSim_warp_blender51.sim.enums import SurfaceUpdateCadence
-from fluidSim_warp_blender51.sim.fields import SparseGrid
-from fluidSim_warp_blender51.sim.solver import SolverSettings
-from fluidSim_warp_blender51.sim.surface import SurfacePipeline
-from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem
+from fluidSim_warp_blender51.sim.enums import SurfaceUpdateCadence  # noqa: E402
+from fluidSim_warp_blender51.sim.fields import SparseGrid  # noqa: E402
+from fluidSim_warp_blender51.sim.solver import SolverSettings  # noqa: E402
+from fluidSim_warp_blender51.sim.surface import SurfacePipeline  # noqa: E402
+from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem  # noqa: E402
 
 
 def _grid(device):

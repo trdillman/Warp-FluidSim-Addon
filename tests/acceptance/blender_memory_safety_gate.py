@@ -17,8 +17,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "support"))
 from _test_device import script_device  # noqa: E402
 
-import fluidSim_warp_blender51 as addon
-from fluidSim_warp_blender51.blender import scene_bridge
+import fluidSim_warp_blender51 as addon  # noqa: E402
+from fluidSim_warp_blender51.blender import scene_bridge  # noqa: E402
 
 
 def main():

@@ -5,11 +5,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fluidSim_warp_blender51.blender.scene_inputs import _effective_source_target
-from settings_doubles import split_settings
+from settings_doubles import full_settings, split_settings
 
 
 def _scene(global_sampling=12):
-    return SimpleNamespace(fluidsim=split_settings(SimpleNamespace(
+    # Every declared field at its RNA default, so the scene-level ``quality``
+    # tier the effective target multiplies by is present, as on a real scene.
+    return SimpleNamespace(fluidsim=split_settings(full_settings(
         voxel_size=0.1, particles_per_voxel=global_sampling)))
 
 

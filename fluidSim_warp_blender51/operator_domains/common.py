@@ -44,19 +44,57 @@ def _runtime_poll(cls) -> bool:
     return ready
 
 
-def _mutation_poll(cls, context) -> bool:
-    """Block solver mutations while Production Bake owns the scene."""
+def _bake_poll(cls, context) -> bool:
+    """Refuse while any Production Bake runs (owner decision D2).
+
+    The Solver Session is a process singleton, so a bake in one scene owns it
+    for every scene.
+    """
     from ..blender import production_bake
 
     scene = getattr(context, "scene", None)
     if scene is not None and production_bake.bake_is_active(scene):
         cls.poll_message_set("Production Bake owns this scene")
         return False
+    if production_bake.any_bake_active():
+        cls.poll_message_set("A Production Bake is running in another scene")
+        return False
+    return True
+
+
+def _mutation_poll(cls, context) -> bool:
+    """Block solver mutations while a Production Bake owns the session."""
+    if not _bake_poll(cls, context):
+        return False
     return _runtime_poll(cls)
+
+
+UNSAVED_RELATIVE_CACHE_MESSAGE = (
+    "Save the .blend file first, or set an absolute Cache Path: an unsaved file "
+    "has no folder for a relative cache path, so the cache would land in "
+    "Blender's working directory and move when the file is saved"
+)
+
+
+def _unsaved_relative_cache_path(scene) -> bool:
+    """Whether the cache path is relative while the .blend file is unsaved.
+
+    ``bpy.path.abspath('//fluidsim_cache/')`` of an unsaved file returns the
+    bare relative ``fluidsim_cache/``, which resolves against the process
+    working directory; after the file is saved the same setting points next
+    to the .blend instead, so the cache appears to vanish.
+    """
+    raw = str(getattr(scene.fluidsim, "cache_path", "") or "").strip()
+    data = getattr(bpy, "data", None)
+    if not raw or data is None or str(getattr(data, "filepath", "") or ""):
+        return False
+    return raw.startswith("//") or not Path(raw).expanduser().is_absolute()
 
 
 def _resolved_cache_path(scene) -> Path:
     """Resolve the exact authored cache target used by mutation dialogs."""
+    if _unsaved_relative_cache_path(scene):
+        raise ValueError(UNSAVED_RELATIVE_CACHE_MESSAGE)
     raw = str(bpy.path.abspath(scene.fluidsim.cache_path) or "").strip()
     if not raw:
         raise ValueError("The cache path is empty")

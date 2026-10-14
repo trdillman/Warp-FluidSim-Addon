@@ -30,6 +30,11 @@ from .enums import (
     SurfaceResolutionMode,
     SurfaceUpdateCadence,
     SourceEvaluationCadence,
+    SourceEmissionMode,
+    SourceLifecycle,
+    SourceOperation,
+    SourceShapeSourceMode,
+    SourceShapeType,
 )
 from .fields import (
     SparseGrid,
@@ -40,12 +45,11 @@ from .fields import (
 )
 from .particles import ParticleSystem, ParticleBins
 from .attributes import persistent_particle_channels
-from .checkpoint_state import CheckpointSchema
+from .checkpoint_state import CheckpointSchema, host_prefix
 from .color_mixing import ColorMixTransport
 from .frame_features import FrameFeaturePhase, FrameFeatures
 from .frame_runtime import FrameStats, SubstepPolicy, select_substeps
 from .quality_contract import resolve_quality
-from .spacetime import SpaceTimeState
 from .pressure import PressureSolver
 from .viscosity import ViscositySolver
 from .whitewater import (
@@ -85,16 +89,14 @@ from .kernels_core import (
 from .kernels_fluid import (
     ForceFieldProxy,
     k_gather_grid_data,
-    k_gather_grid_data_spacetime,
-    k_spacetime_weights_to_phase_active,
+    k_gather_grid_data_apic,
     k_normalize_mac,
     k_particle_to_count,
     k_particle_to_grid_active,
     k_staggered_field_to_particle,
+    k_staggered_field_to_particle_apic,
     k_apply_collider_material_to_grid,
     k_advect_particles,
-    k_advect_particles_spacetime,
-    k_resync_particle_positions_spacetime,
     k_forces_gravity,
     k_forces_proxy_fields,
     k_forces_directional,
@@ -271,6 +273,84 @@ def k_rasterize_collider_material(
 
 
 @wp.kernel
+def k_rasterize_collider_material_ranked(
+    mesh_id: wp.uint64,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    band: float,
+    linear_velocity: wp.vec3,
+    angular_velocity: wp.vec3,
+    center: wp.vec3,
+    friction: float,
+    restitution: float,
+    rank: wp.int32,
+    collision_sdf: wp.array(dtype=float),
+    collision_vel: wp.array(dtype=wp.vec3),
+    collision_friction: wp.array(dtype=float),
+    collision_restitution: wp.array(dtype=float),
+    owner: wp.array(dtype=wp.int32),
+):
+    """``k_rasterize_collider_material`` in any collider order.
+
+    Rasterizing colliders in list order with a strict ``<`` keeps, per voxel,
+    the smallest distance and on a tie the earliest collider (walls, written
+    first, have rank -1). Recording the winner's rank and comparing
+    ``(distance, rank)`` reproduces that exactly when colliders are applied
+    out of order, so cached static colliders can be composed with moving
+    ones re-rasterized each substep (P08).
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    lc = leaf_coords[tid // C.LEAF_VOLUME]
+    local = tid - (tid // C.LEAF_VOLUME) * C.LEAF_VOLUME
+    li = local & C.LEAF_MASK
+    lj = (local >> C.LEAF_SHIFT) & C.LEAF_MASK
+    lk = local >> (2 * C.LEAF_SHIFT)
+    ijk = wp.vec3i(lc[0] * C.LEAF_DIM + li, lc[1] * C.LEAF_DIM + lj, lc[2] * C.LEAF_DIM + lk)
+    p = origin + wp.vec3(
+        (float(ijk[0]) + 0.5) * voxel_size,
+        (float(ijk[1]) + 0.5) * voxel_size,
+        (float(ijk[2]) + 0.5) * voxel_size,
+    )
+    q = wp.mesh_query_point_sign_normal(mesh_id, p, band)
+    if not q.result:
+        return
+    cp = wp.mesh_eval_position(mesh_id, q.face, q.u, q.v)
+    distance = wp.length(p - cp) * q.sign
+    current = collision_sdf[tid]
+    if distance < current or (distance == current and rank < owner[tid]):
+        collision_sdf[tid] = distance
+        collision_vel[tid] = linear_velocity + wp.cross(angular_velocity, p - center)
+        collision_friction[tid] = friction
+        collision_restitution[tid] = restitution
+        owner[tid] = rank
+
+
+@wp.kernel
+def k_copy_collision_state(
+    src_sdf: wp.array(dtype=float),
+    src_vel: wp.array(dtype=wp.vec3),
+    src_friction: wp.array(dtype=float),
+    src_restitution: wp.array(dtype=float),
+    src_owner: wp.array(dtype=wp.int32),
+    dst_sdf: wp.array(dtype=float),
+    dst_vel: wp.array(dtype=wp.vec3),
+    dst_friction: wp.array(dtype=float),
+    dst_restitution: wp.array(dtype=float),
+    dst_owner: wp.array(dtype=wp.int32),
+):
+    i = wp.tid()
+    dst_sdf[i] = src_sdf[i]
+    dst_vel[i] = src_vel[i]
+    dst_friction[i] = src_friction[i]
+    dst_restitution[i] = src_restitution[i]
+    dst_owner[i] = src_owner[i]
+
+
+@wp.kernel
 def k_transform_collider_points(
     base_points: wp.array(dtype=wp.vec3),
     center: wp.vec3,
@@ -348,6 +428,40 @@ def k_sanitize_mac_velocity(
 
 
 @wp.kernel
+def k_apic_clamp_affine(
+    velocities: wp.array(dtype=wp.vec3),
+    affine: wp.array(dtype=wp.mat33),
+    alive: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    max_speed: float,
+):
+    """APIC companion of the speed clamp in :func:`k_sanitize_particles`.
+
+    Runs just before it, on the same unclamped velocity, and rescales the
+    affine matrix by the factor the clamp will apply to the velocity so a
+    clamped particle keeps its direction of motion and its affine shape in
+    proportion.  A non-finite matrix is zeroed (zero affine is always valid).
+    """
+    tid = wp.tid()
+    if tid >= count[0]:
+        return
+    if alive[tid] == 0:
+        return
+    c = affine[tid]
+    finite = True
+    for i in range(3):
+        for j in range(3):
+            if wp.isnan(c[i, j]) or wp.isinf(c[i, j]):
+                finite = False
+    if not finite:
+        affine[tid] = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return
+    speed = wp.length(velocities[tid])
+    if speed > max_speed:
+        affine[tid] = c * (max_speed / speed)
+
+
+@wp.kernel
 def k_sanitize_particles(
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
@@ -394,6 +508,12 @@ class ColliderDesc:
     # only when this collider is moving. Non-None marks it eligible for
     # per-substep re-transform; the Blender bridge never sets this field.
     base_points: object = None
+    # Solver-internal: mesh.points currently hold an extrapolated sub-frame
+    # pose that _restore_collider_poses must undo.
+    reposed: bool = False
+    # Solver-internal: rotation centre of that sub-frame pose (the frame-start
+    # centre translated with the points); None at the frame-start pose.
+    pose_center: object = None
 
 
 @dataclass
@@ -459,176 +579,7 @@ class ForceFieldDesc:
         return field
 
 
-@dataclass
-class SolverSettings:
-    domain_min: tuple = (-2.0, -2.0, 0.0)
-    domain_max: tuple = (2.0, 2.0, 4.0)
-    voxel_size: float = C.DEFAULT_VOXEL_SIZE
-    leaf_capacity: int = C.DEFAULT_LEAF_CAPACITY
-    max_particles: int = C.DEFAULT_MAX_PARTICLES
-    auto_grow_particles: bool = True
-    particle_growth_failure_policy: str = "DEFER"
-    max_whitewater: int = C.DEFAULT_MAX_WHITEWATER
-
-    frame_rate: float = 24.0
-    time_scale: float = 1.0
-    cfl: float = C.DEFAULT_CFL
-    min_substeps: int = 1
-    max_substeps: int = 4
-
-    gravity: tuple = C.DEFAULT_GRAVITY
-    sample_type: int = int(ParticleSampleType.FLIP)
-    flip_ratio: float = C.DEFAULT_FLIP_RATIO
-    trace_mode: int = int(TraceMode.RK3)
-    max_speed: float = 0.0                    # 0 disables the speed limit
-    speed_limit_behavior: int = 0
-    speed_limit_percent: float = 0.1
-    directional_force: tuple = (0.0, 0.0, 0.0)
-    omnidirectional_force_center: tuple = (0.0, 0.0, 0.0)
-    omnidirectional_force_strength: float = 0.0
-    omnidirectional_force_radius: float = 1.0
-    force_diffusion: float = 0.0
-    dissipation_enabled: bool = False
-    dissipation_attribute: str = "temperature"
-    dissipation_rate: float = 0.0
-    dissipation_target: float = 0.0
-    attraction_enabled: bool = False
-    attraction_strength: float = 0.0
-    attraction_max_distance: float = 1.0
-
-    particles_per_voxel: float = float(C.DEFAULT_PARTICLES_PER_VOXEL)
-    count_stiffness: float = 0.0
-    resolved_quality: object = dc_field(default=None, repr=False, compare=False)
-
-    # Spatiotemporal FLIP (ST-FLIP, Braun et al. 2026).
-    spacetime_enabled: bool = False
-    spacetime_jitter_strength: float = 1.0
-    spacetime_adaptive_jitter: bool = True
-    spacetime_phase_eta: float = 0.5
-    spacetime_phase_threshold: float = 0.5
-    spacetime_reference_mass: float = 0.0  # <=0 derives from particles_per_voxel
-    spacetime_variable_projection: bool = False
-    spacetime_liquid_density: float = 1.0
-    spacetime_gas_density: float = 0.0
-    spacetime_min_density: float = 0.05
-    spacetime_local_cfl: float = 1.0
-    spacetime_max_local_substeps: int = 64
-    spacetime_resync_surface: bool = True
-    spacetime_seed: int = 1729
-
-    relax_enabled: bool = True
-    relax_strength: float = 0.5
-    relax_mode: int = int(RelaxMode.LOCAL_VOXEL)
-    open_boundaries: bool = False
-    # Closed domains (open_boundaries=False) need actual collision-SDF walls
-    # or the pressure solve treats sparse-grid padding beyond the domain box
-    # as open space (see k_mark_domain_walls docstring). Default True so a
-    # fresh closed-domain scene is not silently unbounded.
-    domain_sdf_walls: bool = True
-    pressure_solver: int = int(ProjectNonDivergentSolver.PCG)
-    pressure_iterations: int = C.DEFAULT_PRESSURE_ITERATIONS
-    pressure_tolerance: float = C.DEFAULT_PRESSURE_TOLERANCE
-    pressure_threshold: float = 0.0
-
-    viscosity_enabled: bool = False
-    viscosity_solver: int = int(ViscositySolverEnum.PCG)
-    viscosity_constant: float = 0.0
-    viscosity_iterations: int = C.DEFAULT_VISCOSITY_ITERATIONS
-    viscosity_tolerance: float = C.DEFAULT_VISCOSITY_TOLERANCE
-    viscosity_from_particles: bool = False
-
-    # Continuum-surface-force surface tension.  Coefficient is N/m, density
-    # is kg/m^3, and the narrow-band width is authored in simulation voxels.
-    surface_tension_enabled: bool = False
-    surface_tension_coefficient: float = 0.072
-    surface_tension_density: float = 1000.0
-    surface_tension_band_voxels: float = 1.5
-    surface_tension_safety: float = 0.5
-    surface_tension_smoothing_iterations: int = 1
-
-    # GPU-resident artistic mixing of the existing per-particle color channel.
-    species_enabled: bool = False
-    species_mixing_rate: float = 8.0
-
-    surface_enabled: bool = True
-    particle_radius_scale: float = 1.2
-    surface_splat_radius: int = 2
-    # Render surfacing is intentionally decoupled from the simulation grid.
-    # The optional simulation SDF is retained only when requested or required
-    # by whitewater, while the render SDF can use a separate resolution.
-    surface_resolution_mode: int = int(SurfaceResolutionMode.SIMULATION)
-    surface_resolution_multiplier: float = 2.0
-    surface_voxel_size: float = 0.0
-    surface_leaf_capacity_scale: float = 8.0
-    surface_max_dense_dim: int = 512
-    surface_update_cadence: int = int(SurfaceUpdateCadence.FRAME)
-    live_surface_publish_cadence: int = 1
-    surface_build_lowres_sdf: bool = False
-    surface_filter_type: int = int(SdfFilterType.BOX)
-    surface_filter_iterations: int = 0
-    surface_filter_strength: float = 0.7
-    surface_dilate_iterations: int = 0
-    surface_dilate_strength: float = 1.0
-    surface_erode_iterations: int = 0
-    surface_erode_strength: float = 1.0
-    surface_smooth_type: int = int(SdfFilterType.BOX)
-    surface_smooth_iterations: int = 1
-    surface_smooth_strength: float = 0.7
-
-    # Artist-ready output inventory.  These fields are signature-bound and
-    # selected before initialization so optional particle channels stay opt-in.
-    export_attributes: bool = False
-    surface_attribute_velocity: bool = True
-    surface_attribute_speed: bool = False
-    surface_attribute_vorticity: bool = False
-    surface_attribute_age: bool = False
-    surface_attribute_lifetime: bool = False
-    surface_attribute_color: bool = False
-    surface_attribute_source_id: bool = False
-    surface_attribute_viscosity: bool = False
-    surface_attribute_density: bool = False
-    surface_attribute_motion: bool = True
-    particles_attribute_velocity: bool = False
-    particles_attribute_speed: bool = False
-    particles_attribute_vorticity: bool = False
-    particles_attribute_age: bool = True
-    particles_attribute_lifetime: bool = True
-    particles_attribute_color: bool = False
-    particles_attribute_source_id: bool = False
-    particles_attribute_uid: bool = False
-    particles_attribute_viscosity: bool = False
-    particles_attribute_density: bool = False
-    whitewater_attribute_velocity: bool = False
-    whitewater_attribute_speed: bool = False
-    whitewater_attribute_age: bool = True
-    whitewater_attribute_lifetime: bool = True
-    whitewater_attribute_type: bool = True
-
-    whitewater_enabled: bool = False
-    churn_decay: float = 1.0
-    churn_gain: float = 1.0
-    ww_churn_threshold: float = 0.5
-    ww_emission_rate: float = 2.0
-    ww_surface_band: float = 2.0     # in voxels
-    ww_min_speed: float = 0.5
-    ww_life_min: float = 1.0
-    ww_life_max: float = 3.0
-    ww_foam_band: float = 1.0        # in voxels
-    ww_spray_min_speed: float = 0.5
-    ww_type_hysteresis: float = 0.25
-    ww_foam_advection: float = 1.0
-    ww_foam_preservation: float = 0.0
-    ww_foam_density_influence: float = 0.0
-    ww_foam_life_multiplier: float = 1.0
-    ww_bubble_drag: float = 8.0
-    ww_bubble_buoyancy: float = 1.0
-    ww_bubble_life_multiplier: float = 1.0
-    ww_spray_drag: float = 0.5
-    ww_spray_gravity_scale: float = 1.0
-    ww_spray_life_multiplier: float = 1.0
-
-    topology_expand: int = 1
-    device: str = "cuda:0"
+from .solver_settings_model import SolverSettings  # noqa: F401 (re-export)
 
 
 _CHECKPOINT_FIELD_NAMES = (
@@ -636,6 +587,12 @@ _CHECKPOINT_FIELD_NAMES = (
     "vel_saved_u", "vel_saved_v", "vel_saved_w",
     "voxel_type.data", "temperature.data", "viscosity_field.data",
     "density.data", "churn.data",
+)
+
+
+_NARROW_BAND_CHECKPOINT_FIELDS = (
+    "narrow_band.phi", "narrow_band.nb_u", "narrow_band.nb_v",
+    "narrow_band.nb_w",
 )
 
 
@@ -648,6 +605,9 @@ def _resolve_attr(root, dotted_name: str):
 
 class FluidSolver:
     """GPU-resident FLIP/PIC liquid solver."""
+
+    # Class default so solver stand-ins built without __init__ read as "mode off".
+    narrow_band = None
 
     def __init__(self, settings: SolverSettings, profiler=None):
         self.settings = settings
@@ -722,6 +682,7 @@ class FluidSolver:
             settings.max_particles, self.device,
             persistent_particle_channels(settings))
         self.bins = ParticleBins(settings.max_particles, vc, self.device)
+        self._sync_affine_mode()
         self.whitewater = WhitewaterSystem(
             settings.max_whitewater, self.device,
             candidate_capacity=settings.max_particles)
@@ -771,13 +732,17 @@ class FluidSolver:
         self.sim_time = 0.0
         self.stats = FrameStats()
         self._whitewater_emit_seed = 12345
-        self.spacetime = SpaceTimeState(settings, self.quality)
         # Active-work launch bound for per-voxel kernels, refreshed after
         # every topology rebuild. Kernels guard on the device-side count, so
         # any dim >= the active voxel count is safe; dispatching only the
         # active region instead of the full allocation keeps kernel cost
         # proportional to live work (see TASK-POLICY-DRIFT-002).
         self._nvox = 1
+        # Narrow-band FLIP state (None unless the mode is on; see narrow_band_state).
+        self.narrow_band = None
+        if getattr(settings, "narrow_band_enabled", False):
+            from .narrow_band_state import NarrowBand
+            self.narrow_band = NarrowBand(self)
 
     # Host configuration
 
@@ -793,6 +758,10 @@ class FluidSolver:
             tuple(legacy_descriptors), tuple(native_plans)))
 
     def set_colliders(self, colliders):
+        # The meshes are the scene's cached collider meshes; hand back any we
+        # re-posed before letting go of them (also covers a step that raised).
+        self._restore_collider_poses()
+        self._static_collision_cache_ready = False
         self.colliders = list(colliders)
         for col in self.colliders:
             moving = col.mesh is not None and (
@@ -830,9 +799,27 @@ class FluidSolver:
         """Update launch-time Custom Effect values without replacing solver state."""
         return self.features.update_runtime_bindings(instances)
 
+    def _apic_active(self) -> bool:
+        return int(getattr(self.settings, "sample_type", ParticleSampleType.FLIP)
+                   ) == int(ParticleSampleType.APIC)
+
+    def _sync_affine_mode(self):
+        """Make the affine channel match the live transfer mode.
+
+        ``sample_type`` is a live setting.  APIC allocates the channel lazily
+        (zeroed, which is a valid state); leaving APIC frees it, so nothing
+        stale can leak back in when APIC is selected again.
+        """
+        if self._apic_active():
+            self.particles.ensure_affine()
+        elif getattr(self.particles, "affine", None) is not None:
+            self.particles.release_affine()
+
     def ensure_particle_capacity(self, required: int):
         """Atomically grow particle/binner storage while preserving solver state."""
-        from .memory_safety import release_cuda_memory, vram_snapshot
+        from .memory_safety import (
+            affine_bytes_per_particle, release_cuda_memory, vram_snapshot,
+        )
         from .particle_capacity import (
             ParticleGrowthResult, plan_particle_growth,
         )
@@ -856,6 +843,7 @@ class FluidSolver:
             current, required,
             gpu_total_bytes=int(resources.get("gpu_total_bytes", 0)),
             gpu_free_bytes=int(resources.get("gpu_free_bytes", 0)),
+            extra_particle_bytes=affine_bytes_per_particle(self.settings),
         )
         if not plan.allowed:
             result = ParticleGrowthResult(
@@ -925,12 +913,17 @@ class FluidSolver:
                 sourcing.replace_particle_storage(self.particles)
             del old_particles
         self.particles.clear()
+        self._sync_affine_mode()
         self.color_mixing = self._new_color_mixing()
         self.whitewater.clear()
+        if self.narrow_band is not None:
+            self.narrow_band.reset()
         self.churn.zero()
+        ww_density = getattr(self, "ww_density", None)
+        if ww_density is not None:
+            ww_density.zero()
         self.frame = 0
         self.sim_time = 0.0
-        self.spacetime.reset_for_run()
         settings = getattr(self, "settings", None)
         self.grid.begin_topology()
         self.grid.finalize_topology()
@@ -944,9 +937,17 @@ class FluidSolver:
                 surface_tension.reset()
         self._host_frame_cache = None
 
+    def _checkpoint_field_names(self):
+        """Persistent grid fields; narrow-band adds its own only when on."""
+        if self.narrow_band is None:
+            return _CHECKPOINT_FIELD_NAMES
+        return _CHECKPOINT_FIELD_NAMES + _NARROW_BAND_CHECKPOINT_FIELDS
+
     def export_checkpoint_state(self):
         """Synchronize once and return host-owned deterministic restart state.
 
+        Each array is sliced to its live count on the device before readback,
+        so unused particle, whitewater and leaf capacity never crosses the bus.
         Scratch pressure, collision, binning, surface-extraction, and temporary
         reduction arrays are omitted because ``import_checkpoint_state`` clears
         or rebuilds them before the next source/P2G transaction.
@@ -959,39 +960,43 @@ class FluidSolver:
 
         arrays = {
             "grid_leaf_coords": np.ascontiguousarray(
-                self.grid.leaf_coords.numpy()[:leaf_count], dtype=np.int32),
+                host_prefix(self.grid.leaf_coords, leaf_count), dtype=np.int32),
             "grid_old_leaf_table": np.ascontiguousarray(
                 self.old_leaf_table.numpy(), dtype=np.int32),
             "particle_position": np.ascontiguousarray(
-                self.particles.position.numpy()[:particle_count], dtype=np.float32),
+                host_prefix(self.particles.position, particle_count), dtype=np.float32),
             "particle_velocity": np.ascontiguousarray(
-                self.particles.velocity.numpy()[:particle_count], dtype=np.float32),
+                host_prefix(self.particles.velocity, particle_count), dtype=np.float32),
             "particle_alive": np.ascontiguousarray(
-                self.particles.alive.numpy()[:particle_count], dtype=np.int32),
+                host_prefix(self.particles.alive, particle_count), dtype=np.int32),
             "particle_time_offset": np.ascontiguousarray(
-                self.particles.time_offset.numpy()[:particle_count], dtype=np.float32),
+                host_prefix(self.particles.time_offset, particle_count), dtype=np.float32),
             "whitewater_position": np.ascontiguousarray(
-                self.whitewater.position.numpy()[:whitewater_count], dtype=np.float32),
+                host_prefix(self.whitewater.position, whitewater_count), dtype=np.float32),
             "whitewater_velocity": np.ascontiguousarray(
-                self.whitewater.velocity.numpy()[:whitewater_count], dtype=np.float32),
+                host_prefix(self.whitewater.velocity, whitewater_count), dtype=np.float32),
             "whitewater_age": np.ascontiguousarray(
-                self.whitewater.age.numpy()[:whitewater_count], dtype=np.float32),
+                host_prefix(self.whitewater.age, whitewater_count), dtype=np.float32),
             "whitewater_life": np.ascontiguousarray(
-                self.whitewater.life.numpy()[:whitewater_count], dtype=np.float32),
+                host_prefix(self.whitewater.life, whitewater_count), dtype=np.float32),
             "whitewater_alive": np.ascontiguousarray(
-                self.whitewater.alive.numpy()[:whitewater_count], dtype=np.int32),
+                host_prefix(self.whitewater.alive, whitewater_count), dtype=np.int32),
             "whitewater_type": np.ascontiguousarray(
-                self.whitewater.type.numpy()[:whitewater_count], dtype=np.int32),
+                host_prefix(self.whitewater.type, whitewater_count), dtype=np.int32),
         }
         for name in self.particles.ATTR_NAMES:
             arrays[f"particle_attr_{name}"] = np.ascontiguousarray(
-                self.particles.attrs[name].numpy()[:particle_count],
+                host_prefix(self.particles.attrs[name], particle_count),
                 dtype=np.float32)
         arrays.update(self.particles.checkpoint_arrays(particle_count))
-        for dotted_name in _CHECKPOINT_FIELD_NAMES:
+        for dotted_name in self._checkpoint_field_names():
             arrays[f"field_{dotted_name.replace('.', '_')}"] = np.ascontiguousarray(
-                _resolve_attr(self, dotted_name).numpy()[:active_voxels])
+                host_prefix(_resolve_attr(self, dotted_name), active_voxels))
 
+        if self.narrow_band is not None:
+            arrays["narrow_band_seed_state"] = np.asarray(
+                [self.narrow_band.reseed_epoch, int(self.narrow_band.owed.numpy()[0])],
+                dtype=np.uint32)
         return {
             "arrays": arrays,
             "scalars": {
@@ -1004,7 +1009,6 @@ class FluidSolver:
                 "particle_capacity": int(self.particles.capacity),
                 "whitewater_capacity": int(self.whitewater.capacity),
                 "whitewater_emit_seed": int(self._whitewater_emit_seed),
-                **self.spacetime.checkpoint_scalars(),
                 "next_particle_uid": int(self.particles.next_uid),
                 "particle_optional_channels": ",".join(
                     self.particles.optional_channels),
@@ -1021,7 +1025,7 @@ class FluidSolver:
             particle_attributes=tuple(self.particles.ATTR_NAMES),
             optional_particle_channels=tuple(
                 self.particles.optional_channels),
-            field_names=_CHECKPOINT_FIELD_NAMES,
+            field_names=self._checkpoint_field_names(),
             whitewater_type_schema_version=WHITEWATER_TYPE_SCHEMA_VERSION,
         )
         return schema.validate(state)
@@ -1030,6 +1034,7 @@ class FluidSolver:
         """Restore into a newly initialized, signature-compatible solver."""
         arrays, scalars, counts = self._validate_checkpoint_state(state)
         particle_count = counts["particle_count"]
+        self._sync_affine_mode()
         if particle_count > self.particles.capacity:
             growth = self.ensure_particle_capacity(particle_count)
             if str(getattr(growth, "status", "")) not in {
@@ -1040,7 +1045,7 @@ class FluidSolver:
 
         self.grid.restore_topology(arrays["grid_leaf_coords"])
         active_voxels = counts["leaf_count"] * C.LEAF_VOLUME
-        for dotted_name in _CHECKPOINT_FIELD_NAMES:
+        for dotted_name in self._checkpoint_field_names():
             target = _resolve_attr(self, dotted_name)
             target.zero_()
             if active_voxels:
@@ -1074,7 +1079,10 @@ class FluidSolver:
         self.frame = int(scalars["frame"])
         self.sim_time = float(scalars["sim_time"])
         self._whitewater_emit_seed = int(scalars["whitewater_emit_seed"])
-        self.spacetime.restore_checkpoint_scalars(scalars)
+        if self.narrow_band is not None:
+            seed_state = np.asarray(
+                arrays.get("narrow_band_seed_state", ()), dtype=np.uint32)
+            self.narrow_band.restore_seed_state(seed_state)
         self._rebuild_transient_state_after_restore()
         self.assert_checkpoint_invariants()
 
@@ -1095,6 +1103,11 @@ class FluidSolver:
         self._force_fields_dev = None
         self._host_frame_cache = None
         self._nvox = max(1, self.grid.active_voxel_count)
+        # Not checkpointed, but not scratch either: the next frame's foam
+        # ageing reads it. Checkpoints are taken after _finalize_whitewater,
+        # so re-splatting the restored whitewater reproduces it exactly.
+        if self.settings.whitewater_enabled:
+            self._splat_whitewater_density(self.whitewater.refresh_host_count())
         self.surface.reset()
         self.surface_tension.reset()
         self.whitewater.reset_frame_diagnostics()
@@ -1112,23 +1125,23 @@ class FluidSolver:
         if not 0 <= whitewater_count <= self.whitewater.capacity:
             raise ValueError("restored whitewater count violates capacity")
         for name, value in (
-                ("particle_position", self.particles.position.numpy()[:particle_count]),
-                ("particle_velocity", self.particles.velocity.numpy()[:particle_count]),
-                ("whitewater_position", self.whitewater.position.numpy()[:whitewater_count]),
-                ("whitewater_velocity", self.whitewater.velocity.numpy()[:whitewater_count])):
+                ("particle_position", host_prefix(self.particles.position, particle_count)),
+                ("particle_velocity", host_prefix(self.particles.velocity, particle_count)),
+                ("whitewater_position", host_prefix(self.whitewater.position, whitewater_count)),
+                ("whitewater_velocity", host_prefix(self.whitewater.velocity, whitewater_count))):
             if not np.all(np.isfinite(value)):
                 raise ValueError(f"restored {name} contains non-finite values")
         validate_type_values(
-            self.whitewater.type.numpy()[:whitewater_count],
+            host_prefix(self.whitewater.type, whitewater_count),
             allow_unclassified=False,
         )
         if "uid" in self.particles.optional_channels and particle_count:
-            uid = self.particles.int_attrs["uid"].numpy()[:particle_count]
+            uid = host_prefix(self.particles.int_attrs["uid"], particle_count)
             if np.any(uid <= 0) or len(np.unique(uid)) != particle_count:
                 raise ValueError("restored particle UIDs are invalid")
             if int(self.particles.next_uid) <= int(np.max(uid)):
                 raise ValueError("restored next_particle_uid is not monotonic")
-        if not math.isfinite(self.sim_time) or not self.spacetime.timing_is_finite():
+        if not math.isfinite(self.sim_time):
             raise ValueError("restored timing state is non-finite")
         return True
 
@@ -1216,24 +1229,7 @@ class FluidSolver:
     def render_surface_extractor(self): return self.surface.render_extractor
 
     def _surface_positions(self):
-        s = self.settings
-        p = self.particles
-        if s.spacetime_enabled and s.spacetime_resync_surface:
-            g = self.grid
-            fast_launch(
-                k_resync_particle_positions_spacetime, dim=self._np_dim(),
-                inputs=[p.position, p.velocity, p.time_offset, p.count,
-                        self.vel.u, self.vel.v, self.vel.w,
-                        self.vel.wu, self.vel.wv, self.vel.ww,
-                        self.collision_sdf.data, self.collision_vel,
-                        self.collision_friction, self.collision_restitution,
-                        g.leaf_table, g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size, int(s.trace_mode),
-                        wp.vec3(*s.domain_min), wp.vec3(*s.domain_max)],
-                outputs=[p._position2], device=self.device,
-            )
-            return p._position2
-        return p.position
+        return self.particles.position
 
 
     def _phase(self, name):
@@ -1250,6 +1246,8 @@ class FluidSolver:
         g.begin_topology()
         g.mark_points(self.particles.position, self.particles.count,
                       self._np_dim())
+        if self.narrow_band is not None:
+            self.narrow_band.mark_leaves()
         for src in self.sources:
             if not self.sourcing.legacy_descriptor_requires_topology(src):
                 continue
@@ -1258,34 +1256,23 @@ class FluidSolver:
         if self.sourcing.plans:
             # Compile before topology so imported-volume active leaves and all
             # other normalized regions allocate through the same flat table.
-            from .source_regions import plan_requires_source_topology
-            dynamic_sources = any(
-                plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME
-                for plan in self.sourcing.plans)
-            batch = self.sourcing._compiled_batch
-            if batch is None or dynamic_sources:
-                batch = self.sourcing.compile(frame=self.frame, substep=0)
-            leaf_world = C.LEAF_DIM * s.voxel_size
-            origin = s.domain_min
-            for compiled in batch.sources:
-                if not plan_requires_source_topology(compiled.plan):
-                    continue
-                topology_coords = (
-                    compiled.region.topology_leaf_coords
-                    if compiled.region.topology_leaf_coords is not None
-                    else compiled.region.leaf_coords)
-                for coord in topology_coords:
-                    lo = tuple(origin[axis] + int(coord[axis]) * leaf_world
-                               for axis in range(3))
-                    hi = tuple(value + leaf_world for value in lo)
-                    g.mark_world_box(lo, hi)
+            batch = self.sourcing.compiled_batch_for(self.frame)
+            self.sourcing.mark_source_topology(g, batch)
         for col in self.colliders:
-            g.mark_world_box(col.aabb_min, col.aabb_max)
+            # A collider with no domain overlap (placed outside, or animated
+            # out) has no influence this frame, matching the capacity planner;
+            # strict rejection stays for sources, where it is an authoring error.
+            if g.overlaps_world_box(col.aabb_min, col.aabb_max):
+                g.mark_world_box(col.aabb_min, col.aabb_max)
         hs = self.height_source
         if hs.enabled:
+            # Shared height model: the safety band sits above the profile's
+            # peak, not only above the base level.
+            from .source_regions import height_topology_top
             dmin = s.domain_min
             dmax = s.domain_max
-            g.mark_world_box(dmin, (dmax[0], dmax[1], hs.base_height + 4.0 * s.voxel_size))
+            g.mark_world_box(dmin, (dmax[0], dmax[1], height_topology_top(
+                hs.base_height, hs.back_mode, hs.profile, s.voxel_size)))
         # Gate on the setting, not the exact count: the mark kernel guards on
         # count[0] and host_count is an upper bound on it.
         if s.whitewater_enabled:
@@ -1300,7 +1287,9 @@ class FluidSolver:
         g.finalize_topology(sync=True)
         self._nvox = max(1, g.active_voxel_count)
 
-        # Carry churn across the rebuild (only persistent grid field).
+        # Carry the persistent grid fields across the rebuild: churn, and the
+        # end-of-frame whitewater density that foam ageing reads next frame.
+        # churn_tmp is free scratch again once the churn swap is done.
         fast_launch(
             k_remap_leaf_field, dim=self._nvox,
             inputs=[self.churn.data, self.old_leaf_table, g.leaf_coords,
@@ -1308,6 +1297,17 @@ class FluidSolver:
             outputs=[self.churn_tmp.data], device=self.device,
         )
         self.churn.data, self.churn_tmp.data = self.churn_tmp.data, self.churn.data
+        if s.whitewater_enabled:
+            fast_launch(
+                k_remap_leaf_field, dim=self._nvox,
+                inputs=[self.ww_density.data, self.old_leaf_table, g.leaf_coords,
+                        g.num_leaves, g.leaves_dim],
+                outputs=[self.churn_tmp.data], device=self.device,
+            )
+            self.ww_density.data, self.churn_tmp.data = (
+                self.churn_tmp.data, self.ww_density.data)
+        if self.narrow_band is not None:
+            self.narrow_band.remap(self.old_leaf_table)
         return g.active_leaf_count
 
     # Per-substep phases
@@ -1329,6 +1329,10 @@ class FluidSolver:
         )
         if not clear_collision:
             return
+        self._reset_collision_grid()
+
+    def _reset_collision_grid(self):
+        nv = self._nvox
         fast_launch(
             k_reset_collision_grid, dim=nv,
             inputs=[self.collision_vel, self.collision_friction,
@@ -1370,29 +1374,126 @@ class FluidSolver:
                 outputs=[col.mesh.points], device=self.device,
             )
             col.mesh.refit()
+            col.reposed = True
+            # The points rotate about the translated centre, so the contact
+            # velocity v + w x (p - c) must use it too (B38).
+            col.pose_center = tuple(
+                c + d for c, d in zip(col.center, linear_disp))
 
-    def _apply_collisions(self):
+    def _restore_collider_poses(self):
+        """Put re-posed collider meshes back at their authored frame pose.
+
+        ``_update_moving_colliders`` writes extrapolated points into the
+        scene-owned cached mesh. Left there, a collider that then stops keeps
+        its extrapolated pose: the scene reuses the unchanged cached mesh and
+        zero velocity never re-poses it.
+        """
+        for col in getattr(self, "colliders", ()):
+            if col.base_points is None or not getattr(col, "reposed", False):
+                continue
+            wp.copy(col.mesh.points, col.base_points)
+            col.mesh.refit()
+            col.reposed = False
+            col.pose_center = None
+
+    def _static_collision_cache_usable(self):
+        """True when this substep may restore static colliders from the cache.
+
+        The cache holds the walls plus every static collider as rasterized at
+        the last full collision pass; it stays valid until the topology or the
+        collider set changes, both of which clear the ready flag.
+        """
+        return bool(getattr(self, "_static_collision_cache_ready", False))
+
+    def _rasterize_collider(self, col, rank=None):
         g = self.grid
         s = self.settings
-        for col in self.colliders:
-            if col.mesh is None:
-                continue
-            extent = tuple(col.aabb_max[i] - col.aabb_min[i] for i in range(3))
-            # Cover the entire resolved collider interior. A narrow query band
-            # turns sufficiently deep penetration into the +infinity default.
-            band = max(8.0 * s.voxel_size,
-                       math.sqrt(sum(value * value for value in extent)))
-            lv = col.linear_velocity
-            av = col.angular_velocity
+        extent = tuple(col.aabb_max[i] - col.aabb_min[i] for i in range(3))
+        # Cover the entire resolved collider interior. A narrow query band
+        # turns sufficiently deep penetration into the +infinity default.
+        band = max(8.0 * s.voxel_size,
+                   math.sqrt(sum(value * value for value in extent)))
+        lv = col.linear_velocity
+        av = col.angular_velocity
+        center = getattr(col, "pose_center", None) or col.center
+        inputs = [col.mesh.id, g.leaf_coords, g.num_leaves, g.origin,
+                  s.voxel_size, band, wp.vec3(*lv), wp.vec3(*av),
+                  wp.vec3(*center), col.friction, col.restitution]
+        outputs = [self.collision_sdf.data, self.collision_vel,
+                   self.collision_friction, self.collision_restitution]
+        if rank is None:
+            fast_launch(k_rasterize_collider_material, dim=self._nvox,
+                        inputs=inputs, outputs=outputs, device=self.device)
+        else:
+            fast_launch(k_rasterize_collider_material_ranked, dim=self._nvox,
+                        inputs=inputs + [int(rank)],
+                        outputs=outputs + [self._collision_owner],
+                        device=self.device)
+
+    def _ensure_static_collision_cache(self, nv):
+        cache = getattr(self, "_static_collision_cache", None)
+        if cache is not None and cache[0].shape[0] >= nv:
+            return cache
+        dev = self.device
+        n = max(1, int(nv))
+        self._collision_owner = wp.full(n, -1, dtype=wp.int32, device=dev)
+        self._static_collision_cache = (
+            wp.zeros(n, dtype=float, device=dev),
+            wp.zeros(n, dtype=wp.vec3, device=dev),
+            wp.zeros(n, dtype=float, device=dev),
+            wp.zeros(n, dtype=float, device=dev),
+            wp.full(n, -1, dtype=wp.int32, device=dev),
+        )
+        return self._static_collision_cache
+
+    def _apply_collisions(self, reuse_static=False):
+        """Rasterize collider SDF, velocity and material into the grid.
+
+        With both moving and static colliders, the walls plus static colliders
+        are snapshotted after a full pass and later substeps restore that
+        snapshot and re-rasterize only the moving colliders (P08). The ranked
+        kernel keeps the full pass's min-distance / earliest-collider result
+        bit for bit. ``reuse_static`` requests the restore; the caller must
+        then have skipped the collision reset.
+        """
+        live = [(rank, col) for rank, col in enumerate(self.colliders)
+                if col.mesh is not None]
+        moving = [(rank, col) for rank, col in live
+                  if col.base_points is not None]
+        static = [(rank, col) for rank, col in live
+                  if col.base_points is None]
+        if not moving or not static:
+            self._static_collision_cache_ready = False
+            for _, col in live:
+                self._rasterize_collider(col)
+            return
+        nv = self._nvox
+        if reuse_static and self._static_collision_cache_usable():
+            cache = self._static_collision_cache
             fast_launch(
-                k_rasterize_collider_material, dim=self._nvox,
-                inputs=[col.mesh.id, g.leaf_coords, g.num_leaves, g.origin,
-                        s.voxel_size, band, wp.vec3(*lv), wp.vec3(*av),
-                        wp.vec3(*col.center), col.friction, col.restitution],
+                k_copy_collision_state, dim=nv,
+                inputs=[*cache],
                 outputs=[self.collision_sdf.data, self.collision_vel,
-                         self.collision_friction, self.collision_restitution],
-                device=self.device,
-            )
+                         self.collision_friction, self.collision_restitution,
+                         self._collision_owner],
+                device=self.device)
+        else:
+            if reuse_static:
+                # The caller skipped the reset expecting a usable cache.
+                self._reset_collision_grid()
+            cache = self._ensure_static_collision_cache(nv)
+            self._collision_owner[:nv].fill_(-1)
+            for rank, col in static:
+                self._rasterize_collider(col, rank)
+            fast_launch(
+                k_copy_collision_state, dim=nv,
+                inputs=[self.collision_sdf.data, self.collision_vel,
+                        self.collision_friction, self.collision_restitution,
+                        self._collision_owner],
+                outputs=[*cache], device=self.device)
+            self._static_collision_cache_ready = True
+        for rank, col in moving:
+            self._rasterize_collider(col, rank)
 
     def _index_particles(self):
         g = self.grid
@@ -1419,43 +1520,36 @@ class FluidSolver:
     def _source(self, dt):
         return self.sourcing.apply(dt)
 
-    def _p2g(self, dt=None):
+    def _p2g(self):
         g = self.grid
         p = self.particles
-        st = self.settings
         # Gather, not scatter: one thread per active voxel pulls its own
         # contributions out of the sorted bins built by _index_particles.
         # The scatter kernels stay registered as the faithful reference, but
         # their float wp.atomic_add sums in thread-arrival order and makes the
         # whole bake irreproducible; see k_gather_grid_data.
         nv = self._nvox
-        if st.spacetime_enabled:
-            prev_dt = self.spacetime.gather_dt(dt)
-            fast_launch(
-                k_gather_grid_data_spacetime, dim=nv,
-                inputs=[p.position, p.velocity, p.time_offset,
-                        g.leaf_table, g.leaf_coords, g.num_leaves,
-                        g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size, prev_dt,
-                        self.voxel_counts.data, self.bins.starts,
-                        self.bins.indices],
-                outputs=[self.vel.u, self.vel.v, self.vel.w,
-                         self.vel.wu, self.vel.wv, self.vel.ww],
-                device=self.device,
-            )
+        # PIC/FLIP keep the original kernel untouched (bit-identical); APIC has
+        # its own variant so no APIC arithmetic can reach the shared path.
+        if self._apic_active():
+            gather_kernel = k_gather_grid_data_apic
+            head = [p.position, p.velocity, p.affine_for_kernels(),
+                    int(self.settings.sample_type)]
         else:
-            fast_launch(
-                k_gather_grid_data, dim=nv,
-                inputs=[p.position, p.velocity,
-                        g.leaf_table, g.leaf_coords, g.num_leaves,
-                        g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size,
-                        self.voxel_counts.data, self.bins.starts,
-                        self.bins.indices],
-                outputs=[self.vel.u, self.vel.v, self.vel.w,
-                         self.vel.wu, self.vel.wv, self.vel.ww],
-                device=self.device,
-            )
+            gather_kernel = k_gather_grid_data
+            head = [p.position, p.velocity]
+        fast_launch(
+            gather_kernel, dim=nv,
+            inputs=[*head,
+                    g.leaf_table, g.leaf_coords, g.num_leaves,
+                    g.voxels_dim, g.leaves_dim,
+                    g.origin, g.voxel_size,
+                    self.voxel_counts.data, self.bins.starts,
+                    self.bins.indices],
+            outputs=[self.vel.u, self.vel.v, self.vel.w,
+                     self.vel.wu, self.vel.wv, self.vel.ww],
+            device=self.device,
+        )
         fast_launch(
             k_normalize_mac, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w,
@@ -1464,22 +1558,11 @@ class FluidSolver:
             device=self.device,
         )
         # Particle/phase accumulators -> voxel activity (fluid mask).
-        if st.spacetime_enabled:
-            fast_launch(
-                k_spacetime_weights_to_phase_active, dim=self._nvox,
-                inputs=[self.vel.wu, self.vel.wv, self.vel.ww,
-                        self.voxel_type.data, g.leaf_table, g.leaf_coords,
-                        g.voxels_dim, g.leaves_dim, g.num_leaves,
-                        self.spacetime.reference_mass(), st.spacetime_phase_eta,
-                        st.spacetime_phase_threshold],
-                outputs=[self.density.data], device=self.device,
-            )
-        else:
-            fast_launch(
-                k_particle_to_grid_active, dim=self._nvox,
-                inputs=[self.voxel_counts.data, g.num_leaves],
-                outputs=[self.voxel_type.data], device=self.device,
-            )
+        fast_launch(
+            k_particle_to_grid_active, dim=self._nvox,
+            inputs=[self.voxel_counts.data, g.num_leaves],
+            outputs=[self.voxel_type.data], device=self.device,
+        )
         # Splat viscosity attribute when requested.
         st = self.settings
         if st.viscosity_enabled and st.viscosity_from_particles:
@@ -1616,6 +1699,12 @@ class FluidSolver:
         s = self.settings
         if not s.viscosity_enabled:
             return
+        # The grid clear zeroes voxel_type every substep and the collision bits
+        # are otherwise re-derived only in _collision_faces, after this solve,
+        # so viscosity's VOXEL_COLLISION guards would never fire for mesh
+        # colliders or domain walls. collision_sdf is final by now; the later
+        # pass re-derives the same bits.
+        self._classify_collision_voxels()
         if not s.viscosity_from_particles and s.viscosity_constant > 0.0:
             fast_launch(
                 k_fill_float, dim=self._nvox,
@@ -1639,7 +1728,7 @@ class FluidSolver:
         self.stats.viscosity_residual = float(status["residual"])
         self.stats.native_solver_message = self._native_solver_message()
 
-    def _collision_faces(self):
+    def _classify_collision_voxels(self):
         g = self.grid
         fast_launch(
             k_sdf_to_axis_collision, dim=self._nvox,
@@ -1647,6 +1736,10 @@ class FluidSolver:
                     g.voxels_dim, g.leaves_dim, g.num_leaves, 0.0],
             outputs=[self.voxel_type.data], device=self.device,
         )
+
+    def _collision_faces(self):
+        g = self.grid
+        self._classify_collision_voxels()
         fast_launch(
             k_expand_shift_axis_velocity_in_collider, dim=self._nvox,
             inputs=[self.vel.u, self.vel.v, self.vel.w, self.voxel_type.data,
@@ -1665,7 +1758,8 @@ class FluidSolver:
 
     def _pressure(self, dt):
         s = self.settings
-        st_projection = bool(s.spacetime_enabled and s.spacetime_variable_projection)
+        # Live edits mutate self.settings in place; re-read before every solve.
+        self.pressure_solver.preconditioner = s.pressure_preconditioner
         status = self.pressure_solver.project_frame(
             self.vel,
             self.voxel_type.data,
@@ -1673,8 +1767,6 @@ class FluidSolver:
             self.voxel_counts.data,
             s,
             max_gradient=self._cfl_speed_limit(dt),
-            reference_mass=(self.spacetime.reference_mass()
-                            if st_projection else None),
             pressure_source=lambda: self.sourcing.apply_pressure_sources(dt),
         )
         self.stats.pressure_iterations = status["iterations"]
@@ -1730,6 +1822,12 @@ class FluidSolver:
         safe_dt = max(float(dt), 1.0e-8)
         max_speed = max(s.cfl * g.voxel_size / safe_dt * 2.0, 50.0)
         p = self.particles
+        if self._apic_active() and p.affine_allocated:
+            fast_launch(
+                k_apic_clamp_affine, dim=self._np_dim(),
+                inputs=[p.velocity, p.affine, p.alive, p.count, max_speed],
+                device=self.device,
+            )
         fast_launch(
             k_sanitize_particles, dim=self._np_dim(),
             inputs=[p.position, p.velocity, p.alive, p.count, max_speed,
@@ -1737,12 +1835,16 @@ class FluidSolver:
             device=self.device,
         )
 
-    def _g2p_advect(self, dt):
+    def _g2p_transfer(self):
+        """Grid -> particle velocity update (PIC / FLIP / APIC); no advection."""
         g = self.grid
         s = self.settings
         p = self.particles
+        apic = self._apic_active()
         fast_launch(
-            k_staggered_field_to_particle, dim=self._np_dim(),
+            k_staggered_field_to_particle_apic if apic
+            else k_staggered_field_to_particle,
+            dim=self._np_dim(),
             inputs=[p.position, p.count,
                     self.vel.u, self.vel.v, self.vel.w,
                     self.vel.wu, self.vel.wv, self.vel.ww,
@@ -1750,42 +1852,30 @@ class FluidSolver:
                     g.leaf_table, g.voxels_dim, g.leaves_dim,
                     g.origin, g.voxel_size,
                     int(s.sample_type), s.flip_ratio],
-            outputs=[p.velocity], device=self.device,
+            outputs=([p.velocity, p.affine_for_kernels()] if apic
+                     else [p.velocity]),
+            device=self.device,
         )
 
-        if s.spacetime_enabled:
-            step_seed = self.spacetime.advance_seed()
-            fast_launch(
-                k_advect_particles_spacetime, dim=self._np_dim(),
-                inputs=[p.position, p.velocity, p.time_offset, p.count,
-                        self.vel.u, self.vel.v, self.vel.w,
-                        self.vel.wu, self.vel.wv, self.vel.ww,
-                        self.collision_sdf.data, self.collision_vel,
-                        self.collision_friction, self.collision_restitution,
-                        g.leaf_table, g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size, dt, int(s.trace_mode),
-                        wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
-                        1 if s.open_boundaries else 0,
-                        step_seed, s.spacetime_jitter_strength,
-                        1 if s.spacetime_adaptive_jitter else 0,
-                        s.spacetime_local_cfl, int(s.spacetime_max_local_substeps)],
-                outputs=[p.alive], device=self.device,
-            )
-            self.spacetime.record_step(dt)
-        else:
-            fast_launch(
-                k_advect_particles, dim=self._np_dim(),
-                inputs=[p.position, p.velocity, p.count,
-                        self.vel.u, self.vel.v, self.vel.w,
-                        self.vel.wu, self.vel.wv, self.vel.ww,
-                        self.collision_sdf.data, self.collision_vel,
-                        self.collision_friction, self.collision_restitution,
-                        g.leaf_table, g.voxels_dim, g.leaves_dim,
-                        g.origin, g.voxel_size, dt, int(s.trace_mode),
-                        wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
-                        1 if s.open_boundaries else 0],
-                outputs=[p.alive], device=self.device,
-            )
+    def _g2p_advect(self, dt):
+        g = self.grid
+        s = self.settings
+        p = self.particles
+        self._g2p_transfer()
+
+        fast_launch(
+            k_advect_particles, dim=self._np_dim(),
+            inputs=[p.position, p.velocity, p.count,
+                    self.vel.u, self.vel.v, self.vel.w,
+                    self.vel.wu, self.vel.wv, self.vel.ww,
+                    self.collision_sdf.data, self.collision_vel,
+                    self.collision_friction, self.collision_restitution,
+                    g.leaf_table, g.voxels_dim, g.leaves_dim,
+                    g.origin, g.voxel_size, dt, int(s.trace_mode),
+                    wp.vec3(*s.domain_min), wp.vec3(*s.domain_max),
+                    1 if s.open_boundaries else 0],
+            outputs=[p.alive], device=self.device,
+        )
 
     def _new_color_mixing(self):
         if not bool(getattr(self.settings, "species_enabled", False)):
@@ -1820,7 +1910,14 @@ class FluidSolver:
                     g.origin, g.voxel_size],
             outputs=[p.alive], device=self.device,
         )
+        nb = self.narrow_band
+        if nb is not None:
+            nb.update_phi(dt)
+            nb.kill_interior()
         p.compact(count_hint=np_dim)
+        if nb is not None:
+            self._index_particles()
+            nb.reseed(nb._substep_index)
 
     def _relax(self):
         s = self.settings
@@ -1949,9 +2046,15 @@ class FluidSolver:
             ww.update_type_counts(active_whitewater)
             return active_whitewater
 
-        g = self.grid
         ww.compact(active_whitewater)
         active_whitewater = ww.refresh_host_count()
+        self._splat_whitewater_density(active_whitewater)
+        return active_whitewater
+
+    def _splat_whitewater_density(self, active_whitewater):
+        """Rebuild the end-of-frame whitewater density from whitewater positions."""
+        g = self.grid
+        ww = self.whitewater
         self.ww_density.data[:self._nvox].zero_()
         fast_launch(
             k_whitewater_set_grid_data, dim=max(1, active_whitewater),
@@ -1960,7 +2063,6 @@ class FluidSolver:
                     g.origin, self.settings.voxel_size],
             outputs=[self.ww_density.data], device=self.device,
         )
-        return active_whitewater
 
     # CFL
 
@@ -1994,12 +2096,71 @@ class FluidSolver:
             vmax = max(vmax, tip_speed)
         return vmax
 
+    def _armed_source_max_speed(self):
+        """Fastest velocity an armed liquid source will emit with this frame.
+
+        Host-side only. Mirrors the arming rules of sourcing: an initial-fill
+        legacy source or a ONCE/DIRECT_APPEND plan is armed until it fires.
+        """
+        sourcing = getattr(self, "sourcing", None)
+        if sourcing is None:
+            return 0.0
+        fired = getattr(sourcing, "_initial_fired", ())
+
+        def speed(vector):
+            return math.sqrt(sum(float(v) * float(v) for v in vector))
+
+        vmax = 0.0
+        height = getattr(sourcing, "height_source", None)
+        legacy = list(getattr(sourcing, "sources", ()))
+        for desc in legacy + ([height] if height is not None else []):
+            if desc is height:
+                emits = bool(getattr(desc, "enabled", False)
+                             and getattr(desc, "emit_particles", False))
+            else:
+                emits = bool(
+                    getattr(desc, "enabled", False)
+                    and int(getattr(desc, "stype", SourceShapeType.SOURCE))
+                    == SourceShapeType.SOURCE
+                    and int(getattr(desc, "mode", SourceShapeSourceMode.PARTICLES))
+                    == SourceShapeSourceMode.PARTICLES)
+            if not emits or float(getattr(desc, "emit_rate", 0.0)) < 1.0:
+                continue
+            if (int(getattr(desc, "emission_mode",
+                            SourceEmissionMode.CONTINUOUS_INFLOW))
+                    == SourceEmissionMode.INITIAL_FILL
+                    and getattr(desc, "source_id", "") in fired):
+                continue
+            vmax = max(vmax, speed(getattr(desc, "velocity", (0.0, 0.0, 0.0))))
+        for plan in getattr(sourcing, "plans", ()):
+            if (plan.operation != SourceOperation.LIQUID
+                    or not plan.activation.enabled):
+                continue
+            if (plan.lifecycle in (SourceLifecycle.ONCE,
+                                   SourceLifecycle.DIRECT_APPEND)
+                    and str(plan.stable_id) in fired):
+                continue
+            vmax = max(vmax, speed(plan.payload.velocity))
+            velocities = getattr(plan.region, "velocities", None)
+            if velocities is not None and len(velocities):
+                vmax = max(vmax, float(np.sqrt(
+                    (np.asarray(velocities, dtype=np.float64) ** 2)
+                    .sum(axis=1).max())))
+        return vmax
+
     def _compute_substeps(self, frame_dt):
         """Measure live speed and delegate pure schedule selection."""
         policy = SubstepPolicy.from_settings(self.settings)
         has_particles = self.particles.host_count > 0
         fluid_max_speed = 0.0
         collider_max_speed = 0.0
+        # Scheduling runs before emission: count what armed sources will add.
+        # Release validation drives this method on a stand-in solver without
+        # sources, so a missing helper means no armed source.
+        armed_speed = getattr(self, "_armed_source_max_speed", None)
+        source_max_speed = (
+            armed_speed() if policy.adaptive and armed_speed is not None
+            else 0.0)
         # A fixed-substep scene cannot adapt to CFL, so avoid the synchronous
         # device reduction/readback entirely. Pure capillary demand is still
         # calculated by select_substeps so clamp diagnostics remain truthful.
@@ -2018,6 +2179,7 @@ class FluidSolver:
             has_particles=has_particles,
             fluid_max_speed=fluid_max_speed,
             collider_max_speed=collider_max_speed,
+            source_max_speed=source_max_speed,
         )
         self._last_substep_diagnostics = schedule.diagnostics()
         return schedule.substeps, schedule.cfl_clamped
@@ -2067,6 +2229,7 @@ class FluidSolver:
         """Advance one display frame (interactive playback entry point)."""
         s = self.settings
         t_start = _time.perf_counter()
+        self._sync_affine_mode()
         frame_dt = s.time_scale / s.frame_rate
         if self.profiler is not None:
             self.profiler.begin_frame()
@@ -2076,8 +2239,13 @@ class FluidSolver:
         substeps, cfl_clamped = self._compute_substeps(frame_dt)
         dt = frame_dt / substeps
 
+        # The Solver Session sets effect_frame to the timeline frame this step
+        # produces (decision D6); a solver stepped directly uses its counter.
+        effect_frame = getattr(self, "effect_frame", None)
+        self.effect_frame = None
         time_ctx = {
-            "frame": self.frame, "time": self.sim_time,
+            "frame": self.frame if effect_frame is None else int(effect_frame),
+            "time": self.sim_time,
             "real_time_step": frame_dt, "solver_time_step": dt,
             "time_scale": s.time_scale, "substeps": substeps,
         }
@@ -2085,36 +2253,59 @@ class FluidSolver:
         rebuild_each_substep = self.features.rebuild_topology_each_substep
         moving_colliders = any(
             col.base_points is not None for col in self.colliders)
+        capillary_expand = self._surface_tension_topology_expand()
         frame_topology_expand = max(
             int(s.topology_expand),
             int(math.ceil(substeps * max(float(s.cfl), 0.0) / C.LEAF_DIM)),
             self._whitewater_topology_expand(frame_dt),
-            self._surface_tension_topology_expand(),
+            capillary_expand,
         )
+        # A rebuild every substep needs no frame-long motion margin, but the
+        # capillary SDF still needs its halo (B37).
+        substep_topology_expand = max(int(s.topology_expand), capillary_expand)
         self.whitewater.reset_frame_diagnostics()
         self._whitewater_launch_bound = self.whitewater.host_count
         for substep_index in range(substeps):
             time_ctx["substep_index"] = substep_index
+            if self.narrow_band is not None:
+                self.narrow_band._substep_index = substep_index
             self.features.run(
                 FrameFeaturePhase.BEFORE_EMISSION, self, time_ctx)
             rebuild = substep_index == 0 or rebuild_each_substep
             collision_rebuild = rebuild or moving_colliders
+            if rebuild:
+                # New leaf slots: the static collider snapshot is stale.
+                self._static_collision_cache_ready = False
+            reuse_static = (collision_rebuild and not rebuild
+                            and self._static_collision_cache_usable())
             with self._phase("misc"):
                 if rebuild:
                     self._rebuild_topology(
-                        frame_topology_expand if not rebuild_each_substep else None)
-                self._clear_grid_fields(clear_collision=collision_rebuild)
+                        substep_topology_expand if rebuild_each_substep
+                        else frame_topology_expand)
+                self._clear_grid_fields(
+                    clear_collision=collision_rebuild and not reuse_static)
             with self._phase("collision"):
                 if collision_rebuild:
                     if moving_colliders and substep_index > 0:
                         self._update_moving_colliders(substep_index * dt)
-                    self._apply_collisions()
+                    self._apply_collisions(reuse_static=reuse_static)
             self.features.run(
                 FrameFeaturePhase.BEFORE_SOURCING, self, time_ctx)
             with self._phase("indexing"):
                 self._index_particles()
             with self._phase("sourcing"):
+                if self.narrow_band is not None:
+                    self.narrow_band.credit_interior_counts()
+                bins_before = self.bins
                 emitted = self._source(dt)
+                if self.narrow_band is not None:
+                    self.narrow_band.release_interior_counts()
+                # A successful pool growth swaps in fresh, empty bins and
+                # defers the emission, so the index must be rebuilt even
+                # though nothing was emitted.
+                if not emitted and self.bins is not bins_before:
+                    self._index_particles()
                 # Re-count after emission so P2G activity sees new particles.
                 # Skipped when no emitter ran: indexing is already current.
                 if emitted:
@@ -2125,7 +2316,9 @@ class FluidSolver:
                     # invalidate explicitly before the capillary force reads it.
                     self.surface.invalidate_solver_sdf()
             with self._phase("p2g"):
-                self._p2g(dt)
+                self._p2g()
+            if self.narrow_band is not None:
+                self.narrow_band.prepare_grid(dt)
             self._save_velocities()
             self.features.run(
                 FrameFeaturePhase.AFTER_PARTICLE_TRANSFER, self, time_ctx)
@@ -2165,7 +2358,11 @@ class FluidSolver:
                 self._whitewater(dt, sdf_ready=sdf_ready)
             self.features.run(
                 FrameFeaturePhase.AFTER_PARTICLE_UPDATE, self, time_ctx)
+            # Time advances, particles do not: a solver SDF built after
+            # advection (whitewater) stays current for the next consumer.
+            sdf_key = self.surface.solver_sdf_build_key()
             self.sim_time += dt
+            self.surface.advance_solver_sdf_key(sdf_key)
             time_ctx["time"] = self.sim_time
 
         # Color is an artistic display attribute, so exchange it once per
@@ -2173,8 +2370,11 @@ class FluidSolver:
         # elapsed simulation time without multiplying work by CFL substeps.
         with self._phase("g2p"):
             self._mix_particle_colors(frame_dt)
+        self._restore_collider_poses()
 
+        sdf_key = self.surface.solver_sdf_build_key()
         self.frame += 1
+        self.surface.advance_solver_sdf_key(sdf_key)
         self._host_frame_cache = None
         with self._phase("whitewater"):
             whitewater_particles = self._finalize_whitewater()
@@ -2208,6 +2408,9 @@ class FluidSolver:
         st.initialized_voxels = self.grid.voxel_capacity
         st.total_voxels = self.grid.total_voxels()
         st.active_particles = self.particles.refresh_host_count()
+        if self.narrow_band is not None:
+            st.liquid_voxels = self.narrow_band.end_frame()
+            st.narrow_band_reseed_overflow = self.narrow_band.reseed_overflow
         st.total_particles = self.particles.capacity
         st.whitewater_particles = whitewater_particles
         st.whitewater_foam = whitewater_types["foam"]

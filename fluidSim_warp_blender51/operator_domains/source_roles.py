@@ -11,6 +11,11 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
 from . import common as _runtime
 
+# The Solver Session is a process singleton; these operators read or mutate
+# the solver of the context scene only, and never take it over.
+_FOREIGN_SOLVER_MESSAGE = (
+    "Initialize this scene first: the solver belongs to another scene")
+
 _FLUIDSIM_OT_session_base = _runtime._FLUIDSIM_OT_session_base
 
 
@@ -36,18 +41,15 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
     )
     preset_id: StringProperty(default="", options={"SKIP_SAVE"})
     start_preview: BoolProperty(
-        name="Start Preview",
-        description="Start timeline preview after the scene is configured",
+        name="Start Playback",
+        description="Start timeline playback after the scene is configured",
         default=False,
         options={"SKIP_SAVE"},
     )
 
     @classmethod
     def poll(cls, context):
-        from ..blender import production_bake
-
-        if production_bake.bake_is_active(context.scene):
-            cls.poll_message_set("Production Bake owns this scene")
+        if not _runtime._bake_poll(cls, context):
             return False
         selected = getattr(context, "selected_objects", ())
         if not any(getattr(obj, "type", None) == "MESH" for obj in selected):
@@ -96,10 +98,23 @@ class FLUIDSIM_OT_setup_scene(bpy.types.Operator):
 def _execute_role_tag(operator, context, role):
     from ..blender import colliders as _colliders
     from ..blender import sources as _sources
+    from ..blender.setup_wizard import reserved_object_reason
 
+    scene = getattr(context, "scene", None)
     count = 0
     skipped = 0
+    reserved = 0
     for obj in context.selected_objects:
+        if reserved_object_reason(scene, obj):
+            # The domain and the add-on's outputs are never simulation inputs.
+            # Clearing only drops a stray role; it must not restyle them.
+            fluidsim = getattr(obj, "fluidsim", None)
+            if role == "NONE" and getattr(fluidsim, "role", "NONE") != "NONE":
+                fluidsim.role = "NONE"
+                count += 1
+            else:
+                reserved += 1
+            continue
         if role == "SOURCE":
             _sources.tag_source(obj)
         elif role == "SINK":
@@ -119,11 +134,16 @@ def _execute_role_tag(operator, context, role):
             obj.hide_render = False
         count += 1
     if count == 0:
-        message = ("Colliders require a selected mesh object"
-                   if role == "COLLIDER" else "No supported selected objects")
+        if reserved and not skipped:
+            message = "The FluidSim domain and outputs cannot take a simulation role"
+        else:
+            message = ("Colliders require a selected mesh object"
+                       if role == "COLLIDER" else "No supported selected objects")
         operator.report({"WARNING"}, message)
         return {"CANCELLED"}
     detail = f"; skipped {skipped} non-mesh object(s)" if skipped else ""
+    if reserved:
+        detail += f"; skipped {reserved} FluidSim domain/output object(s)"
     operator.report({"INFO"}, f"Tagged {count} object(s) as {role}{detail}")
     return {"FINISHED"}
 
@@ -241,6 +261,8 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        if not _runtime._bake_poll(cls, context):
+            return False
         if not _runtime._bridge().session().active:
             cls.poll_message_set("Initialize the solver before injecting points")
             return False
@@ -261,6 +283,10 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
         if not sess.active:
             self.report({"ERROR"}, "Solver not initialized")
             return {"CANCELLED"}
+        scene = context.scene
+        if not sess.owns_scene(scene):
+            self.report({"ERROR"}, _FOREIGN_SOLVER_MESSAGE)
+            return {"CANCELLED"}
         obj = context.active_object
         if obj is None:
             self.report({"ERROR"}, "No active object")
@@ -268,7 +294,6 @@ class FLUIDSIM_OT_inject_particles(bpy.types.Operator):
         from ..blender import output_publication
         from ..blender import sources as _sources
 
-        scene = context.scene
         try:
             n = _sources.inject_object_particles(scene, obj, sess)
         except Exception as exc:  # noqa: BLE001

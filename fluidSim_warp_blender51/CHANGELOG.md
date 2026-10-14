@@ -1,8 +1,67 @@
 # Changelog
 
-## 2.2.0 — User-installed Warp runtime
+## 3.2.0 — Reliability, bake safety and speed
 
-### Changed
+A full review of the add-on: about 80 fixes and 20 speed-ups.
+
+### Upgrade notes
+
+- **Simulation results change.** Bake caches again. Fixes that change
+  results: pressure no longer leaves liquid compressible at domain walls and
+  topology edges; particle-pool growth no longer drops a substep's grid
+  transfer; compiled sources mark exactly their own leaves and jitter
+  particles inside each voxel; rotated sources keep their corners; height
+  profiles shape emission; viscosity sees mesh colliders and walls; JACOBI
+  viscosity and Diffusion no longer slow moving liquid at its surface;
+  collider velocity is correct for tilted and translating spinners; and
+  several narrow-band, APIC, whitewater and surface-tension fixes.
+- **Existing caches still play**: a cache no longer depends on which GPU baked
+  it, and caches baked by 3.0/3.1 are still accepted.
+- **Point, volume and field sources show Evaluation** (First Sim Frame /
+  Every Sim Frame). First Sim Frame now really freezes the input. Files saved
+  before 3.2 switch those sources to Every Sim Frame once, so they keep
+  animating as they did.
+
+### Production Bake
+
+- A running bake owns the solver. Initialize, Step, Apply Preset, Apply or
+  Revert pending changes, Inject, Cache Playback and Load Demo wait until it
+  ends, in every scene. Settings and effect edits made during a bake are held
+  and applied when it ends; keyframed solver settings do not animate inside a
+  bake.
+- Only Esc cancels a bake; right-click works normally again.
+- Resuming with a later end frame extends the cache. A failed start restores
+  the live solver, Live is restored after a bake, the bake starts from its
+  start frame wherever the playhead is, and resumed colliders keep their
+  velocity history.
+- Command-line bakes accept seed-only scenes (crown_splash, paddle_stir), and
+  cache errors exit with code 14.
+
+### Fixed
+
+- Ticking Color, Source ID or UID mid-run no longer stops the live session.
+- Live Surface Tension and Mixing Strength edits reach the running solver;
+  toggling Surface Tension or Species shows "Reset pending".
+- Moving a cache into a folder inside itself is refused instead of deleting it.
+- A collider outside the domain is ignored instead of stopping the frame.
+- Whitewater with Type Hysteresis 0 no longer fails.
+- A collider that stops moving no longer keeps an extrapolated pose.
+- Revert, presets, capacity options and narrow-band refusals behave as shown.
+- Custom Effects: safe mode closes several permission bypasses, Expert access
+  needs the acknowledgement, generated names are reserved, effects use the
+  timeline frame in preview and bake, and particle velocity effects move to
+  Before Emission so PIC/APIC keep them.
+- Quick Liquid and Set Selected As no longer tag the domain or outputs; Add >
+  Fluid Domain draws as wire and does not render.
+
+### Faster
+
+- Point sources (8,000 points: 69 s to 1 s), CPU mesh admission (seconds to
+  under 0.1 s), capacity planning on fine grids (9 s to under 1 s), checkpoint
+  export, cache manifests and resume, static colliders, Bake panel and effect
+  panel redraws, and display-fraction readback.
+
+### Warp installation
 
 - **Warp is no longer bundled.** The extension zip does not contain NVIDIA
   Warp wheels. **Install Warp** in Add-on Preferences downloads the locked
@@ -19,18 +78,188 @@
   The checked replacement is staged safely and applied after restarting Blender.
 - The local installation helper supports an explicit `--install-warp` step;
   ordinary installation and `--probe-only` keep downloads disabled.
-
-### Compatibility
-
-- The certified Warp version (1.17.0, CUDA 12 build) is unchanged.
-- The installation change itself does not alter solver numerics or cache
+- The certified Warp version (1.17.0, CUDA 12 build) is unchanged. The
+  installation change itself does not alter solver numerics or cache
   compatibility; the reconciled candidate still requires its own runtime
-  qualification.
-- Existing 2.1.0 installations with bundled Warp continue to work until this
-  zip is installed; then press **Install Warp**.
+  qualification. The simulation and cache changes above apply independently.
+- After upgrading from a bundled-Warp release, press **Install Warp**.
 
----
+## 3.1.0 — Play drives the simulation, VDB export, pressure-solve fix
 
+- **Changed: Play is the preview.** The Preview / Resume Preview button is
+  gone. Blender's own Play (spacebar, Timeline, or the panel's Play button)
+  starts and resumes the simulation on any scene with a domain. Pausing,
+  editing an effect, or applying changes no longer leaves the spacebar
+  playing the animation without simulating. Edits that would discard
+  progress stay pending until you rewind to the start frame or use Apply
+  Changes. Revoking trust in a running effect still stops the solver.
+  Preview Cache and Set Up & Preview are now Play Cache and Set Up & Play.
+- **Fixed: resting liquid slowly sank under the default pressure solver.**
+  The Jacobi-preconditioned pressure solve gave up as "stalled" the first
+  time its residual rose between two checks (iteration 25), which is normal
+  conjugate-gradient behaviour, and projected an unconverged pressure. A
+  resting tank lost about 25% of its height in 30 frames. A solve now
+  stalls only after 100 iterations without a new best residual. The bug
+  predates 3.0 (it is in 2.0 and 2.1). Simulation results change, so caches
+  should be baked again; solves that used to stop early now run to
+  convergence and can take longer.
+- **Fixed: File > Append of a pre-3.0 domain** now converts its voxel size to
+  Resolution Divisions, as opening the file already did.
+- **New: Export Liquid Level Set as VDB** (Bake stage) writes a baked
+  narrow-band cache as an OpenVDB sequence.
+
+## 3.0.0 — Resolution Divisions, cache format 3, APIC, Multigrid and narrow band
+
+See `docs/migrating_to_3_0.md` for what happens to a 2.x file, cache and
+checkpoint.
+
+### Upgrade notes
+
+- **Caches must be baked again.** Cache format 3 is the only format 3.0
+  reads. A 2.x cache is refused with "This cache was baked by FluidSim 2.x and
+  cannot be played by 3.0. Re-bake, or open it in 2.1.1." and is never
+  migrated. Solver checkpoints are format 2, so a 2.x checkpoint is refused as
+  well.
+- **Voxel Size is replaced by Resolution Divisions** (cells along the longest
+  domain axis, default 64). A `.blend` saved before 3.0 is migrated on load:
+  its divisions are `round(longest axis / voxel size)`, so the cell size moves
+  to the nearest whole division. Resizing the domain now changes the cell size,
+  not the cell count. New domains use 64 divisions (0.0625 m on the 4 m default
+  box, previously 0.05 m).
+- **A cell size that went through float32 no longer pads an extra leaf.** Some
+  saved scenes get a smaller grid for the same settings and need a re-bake.
+  The crown_splash demo grid changes from 88 × 88 × 56 to 80 × 80 × 56 cells,
+  and dam_break's cell size from 0.03 m to 0.02995 m (187 divisions, same
+  dimensions). The demo reference hash changes with them.
+- **ST-FLIP (Spatiotemporal FLIP, Variable Projection) is removed.** See
+  Removed.
+- **The settings signature changed** when Narrow-Band Particles was added, so
+  caches baked by an earlier 3.0 alpha build must be baked again.
+- **The Scene tab shows only scene settings.** Every domain setting is on the
+  Physics tab; saved values are unchanged.
+
+### Added
+
+- **Resolution Divisions** replaces the authored Voxel Size in Setup and in the
+  Physics tab. The effective cell size and padded grid are shown read-only.
+  `voxel_size` stays as a derived property: writing it sets the nearest whole
+  divisions.
+- **APIC (affine particle-in-cell)** as a third **Transfer** mode beside PIC and
+  FLIP. It keeps swirl and rotation that PIC averages away. It uses its own
+  transfer kernels and costs 72 bytes per particle only while selected. FLIP
+  stays the default.
+- **Multigrid pressure preconditioner.** Pressure > Preconditioner (shown for
+  the PCG solver) chooses Jacobi or Multigrid. Multigrid is a symmetric,
+  atomic-free V-cycle inside the existing CUDA graph and needed 13 PCG
+  iterations against 123 for Jacobi on a 32³ obstacle test. Jacobi stays the
+  default and is bitwise unchanged.
+- **Export Surface as Alembic** in the Bake & Export stage. It writes the liquid
+  surface of a verified baked cache as a mesh sequence through Blender's
+  exporter and restores your playback state afterwards. It exports the surface
+  mesh only, not particles or whitewater.
+- **Playback only mode.** With Warp loaded but no CUDA device, the extension
+  enables, loads, plays and exports caches. The UI says "Playback only — CUDA
+  unavailable", the Simulate stage is disabled and baking is hidden.
+- **Cache format 3.** Every frame records a stamp of every source and collider
+  as evaluated at that frame. Resume refuses when an animation changed after
+  the bake and names the first changed frame; **Re-bake from Frame N** keeps the
+  frames before it and bakes the rest. The Bake stage explains a refused 2.x
+  cache. The manifest also records the grid, transfer mode, platform and source
+  schema, and each frame carries empty sparse `liquid_sdf_*` arrays.
+- **Narrow-Band Particles** (Setup stage, off by default). Particles are kept
+  only within **Band Width** voxels (default 3) of the liquid surface and the
+  deep interior is carried on the grid. A 16 × 16 × 32 test tank needed 8×
+  fewer particles (49,152 to 6,144) with the same column height under
+  Multigrid. The toggle is greyed with the reason when color mixing,
+  viscosity from particles, a scalar field source or attribute export is on,
+  and Initialize refuses such a setup. While it is on, baked frames carry the
+  liquid surface SDF, checkpoints save the level set, and the Live Readout
+  shows Liquid voxels. With it off, results are bitwise unchanged.
+- **Checkpoint format 2** reserves the `particle_affine` and
+  `narrow_band_seed_state` slots.
+
+### Changed
+
+- Bake manifests record the real transfer mode (PIC, FLIP or APIC) instead of
+  always FLIP.
+- Switching Transfer between FLIP and APIC mid-simulation is allowed. Importing
+  a checkpoint from the other mode drops or zero-fills the affine data without
+  error.
+- The Resumable Cache format is labelled "Resumable Cache" instead of "v2" (the
+  saved identifier is unchanged, so old files still resolve).
+- **Open Full Settings** opens the Physics tab when a domain is active.
+- `SolverSettings` defaults now equal the Blender property defaults
+  (`viscosity_constant` 0.05, `ww_bubble_drag` 4.0, `ww_spray_drag` 0.2,
+  `speed_limit_percent` 0.5, `churn_decay` 2.0). Blender scenes always passed
+  the property value, so only code that builds `SolverSettings()` directly sees
+  a difference.
+- Kernel prewarm is skipped when the runtime probe reports no CUDA.
+- A Multigrid pressure solve is about 1.85× faster: the start V-cycle and the
+  coarse-level setup replay from CUDA graphs, and the finest level visits only
+  pressure unknowns. Results are bitwise unchanged.
+
+### Removed
+
+- **ST-FLIP.** The Spatiotemporal FLIP solver, its 14 settings, the
+  Spatiotemporal Processing panel, its kernels, its validation gate and its
+  checkpoint scalars are gone. A saved scene that had ST-FLIP on opens without
+  it and simulates with the ordinary pressure projection; re-bake it.
+- **Time Offset colour mode.** It read a channel only ST-FLIP filled, so it
+  always showed zero. A scene saved with it opens with Material colouring.
+
+### Fixed
+
+- A float32 cell size no longer pads an extra leaf per axis (for example 64
+  divisions padding to 72).
+- A domain whose mesh has no size no longer derives a zero voxel size, which drew
+  its particles with no radius.
+- Capacity Options that coarsen the resolution apply again: they now suggest whole
+  Resolution Divisions, never finer than the size they were costed at.
+- Demos opened from the Demo Gallery keep their authored resolution instead of
+  the default 64 divisions.
+- Add-on unregistration finishes past a class that refuses to unregister and
+  names it, instead of stopping at the first failure.
+- `CudaDotProduct` checks array lengths before a launch.
+- A refused bake start restores the Live flag.
+- Narrow-Band Particles no longer grows the particle count past the full band
+  on spreading liquid (dam_break reached the 600k cap against 256k). Reseeding
+  fills only nearly empty band cells, to half the authored density, and never
+  adds more particles than the band removed from the interior.
+- Opening a baked cache no longer needs Warp to be importable. The cache settings
+  signature is unchanged, so existing 3.0 caches stay valid.
+
+### Internal
+
+- `io/vdb_writer.py` is a pure-Python OpenVDB level-set writer that Blender 5.2
+  loads as a Volume. It is not connected to bake, cache or the UI.
+
+### Known limitations
+
+- APIC retains 0.939 of a spinning disc's angular momentum over 100 frames
+  (PIC 0.596, FLIP 0.940). Most of the loss is in the shared free-surface path,
+  not in APIC.
+- APIC, the Multigrid preconditioner and Narrow-Band Particles stay opt-in;
+  FLIP, Jacobi and the full band remain the defaults. Measured on dam_break:
+  - APIC costs about 8% less per substep than FLIP but keeps more energy, so
+    splashes move faster and it takes about 35% more substeps (frames about
+    1.26× as long).
+  - Multigrid needs about 10× fewer iterations, but a solve takes about 1.34×
+    as long as Jacobi (2.07 against 1.54 ms), and about 1.9× at twice the
+    Resolution Divisions.
+  - Narrow band saves particles on deep, calm volumes. On splashy scenes that
+    turn into thin sheets it saves few and is slower (dam_break about 1.4–1.6×
+    per frame).
+- The cache frame stamp covers each source's world matrix and geometry.
+  Collider motion driven by rigid-body simulation is not tested.
+- Resume checks every baked frame's stamp with `frame_set`, so its start-up
+  cost grows with the number of baked frames.
+- Points and whitewater are not exported to Alembic: Blender 5.2's exporter
+  writes only an empty transform for a point cloud.
+- Under the default Jacobi preconditioner a deep liquid column settles about
+  a third lower than it should within 30 frames, with or without narrow band.
+  Use the Multigrid preconditioner where hydrostatic depth matters.
+- If a narrow-band reseed needs more particles than Max Particles allows, the
+  band is left under-seeded and the bake prints a notice to the console.
 ## 2.1.0 — staged sidebar, collider walls that slide and grip, faster viscosity
 
 ### Upgrade notes

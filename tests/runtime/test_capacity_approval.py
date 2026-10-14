@@ -17,6 +17,10 @@ import pytest
 
 from fluidSim_warp_blender51.blender import capacity_approval
 from fluidSim_warp_blender51.blender.capacity_approval import CapacityApplyError, apply_suggestion
+from fluidSim_warp_blender51.sim.quality_contract import (
+    divisions_for_voxel_size,
+    voxel_size_for_divisions,
+)
 
 
 class _Settings:
@@ -255,6 +259,118 @@ def test_a_failure_after_the_resize_puts_the_transform_back_too():
     assert (domain.location, domain.dimensions) == ((0.0, 0.0, 0.0), (4.0, 4.0, 4.0))
 
 
+class _MeshDomain:
+    """An object whose mesh is not centred on its origin (B54).
+
+    Models Blender closely enough for an axis-aligned, unparented object: the
+    world AABB is ``location + delta_location + scale * delta_scale * local``,
+    ``dimensions`` rescales against the local bound box, and ``matrix_world``
+    follows the transform (as it does after the view layer updates).
+    """
+
+    def __init__(self, local_min, local_max, location=(0.0, 0.0, 0.0),
+                 delta_location=(0.0, 0.0, 0.0), scale=(1.0, 1.0, 1.0),
+                 delta_scale=(1.0, 1.0, 1.0)):
+        self.local_min, self.local_max = tuple(local_min), tuple(local_max)
+        self.location = tuple(location)
+        self.delta_location = tuple(delta_location)
+        self.scale = tuple(scale)
+        self.delta_scale = tuple(delta_scale)
+        self.rotation_euler = (0.0, 0.0, 0.0)
+        self.delta_rotation_euler = (0.0, 0.0, 0.0)
+        self.parent = None
+
+    @property
+    def bound_box(self):
+        lo, hi = self.local_min, self.local_max
+        return [(x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1])
+                for z in (lo[2], hi[2])]
+
+    def _effective_scale(self):
+        return tuple(s * d for s, d in zip(self.scale, self.delta_scale))
+
+    @property
+    def dimensions(self):
+        return tuple(abs(s) * (hi - lo) for s, lo, hi in zip(
+            self._effective_scale(), self.local_min, self.local_max))
+
+    @dimensions.setter
+    def dimensions(self, value):
+        self.scale = tuple(
+            (1.0 if s >= 0.0 else -1.0) * v / ((hi - lo) * abs(d))
+            for v, s, d, lo, hi in zip(value, self.scale, self.delta_scale,
+                                       self.local_min, self.local_max))
+
+    @property
+    def matrix_world(self):
+        s = self._effective_scale()
+        t = tuple(a + b for a, b in zip(self.location, self.delta_location))
+        return [[s[0], 0.0, 0.0, t[0]], [0.0, s[1], 0.0, t[1]],
+                [0.0, 0.0, s[2], t[2]], [0.0, 0.0, 0.0, 1.0]]
+
+    def world_bounds(self):
+        m = self.matrix_world
+        points = [tuple(m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3]
+                        for r in range(3)) for p in self.bound_box]
+        return (tuple(min(p[i] for p in points) for i in range(3)),
+                tuple(max(p[i] for p in points) for i in range(3)))
+
+
+@pytest.mark.parametrize(
+    "domain_kwargs",
+    [
+        # Mesh with transforms applied: origin at world 0, geometry at 2..6.
+        {"local_min": (2.0, 2.0, 0.0), "local_max": (6.0, 6.0, 4.0)},
+        # Corner origin plus a delta offset and a delta scale.
+        {"local_min": (0.0, 0.0, 0.0), "local_max": (1.0, 2.0, 0.5),
+         "location": (1.0, -1.0, 0.0), "delta_location": (0.5, 0.0, -0.25),
+         "scale": (4.0, 2.0, 8.0), "delta_scale": (1.0, 1.0, 1.0)},
+        # Mirrored (negative scale) on one axis.
+        {"local_min": (-1.0, 0.0, -1.0), "local_max": (3.0, 4.0, 3.0),
+         "scale": (-1.0, 1.0, 1.0)},
+    ],
+)
+def test_bounds_land_where_the_option_says_for_an_off_centre_mesh(domain_kwargs):
+    domain = _MeshDomain(**domain_kwargs)
+    requested = ((2.0, 2.0, 0.5), (4.0, 5.0, 2.0))
+
+    changed = _apply(
+        _settings(), domain,
+        {"domain_min": requested[0], "domain_max": requested[1]},
+        on_transform_changed=lambda: None)
+
+    assert changed == ["domain bounds"]
+    lo, hi = domain.world_bounds()
+    assert lo == pytest.approx(requested[0], abs=1e-9)
+    assert hi == pytest.approx(requested[1], abs=1e-9)
+
+
+def test_a_resize_whose_world_bounds_do_not_match_is_rolled_back():
+    class _StaleMatrixDomain(_MeshDomain):
+        _frozen = None
+
+        @property
+        def matrix_world(self):
+            # Blender only re-evaluates matrix_world on a view-layer update; a
+            # refresh that did not take leaves the old transform in place.
+            if self._frozen is None:
+                self._frozen = _MeshDomain.matrix_world.fget(self)
+            return self._frozen
+
+    domain = _StaleMatrixDomain((2.0, 2.0, 0.0), (6.0, 6.0, 4.0))
+    domain.matrix_world  # freeze the authored transform
+    settings = _settings()
+
+    with pytest.raises(CapacityApplyError, match="landed at"):
+        _apply(settings, domain,
+               {"max_particles": 4_000_000, "domain_min": (2.0, 2.0, 0.0),
+                "domain_max": (4.0, 4.0, 2.0)},
+               on_transform_changed=lambda: None)
+
+    assert settings.max_particles == 2_000_000
+    assert (domain.location, domain.dimensions) == ((0.0, 0.0, 0.0), (4.0, 4.0, 4.0))
+
+
 def test_unreadable_authored_settings_roll_the_option_back():
     settings = _settings()
 
@@ -319,3 +435,80 @@ def test_the_module_is_a_leaf_that_never_imports_blender_or_the_add_on():
             assert node.level == 0, "no relative (add-on) imports"
             imported.add((node.module or "").split(".")[0])
     assert imported <= {"__future__", "math"}
+
+
+# --- derived voxel_size (resolution divisions over the domain's longest axis) ---
+
+
+class _DerivedSettings:
+    """Models properties.py: voxel_size = longest axis / whole divisions."""
+
+    def __init__(self, domain, divisions):
+        object.__setattr__(self, "_domain", domain)
+        object.__setattr__(self, "resolution_divisions", divisions)
+        object.__setattr__(self, "bl_rna", SimpleNamespace(properties={}))
+
+    @property
+    def voxel_size(self):
+        return voxel_size_for_divisions(self.resolution_divisions, max(self._domain.dimensions))
+
+    @voxel_size.setter
+    def voxel_size(self, value):
+        object.__setattr__(
+            self,
+            "resolution_divisions",
+            divisions_for_voxel_size(value, max(self._domain.dimensions)),
+        )
+
+
+def test_a_lattice_voxel_round_trips_through_a_derived_voxel_setting():
+    domain = _domain(dimensions=(10.0, 4.0, 4.0))
+    settings = _DerivedSettings(domain, 100)
+    target = voxel_size_for_divisions(77, 10.0)
+
+    changed = _apply(settings, domain, {"voxel_size": target})
+
+    assert changed == ["voxel_size"]
+    assert settings.resolution_divisions == 77
+
+
+def test_bounds_and_voxel_are_costed_against_the_resized_domain():
+    domain = _domain(dimensions=(10.0, 10.0, 10.0))
+    settings = _DerivedSettings(domain, 100)
+    # Costed against the NEW 4 m longest axis; against the old 10 m it would
+    # round to a different divisions count and fail the strict read-back.
+    target = voxel_size_for_divisions(30, 4.0)
+
+    changed = _apply(
+        settings,
+        domain,
+        {"voxel_size": target, "domain_min": (-2, -2, -2), "domain_max": (2, 2, 2)},
+    )
+
+    assert changed == ["voxel_size", "domain bounds"]
+    assert settings.resolution_divisions == 30
+    assert settings.voxel_size == target
+
+
+def test_a_failed_bounds_and_voxel_option_restores_divisions_and_transform():
+    domain = _domain(dimensions=(10.0, 10.0, 10.0))
+    settings = _DerivedSettings(domain, 100)
+    before = settings.voxel_size
+
+    def refresh_fails_after_resize(calls=[]):
+        calls.append(1)
+        if len(calls) == 1:
+            return
+        raise RuntimeError("view layer is gone")
+
+    with pytest.raises(CapacityApplyError):
+        _apply(
+            settings,
+            domain,
+            {"voxel_size": 0.1, "domain_min": (-2, -2, -2), "domain_max": (2, 2, 2), "bogus": 1},
+            on_transform_changed=refresh_fails_after_resize,
+        )
+
+    assert settings.resolution_divisions == 100
+    assert settings.voxel_size == before
+    assert domain.dimensions == (10.0, 10.0, 10.0)

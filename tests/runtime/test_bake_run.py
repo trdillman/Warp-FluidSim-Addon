@@ -336,15 +336,16 @@ def test_the_registry_lists_every_active_bake_with_its_scene(tmp_path):
 
     scene_a, scene_b = _scene(11), _scene(22)
     run_a = BakeRun(scene_a, backend=_Backend(tmp_path / "a"))
-    run_b = BakeRun(scene_b, backend=_Backend(tmp_path / "b"))
     try:
+        # One bake per process: the Solver Session is a singleton, so a second
+        # bake in another scene is refused rather than listed beside the first.
+        with pytest.raises(RuntimeError, match="only one bake"):
+            BakeRun(scene_b, backend=_Backend(tmp_path / "b"))
         listed = production_bake.active_bakes()
-        assert {id(scene) for scene, _ in listed} == {id(scene_a), id(scene_b)}
-        assert {id(controller) for _, controller in listed} == {
-            id(run_a.controller), id(run_b.controller)}
+        assert [(id(scene), id(controller)) for scene, controller in listed] == [
+            (id(scene_a), id(run_a.controller))]
     finally:
         run_a.close()
-        run_b.close()
 
     assert production_bake.active_bakes() == ()
 

@@ -210,6 +210,9 @@ def _write_package(
                 f"resources/examples/custom_effects/renders/{stem}.png",
                 b"\x89PNG\r\n\x1a\n" + b"\0" * 1_024,
             )
+        for demo_id in build_extension.DEMO_IDS:
+            if f"resources/demos/{demo_id}.blend" not in (extra or {}):
+                archive.writestr(f"resources/demos/{demo_id}.blend", b"BLENDER-demo")
         for name, value in (extra or {}).items():
             archive.writestr(name, value)
 
@@ -219,7 +222,7 @@ def test_verify_source_tree_reports_one_locked_wheel_per_platform(tmp_path: Path
     result = build_extension.verify_source_tree(tmp_path)
     assert result.platforms == ("windows-x64", "linux-x64")
     assert result.release_ready is True
-    assert result.bundled_warp_wheels == (LINUX_WHEEL, WINDOWS_WHEEL)
+    assert result.locked_warp_wheels == (LINUX_WHEEL, WINDOWS_WHEEL)
     assert result.wheel_for_platform("linux-x64") == LINUX_WHEEL
     assert result.wheel_for_platform("windows-x64") == WINDOWS_WHEEL
 
@@ -243,7 +246,7 @@ def test_verify_source_tree_accepts_fetched_locked_wheels(tmp_path: Path):
     _write_project(tmp_path)
     for name, payload in WHEELS.values():
         (tmp_path / "wheels" / name).write_bytes(payload)
-    assert build_extension.verify_source_tree(tmp_path).bundled_warp_wheels
+    assert build_extension.verify_source_tree(tmp_path).locked_warp_wheels
 
 
 @pytest.mark.parametrize(
@@ -468,6 +471,91 @@ def test_inspect_packages_rejects_compiled_python_artifacts(tmp_path: Path):
         build_extension.inspect_packages(tmp_path, [package])
 
 
+def _write_demo_sources(source: Path) -> Path:
+    source.mkdir(parents=True, exist_ok=True)
+    for demo_id in build_extension.DEMO_IDS:
+        (source / f"{demo_id}.blend").write_bytes(b"BLENDER-v500" + demo_id.encode())
+        # Untracked local leftovers that must not ride along.
+        (source / f"{demo_id}.blend1").write_bytes(b"BLENDER-backup")
+        (source / f"{demo_id}_preview.png").write_bytes(b"\x89PNG")
+    return source
+
+
+def test_stage_demo_assets_copies_only_the_demo_blends(tmp_path: Path):
+    root = tmp_path / "addon"
+    stale = root / "resources" / "demos" / "retired_demo.blend"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"BLENDER-old")
+    source = _write_demo_sources(tmp_path / "demos")
+
+    staged = build_extension.stage_demo_assets(root, source)
+
+    target = root / "resources" / "demos"
+    assert sorted(path.name for path in target.iterdir()) == sorted(
+        f"{demo_id}.blend" for demo_id in build_extension.DEMO_IDS)
+    assert staged == [target / f"{demo_id}.blend" for demo_id in build_extension.DEMO_IDS]
+    assert (target / "dam_break.blend").read_bytes() == (source / "dam_break.blend").read_bytes()
+
+
+def test_stage_demo_assets_defaults_to_the_repo_demos_directory(tmp_path: Path):
+    root = tmp_path / "addon"
+    _write_demo_sources(tmp_path / "demos")
+    build_extension.stage_demo_assets(root)
+    assert (root / "resources" / "demos" / "crown_splash.blend").is_file()
+
+
+def test_stage_demo_assets_rejects_a_missing_demo(tmp_path: Path):
+    source = _write_demo_sources(tmp_path / "demos")
+    (source / "paddle_stir.blend").unlink()
+    with pytest.raises(RuntimeError, match="paddle_stir.blend"):
+        build_extension.stage_demo_assets(tmp_path / "addon", source)
+    assert not (tmp_path / "addon" / "resources" / "demos").exists()
+
+
+def test_stage_demo_assets_rejects_a_non_blender_file(tmp_path: Path):
+    source = _write_demo_sources(tmp_path / "demos")
+    (source / "chromatic_vortex.blend").write_bytes(b"version https://git-lfs")
+    with pytest.raises(RuntimeError, match="not a Blender file"):
+        build_extension.stage_demo_assets(tmp_path / "addon", source)
+
+
+def test_inspect_packages_rejects_a_package_without_a_demo(tmp_path: Path):
+    _write_project(tmp_path)
+    package = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
+    _write_package(package)
+    with zipfile.ZipFile(package) as archive:
+        kept = {
+            name: archive.read(name) for name in archive.namelist()
+            if name != "resources/demos/dam_break.blend"
+        }
+    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, value in kept.items():
+            archive.writestr(name, value)
+    with pytest.raises(RuntimeError, match="resources/demos/dam_break.blend"):
+        build_extension.inspect_packages(tmp_path, [package])
+
+
+def test_inspect_packages_rejects_a_corrupt_demo(tmp_path: Path):
+    _write_project(tmp_path)
+    package = tmp_path / f"fluidsim_warp-{VERSION}-linux_x64.zip"
+    _write_package(package, extra={"resources/demos/crown_splash.blend": b"not-a-blend"})
+    with pytest.raises(RuntimeError, match="invalid demo crown_splash.blend"):
+        build_extension.inspect_packages(tmp_path, [package])
+
+
+def test_bundled_demo_ids_match_the_gallery_catalog_and_smoke_test(demo_gallery_module):
+    DEMO_CATALOG = demo_gallery_module.DEMO_CATALOG
+
+    assert build_extension.DEMO_IDS == tuple(DEMO_CATALOG)
+    assert all(
+        DEMO_CATALOG[demo_id]["blend_filename"] == f"{demo_id}.blend"
+        for demo_id in build_extension.DEMO_IDS
+    )
+    smoke = build_extension.TOOL_ROOT / "smoke_test_blender.py"
+    assert tuple(build_extension._assigned_literal(smoke, "DEMO_IDS")) == (
+        build_extension.DEMO_IDS)
+
+
 def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
     _write_project(tmp_path)
     output = tmp_path / "dist"
@@ -488,9 +576,13 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
             )
 
     fetched: list[Path] = []
+    demo_source = _write_demo_sources(tmp_path / "repo_demos")
     packages = build_extension.build(
-        tmp_path, Path("/opt/blender"), output, runner=fake_run, fetcher=fetched.append)
+        tmp_path, Path("/opt/blender"), output, runner=fake_run, fetcher=fetched.append,
+        demo_source=demo_source)
     assert fetched == []
+    assert sorted(path.name for path in (tmp_path / "resources" / "demos").iterdir()) == sorted(
+        f"{demo_id}.blend" for demo_id in build_extension.DEMO_IDS)
     flattened = [" ".join(command) for command in commands]
     assert any("-m ruff check" in command for command in flattened)
     assert any("-m pytest" in command for command in flattened)
@@ -575,7 +667,7 @@ def test_verify_only_is_successful_without_runtime_binary_payloads(tmp_path: Pat
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert exit_code == 0
     assert payload["release_ready"] is True
-    assert payload["source"]["bundled_warp_wheels"] == [LINUX_WHEEL, WINDOWS_WHEEL]
+    assert payload["source"]["locked_warp_wheels"] == [LINUX_WHEEL, WINDOWS_WHEEL]
 
 
 def test_release_metadata_writes_are_atomic_and_strict(tmp_path: Path):

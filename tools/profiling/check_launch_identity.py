@@ -81,7 +81,7 @@ def main(argv=None):
         if plain:
             cmd.append("--plain")
         out = subprocess.run(cmd, capture_output=True, text=True).stdout
-        line = [l for l in out.splitlines() if l.startswith("DIGEST")]
+        line = [text for text in out.splitlines() if text.startswith("DIGEST")]
         digests.append(line[-1] if line else "MISSING")
         print(("plain  " if plain else "cached ") + digests[-1])
     ok = digests[0] == digests[1] and digests[0] != "MISSING"

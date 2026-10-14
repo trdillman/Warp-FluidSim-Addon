@@ -17,6 +17,7 @@ import tempfile
 import time
 from typing import Any, Mapping
 
+from ..io.cache_schema import LEGACY_2X_CACHE_MESSAGE
 from .scene_access import active_domain_object, active_domain_settings
 
 
@@ -115,6 +116,7 @@ def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
     temp = Path(temp_name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            descriptor = None  # the handle owns and closes it now
             json.dump(payload, handle, indent=2, sort_keys=True, allow_nan=False)
             handle.write("\n")
             handle.flush()
@@ -127,10 +129,11 @@ def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
             finally:
                 os.close(directory)
     except Exception:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         try:
             temp.unlink()
         except FileNotFoundError:
@@ -148,18 +151,23 @@ def _scene_validation(scene) -> tuple[bool, str]:
         return False, "FluidSim scene settings are not registered"
     if active_domain_object(scene) is None:
         return False, "No FluidSim domain is assigned"
-    sources = [
-        obj
-        for obj in getattr(scene, "objects", ())
-        if getattr(getattr(obj, "fluidsim", None), "role", "NONE") == "SOURCE"
-        and bool(getattr(getattr(obj, "fluidsim", None), "enabled", True))
-    ]
+    # Liquid comes from enabled SOURCE objects or from enabled auto-injected
+    # seeds of any role (sources.prepare_auto_seeds); seed-only scenes such as
+    # crown_splash and paddle_stir are valid.
+    sources = []
+    for obj in getattr(scene, "objects", ()):
+        pg = getattr(obj, "fluidsim", None)
+        if pg is None or not bool(getattr(pg, "enabled", True)):
+            continue
+        if (getattr(pg, "role", "NONE") == "SOURCE"
+                or bool(getattr(pg, "auto_inject_seed", False))):
+            sources.append(obj)
     # height_enabled is a solver setting: gather_height_source reads it from
     # the domain owner, so validating the scene group would pass a scene whose
     # height fill the solver will not run (and vice versa).
     height_owner = active_domain_settings(scene)
     if not sources and not bool(getattr(height_owner, "height_enabled", False)):
-        return False, "No enabled liquid source or height fill is configured"
+        return False, "No enabled liquid source, seed object or height fill is configured"
     return True, "Scene setup is valid"
 
 
@@ -171,6 +179,24 @@ def _select_scene(bpy, name: str):
         bpy.context.window.scene = scene
         return scene
     return bpy.context.scene
+
+
+def _is_legacy_2x_cache(cache: Path) -> bool:
+    """Whether ``cache`` holds a FluidSim 2.x cache, which 3.0 refuses to read."""
+    from ..io.cache import detect_cache_format
+    from ..io.cache_schema import LEGACY_2X_FORMAT_VERSION
+
+    return detect_cache_format(cache) == LEGACY_2X_FORMAT_VERSION
+
+
+def _is_resume_refusal(exc: BaseException) -> bool:
+    """Whether ``exc`` is production_bake.ResumeRefused, without importing it.
+
+    production_bake needs Blender; this module stays importable without it.
+    """
+    module = sys.modules.get(f"{__package__}.production_bake")
+    refused = getattr(module, "ResumeRefused", None)
+    return isinstance(refused, type) and isinstance(exc, refused)
 
 
 def _report_path(options: CliOptions) -> Path:
@@ -195,6 +221,14 @@ def run(options: CliOptions) -> int:
     }
     code = EXIT_BAKE_FAILURE
     try:
+        # A 2.x cache is refused before anything else runs, under every
+        # --resume mode: it can be neither resumed nor overwritten, and the
+        # check needs neither Blender nor a GPU.
+        if _is_legacy_2x_cache(options.cache):
+            code = EXIT_RESUME_INCOMPATIBLE
+            report["message"] = LEGACY_2X_CACHE_MESSAGE
+            return code
+
         import bpy
 
         from .effects import scene_effect_instances, trust_store_for_scene
@@ -281,12 +315,30 @@ def run(options: CliOptions) -> int:
             checkpoint_interval=options.checkpoint_interval,
             compressed=bool(getattr(fs, "cache_compress", False)),
         )
-        existing = load_manifest(manifest_path(options.cache))
+        try:
+            existing = load_manifest(manifest_path(options.cache))
+        except ValueError as exc:
+            # A corrupt or unreadable manifest is a cache problem, not an
+            # invalid scene: farms remediate it by fixing/clearing the cache.
+            code = EXIT_RESUME_INCOMPATIBLE
+            report["message"] = f"Cache manifest is unreadable: {type(exc).__name__}: {exc}"
+            return code
         resume = options.resume == "required" or (
             options.resume == "auto" and existing is not None
         )
         if resume:
-            decision = backend.resume_decision(scene)
+            try:
+                decision = backend.resume_decision(scene)
+                if decision.code == "ALREADY_COMPLETE":
+                    # A later end frame extends a complete cache, as the
+                    # GUI's Resume does (owner decision D4).
+                    decision = backend.resume_decision(scene, end=end)
+            except ValueError as exc:
+                code = EXIT_RESUME_INCOMPATIBLE
+                report["message"] = (
+                    f"Cache could not be verified for resume: "
+                    f"{type(exc).__name__}: {exc}")
+                return code
             if not decision.allowed:
                 code = EXIT_RESUME_INCOMPATIBLE
                 report["message"] = f"{decision.code}: {decision.message}"
@@ -294,7 +346,7 @@ def run(options: CliOptions) -> int:
         elif options.resume == "never" and existing is not None:
             code = EXIT_RESUME_INCOMPATIBLE
             report["message"] = (
-                "A cache-v2 manifest already exists and --resume=never will not overwrite it"
+                "A cache manifest already exists and --resume=never will not overwrite it"
             )
             return code
 
@@ -337,7 +389,10 @@ def run(options: CliOptions) -> int:
         report["message"] = result.message
         return code
     except ValueError as exc:
-        code = EXIT_SCENE_INVALID
+        # ResumeRefused (raised when the resume decision changes between the
+        # CLI's check and the bake's own) is a resume/cache category error.
+        code = (EXIT_RESUME_INCOMPATIBLE if _is_resume_refusal(exc)
+                else EXIT_SCENE_INVALID)
         report["message"] = f"{type(exc).__name__}: {exc}"
         return code
     except Exception as exc:  # Blender log retains the traceback via stderr

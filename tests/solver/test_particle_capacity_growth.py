@@ -121,9 +121,9 @@ def test_solver_growth_swaps_only_after_copy_succeeds(monkeypatch):
     )
     def replace_particle_storage(replacement):
         owner.sourcing.particles = replacement
-        owner.sourcing._compiled_batch = None
 
     owner.sourcing.replace_particle_storage = replace_particle_storage
+    compiled_batch = owner.sourcing._compiled_batch
 
     result = owner.ensure_particle_capacity(6)
 
@@ -134,7 +134,7 @@ def test_solver_growth_swaps_only_after_copy_succeeds(monkeypatch):
     assert owner.settings.max_particles == 8
     np.testing.assert_allclose(owner.particles.position.numpy()[0], (1.0, 2.0, 3.0))
     assert owner.sourcing.particles is owner.particles
-    assert owner.sourcing._compiled_batch is None
+    assert owner.sourcing._compiled_batch is compiled_batch
 
 
 def test_solver_growth_failure_preserves_authoritative_pool(monkeypatch):

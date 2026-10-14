@@ -48,7 +48,7 @@ else:
         blend_path = bpy.data.filepath
         report_path = profile_safe_result_path
 
-from fluidSim_warp_blender51.blender.scene_bridge import (
+from fluidSim_warp_blender51.blender.scene_bridge import (  # noqa: E402
     active_domain_settings,
     session,
 )

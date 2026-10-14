@@ -21,6 +21,9 @@ import bpy
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
 
+_deferred_imports = {}
+_migrating_imports = False
+
 PRE_BRIDGE_MESSAGE = (
     "Saved before FluidSim 1.1: domain settings were not carried over. "
     "Open and re-save this file in FluidSim 1.1 first")
@@ -89,27 +92,257 @@ def draw_pre_bridge_warning(layout, scene) -> None:
     box.label(text="Open and re-save this file in FluidSim 1.1 first.")
 
 
+# The domain-settings schema a domain object was saved under, stored raw in its
+# ``fluidsim_domain`` group. 3 = the grid is authored as Resolution Divisions
+# (default 64). Files saved before 3.1 carry no stamp, and an unstamped domain
+# that stores neither ``voxel_size`` nor ``resolution_divisions`` may come from
+# 2.x (default voxel 0.05) or from 3.0 (default 64 divisions): nothing in the
+# file tells them apart, so it keeps the 3.0 default (decision B62). The stamp
+# lets the next change to a default migrate untouched domains exactly.
+DOMAIN_SCHEMA_KEY = "domain_schema_version"
+CURRENT_DOMAIN_SCHEMA = 3
+
+
+def _writable_domain_group(obj):
+    """``obj``'s raw ``fluidsim_domain`` group, created when missing."""
+    getter = getattr(obj, "bl_system_properties_get", None)
+    if not callable(getter):
+        return None
+    try:
+        stored = getter(do_create=True)
+        if stored is None:
+            return None
+        if stored.get("fluidsim_domain") is None:
+            stored["fluidsim_domain"] = {}
+        return stored.get("fluidsim_domain")
+    except (AttributeError, KeyError, TypeError):
+        return None
+
+
+def stamp_domain_schema(objects=None, scenes=None) -> int:
+    """Stamp every local domain object with :data:`CURRENT_DOMAIN_SCHEMA`.
+
+    Covers each scene's designated domain, even one whose group was never
+    written, and any object that stores a domain group. Linked library data
+    belongs to its own file and is left alone. Returns the number stamped.
+    """
+    from .scene_access import active_domain_object
+
+    data = getattr(bpy, "data", None)
+    objects = getattr(data, "objects", ()) if objects is None else objects
+    scenes = getattr(data, "scenes", ()) if scenes is None else scenes
+    candidates = {}
+    for obj in [active_domain_object(scene) for scene in scenes] + [
+            obj for obj in objects
+            if _stored_scene_group(obj, "fluidsim_domain") is not None]:
+        if obj is not None and getattr(obj, "library", None) is None:
+            pointer = getattr(obj, "as_pointer", None)
+            candidates[pointer() if callable(pointer) else id(obj)] = obj
+    stamped = 0
+    for obj in candidates.values():
+        group = _writable_domain_group(obj)
+        if group is None or group.get(DOMAIN_SCHEMA_KEY) == CURRENT_DOMAIN_SCHEMA:
+            continue
+        group[DOMAIN_SCHEMA_KEY] = CURRENT_DOMAIN_SCHEMA
+        stamped += 1
+    return stamped
+
+
+def migrate_domain_resolution(objects=None, scenes=None, *, _evaluate_views=True) -> int:
+    """Give a pre-3.0 domain object the Resolution Divisions its voxel size implied.
+
+    Before 3.0 the grid was authored as an absolute ``voxel_size``. It is now
+    derived from ``resolution_divisions``, so a domain group that stores a
+    ``voxel_size`` and no ``resolution_divisions`` gets
+    ``round(longest axis / voxel_size)``. The legacy value is read from the stored
+    raw group, which keeps keys the class no longer stores. Idempotent: a group
+    that already stores divisions is left alone. Returns the number migrated.
+    """
+    from contextlib import ExitStack
+
+    from ..properties import _domain_longest_axis
+    from ..sim.quality_contract import divisions_for_voxel_size
+    from . import pending_settings
+
+    data = getattr(bpy, "data", None)
+    objects = getattr(data, "objects", ()) if objects is None else objects
+    scenes = getattr(data, "scenes", ()) if scenes is None else scenes
+    # A freshly loaded object's matrix_world is not evaluated yet (it reads as
+    # identity), and the longest axis is measured from it.
+    if _evaluate_views:
+        for scene in scenes:
+            for view_layer in getattr(scene, "view_layers", ()):
+                view_layer.update()
+    pending = []
+    for obj in objects:
+        if getattr(obj, "library", None) is not None:
+            continue
+        stored = _stored_scene_group(obj, "fluidsim_domain")
+        try:
+            if stored is None or "resolution_divisions" in stored or (
+                    "voxel_size" not in stored):
+                continue
+            voxel = float(stored["voxel_size"])
+        except (AttributeError, TypeError, ValueError):
+            continue
+        group = getattr(obj, "fluidsim_domain", None)
+        if group is not None and voxel > 0.0:
+            if getattr(obj, "users_scene", None) == ():
+                # Library-load can return an unlinked object. Its matrix_world
+                # is still identity, including transformed parents. Preserve
+                # the raw voxel size until Blender evaluates its first scene.
+                _deferred_imports[obj.as_pointer()] = obj
+                continue
+            pending.append((group, voxel))
+    with ExitStack() as stack:
+        for scene in scenes:
+            stack.enter_context(pending_settings.suppress_callbacks(scene))
+        for group, voxel in pending:
+            group.resolution_divisions = divisions_for_voxel_size(
+                voxel, _domain_longest_axis(group))
+    return len(pending)
+
+
+def migrate_removed_particle_color_mode(scenes=None) -> int:
+    """Send a scene that stored the removed Time Offset particle colour mode to ``NONE``.
+
+    ``TIME_OFFSET`` was the last ``particle_attribute_mode`` item. Blender keeps
+    an enum as its integer index, so after the item was removed a stored index
+    past the end of the list reads back as an empty string, which no colour
+    branch recognizes. Such a scene is set back to ``NONE`` (Material).
+    Idempotent. Returns the number of scenes changed.
+    """
+    from ..properties import PARTICLE_ATTR_ITEMS
+    from . import pending_settings
+
+    scenes = getattr(getattr(bpy, "data", None), "scenes", ()) if scenes is None else scenes
+    stale = []
+    for scene in scenes:
+        stored = _stored_scene_group(scene)
+        try:
+            index = None if stored is None else stored.get("particle_attribute_mode")
+            if index is None or int(index) < len(PARTICLE_ATTR_ITEMS):
+                continue
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if getattr(scene, "fluidsim", None) is not None:
+            stale.append(scene)
+    for scene in stale:
+        with pending_settings.suppress_callbacks(scene):
+            scene.fluidsim.particle_attribute_mode = "NONE"
+    return len(stale)
+
+
 @persistent
 def _on_load_post(_arg):
+    migrate_domain_resolution()
     for scene in getattr(getattr(bpy, "data", None), "scenes", ()):
         if has_unmigrated_snippets(scene):
             print(f"FluidSim: scene {scene.name!r}: {UNMIGRATED_SNIPPETS_MESSAGE}")
         elif is_pre_bridge_scene(scene):
             print(f"FluidSim: scene {scene.name!r}: {PRE_BRIDGE_MESSAGE}")
+    migrate_removed_particle_color_mode()
+
+
+@persistent
+def _on_blend_import_post(context):
+    """Migrate only newly appended local IDs, never links or re-used data.
+
+    Blender supplies dependent objects in import_items as well as the root
+    Scene/Collection. Do not sweep bpy.data: a later append must not rewrite
+    an existing domain or library data.
+    """
+    if "LINK" in getattr(context, "options", ()):
+        return
+    objects = []
+    imported_scenes = []
+    scenes = []
+    for item in getattr(context, "import_items", ()):
+        if getattr(item, "append_action", "UNSET") not in {"MAKE_LOCAL", "COPY_LOCAL"}:
+            continue
+        data = getattr(item, "id", None)
+        if data is None or getattr(data, "library", None) is not None:
+            continue
+        if hasattr(data, "fluidsim_domain"):
+            objects.append(data)
+            for scene in getattr(data, "users_scene", ()):
+                if scene not in scenes:
+                    scenes.append(scene)
+        elif hasattr(data, "view_layers"):
+            imported_scenes.append(data)
+            if data not in scenes:
+                scenes.append(data)
+    if objects or imported_scenes:
+        from . import sources
+
+        migrate_domain_resolution(objects=objects, scenes=scenes)
+        migrate_removed_particle_color_mode(scenes=imported_scenes)
+        sources.migrate_source_schema(objects=objects, scenes=scenes)
+
+
+@persistent
+def _on_compat_load_pre(_arg):
+    _deferred_imports.clear()
+
+
+@persistent
+def _on_save_pre(_arg):
+    stamp_domain_schema()
+
+
+@persistent
+def _on_imported_domain_update(scene, _depsgraph):
+    """Resolve only queued, newly linked domains after dependency evaluation."""
+    global _migrating_imports
+    if _migrating_imports or not _deferred_imports:
+        return
+    _migrating_imports = True
+    try:
+        for key, obj in tuple(_deferred_imports.items()):
+            try:
+                if obj.library is not None:
+                    _deferred_imports.pop(key, None)
+                    continue
+                if scene not in obj.users_scene:
+                    continue
+                migrate_domain_resolution(objects=(obj,), scenes=(scene,),
+                                          _evaluate_views=False)
+                _deferred_imports.pop(key, None)
+            except ReferenceError:  # removed before ever being linked
+                _deferred_imports.pop(key, None)
+    finally:
+        _migrating_imports = False
+
+
+_COMPAT_HANDLERS = (
+    ("load_post", _on_load_post),
+    ("blend_import_post", _on_blend_import_post),
+    ("load_pre", _on_compat_load_pre),
+    ("save_pre", _on_save_pre),
+    ("depsgraph_update_post", _on_imported_domain_update),
+)
 
 
 def register_handlers():
     unregister_handlers()
-    load_post = getattr(getattr(getattr(bpy, "app", None), "handlers", None),
-                        "load_post", None)
-    if load_post is not None:
-        load_post.append(_on_load_post)
+    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+    for name, callback in _COMPAT_HANDLERS:
+        callbacks = getattr(handlers, name, None)
+        if callbacks is not None:
+            callbacks.append(callback)
+    try:
+        # The file that is already open; sources migrate it on their own.
+        migrate_domain_resolution()
+        migrate_removed_particle_color_mode()
+    except (AttributeError, RuntimeError):  # bpy.data is restricted during enable
+        pass
 
 
 def unregister_handlers():
-    load_post = getattr(getattr(getattr(bpy, "app", None), "handlers", None),
-                        "load_post", None)
-    if load_post is None:
-        return
-    while _on_load_post in load_post:
-        load_post.remove(_on_load_post)
+    _deferred_imports.clear()
+    handlers = getattr(getattr(bpy, "app", None), "handlers", None)
+    for name, callback in _COMPAT_HANDLERS:
+        callbacks = getattr(handlers, name, None)
+        if callbacks is not None:
+            while callback in callbacks:
+                callbacks.remove(callback)

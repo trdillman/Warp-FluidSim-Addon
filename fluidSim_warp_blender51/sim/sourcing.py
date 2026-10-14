@@ -8,6 +8,7 @@ import numpy as np
 import warp as wp
 
 from . import constants as C
+from .fastlaunch import launch as fast_launch
 from .enums import (
     BlendMode,
     MeshSinkRegionMode,
@@ -53,6 +54,7 @@ from .source_kernels import (
     k_count_mesh_source_particles,
     k_count_source_shapes_particles,
     k_emit_compiled_source_particles,
+    k_mark_source_leaves,
     k_mesh_source_field,
     k_mesh_source_particles,
     k_reserve_owned_point_slots,
@@ -154,6 +156,7 @@ __all__ = [
     "k_apply_compiled_source",
     "k_apply_compiled_staggered_source",
     "k_emit_compiled_source_particles",
+    "k_mark_source_leaves",
     "k_assign_emitted_uids",
     "k_add_emission_demand",
     "k_admit_emission_batch",
@@ -299,9 +302,13 @@ class SourcePipeline(CompiledSourceExecution):
         self.last_apply_result = replace(self.last_apply_result, available=max(0, int(available)))
 
     def replace_particle_storage(self, particles) -> None:
-        """Rebind source execution after the solver atomically swaps its pool."""
+        """Rebind source execution after the solver atomically swaps its pool.
+
+        The compiled batch holds region data only, so it survives the swap:
+        growth happens mid-substep, and dropping it skipped the compiled field
+        and pressure stages for the rest of that substep.
+        """
         self.runtime = replace(self.runtime, particles=particles)
-        self._compiled_batch = None
         self.update_available_capacity(
             int(particles.capacity) - int(particles.host_count)
         )
@@ -390,12 +397,66 @@ class SourcePipeline(CompiledSourceExecution):
             if bounds is not None and plan.activation.enabled:
                 yield bounds()
 
-    def compile(self, frame=0, substep=0, *, upload=True):
-        """Compile current plans for the owner's sparse-grid context."""
+    def mark_source_topology(self, grid, batch):
+        """Flag every leaf a compiled source needs, in one launch.
+
+        Marks the compiled flat leaf coordinates themselves. Converting each
+        to a world box and marking it inclusively also flagged the next leaf
+        on every positive side (up to eight leaves per source leaf), and
+        cost one Python dispatch per leaf on every rebuild.
+        """
+        from .source_regions import plan_requires_source_topology
+
+        # A DIRECT_APPEND packet needs the leaves holding its points, and only
+        # until it has fired; after that its particles mark their own leaves.
+        # Its uploaded points are marked exactly like particles.
+        for compiled in batch.sources:
+            plan, points = compiled.plan, compiled.region.points
+            if (plan.lifecycle == SourceLifecycle.DIRECT_APPEND
+                    and str(plan.stable_id) not in self._initial_fired
+                    and points is not None
+                    and points.device_positions is not None
+                    and len(points.positions)):
+                count = int(len(points.positions))
+                grid.mark_points(
+                    points.device_positions,
+                    wp.array([count], dtype=wp.int32, device=self.device),
+                    count,
+                )
+        included = tuple(
+            index for index, compiled in enumerate(batch.sources)
+            if plan_requires_source_topology(compiled.plan)
+            and compiled.plan.lifecycle != SourceLifecycle.DIRECT_APPEND
+        )
+        upload = batch.topology_upload
+        if upload is None or upload[0] != included:
+            coords = [
+                (region.topology_leaf_coords
+                 if region.topology_leaf_coords is not None
+                 else region.leaf_coords)
+                for region in (batch.sources[index].region for index in included)
+            ]
+            coords = [value for value in coords if len(value)]
+            host = (np.unique(np.concatenate(coords), axis=0).astype(np.int32)
+                    if coords else np.empty((0, 3), np.int32))
+            device = (wp.array(host, dtype=wp.vec3i, device=self.device)
+                      if len(host) else None)
+            upload = batch.topology_upload = (included, device, int(len(host)))
+        _, device, count = upload
+        if count:
+            fast_launch(
+                k_mark_source_leaves,
+                dim=count,
+                inputs=[device, count, grid.leaves_dim, grid.leaf_flags],
+                device=self.device,
+            )
+        return count
+
+    def _compile_context(self, frame, substep, upload):
         from .source_regions import CompileContext
 
         owner, settings = self.runtime, self.runtime.settings
-        context = CompileContext(
+        return CompileContext(
             frame=int(frame),
             substep=int(substep),
             session_generation=self._session_generation,
@@ -408,7 +469,35 @@ class SourcePipeline(CompiledSourceExecution):
             particle_capacity=int(owner.particles.capacity),
             upload=upload,
         )
+
+    def compile(self, frame=0, substep=0, *, upload=True):
+        """Compile current plans for the owner's sparse-grid context."""
+        context = self._compile_context(frame, substep, upload)
         self._compiled_batch = self.compiler.compile(self.plans, context)
+        self._compiled_context = context
+        self.last_diagnostics = self._compiled_batch.diagnostics
+        return self._compiled_batch
+
+    def compiled_batch_for(self, frame):
+        """Return the compiled batch for ``frame``, compiling only if it can differ.
+
+        Static and first-frame plans keep their batch until the plans change.
+        With any EVERY_SIM_FRAME plan, the topology rebuild and every
+        sourcing substep used to recompile with the identical frame/substep-0
+        context, re-hashing every plan input to reach the same cache rows;
+        the batch is now reused while that context is unchanged.
+        """
+        batch = getattr(self, "_compiled_batch", None)
+        dynamic = any(
+            plan.cadence == SourceEvaluationCadence.EVERY_SIM_FRAME for plan in self.plans
+        )
+        if batch is not None and not dynamic:
+            return batch
+        context = self._compile_context(frame, 0, True)
+        if batch is not None and getattr(self, "_compiled_context", None) == context:
+            return batch
+        self._compiled_batch = self.compiler.compile(self.plans, context)
+        self._compiled_context = context
         self.last_diagnostics = self._compiled_batch.diagnostics
         return self._compiled_batch
 

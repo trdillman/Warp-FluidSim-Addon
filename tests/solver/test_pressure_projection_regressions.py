@@ -12,20 +12,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 wp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim.constants import (
+from fluidSim_warp_blender51.sim.constants import (  # noqa: E402
     LEAF_VOLUME,
     VOXEL_COLLISION,
     VOXEL_FLUID,
     VOXEL_NONE,
 )
-from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
-from fluidSim_warp_blender51.sim.kernels_fluid import (
+from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid  # noqa: E402
+from fluidSim_warp_blender51.sim.kernels_fluid import (  # noqa: E402
     k_apply_collider_material_to_grid,
     resolve_collision,
     resolve_collision_segment,
 )
-from fluidSim_warp_blender51.sim.pressure import PressureSolver
-from fluidSim_warp_blender51.sim.solver import (
+from fluidSim_warp_blender51.sim.pressure import PressureSolver  # noqa: E402
+from fluidSim_warp_blender51.sim.solver import (  # noqa: E402
     ColliderDesc,
     FluidSolver,
     SolverSettings,
@@ -625,9 +625,8 @@ def test_pressure_project_does_not_spread_non_finite_pressure_to_mac_velocity(cu
         assert np.max(np.abs(component.numpy())) <= 2.0
 
 
-@pytest.mark.parametrize("variant", ["project", "project_st"])
 def test_projection_pins_wall_faces_but_not_faces_inside_the_collider(
-        cuda_device, variant):
+        cuda_device):
     """Only faces with solid on exactly one side are boundary faces.
 
     A face with solid on both sides lies inside the collider. Pinning it to
@@ -654,7 +653,7 @@ def test_projection_pins_wall_faces_but_not_faces_inside_the_collider(
     collision_vel = wp.array(collider, dtype=wp.vec3, device=cuda_device)
     solver.pressure.zero_()
 
-    getattr(solver, variant)(vel, voxel_type_wp, collision_vel)
+    solver.project(vel, voxel_type_wp, collision_vel)
 
     u, v, w = (c.numpy() for c in (vel.u, vel.v, vel.w))
     wu, wv, ww = (c.numpy() for c in (vel.wu, vel.wv, vel.ww))
@@ -804,6 +803,46 @@ def test_pcg_keeps_finite_best_effort_solution_projectable(cuda_device):
     assert status["project_velocity"] is True
     assert solver.should_project_pressure() is True
     assert np.any(np.abs(solver.pressure.numpy()) > 0.0)
+
+
+@pytest.mark.parametrize("conditional", [True, False], ids=["cuda_conditional", "host_batched"])
+def test_pcg_stalls_only_after_a_window_without_a_new_best_residual(
+        cuda_device, monkeypatch, conditional):
+    """A sealed fluid pocket with a non-zero-mean RHS has no solution.
+
+    Its residual never improves on the initial one, so the solve must stall
+    after exactly ``PCG_STALL_WINDOW`` iterations: not at the first rising
+    check (a transient rise is normal CG behaviour, see the resting-column
+    test), and not by running the whole iteration budget.
+    """
+    from fluidSim_warp_blender51.sim import pressure
+
+    if not conditional:
+        monkeypatch.setattr(wp, "is_conditional_graph_supported", lambda: False)
+    grid = _one_leaf_grid(cuda_device)
+    solver = PressureSolver(grid, cuda_device)
+    voxel_type = np.full(grid.voxel_capacity, VOXEL_COLLISION, dtype=np.int32)
+    voxel_type[:128] = VOXEL_FLUID
+    voxel_type_wp = wp.zeros(
+        grid.voxel_capacity, dtype=wp.int32, device=cuda_device)
+    _copy_int(voxel_type_wp, voxel_type, cuda_device)
+    rng = np.random.default_rng(7)
+    rhs = np.zeros(grid.voxel_capacity, dtype=np.float32)
+    rhs[:128] = (rng.normal(size=128) + 0.5).astype(np.float32)
+    _copy_float(solver.rhs, rhs, cuda_device)
+    solver.build_preconditioner(voxel_type_wp)
+
+    budget = 2000
+    status = solver.solve_pcg(
+        voxel_type_wp, max_iterations=budget, tolerance=1.0e-6,
+        check_every=25)
+
+    expected_mode = "cuda_conditional" if conditional else "host_batched"
+    if conditional and solver.last_pcg_execution_mode != expected_mode:
+        pytest.skip("CUDA conditional graphs are unavailable here")
+    assert solver.last_pcg_execution_mode == expected_mode
+    assert status["reason"] == "stalled", status
+    assert solver.last_iterations == pressure.PCG_STALL_WINDOW
 
 
 def test_sanitize_mac_velocity_zeroes_non_finite_faces_and_clamps_speed(cuda_device):
@@ -1562,19 +1601,15 @@ def test_project_frame_owns_algorithm_selection_and_projection_guard(monkeypatch
         "project_velocity": False,
     }
     for name in (
-            "build_rhs", "build_preconditioner", "build_preconditioner_st",
-            "solve_pcg", "solve_pcg_st", "apply_threshold", "project",
-            "project_st"):
+            "build_rhs", "build_preconditioner", "solve_pcg",
+            "apply_threshold", "project"):
         monkeypatch.setattr(solver, name, record(name))
     monkeypatch.setattr(solver, "solve_jacobi", record("solve_jacobi", valid))
-    monkeypatch.setattr(
-        solver, "solve_jacobi_st", record("solve_jacobi_st", valid))
 
     settings = SolverSettings(
         pressure_solver=0,
         pressure_iterations=4,
         pressure_threshold=0.25,
-        spacetime_enabled=False,
     )
     result = solver.project_frame(
         "velocity", "voxel_type", "collision_velocity", "voxel_counts",
@@ -1588,16 +1623,13 @@ def test_project_frame_owns_algorithm_selection_and_projection_guard(monkeypatch
     assert calls[-1][2] == {"max_gradient": 3.0}
 
     calls.clear()
-    monkeypatch.setattr(solver, "solve_pcg_st", record("solve_pcg_st", invalid))
+    monkeypatch.setattr(solver, "solve_pcg", record("solve_pcg", invalid))
     settings.pressure_solver = 1
-    settings.spacetime_enabled = True
-    settings.spacetime_variable_projection = True
     result = solver.project_frame(
         "velocity", "voxel_type", "collision_velocity", "voxel_counts",
-        settings, max_gradient=2.0, reference_mass=7.0)
+        settings, max_gradient=2.0)
 
     assert result is invalid
     assert [call[0] for call in calls] == [
-        "build_rhs", "build_preconditioner_st", "solve_pcg_st",
+        "build_rhs", "build_preconditioner", "solve_pcg",
     ]
-    assert calls[1][2]["reference_mass"] == 7.0
