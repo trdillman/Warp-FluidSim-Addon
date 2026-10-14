@@ -36,6 +36,13 @@
   be removed in 4.1.
 - Disabling the add-on keeps unregistering the remaining classes when one
   fails and prints a single summary line listing every class it left behind.
+- **Export Liquid as USD** (Bake stage, next to Alembic) writes the baked
+  surface, particles and whitewater over the cached range as one animated USD
+  stage: points with per-frame positions and widths, plus a `fluidsim_*`
+  primvar per exported attribute (speed, age, velocity and the rest). Points
+  are the cached particles, not the viewport/render spheres. Alembic still
+  exports only the surface; on Blender 5.2 it writes point clouds as empty
+  transforms. The zero-radius capacity padding is not written.
 
 ### Corrections
 

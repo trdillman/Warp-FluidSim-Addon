@@ -11,6 +11,24 @@ Every piece of scene state the export changes is restored in a ``finally``.
 
 The export must not run inside ``playback.suppress_frame_handlers``: that would
 block the very handler that publishes each frame.
+
+USD (``export_usd``) rides the same playback, with three additions measured on
+Blender 5.2 (4.0 plan section 7): Alembic writes an empty transform for a
+PointCloud, while USD writes ``UsdGeom.Points`` with widths, velocities and a
+primvar per custom attribute. But the USD exporter writes per-frame time
+samples for handler-published geometry only when (a) the handler rewrites the
+same datablock in place and (b) the object carries a time-dependent modifier;
+a replaced datablock becomes a separate prim. So the export
+
+* reserves each point cloud's capacity for the range's largest frame (from the
+  cache manifest) and holds shrinking off, so no cloud is replaced mid-range;
+* adds a temporary Geometry Nodes modifier to every exported object: Scene
+  Time x 0 as a Set Position offset (makes the object time-dependent) and, on
+  point clouds, a Delete Geometry of zero-radius points. Publication pads
+  clouds to capacity with zero-radius points; trimming them keeps the file to
+  the live points (every published live point has a positive radius);
+* walks the scene frame range, which it sets to the export range (the 5.2
+  exporter has no range arguments), and restores it afterwards.
 """
 
 from __future__ import annotations
@@ -86,8 +104,8 @@ def available_frames(scene) -> tuple[int, ...]:
     return frames
 
 
-def plan_export(scene, frame_start: int = 0, frame_end: int = 0) -> ExportPlan:
-    """Validate everything the export needs; ``0`` bounds mean the whole cache."""
+def _export_frames(scene, frame_start: int, frame_end: int) -> tuple[int, ...]:
+    """Cached frames inside the requested range; ``0`` bounds mean the whole cache."""
     if production_bake.bake_is_active(scene):
         raise ExportRefused("A production bake is running. Wait for it or cancel it.")
     frames = available_frames(scene)
@@ -99,6 +117,12 @@ def plan_export(scene, frame_start: int = 0, frame_end: int = 0) -> ExportPlan:
         raise ExportRefused(
             f"The export range {start}-{end} is outside the cached frames "
             f"{frames[0]}-{frames[-1]}.")
+    return tuple(f for f in frames if start <= f <= end)
+
+
+def plan_export(scene, frame_start: int = 0, frame_end: int = 0) -> ExportPlan:
+    """Validate everything the export needs; ``0`` bounds mean the whole cache."""
+    frames = _export_frames(scene, frame_start, frame_end)
     surface = output_publication.output_object(scene, SURFACE_KIND)
     if surface is None:
         raise ExportRefused(
@@ -106,28 +130,98 @@ def plan_export(scene, frame_start: int = 0, frame_end: int = 0) -> ExportPlan:
             "play a cached frame first.")
     return ExportPlan(
         base_dir=bpy.path.abspath(scene.fluidsim.cache_path),
-        frames=tuple(f for f in frames if start <= f <= end),
+        frames=frames,
         surface=surface,
     )
+
+
+@dataclass(frozen=True)
+class UsdExportPlan:
+    """The outputs a USD export writes, with each point output's peak count."""
+
+    base_dir: str
+    frames: tuple[int, ...]
+    surface: object | None
+    points: tuple[tuple[object, int], ...]
+
+    @property
+    def start(self) -> int:
+        return self.frames[0]
+
+    @property
+    def end(self) -> int:
+        return self.frames[-1]
+
+    @property
+    def objects(self) -> tuple[object, ...]:
+        head = () if self.surface is None else (self.surface,)
+        return head + tuple(obj for obj, _peak in self.points)
+
+
+def _range_point_counts(base_dir: str, frames) -> tuple[int, int]:
+    """Largest particle and whitewater counts the manifest records in ``frames``."""
+    manifest = cache_schema.load_manifest(cache_schema.manifest_path(base_dir))
+    entries = [manifest.frames[frame] for frame in frames]
+    return (max((int(e.particle_count) for e in entries), default=0),
+            max((int(e.whitewater_count) for e in entries), default=0))
+
+
+def plan_usd_export(scene, frame_start: int = 0, frame_end: int = 0) -> UsdExportPlan:
+    """Resolve the range and the outputs to write: the surface (when it renders)
+    and every rendering point output with points somewhere in the range.
+
+    Each typed whitewater output (foam, bubbles, spray) is sized for the
+    combined whitewater count, an upper bound on its own.
+    """
+    frames = _export_frames(scene, frame_start, frame_end)
+    base_dir = bpy.path.abspath(scene.fluidsim.cache_path)
+    particles, whitewater = _range_point_counts(base_dir, frames)
+    surface = output_publication.output_object(scene, SURFACE_KIND)
+    if surface is not None and (surface.type != "MESH" or surface.hide_render):
+        surface = None
+    points = []
+    for kind, peak in (
+            (output_publication.PARTICLES_NAME, particles),
+            *((name, whitewater)
+              for name in output_publication.WHITEWATER_OUTPUT_NAMES)):
+        obj = output_publication.output_object(scene, kind)
+        if obj is None or obj.hide_render or peak <= 0:
+            continue
+        points.append((obj, peak))
+    if surface is None and not points:
+        raise ExportRefused(
+            "There are no FluidSim outputs to export. Enable the surface, particle "
+            "or whitewater output and play a cached frame first.")
+    return UsdExportPlan(
+        base_dir=base_dir, frames=frames, surface=surface, points=tuple(points))
+
+
+def _set_frame_range(scene, start: int, end: int):
+    # Assigning a start past the current end drags the end along (and the
+    # reverse), so the start is written again once the end is in place.
+    scene.frame_start = int(start)
+    scene.frame_end = int(end)
+    scene.frame_start = int(start)
 
 
 class _SceneState:
     """Everything the export touches, captured up front and restored on exit."""
 
-    def __init__(self, scene, surface):
+    def __init__(self, scene, objects):
         self.scene = scene
-        self.surface = surface
+        self.objects = tuple(objects)
         fs = scene.fluidsim
         self.live = bool(fs.live)
         self.cache_playback = bool(getattr(fs, "cache_playback_enabled", False))
         self.frame = int(scene.frame_current)
+        self.frame_range = (int(scene.frame_start), int(scene.frame_end))
         self.view_layer = bpy.context.view_layer
         self.selected = [o for o in self.view_layer.objects if o.select_get()]
         self.active = self.view_layer.objects.active
-        self.hide_viewport = bool(surface.hide_viewport)
-        self.hide_get = bool(surface.hide_get())
+        self.hidden = [(obj, bool(obj.hide_viewport), bool(obj.hide_get()))
+                       for obj in self.objects]
 
-    def enter(self, plan: ExportPlan):
+    def enter(self, plan):
         scene = self.scene
         fs = scene.fluidsim
         # Releases the solver session; refused (False) during a production bake.
@@ -141,13 +235,13 @@ class _SceneState:
         # A stale cursor would skip republishing the current frame.
         playback.clear_cache_cursors()
 
-        surface = self.surface
-        surface.hide_viewport = False
-        surface.hide_set(False)
         for obj in self.view_layer.objects:
             obj.select_set(False)
-        surface.select_set(True)
-        self.view_layer.objects.active = surface
+        for obj in self.objects:
+            obj.hide_viewport = False
+            obj.hide_set(False)
+            obj.select_set(True)
+        self.view_layer.objects.active = self.objects[0]
 
     def restore(self):
         scene = self.scene
@@ -161,7 +255,6 @@ class _SceneState:
                 problems.append(f"{label}: {exc}")
 
         def restore_selection():
-            surface = self.surface
             for obj in self.view_layer.objects:
                 obj.select_set(False)
             for obj in self.selected:
@@ -170,10 +263,13 @@ class _SceneState:
                 except (ReferenceError, RuntimeError):
                     pass
             self.view_layer.objects.active = self.active
-            surface.hide_viewport = self.hide_viewport
-            surface.hide_set(self.hide_get)
+            for obj, hide_viewport, hide_get in self.hidden:
+                obj.hide_viewport = hide_viewport
+                obj.hide_set(hide_get)
 
         def restore_frame():
+            if (int(scene.frame_start), int(scene.frame_end)) != self.frame_range:
+                _set_frame_range(scene, *self.frame_range)
             # Still in cache-playback mode, so this republishes the original
             # frame's mesh when the cache holds it.
             playback.clear_cache_cursors()
@@ -194,16 +290,17 @@ class _SceneState:
         return problems
 
 
-def _normalized_path(filepath: str) -> str:
+def _normalized_path(filepath: str, suffixes=(".abc",)) -> str:
+    """Absolute output path; an unknown suffix becomes the first of ``suffixes``."""
     path = Path(bpy.path.abspath(filepath))
-    if path.suffix.lower() != ".abc":
-        path = path.with_suffix(".abc")
+    if path.suffix.lower() not in suffixes:
+        path = path.with_suffix(suffixes[0])
     return str(path)
 
 
 def export_alembic(scene, filepath: str, plan: ExportPlan) -> list[str]:
     """Run the exporter under cache playback; returns restore problems (if any)."""
-    state = _SceneState(scene, plan.surface)
+    state = _SceneState(scene, (plan.surface,))
     try:
         state.enter(plan)
         result = bpy.ops.wm.alembic_export(
@@ -226,15 +323,153 @@ def export_alembic(scene, filepath: str, plan: ExportPlan) -> list[str]:
     return problems
 
 
-class FLUIDSIM_OT_export_alembic(bpy.types.Operator):
-    """Export the baked liquid surface as an Alembic mesh sequence"""
+USD_SUFFIXES = (".usd", ".usda", ".usdc")
+SAMPLER_NAME = "FluidSim USD Sampler"
 
-    bl_idname = "fluidsim.export_alembic"
-    bl_label = "Export Surface as Alembic"
+
+def _sampler_group(name: str, trim_padding: bool):
+    """A Geometry Nodes group that changes nothing but depends on time.
+
+    Scene Time x 0 drives a Set Position offset, so the USD exporter samples
+    the object every frame. With ``trim_padding`` it also deletes zero-radius
+    points: the padding publication keeps beyond the live count.
+    """
+    group = bpy.data.node_groups.new(name, "GeometryNodeTree")
+    group.interface.new_socket(
+        "Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    group.interface.new_socket(
+        "Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    nodes, links = group.nodes, group.links
+    geometry = nodes.new("NodeGroupInput").outputs[0]
+    if trim_padding:
+        radius = nodes.new("GeometryNodeInputRadius")
+        padding = nodes.new("FunctionNodeCompare")
+        padding.data_type = "FLOAT"
+        padding.operation = "LESS_EQUAL"
+        padding.inputs[1].default_value = 0.0
+        links.new(radius.outputs[0], padding.inputs[0])
+        delete = nodes.new("GeometryNodeDeleteGeometry")
+        delete.domain = "POINT"
+        links.new(geometry, delete.inputs["Geometry"])
+        links.new(padding.outputs[0], delete.inputs["Selection"])
+        geometry = delete.outputs[0]
+    time = nodes.new("GeometryNodeInputSceneTime")
+    zero = nodes.new("ShaderNodeMath")
+    zero.operation = "MULTIPLY"
+    zero.inputs[1].default_value = 0.0
+    offset = nodes.new("ShaderNodeCombineXYZ")
+    move = nodes.new("GeometryNodeSetPosition")
+    links.new(time.outputs["Frame"], zero.inputs[0])
+    links.new(zero.outputs[0], offset.inputs[0])
+    links.new(geometry, move.inputs["Geometry"])
+    links.new(offset.outputs[0], move.inputs["Offset"])
+    links.new(move.outputs[0], nodes.new("NodeGroupOutput").inputs[0])
+    return group
+
+
+class _UsdSamplers:
+    """The temporary modifiers and node groups, removed by :meth:`remove`.
+
+    Point outputs export their cached points: the existing modifiers on a
+    point cloud (the add-on's render group realizes an ico-sphere per point)
+    are muted for render and restored by :meth:`remove`.
+    """
+
+    def __init__(self):
+        self.groups = []
+        self.modifiers = []
+        self.muted = []
+
+    def attach(self, objects):
+        groups = {}
+        for obj in objects:
+            trim = obj.type == "POINTCLOUD"
+            if trim:
+                for existing in obj.modifiers:
+                    if existing.show_render:
+                        self.muted.append((existing, True))
+                        existing.show_render = False
+            if trim not in groups:
+                groups[trim] = _sampler_group(SAMPLER_NAME, trim)
+                self.groups.append(groups[trim])
+            modifier = obj.modifiers.new(SAMPLER_NAME, "NODES")
+            self.modifiers.append((obj, modifier))
+            modifier.node_group = groups[trim]
+
+    def remove(self) -> list[str]:
+        problems = []
+        for obj, modifier in reversed(self.modifiers):
+            try:
+                obj.modifiers.remove(modifier)
+            except Exception as exc:  # noqa: BLE001 - keep removing the rest
+                problems.append(f"modifier on {obj.name}: {exc}")
+        self.modifiers.clear()
+        for modifier, shown in reversed(self.muted):
+            try:
+                modifier.show_render = shown
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"modifier {modifier.name}: {exc}")
+        self.muted.clear()
+        for group in self.groups:
+            try:
+                bpy.data.node_groups.remove(group)
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"node group: {exc}")
+        self.groups.clear()
+        return problems
+
+
+def export_usd(scene, filepath: str, plan: UsdExportPlan) -> list[str]:
+    """Write the plan's outputs as one animated USD stage; returns restore problems.
+
+    Raises when a point cloud was replaced mid-range anyway (its points would
+    be split across prims instead of sampled per frame).
+    """
+    state = _SceneState(scene, plan.objects)
+    samplers = _UsdSamplers()
+    try:
+        state.enter(plan)
+        with output_publication.hold_point_capacity():
+            for obj, peak in plan.points:
+                output_publication.reserve_point_capacity(obj, peak)
+            # Reservation leaves placeholders: republish the first frame.
+            playback.clear_cache_cursors()
+            samplers.attach(plan.objects)
+            datablocks = [(obj, obj.data.as_pointer()) for obj in plan.objects]
+            _set_frame_range(scene, plan.start, plan.end)
+            result = bpy.ops.wm.usd_export(
+                filepath=filepath,
+                selected_objects_only=True,
+                export_animation=True,
+                evaluation_mode="RENDER",
+                export_materials=False,
+                export_uvmaps=False,
+                export_custom_properties=False,
+            )
+            if "FINISHED" not in result:
+                raise RuntimeError("Blender's USD exporter did not finish.")
+            replaced = [obj.name for obj, pointer in datablocks
+                        if obj.data.as_pointer() != pointer]
+            if replaced:
+                raise RuntimeError(
+                    f"{', '.join(replaced)} changed datablock during the export, "
+                    "so the file has no per-frame samples for it.")
+    finally:
+        problems = samplers.remove()
+        problems += state.restore()
+    return problems
+
+
+class _CacheRangeExport:
+    """File-select operator body shared by the cache-driven exporters.
+
+    Subclasses set ``format_name``, ``default_name``, ``suffixes`` and the
+    ``planner``/``exporter`` callables.
+    """
+
     bl_options = {"REGISTER"}
 
     filepath: StringProperty(subtype="FILE_PATH", default="")
-    filter_glob: StringProperty(default="*.abc", options={"HIDDEN"})
     frame_start: IntProperty(
         name="Start", default=0, min=0,
         description="First frame to export; 0 uses the first cached frame")
@@ -248,7 +483,7 @@ class FLUIDSIM_OT_export_alembic(bpy.types.Operator):
 
     def _plan(self, context):
         try:
-            return plan_export(context.scene, self.frame_start, self.frame_end)
+            return self.planner(context.scene, self.frame_start, self.frame_end)
         except ExportRefused as exc:
             self.report({"ERROR"}, str(exc))
             return None
@@ -257,7 +492,7 @@ class FLUIDSIM_OT_export_alembic(bpy.types.Operator):
         if self._plan(context) is None:
             return {"CANCELLED"}
         if not self.filepath:
-            self.filepath = "fluidsim_surface.abc"
+            self.filepath = self.default_name
         context.window_manager.fileselect_add(self)
         return {"RUNNING_MODAL"}
 
@@ -269,14 +504,14 @@ class FLUIDSIM_OT_export_alembic(bpy.types.Operator):
         plan = self._plan(context)
         if plan is None:
             return {"CANCELLED"}
-        filepath = _normalized_path(self.filepath)
+        filepath = _normalized_path(self.filepath, self.suffixes)
         try:
-            problems = export_alembic(scene, filepath, plan)
+            problems = self.exporter(scene, filepath, plan)
         except ExportRefused as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
         except Exception as exc:  # noqa: BLE001 - surface any exporter failure
-            self.report({"ERROR"}, f"Alembic export failed: {exc}")
+            self.report({"ERROR"}, f"{self.format_name} export failed: {exc}")
             return {"CANCELLED"}
         for problem in problems:
             self.report({"WARNING"}, f"Could not fully restore {problem}")
@@ -284,6 +519,36 @@ class FLUIDSIM_OT_export_alembic(bpy.types.Operator):
             {"INFO"},
             f"Exported frames {plan.start}-{plan.end} ({len(plan.frames)}) to {filepath}")
         return {"FINISHED"}
+
+
+class FLUIDSIM_OT_export_alembic(_CacheRangeExport, bpy.types.Operator):
+    """Export the baked liquid surface as an Alembic mesh sequence"""
+
+    bl_idname = "fluidsim.export_alembic"
+    bl_label = "Export Surface as Alembic"
+
+    filter_glob: StringProperty(default="*.abc", options={"HIDDEN"})
+
+    format_name = "Alembic"
+    default_name = "fluidsim_surface.abc"
+    suffixes = (".abc",)
+    planner = staticmethod(plan_export)
+    exporter = staticmethod(export_alembic)
+
+
+class FLUIDSIM_OT_export_usd(_CacheRangeExport, bpy.types.Operator):
+    """Export the baked liquid surface, particles and whitewater as animated USD, with their attributes"""
+
+    bl_idname = "fluidsim.export_usd"
+    bl_label = "Export Liquid as USD"
+
+    filter_glob: StringProperty(default="*.usd;*.usda;*.usdc", options={"HIDDEN"})
+
+    format_name = "USD"
+    default_name = "fluidsim_liquid.usd"
+    suffixes = USD_SUFFIXES
+    planner = staticmethod(plan_usd_export)
+    exporter = staticmethod(export_usd)
 
 
 def plan_vdb_export(scene, frame_start=0, frame_end=0):
@@ -370,7 +635,7 @@ class FLUIDSIM_OT_export_vdb(bpy.types.Operator):
         return {"FINISHED"}
 
 
-CLASSES = (FLUIDSIM_OT_export_alembic, FLUIDSIM_OT_export_vdb)
+CLASSES = (FLUIDSIM_OT_export_alembic, FLUIDSIM_OT_export_usd, FLUIDSIM_OT_export_vdb)
 
 
 def register():
