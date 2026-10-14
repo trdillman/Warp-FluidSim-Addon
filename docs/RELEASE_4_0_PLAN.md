@@ -100,6 +100,26 @@ the same property as its panel twin; the GUI gate adds one Deck lane (open demo,
 the emitter velocity gizmo, confirm the pending chip and the applied value); Deck off
 leaves the UI operator/panel behaviour tests byte-identical. Spec: `SPEC-liquid-deck.md`.
 
+**Reference mockup.** `docs/design/liquid_deck_mockup.html` (published at
+https://claude.ai/artifact/5jjwB1o9BEDnYjseufEe1V, private to the owner until shared) is the interaction reference for
+lanes K and V. Open it, press **Play guided tour**, and build to what it shows. It is a
+reference for layout, states and behaviour, not code to port: it is a 2D canvas with fake
+physics, and the real Deck is `gpu` drawing plus gizmos plus one modal operator.
+
+| Mockup element | What it pins down | Spec component / file |
+|---|---|---|
+| Deck bar (bottom card) | Group order: transport, readout + ms sparkline, pending chip, preview/palette/wheel, bake ring; translucent card, one accent | `SPEC-liquid-deck.md` Deck bar, `blender/deck/bar.py` |
+| Pending chip | Three states: idle grey; LIVE green "Applied live · field", auto-clears; RESET amber "Reset pending · reason" with Apply (reset) / Revert | Deck bar chip, reads `pending_settings` presentation |
+| Emitter velocity arrow + rate dial | Drag tip = `emitter_velocity`, drag ring = `emission_rate`, live value labels beside the handle; both LIVE | `blender/deck/gizmos.py` emitter group |
+| Domain face handle | During drag: dashed leaf-padded grid, cell count, cell size, padded dims; on release: RESET chip | `gizmos.py` domain group |
+| Collider label click | Static ⇄ Dynamic toggle; Dynamic floats and is pushed; RESET class | `gizmos.py` collider group, `SPEC-rigid-coupling.md` |
+| Liquid Preview toggle (`L`) | Points → screen-space surface with absorption, rim and foam; corner label reads "Liquid Preview" | `SPEC-liquid-preview.md`, `blender/liquid_preview/` |
+| Command palette (`Ctrl+K`) | Kind column (operator/preset/demo/setting), fuzzy match, inline numeric edit committed on Enter, enum shown read-only | `blender/deck/palette.py` |
+| Radial wheel (right-click) | Six slots per stage, hub shows stage and cycles Setup → Simulate → Look → Bake on click | `blender/deck/wheel.py` |
+| Token sheet (dev-notes rail) | Accent, deck fill, LIVE/RESET/REINIT colours, water colour | `blender/deck/tokens.py` (theme-derived in the real build) |
+
+Where the mockup and a spec disagree, the spec wins and the mockup gets updated.
+
 ### 3. Two-way rigid-body coupling — objects that float and get pushed
 Deferred from 3.0 ("no file break needed, so 3.1/3.2"), never built. Colliders already
 push liquid (one-way, with velocity, friction and grip). Add the other direction: a

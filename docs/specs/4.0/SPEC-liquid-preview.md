@@ -61,6 +61,15 @@ touch the solver): `liquid_preview_enabled`, `liquid_preview_scale`,
 Fallback: if shader compilation fails on a backend, log once, set a session flag,
 draw nothing, and keep the PointCloud visible. Never raise inside a draw handler.
 
+## Reference mockup
+
+The Liquid Preview toggle in `docs/design/liquid_deck_mockup.html` (https://claude.ai/artifact/5jjwB1o9BEDnYjseufEe1V) shows
+the intended look and the UI contract: one Deck toggle and an `L` hotkey, the viewport
+corner label switches to "Liquid Preview", thin regions get a bright Fresnel rim, thick
+regions darken toward the absorption colour, and the densest regions read as foam. The
+mockup's image is a 2D thickness splat, not SSFR; the SSIM references above are the
+pixel truth.
+
 ## Acceptance
 
 - `tests/ui/test_liquid_preview_reference.py` (Blender, `--background`, `gpu.init()`):

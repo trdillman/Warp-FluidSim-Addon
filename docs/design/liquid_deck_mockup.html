@@ -1,0 +1,485 @@
+<title>Liquid Deck Mockup</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a fake Blender 3D viewport (canvas, always dark like Blender) carries the Deck layer;
+   a narrow dev-notes rail on the right maps every element to the 4.0 spec. */
+:root{
+  --bg:#f3f4f6; --fg:#15181c; --mute:#5c6572; --rail:#ffffff; --line:#d9dde3;
+  --vp:#3a3d41; --vp-grid:#4a4e53; --vp-axis-x:#c8484f; --vp-axis-y:#6fae3c;
+  --deck:rgba(22,25,30,.72); --deck-line:rgba(255,255,255,.10); --deck-fg:#e8ecf1; --deck-mute:#9aa4b1;
+  --accent:#43c6d8; --accent-ink:#06333a;
+  --live:#6fd38f; --reset:#f2b84b; --reinit:#f06d6d;
+  --water:#2aa6c4; --water-deep:#0a4e63; --foam:#eef6fa;
+  --font-ui:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-data:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#101216;--fg:#e8ecf1;--mute:#9aa4b1;--rail:#171a1f;--line:#262b33;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#101216;--fg:#e8ecf1;--mute:#9aa4b1;--rail:#171a1f;--line:#262b33;color-scheme:dark}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-ui);font-size:14px;line-height:1.45}
+.app{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr;height:100%;min-height:640px}
+header{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.01em}
+header .sub{color:var(--mute);font-size:12.5px}
+header .spacer{flex:1}
+.btn{font:inherit;font-weight:600;font-size:12.5px;padding:6px 11px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn:focus-visible,.deck button:focus-visible,.pal input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.stage{position:relative;min-width:0;overflow:hidden;background:var(--vp)}
+canvas#vp{display:block;width:100%;height:100%;cursor:crosshair}
+.stage .corner{position:absolute;left:12px;top:10px;color:#cfd5dc;font-size:12px;font-family:var(--font-data);opacity:.85;pointer-events:none}
+.stage .corner b{color:#fff;font-weight:500}
+/* Deck bar */
+.deck{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:14px;padding:8px 12px;border-radius:14px;background:var(--deck);border:1px solid var(--deck-line);color:var(--deck-fg);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);box-shadow:0 10px 30px rgba(0,0,0,.35);max-width:calc(100% - 24px);flex-wrap:wrap;justify-content:center}
+.deck .grp{display:flex;align-items:center;gap:6px}
+.deck .sep{width:1px;height:26px;background:var(--deck-line)}
+.deck button{font:inherit;color:var(--deck-fg);background:transparent;border:1px solid transparent;border-radius:8px;padding:5px 8px;cursor:pointer;font-weight:600;font-size:12.5px;display:flex;align-items:center;gap:6px}
+.deck button:hover{background:rgba(255,255,255,.08);border-color:var(--deck-line)}
+.deck button.on{background:rgba(67,198,216,.18);border-color:rgba(67,198,216,.5);color:#bff0f7}
+.deck .ro{font-family:var(--font-data);font-size:12px;color:var(--deck-mute);display:flex;align-items:center;gap:10px;font-variant-numeric:tabular-nums}
+.deck .ro b{color:var(--deck-fg);font-weight:500}
+.deck canvas.spark{width:84px;height:22px}
+.chip{display:flex;align-items:center;gap:8px;padding:4px 6px 4px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--deck-line)}
+.chip .dot{width:8px;height:8px;border-radius:50%}
+.chip.live{color:var(--live)} .chip.live .dot{background:var(--live)}
+.chip.reset{color:var(--reset)} .chip.reset .dot{background:var(--reset)}
+.chip.reinit{color:var(--reinit)} .chip.reinit .dot{background:var(--reinit)}
+.chip.idle{color:var(--deck-mute)} .chip.idle .dot{background:var(--deck-mute)}
+.chip button{padding:3px 8px;font-size:11.5px;border-radius:999px}
+.chip button.go{background:rgba(242,184,75,.2);border-color:rgba(242,184,75,.5);color:#ffd98a}
+.ring{position:relative;width:28px;height:28px}
+.ring svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.ring span{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--font-data);font-size:9.5px;color:var(--deck-fg)}
+/* Palette */
+.pal{position:absolute;left:50%;top:14%;transform:translateX(-50%);width:min(520px,calc(100% - 32px));border-radius:14px;background:var(--deck);border:1px solid var(--deck-line);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:0 20px 50px rgba(0,0,0,.45);color:var(--deck-fg);overflow:hidden}
+.pal input{width:100%;box-sizing:border-box;font:inherit;font-size:15px;padding:12px 14px;background:transparent;border:0;border-bottom:1px solid var(--deck-line);color:var(--deck-fg)}
+.pal ul{list-style:none;margin:0;padding:6px;max-height:300px;overflow:auto}
+.pal li{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px}
+.pal li.sel,.pal li:hover{background:rgba(67,198,216,.16)}
+.pal li .k{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--deck-mute);width:62px;flex:none}
+.pal li .v{margin-left:auto;font-family:var(--font-data);font-size:12px;color:#bff0f7}
+.pal li input.inl{width:84px;font-family:var(--font-data);font-size:12px;padding:2px 6px;border:1px solid var(--deck-line);border-radius:6px;border-bottom:1px solid var(--deck-line);margin-left:auto}
+.pal .hint{padding:6px 12px 10px;font-size:11px;color:var(--deck-mute);border-top:1px solid var(--deck-line)}
+/* Radial wheel */
+.wheel{position:absolute;width:260px;height:260px;transform:translate(-50%,-50%);pointer-events:none}
+.wheel .slot{position:absolute;left:50%;top:50%;width:74px;height:48px;margin:-24px 0 0 -37px;display:grid;place-items:center;text-align:center;font-size:11.5px;font-weight:700;color:var(--deck-fg);background:var(--deck);border:1px solid var(--deck-line);border-radius:12px;pointer-events:auto;cursor:pointer;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);transition:transform .12s ease,background .12s}
+.wheel .slot:hover{background:rgba(67,198,216,.25);border-color:var(--accent)}
+.wheel .hub{position:absolute;left:50%;top:50%;width:72px;height:72px;margin:-36px 0 0 -36px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;color:#bff0f7;background:var(--deck);border:1px solid rgba(67,198,216,.5);pointer-events:auto;cursor:pointer;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+/* Toast + tour caption */
+.toast{position:absolute;left:50%;top:14px;transform:translateX(-50%);padding:7px 12px;border-radius:999px;background:var(--deck);border:1px solid var(--deck-line);color:var(--deck-fg);font-size:12.5px;font-weight:600;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px)}
+.toast.show{opacity:1}
+.caption{position:absolute;right:14px;top:14px;max-width:300px;padding:10px 12px;border-radius:var(--r);background:var(--deck);border:1px solid rgba(67,198,216,.45);color:var(--deck-fg);font-size:12.5px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.caption b{color:#bff0f7}
+.caption .step{font-family:var(--font-data);font-size:10.5px;color:var(--deck-mute);display:block;margin-bottom:3px}
+/* Rail */
+aside{min-width:0;border-left:1px solid var(--line);background:var(--rail);overflow:auto;padding:14px 16px;font-size:13px}
+aside h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:14px 0 8px;font-weight:700}
+aside h2:first-child{margin-top:0}
+aside ol{margin:0;padding-left:18px;display:grid;gap:7px}
+aside li b{font-weight:700}
+aside code{font-family:var(--font-data);font-size:11.5px;background:color-mix(in srgb,var(--fg) 7%,transparent);padding:1px 5px;border-radius:5px}
+.tok{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-family:var(--font-data);font-size:11.5px;align-items:center}
+.tok i{width:14px;height:14px;border-radius:4px;border:1px solid var(--line);display:inline-block}
+kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px}
+@media (max-width:860px){.app{grid-template-columns:1fr;grid-template-rows:auto 60vh auto}aside{border-left:0;border-top:1px solid var(--line)}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="app">
+  <header>
+    <h1>Liquid Deck</h1>
+    <span class="sub">Interactive reference mockup for FluidSim Warp 4.0 (plan §1–2, specs <code>SPEC-liquid-deck.md</code>, <code>SPEC-liquid-preview.md</code>). Everything below is simulated in the page.</span>
+    <span class="spacer"></span>
+    <button class="btn primary" id="tourBtn">Play guided tour</button>
+    <button class="btn" id="notesBtn">Hide dev notes</button>
+  </header>
+
+  <div class="stage" id="stage">
+    <canvas id="vp" width="1200" height="720" aria-label="Simulated Blender 3D viewport with a liquid domain, an emitter gizmo and a collider"></canvas>
+    <div class="corner">User Perspective · <b id="cornerMode">Solid</b> · FluidSim Domain · <b id="cornerCells">80 × 64 × 48</b> cells</div>
+
+    <div class="caption" id="caption" hidden></div>
+    <div class="toast" id="toast"></div>
+
+    <div class="wheel" id="wheel" hidden></div>
+
+    <div class="pal" id="pal" hidden role="dialog" aria-label="Command palette">
+      <input id="palIn" placeholder="Type a command, preset, demo or setting…" autocomplete="off">
+      <ul id="palList"></ul>
+      <div class="hint">↑↓ choose · Enter run or edit · Esc close · every row is an existing operator or property</div>
+    </div>
+
+    <div class="deck" id="deck" role="toolbar" aria-label="Liquid Deck bar">
+      <div class="grp">
+        <button id="bPlay" title="screen.animation_play">▶ Play</button>
+        <button id="bStep" title="fluidsim.step_frame">⏭ Step</button>
+        <button id="bRestart" title="fluidsim.restart_simulation">↺ Restart</button>
+      </div>
+      <div class="sep"></div>
+      <div class="ro">
+        <span>particles <b id="roP">0</b></span>
+        <span>substeps <b id="roS">4</b></span>
+        <span>ms <b id="roMs">—</b></span>
+        <canvas class="spark" id="spark" width="168" height="44"></canvas>
+      </div>
+      <div class="sep"></div>
+      <div class="chip idle" id="chip"><span class="dot"></span><span id="chipTxt">No pending changes</span></div>
+      <div class="sep"></div>
+      <div class="grp">
+        <button id="bPrev" title="scene.fluidsim.liquid_preview_enabled">◍ Liquid Preview</button>
+        <button id="bPal" title="fluidsim.command_palette">⌘K</button>
+        <button id="bWheel" title="fluidsim.radial_wheel">◎</button>
+        <button id="bBake" title="fluidsim.bake"><span class="ring"><svg viewBox="0 0 28 28"><circle cx="14" cy="14" r="11" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="3"/><circle id="ringArc" cx="14" cy="14" r="11" fill="none" stroke="#43c6d8" stroke-width="3" stroke-dasharray="69.1" stroke-dashoffset="69.1" stroke-linecap="round"/></svg><span id="ringTxt">●</span></span>Bake</button>
+      </div>
+    </div>
+  </div>
+
+  <aside id="notes">
+    <h2>What this mocks</h2>
+    <ol>
+      <li><b>Deck bar</b> (bottom). Transport, live readout with a ms/frame sparkline, the <b>pending chip</b>, Liquid Preview toggle, palette, wheel, bake ring. Each button names its operator in its tooltip. Spec: Deck bar.</li>
+      <li><b>Emitter gizmo.</b> Drag the arrow head to set <code>emitter_velocity</code> (LIVE class: chip goes green, no reset). Drag the dial ring to set <code>emission_rate</code>.</li>
+      <li><b>Domain handles.</b> Drag the right-face handle to resize the domain. While dragging, the padded grid and cell count preview; on release the chip shows <b>Reset pending</b> with the reason and an Apply button (RESET class).</li>
+      <li><b>Collider.</b> Click the crate to toggle <b>Dynamic</b> (4.0 rigid coupling). A dynamic crate floats and gets pushed.</li>
+      <li><b>Liquid Preview.</b> Toggle in the Deck or with <kbd>L</kbd>: particles become a screen-space surface with absorption, Fresnel rim and foam. Mesh build is skipped; the PointCloud stays published underneath.</li>
+      <li><b>Command palette.</b> <kbd>Ctrl</kbd>+<kbd>K</kbd>. Fuzzy list of operators, presets, demos and settings with inline values; numbers edit in place.</li>
+      <li><b>Radial wheel.</b> Right-click in the viewport. Six slots per stage; the hub cycles Setup → Simulate → Look → Bake.</li>
+    </ol>
+    <h2>Token sheet (SPEC-liquid-deck § tokens)</h2>
+    <div class="tok">
+      <i style="background:#43c6d8"></i><span>--accent · one accent only</span>
+      <i style="background:rgba(22,25,30,.72)"></i><span>--deck · card fill, 14px blur, 1px 10% line</span>
+      <i style="background:#6fd38f"></i><span>--live · LIVE class, applied immediately</span>
+      <i style="background:#f2b84b"></i><span>--reset · RESET class, Apply/Revert</span>
+      <i style="background:#f06d6d"></i><span>--reinit · REINIT class</span>
+      <i style="background:#2aa6c4"></i><span>--water · preview absorption colour</span>
+    </div>
+    <h2>Rules the real build must keep</h2>
+    <ol>
+      <li>Deck holds no state; every control writes the panel's property or calls its operator (parity test).</li>
+      <li>Modal only owns events over Deck hit regions; elsewhere <code>PASS_THROUGH</code>.</li>
+      <li>Colours derive from the active Blender theme at register time (this page hard-codes the dark theme look).</li>
+      <li>Liquid Preview reads the already-published position array; no second readback.</li>
+      <li>Deck OFF leaves every existing UI test byte-identical.</li>
+    </ol>
+  </aside>
+</div>
+
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const vp = $('#vp'), ctx = vp.getContext('2d');
+const stage = $('#stage');
+let W = 1200, H = 720, DPR = 1;
+function resize(){ const r = stage.getBoundingClientRect(); DPR = Math.min(2, window.devicePixelRatio||1); W = Math.max(320, r.width); H = Math.max(320, r.height); vp.width = W*DPR; vp.height = H*DPR; vp.style.width = W+'px'; vp.style.height = H+'px'; }
+window.addEventListener('resize', resize); resize();
+
+/* ---------- scene state (the "scene.fluidsim" twin) ---------- */
+const S = {
+  domain: {w: 5.0, h: 4.0, d: 3.0}, divisions: 80,
+  emitter: {x: -1.6, y: 2.6, z: 0, vx: 2.6, vy: -0.4, rate: 12000},
+  collider: {x: 1.2, y: 0.9, z: 0, s: 0.55, dynamic: false, vy: 0, ay: 0, ang: 0},
+  playing: true, preview: false, stage: 0, substeps: 4,
+  pending: null, // {cls:'LIVE'|'RESET', label}
+  bake: {on:false, p:0},
+};
+const stages = ['Setup','Simulate','Look','Bake'];
+function cells(){ const h = S.domain.w / S.divisions; return [S.divisions, Math.round(S.domain.h/h), Math.round(S.domain.d/h)]; }
+function cellsTxt(){ const c = cells(); return `${c[0]} × ${c[1]} × ${c[2]}`; }
+function cellSize(){ return (S.domain.w / S.divisions); }
+
+/* ---------- camera: tiny 3D projection ---------- */
+const cam = {yaw: -0.55, pitch: 0.42, dist: 11, fov: 1.0};
+function project(x, y, z){
+  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  let X = x*cy - z*sy, Z = x*sy + z*cy;
+  let Y = (y-1.4)*cp - Z*sp; Z = (y-1.4)*sp + Z*cp + cam.dist;
+  const f = (H*0.9)/cam.fov/Z;
+  return [W/2 + X*f, H*0.56 - Y*f, Z, f];
+}
+
+/* ---------- particles: a cheap, honest-looking splash ---------- */
+const P = []; const MAXP = 2600;
+function emit(n){
+  const e = S.emitter;
+  for(let i=0;i<n && P.length<MAXP;i++){
+    P.push({x:e.x+(Math.random()-.5)*.25, y:e.y+(Math.random()-.5)*.25, z:e.z+(Math.random()-.5)*.5, vx:e.vx+(Math.random()-.5)*.6, vy:e.vy+(Math.random()-.5)*.6, vz:(Math.random()-.5)*.6, age:0});
+  }
+}
+function stepSim(dt){
+  const hw = S.domain.w/2, hd = S.domain.d/2, c = S.collider;
+  if(S.playing) emit(Math.round(S.emitter.rate/1500));
+  let fy = 0, cnt = 0;
+  for(const p of P){
+    p.vy -= 9.8*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.z += p.vz*dt; p.age += dt;
+    if(p.y < 0){ p.y = 0; p.vy *= -0.18; p.vx *= .92; p.vz *= .92; }
+    if(p.x < -hw){ p.x=-hw; p.vx*=-.4 } if(p.x > hw){ p.x=hw; p.vx*=-.4 }
+    if(p.z < -hd){ p.z=-hd; p.vz*=-.4 } if(p.z > hd){ p.z=hd; p.vz*=-.4 }
+    // crate collision (axis aligned box)
+    if(Math.abs(p.x-c.x)<c.s && Math.abs(p.z-c.z)<c.s && p.y<c.y+c.s && p.y>c.y-c.s){
+      const dx = p.x-c.x, dz = p.z-c.z;
+      if(Math.abs(dx)>Math.abs(dz)){ p.x = c.x+Math.sign(dx)*c.s; p.vx*=-.3; } else { p.z = c.z+Math.sign(dz)*c.s; p.vz*=-.3; }
+      fy += Math.max(0,-p.vy); cnt++;
+    }
+  }
+  // rigid coupling (mock): buoyancy from submerged depth + impulse from hits
+  if(c.dynamic){
+    const depth = Math.max(0, Math.min(1, (1.0 - (c.y - c.s))/ (2*c.s))); // water level ≈ 1.0 m
+    c.ay = -9.8 + 9.8*2.2*depth + fy*0.02 - c.vy*1.5;
+    c.vy += c.ay*dt; c.y += c.vy*dt; if(c.y < c.s){ c.y=c.s; c.vy*=-.2 }
+    c.ang = Math.sin(performance.now()/900)*0.08*depth;
+  }
+  // recycle oldest
+  while(P.length>MAXP-40) P.shift();
+  for(let i=P.length-1;i>=0;i--) if(P[i].age>7) P.splice(i,1);
+}
+
+/* ---------- drawing ---------- */
+function line(a,b,col,w=1){ ctx.strokeStyle=col; ctx.lineWidth=w; ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke(); }
+function drawGrid(){
+  const g = getComputedStyle(document.documentElement);
+  const gridCol = g.getPropertyValue('--vp-grid').trim();
+  for(let i=-8;i<=8;i++){
+    line(project(i,0,-8), project(i,0,8), i===0?g.getPropertyValue('--vp-axis-y').trim():gridCol, i===0?1.4:0.7);
+    line(project(-8,0,i), project(8,0,i), i===0?g.getPropertyValue('--vp-axis-x').trim():gridCol, i===0?1.4:0.7);
+  }
+}
+function box(x0,y0,z0,x1,y1,z1,col,w,dash){
+  const c=[[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1],[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]].map(v=>project(...v));
+  const E=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  ctx.setLineDash(dash||[]); for(const [a,b] of E) line(c[a],c[b],col,w); ctx.setLineDash([]); return c;
+}
+let handles = {}; // screen-space hit targets
+function drawDomain(dragging){
+  const d=S.domain, hw=d.w/2, hd=d.d/2;
+  box(-hw,0,-hd,hw,d.h,hd,dragging?'#ffd98a':'#e9a23b',1.3);
+  if(dragging){ // padded grid preview: leaf-aligned (8 cells per leaf)
+    const h=cellSize(), c=cells(), pw=Math.ceil(c[0]/8)*8*h, ph=Math.ceil(c[1]/8)*8*h, pd=Math.ceil(c[2]/8)*8*h;
+    box(-pw/2,0,-pd/2,pw/2,ph,pd/2,'rgba(255,217,138,.55)',1,[4,4]);
+    const t=project(hw,d.h+0.25,0); ctx.font=`12px ${getComputedStyle(document.body).getPropertyValue('--font-data')}`; ctx.fillStyle='#ffd98a'; ctx.textAlign='center';
+    ctx.fillText(`${cellsTxt()} cells · ${cellSize().toFixed(4)} m · padded ${Math.ceil(c[0]/8)*8}×${Math.ceil(c[1]/8)*8}×${Math.ceil(c[2]/8)*8}`, t[0], t[1]);
+  }
+  // face handle on +X
+  const hp = project(hw, d.h/2, 0);
+  handles.domX = {x:hp[0], y:hp[1], r:9};
+  ctx.fillStyle = dragging?'#ffd98a':'#e9a23b'; ctx.strokeStyle='#15181c'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.rect(hp[0]-7,hp[1]-7,14,14); ctx.fill(); ctx.stroke();
+}
+function drawCollider(){
+  const c=S.collider, s=c.s; const col = c.dynamic?'#43c6d8':'#8b93a0';
+  const k = box(c.x-s,c.y-s,c.z-s,c.x+s,c.y+s,c.z+s,col,1.6);
+  // shade a face
+  ctx.fillStyle = c.dynamic?'rgba(67,198,216,.14)':'rgba(139,147,160,.12)';
+  ctx.beginPath(); ctx.moveTo(k[4][0],k[4][1]); ctx.lineTo(k[5][0],k[5][1]); ctx.lineTo(k[6][0],k[6][1]); ctx.lineTo(k[7][0],k[7][1]); ctx.closePath(); ctx.fill();
+  const t = project(c.x, c.y+s+0.3, c.z); handles.crate = {x:t[0], y:t[1]+20, r:26};
+  ctx.font=`600 11px ${getComputedStyle(document.body).getPropertyValue('--font-ui')}`; ctx.textAlign='center';
+  ctx.fillStyle=col; ctx.fillText(c.dynamic?'Collider · Dynamic ⟲':'Collider · Static', t[0], t[1]);
+}
+function drawEmitter(active){
+  const e=S.emitter; const o=project(e.x,e.y,e.z); const tip=project(e.x+e.vx*0.5, e.y+e.vy*0.5, e.z);
+  // shape outline (disc)
+  ctx.strokeStyle='#bff0f7'; ctx.lineWidth=1.2; ctx.beginPath();
+  for(let i=0;i<=24;i++){ const a=i/24*Math.PI*2; const p=project(e.x, e.y+Math.cos(a)*.3, e.z+Math.sin(a)*.3); i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]); } ctx.stroke();
+  // velocity arrow
+  const col = active==='vel'?'#ffffff':'#43c6d8';
+  line(o,tip,col,2.2);
+  const ang=Math.atan2(tip[1]-o[1],tip[0]-o[0]);
+  ctx.fillStyle=col; ctx.beginPath(); ctx.moveTo(tip[0],tip[1]); ctx.lineTo(tip[0]-11*Math.cos(ang-.5),tip[1]-11*Math.sin(ang-.5)); ctx.lineTo(tip[0]-11*Math.cos(ang+.5),tip[1]-11*Math.sin(ang+.5)); ctx.closePath(); ctx.fill();
+  handles.vel = {x:tip[0], y:tip[1], r:12};
+  // rate dial
+  const R=28; ctx.strokeStyle='rgba(255,255,255,.18)'; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(o[0],o[1],R,0,Math.PI*2); ctx.stroke();
+  const frac=Math.min(1,e.rate/40000); ctx.strokeStyle=active==='rate'?'#ffffff':'#43c6d8'; ctx.beginPath(); ctx.arc(o[0],o[1],R,-Math.PI/2,-Math.PI/2+frac*Math.PI*2); ctx.stroke();
+  handles.rate = {cx:o[0], cy:o[1], r:R};
+  ctx.font=`11px ${getComputedStyle(document.body).getPropertyValue('--font-data')}`; ctx.fillStyle='#e8ecf1'; ctx.textAlign='left';
+  ctx.fillText(`v ${Math.hypot(e.vx,e.vy).toFixed(2)} m/s`, tip[0]+10, tip[1]-4);
+  ctx.fillText(`${(e.rate/1000).toFixed(1)}k /s`, o[0]+R+6, o[1]+4);
+}
+const off = document.createElement('canvas'); const octx = off.getContext('2d');
+function drawParticles(){
+  const pts = P.map(p=>{ const q=project(p.x,p.y,p.z); return [q[0],q[1],q[3],p]; });
+  if(!S.preview){
+    ctx.fillStyle='#8fd3e6';
+    for(const [x,y,f] of pts){ ctx.beginPath(); ctx.arc(x,y,Math.max(1,0.045*f),0,6.283); ctx.fill(); }
+    return;
+  }
+  // Liquid Preview (mock of SSFR): splat depth-ish blobs, threshold, shade with rim + absorption + foam
+  const sc=0.5; off.width=Math.max(2,W*sc); off.height=Math.max(2,H*sc);
+  octx.clearRect(0,0,off.width,off.height);
+  octx.globalCompositeOperation='lighter';
+  for(const [x,y,f,p] of pts){ const r=Math.max(2,0.19*f*sc); const g=octx.createRadialGradient(x*sc,y*sc,0,x*sc,y*sc,r); g.addColorStop(0,'rgba(255,255,255,.55)'); g.addColorStop(1,'rgba(255,255,255,0)'); octx.fillStyle=g; octx.beginPath(); octx.arc(x*sc,y*sc,r,0,6.283); octx.fill(); }
+  octx.globalCompositeOperation='source-over';
+  const img=octx.getImageData(0,0,off.width,off.height), d=img.data, w=off.width;
+  for(let i=0;i<d.length;i+=4){
+    const t=d[i+3]/255; // "thickness"
+    if(t<0.22){ d[i+3]=0; continue; }
+    // normal from thickness gradient (screen-space), rim light where thin
+    const l = i>=4? d[i-4+3]/255 : t, r = d[i+4+3]/255, u = i>=w*4? d[i-w*4+3]/255 : t, dn = d[i+w*4+3]/255;
+    const nx=(l-r), ny=(u-dn); const rim=Math.min(1, Math.hypot(nx,ny)*6);
+    const ab=Math.min(1,(t-0.22)*1.6); // Beer–Lambert-ish absorption
+    const foam = t>0.95?1:0;
+    d[i]  = Math.round( (42 + 180*rim + 30*(1-ab)) * (1-foam) + 238*foam );
+    d[i+1]= Math.round( (166 + 70*rim - 60*ab) * (1-foam) + 246*foam );
+    d[i+2]= Math.round( (196 + 50*rim - 80*ab) * (1-foam) + 250*foam );
+    d[i+3]= Math.round(255*(0.55+0.4*ab));
+  }
+  octx.putImageData(img,0,0);
+  ctx.imageSmoothingEnabled=true; ctx.drawImage(off,0,0,W,H);
+}
+
+let drag = null; // {kind, start}
+let last = performance.now(), msHist = [];
+function frame(now){
+  const dt = Math.min(0.033, (now-last)/1000); last = now;
+  const t0 = performance.now();
+  stepSim(dt);
+  ctx.setTransform(DPR,0,0,DPR,0,0); ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--vp'); ctx.fillRect(0,0,W,H);
+  drawGrid(); drawDomain(drag&&drag.kind==='domX'); drawParticles(); drawCollider(); drawEmitter(drag&&drag.kind);
+  const ms = performance.now()-t0 + (S.playing? 6 + S.substeps*1.9 + P.length/400 : 0);
+  msHist.push(ms); if(msHist.length>60) msHist.shift();
+  $('#roP').textContent = (P.length*230).toLocaleString();
+  $('#roS').textContent = S.substeps;
+  $('#roMs').textContent = ms.toFixed(1);
+  drawSpark();
+  if(S.bake.on){ S.bake.p=Math.min(1,S.bake.p+dt/9); $('#ringArc').setAttribute('stroke-dashoffset', (69.1*(1-S.bake.p)).toFixed(1)); $('#ringTxt').textContent=Math.round(S.bake.p*100); if(S.bake.p>=1){ S.bake.on=false; toast('Bake finished · 120 frames · cache v3.1'); $('#ringTxt').textContent='✓'; } }
+  requestAnimationFrame(frame);
+}
+function drawSpark(){ const c=$('#spark'), x=c.getContext('2d'); x.clearRect(0,0,c.width,c.height); const n=msHist.length; if(n<2) return; const max=Math.max(30,...msHist); x.beginPath(); msHist.forEach((v,i)=>{ const px=i/(59)*c.width, py=c.height-4-(v/max)*(c.height-8); i?x.lineTo(px,py):x.moveTo(px,py); }); x.strokeStyle='#43c6d8'; x.lineWidth=2; x.stroke(); x.lineTo(c.width*(n-1)/59,c.height); x.lineTo(0,c.height); x.closePath(); x.fillStyle='rgba(67,198,216,.18)'; x.fill(); const lx=c.width*(n-1)/59, ly=c.height-4-(msHist[n-1]/max)*(c.height-8); x.fillStyle='#fff'; x.beginPath(); x.arc(lx,ly,3,0,6.283); x.fill(); }
+requestAnimationFrame(frame);
+
+/* ---------- pending chip (twin of pending_settings presentation) ---------- */
+function setPending(cls,label){
+  const chip=$('#chip'), txt=$('#chipTxt');
+  chip.className='chip '+(cls||'idle').toLowerCase();
+  chip.querySelectorAll('button').forEach(b=>b.remove());
+  if(!cls){ txt.textContent='No pending changes'; S.pending=null; return; }
+  S.pending={cls,label};
+  if(cls==='LIVE'){ txt.textContent=`Applied live · ${label}`; setTimeout(()=>{ if(S.pending&&S.pending.cls==='LIVE') setPending(null); },1800); return; }
+  txt.textContent=`${cls==='RESET'?'Reset':'Re-initialize'} pending · ${label}`;
+  const apply=document.createElement('button'); apply.className='go'; apply.textContent=cls==='RESET'?'Apply (reset)':'Apply (re-init)';
+  apply.title='fluidsim.apply_pending_settings';
+  apply.onclick=()=>{ P.length=0; S.collider.y=0.9; S.collider.vy=0; toast(`Applied · solver reset · ${cellsTxt()} cells`); setPending(null); $('#cornerCells').textContent=cellsTxt(); };
+  const rev=document.createElement('button'); rev.textContent='Revert'; rev.title='fluidsim.revert_pending_settings';
+  rev.onclick=()=>{ S.domain.w=S._snapW||S.domain.w; toast('Reverted'); setPending(null); };
+  chip.append(apply,rev);
+}
+let toastT; function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2200); }
+
+/* ---------- viewport input: gizmos ---------- */
+function pos(ev){ const r=vp.getBoundingClientRect(); const e=ev.touches?ev.touches[0]:ev; return [e.clientX-r.left, e.clientY-r.top]; }
+function hit(ev){
+  const [x,y]=pos(ev);
+  if(handles.vel && Math.hypot(x-handles.vel.x,y-handles.vel.y)<handles.vel.r+4) return 'vel';
+  if(handles.rate && Math.abs(Math.hypot(x-handles.rate.cx,y-handles.rate.cy)-handles.rate.r)<7) return 'rate';
+  if(handles.domX && Math.hypot(x-handles.domX.x,y-handles.domX.y)<handles.domX.r+5) return 'domX';
+  if(handles.crate && Math.hypot(x-handles.crate.x,y-handles.crate.y)<handles.crate.r) return 'crate';
+  return null;
+}
+vp.addEventListener('mousemove', ev=>{ if(drag) return onDrag(ev); vp.style.cursor = hit(ev)?'grab':'crosshair'; });
+vp.addEventListener('mousedown', ev=>{ if(ev.button!==0) return; const k=hit(ev); if(k==='crate'){ S.collider.dynamic=!S.collider.dynamic; toast(S.collider.dynamic?'Collider → Dynamic (floats, gets pushed) · RESET pending':'Collider → Static'); if(S.collider.dynamic) setPending('RESET','collider_dynamic'); return; } if(!k) return; drag={kind:k,start:pos(ev),e:{...S.emitter},w:S.domain.w}; S._snapW=S.domain.w; vp.style.cursor='grabbing'; });
+window.addEventListener('mouseup', ()=>{ if(!drag) return; const k=drag.kind; drag=null; vp.style.cursor='crosshair';
+  if(k==='domX') setPending('RESET',`domain size → ${cellsTxt()}`);
+  if(k==='vel') setPending('LIVE','emitter_velocity'); if(k==='rate') setPending('LIVE','emission_rate'); });
+function onDrag(ev){
+  const [x,y]=pos(ev);
+  if(drag.kind==='vel'){ const o=project(S.emitter.x,S.emitter.y,S.emitter.z); const f=o[3]; // invert screen delta to world (approx: x→x, y→-y)
+    S.emitter.vx = (x-o[0])/f/0.5*Math.cos(cam.yaw)*1.0; S.emitter.vy = -(y-o[1])/f/0.5; S.emitter.vx=Math.max(-6,Math.min(6,S.emitter.vx)); S.emitter.vy=Math.max(-4,Math.min(4,S.emitter.vy)); }
+  if(drag.kind==='rate'){ const a=Math.atan2(y-handles.rate.cy,x-handles.rate.cx)+Math.PI/2; let fr=((a%(Math.PI*2))+Math.PI*2)%(Math.PI*2)/(Math.PI*2); S.emitter.rate=Math.round(400+fr*39600); }
+  if(drag.kind==='domX'){ S.domain.w=Math.max(2,Math.min(9, drag.w + (x-drag.start[0])/55)); $('#cornerCells').textContent=cellsTxt(); }
+}
+vp.addEventListener('contextmenu', ev=>{ ev.preventDefault(); const [x,y]=pos(ev); openWheel(x,y); });
+
+/* ---------- deck buttons (each a twin of an operator) ---------- */
+$('#bPlay').onclick=()=>{ S.playing=!S.playing; $('#bPlay').textContent=S.playing?'❚❚ Pause':'▶ Play'; $('#bPlay').classList.toggle('on',S.playing); toast(S.playing?'screen.animation_play':'screen.animation_cancel'); };
+$('#bPlay').classList.add('on'); $('#bPlay').textContent='❚❚ Pause';
+$('#bStep').onclick=()=>{ const was=S.playing; S.playing=true; stepSim(1/24); S.playing=was; toast('fluidsim.step_frame · +1 frame'); };
+$('#bRestart').onclick=()=>{ P.length=0; S.collider.y=0.9; S.collider.vy=0; toast('fluidsim.restart_simulation'); setPending(null); };
+function setPreview(v){ S.preview=v; $('#bPrev').classList.toggle('on',v); $('#cornerMode').textContent=v?'Liquid Preview':'Solid'; toast(v?'Liquid Preview on · screen-space surface, no mesh build':'Liquid Preview off · points'); }
+$('#bPrev').onclick=()=>setPreview(!S.preview);
+$('#bBake').onclick=()=>{ if(S.bake.on) return; S.bake={on:true,p:0}; $('#ringTxt').textContent='0'; toast('fluidsim.bake · frames 1–120 · Esc cancels'); };
+$('#bPal').onclick=()=>openPal(); $('#bWheel').onclick=()=>openWheel(W/2,H/2-40);
+window.addEventListener('keydown', ev=>{
+  if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==='k'){ ev.preventDefault(); openPal(); return; }
+  if(ev.key==='Escape'){ closePal(); closeWheel(); return; }
+  if(ev.target.tagName==='INPUT') return;
+  if(ev.key.toLowerCase()==='l') setPreview(!S.preview);
+  if(ev.key===' '){ ev.preventDefault(); $('#bPlay').click(); }
+});
+
+/* ---------- command palette ---------- */
+const commands = [
+  {k:'operator', t:'Play / Pause', run:()=>$('#bPlay').click()},
+  {k:'operator', t:'Restart Simulation', run:()=>$('#bRestart').click()},
+  {k:'operator', t:'Bake 1–120', run:()=>$('#bBake').click()},
+  {k:'operator', t:'Export Surface as Alembic', run:()=>toast('fluidsim.export_alembic (needs a baked cache)')},
+  {k:'operator', t:'Apply Pending Changes', run:()=>{ const b=$('#chip button.go'); b?b.click():toast('Nothing pending'); }},
+  {k:'display', t:'Toggle Liquid Preview', run:()=>setPreview(!S.preview)},
+  {k:'preset', t:'Apply preset · Water', run:()=>{ S.substeps=4; toast('Preset Water applied · LIVE + RESET fields classified'); setPending('RESET','preset Water'); }},
+  {k:'preset', t:'Apply preset · Honey (viscous)', run:()=>{ S.substeps=6; toast('Preset Honey applied'); setPending('RESET','preset Honey'); }},
+  {k:'demo', t:'Load demo · dam_break', run:()=>toast('fluidsim.load_demo dam_break')},
+  {k:'demo', t:'Load demo · crown_splash', run:()=>toast('fluidsim.load_demo crown_splash')},
+  {k:'demo', t:'Load demo · paddle_stir', run:()=>toast('fluidsim.load_demo paddle_stir')},
+  {k:'setting', t:'Resolution Divisions', get:()=>S.divisions, set:v=>{ S.divisions=Math.max(16,Math.min(256,Math.round(v))); $('#cornerCells').textContent=cellsTxt(); setPending('RESET',`resolution_divisions = ${S.divisions}`); }},
+  {k:'setting', t:'Substeps', get:()=>S.substeps, set:v=>{ S.substeps=Math.max(1,Math.min(16,Math.round(v))); setPending('LIVE','substeps'); }},
+  {k:'setting', t:'Emission Rate (/s)', get:()=>S.emitter.rate, set:v=>{ S.emitter.rate=Math.max(0,Math.round(v)); setPending('LIVE','emission_rate'); }},
+  {k:'setting', t:'Pressure Preconditioner', get:()=>'MULTIGRID', set:()=>toast('enum: Jacobi | Multigrid (4.0 default)')},
+  {k:'setting', t:'Collider · Dynamic', get:()=>S.collider.dynamic?'on':'off', set:()=>{ S.collider.dynamic=!S.collider.dynamic; setPending('RESET','collider_dynamic'); }},
+];
+let palSel=0, palRows=[];
+function fuzzy(q,t){ q=q.toLowerCase(); t=t.toLowerCase(); let i=0; for(const ch of t){ if(ch===q[i]) i++; if(i===q.length) return true; } return q.length===0; }
+function renderPal(){
+  const q=$('#palIn').value.trim(); palRows=commands.filter(c=>fuzzy(q,c.t)||fuzzy(q,c.k)); palSel=Math.min(palSel,Math.max(0,palRows.length-1));
+  const ul=$('#palList'); ul.innerHTML='';
+  palRows.forEach((c,i)=>{ const li=document.createElement('li'); if(i===palSel) li.classList.add('sel');
+    li.innerHTML=`<span class="k">${c.k}</span><span>${c.t}</span>`;
+    if(c.get!==undefined){ const v=c.get(); if(typeof v==='number'){ const inp=document.createElement('input'); inp.className='inl'; inp.value=v; inp.id='inl'+i; inp.onclick=e=>e.stopPropagation(); inp.onkeydown=e=>{ if(e.key==='Enter'){ c.set(parseFloat(inp.value)); toast(`${c.t} = ${c.get()}`); closePal(); } e.stopPropagation(); }; li.append(inp); } else { const s=document.createElement('span'); s.className='v'; s.textContent=v; li.append(s); } }
+    li.onclick=()=>runRow(i); ul.append(li); });
+}
+function runRow(i){ const c=palRows[i]; if(!c) return; if(c.run){ c.run(); closePal(); } else if(c.set){ const inp=$('#inl'+i); if(inp){ inp.focus(); inp.select(); } else { c.set(); closePal(); } } }
+function openPal(){ $('#pal').hidden=false; $('#palIn').value=''; palSel=0; renderPal(); $('#palIn').focus(); }
+function closePal(){ $('#pal').hidden=true; }
+$('#palIn').addEventListener('input', ()=>{ palSel=0; renderPal(); });
+$('#palIn').addEventListener('keydown', ev=>{ if(ev.key==='ArrowDown'){ palSel=Math.min(palRows.length-1,palSel+1); renderPal(); ev.preventDefault(); } else if(ev.key==='ArrowUp'){ palSel=Math.max(0,palSel-1); renderPal(); ev.preventDefault(); } else if(ev.key==='Enter'){ runRow(palSel); } });
+
+/* ---------- radial wheel ---------- */
+const slotsByStage = {
+  0:['Set Up & Preview','Add Emitter','Add Collider','Resize Domain','Presets','Load Demo'],
+  1:['Play / Pause','Step','Restart','Apply Pending','Substeps','Viscosity'],
+  2:['Liquid Preview','Surface Mesh','Whitewater','Color Mixing','Materials','Overlays'],
+  3:['Bake','Resume Bake','Cache Playback','Export Alembic','Export VDB','Free Cache'],
+};
+function openWheel(x,y){
+  const w=$('#wheel'); w.hidden=false; w.style.left=x+'px'; w.style.top=y+'px'; w.innerHTML='';
+  slotsByStage[S.stage].forEach((t,i)=>{ const a=-Math.PI/2+i*Math.PI/3; const s=document.createElement('div'); s.className='slot'; s.textContent=t; s.style.transform=`translate(${Math.cos(a)*96}px,${Math.sin(a)*96}px)`; s.onclick=()=>{ closeWheel(); wheelAction(t); }; w.append(s); });
+  const hub=document.createElement('div'); hub.className='hub'; hub.textContent=stages[S.stage]; hub.title='Click: next stage'; hub.onclick=ev=>{ ev.stopPropagation(); S.stage=(S.stage+1)%4; openWheel(x,y); }; w.append(hub);
+}
+function closeWheel(){ $('#wheel').hidden=true; }
+function wheelAction(t){ const map={'Play / Pause':()=>$('#bPlay').click(),'Step':()=>$('#bStep').click(),'Restart':()=>$('#bRestart').click(),'Liquid Preview':()=>setPreview(!S.preview),'Bake':()=>$('#bBake').click(),'Apply Pending':()=>{ const b=$('#chip button.go'); b?b.click():toast('Nothing pending'); }}; (map[t]||(()=>toast(`${stages[S.stage]} › ${t} (operator twin)`)))(); }
+stage.addEventListener('mousedown', ev=>{ if(!$('#wheel').hidden && !ev.target.closest('.wheel')) closeWheel(); });
+
+/* ---------- dev notes toggle ---------- */
+$('#notesBtn').onclick=()=>{ const n=$('#notes'); n.hidden=!n.hidden; document.querySelector('.app').style.gridTemplateColumns=n.hidden?'1fr':''; $('#notesBtn').textContent=n.hidden?'Show dev notes':'Hide dev notes'; resize(); };
+
+/* ---------- guided tour: scripted user interaction ---------- */
+const tour = [
+  {t:'Liquid Deck bar', b:'The bar lives in the viewport. Transport, live readout, pending chip, preview, palette, wheel, bake. Every button is a twin of an existing operator (hover for its id).', act:()=>{}},
+  {t:'Drag the emitter velocity gizmo', b:'A LIVE-class property: the chip turns green, "Applied live", nothing resets.', act:()=>{ S.emitter.vx=3.8; S.emitter.vy=0.6; setPending('LIVE','emitter_velocity'); }},
+  {t:'Turn the rate dial', b:'Also LIVE. The dial writes emission_rate; the readout follows on the next frame.', act:()=>{ S.emitter.rate=26000; setPending('LIVE','emission_rate'); }},
+  {t:'Resize the domain', b:'Dragging the face handle previews the padded grid and cell count; releasing makes a RESET-class edit. The chip shows the reason and Apply (reset) / Revert.', act:()=>{ S._snapW=S.domain.w; S.domain.w=6.4; $('#cornerCells').textContent=cellsTxt(); setPending('RESET',`domain size → ${cellsTxt()}`); }},
+  {t:'Apply the reset', b:'Same operator the panel calls (apply_pending_settings). The solver re-admits and the readout restarts.', act:()=>{ const b=$('#chip button.go'); b&&b.click(); }},
+  {t:'Liquid Preview', b:'Press L or the Deck toggle. Particles become a screen-space surface: depth sprites → narrow-range filter → normals → thickness absorption → Fresnel. No mesh build during preview.', act:()=>setPreview(true)},
+  {t:'Make the crate Dynamic', b:'4.0 two-way coupling: the collider floats and is pushed by the liquid. Its pose is keyframed on the object so it renders and exports without a solver.', act:()=>{ S.collider.dynamic=true; setPending('RESET','collider_dynamic'); setTimeout(()=>{ const b=$('#chip button.go'); b&&b.click(); },900); }},
+  {t:'Command palette', b:'Ctrl+K. Operators, presets, demos and settings in one search; numeric settings edit inline and classify like the panel would.', act:()=>{ openPal(); $('#palIn').value='res'; renderPal(); }},
+  {t:'Radial wheel', b:'Right-click. Six slots per stage; the hub cycles Setup → Simulate → Look → Bake.', act:()=>{ closePal(); openWheel(W*0.5,H*0.45); }},
+  {t:'Bake', b:'The ring is the bake progress; Esc cancels (decision D3). Edits during a bake are held and applied after.', act:()=>{ closeWheel(); $('#bBake').click(); }},
+  {t:'End of tour', b:'Everything here is a reference, not the implementation. The real Deck is gpu-module drawing + gizmos + one modal operator, with panels kept as the parity surface.', act:()=>{}},
+];
+let tourI=-1, tourT=null;
+function showCaption(i){ const c=$('#caption'); if(i<0||i>=tour.length){ c.hidden=true; return; } c.hidden=false; c.innerHTML=`<span class="step">tour ${i+1}/${tour.length}</span><b>${tour[i].t}</b><br>${tour[i].b}`; }
+function runTour(){ tourI++; if(tourI>=tour.length){ tourI=-1; showCaption(-1); $('#tourBtn').textContent='Play guided tour'; return; } showCaption(tourI); tour[tourI].act(); tourT=setTimeout(runTour, 4200); }
+$('#tourBtn').onclick=()=>{ if(tourT){ clearTimeout(tourT); tourT=null; tourI=-1; showCaption(-1); closePal(); closeWheel(); $('#tourBtn').textContent='Play guided tour'; return; } $('#tourBtn').textContent='Stop tour'; tourI=-1; runTour(); };
+})();
+</script>

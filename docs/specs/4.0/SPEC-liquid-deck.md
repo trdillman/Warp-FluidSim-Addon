@@ -67,6 +67,27 @@ twin of an existing operator or property.
 Settings: preference `deck_mode` ∈ {AUTO, ON, OFF} (AUTO = on for files saved by ≥ 4.0,
 off for older files); scene flag `deck_shown`. No Deck state is saved per object.
 
+## Reference mockup
+
+`docs/design/liquid_deck_mockup.html` (https://claude.ai/artifact/5jjwB1o9BEDnYjseufEe1V) simulates every component above.
+Its guided tour is the reference interaction script, and the GUI gate Deck lane follows
+its first five steps:
+
+1. Drag the emitter velocity arrow. The chip turns green ("Applied live"), nothing resets.
+2. Turn the rate dial. Same LIVE behaviour.
+3. Drag the domain +X handle. The padded grid and cell count preview while dragging, and
+   release shows "Reset pending" with Apply (reset) / Revert.
+4. Apply. Same operator as the panel; the readout restarts.
+5. Toggle Liquid Preview, make the collider Dynamic, open the palette, open the wheel,
+   start a bake. Each shows its own state change in the bar or viewport.
+
+Behaviour the mockup fixes that the text above leaves open: LIVE chip auto-clears after
+about 2 s; RESET chip stays until Apply or Revert; the palette shows a kind column and
+edits numbers inline; enum settings are read-only in the palette and jump to the panel;
+gizmo value labels sit beside the handle, not in a tooltip. Each Deck button's tooltip
+names the operator it calls; operator ids in the mockup that do not exist yet
+(`fluidsim.command_palette`, `fluidsim.radial_wheel`) are the names to register.
+
 ## Acceptance
 
 - `test_deck_parity.py`: every control maps to an existing operator/property; palette
