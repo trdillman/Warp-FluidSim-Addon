@@ -807,7 +807,8 @@ def _assert_workflow_stages(module_name: str) -> dict[str, object]:
     # put the user-visible choices back (other checks read the view mode).
     saved = {
         "fs": {name: getattr(fs, name) for name in (
-            "liquid_view_mode", "show_whitewater", "cache_use_custom_range")},
+            "liquid_view_mode", "show_whitewater", "cache_use_custom_range",
+            "liquid_preview_enabled")},
         "ds": {name: getattr(ds, name) for name in (
             "surface_enabled", "whitewater_enabled")},
     }
@@ -815,6 +816,7 @@ def _assert_workflow_stages(module_name: str) -> dict[str, object]:
         fs.liquid_view_mode = "SURFACE_PARTICLES"
         fs.show_whitewater = True
         fs.cache_use_custom_range = True
+        fs.liquid_preview_enabled = True
         ds.surface_enabled = True
         ds.whitewater_enabled = True
 
