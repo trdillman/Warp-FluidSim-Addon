@@ -116,6 +116,7 @@ BACKGROUND_ACCEPTANCE = (
      "CHROMATIC-VORTEX-CONTAINMENT-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_color_mixing_runtime_acceptance.py", "COLOR-MIXING-RUNTIME-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_alembic_export_acceptance.py", "ALEMBIC_EXPORT_OK"),
+    ("tests/acceptance/blender_usd_export_acceptance.py", "USD_EXPORT_OK"),
     ("tests/acceptance/blender_color_mixing_ui_acceptance.py", "COLOR-MIXING-UI-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_mixed_source_batch_acceptance.py", "MIXED-SOURCE-BATCH-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_quick_setup_idempotence.py", "QUICK-SETUP-IDEMPOTENCE-PASS"),
