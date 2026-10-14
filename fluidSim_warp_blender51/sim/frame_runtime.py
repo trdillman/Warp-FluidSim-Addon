@@ -187,6 +187,8 @@ class FrameStats:
     #: Set once a CUDA-graph PCG path has fallen back to the slower
     #: host-driven loop for the rest of the run (REVIEW-016).
     native_solver_message: str = ""
+    #: Learned pressure guess state: "" (setting off), "on", "off (reason)".
+    learned_guess_message: str = ""
     timers: dict[str, float] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
@@ -238,6 +240,7 @@ class FrameStats:
             "viscosityIterations": self.viscosity_iterations,
             "viscosityResidual": self.viscosity_residual,
             "nativeSolverMessage": self.native_solver_message,
+            "learnedGuessMessage": self.learned_guess_message,
             "voxelsPerSecond": vps,
             "voxelsPerFrame": self.active_voxels,
             "particlesPerSecond": pps,

@@ -61,14 +61,21 @@ SIMULATE_READOUTS = (
 )
 # Only narrow-band mode counts liquid voxels; elsewhere the readout stays at 0.
 NARROW_BAND_READOUTS = frozenset({"stat_liquid_voxels"})
+# Hidden 4.0 learned pressure guess: "on" or "off (reason)", shown only while
+# the (hidden) setting is on, so a silent fallback is still visible.
+LEARNED_GUESS_READOUT = ("stat_learned_guess_message", "Learned guess")
 
 
 def simulate_readouts(domain) -> tuple[tuple[str, str], ...]:
-    """The Live Readout rows for ``domain``; narrow-band rows only when it is on."""
+    """The Live Readout rows for ``domain``; optional rows only when their mode is on."""
     if getattr(domain, "narrow_band_enabled", False):
-        return SIMULATE_READOUTS
-    return tuple(pair for pair in SIMULATE_READOUTS
-                 if pair[0] not in NARROW_BAND_READOUTS)
+        rows = SIMULATE_READOUTS
+    else:
+        rows = tuple(pair for pair in SIMULATE_READOUTS
+                     if pair[0] not in NARROW_BAND_READOUTS)
+    if getattr(domain, "pressure_learned_guess", False):
+        rows = rows + (LEARNED_GUESS_READOUT,)
+    return rows
 
 
 LOOK_PROPS = (

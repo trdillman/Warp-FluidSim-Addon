@@ -71,6 +71,20 @@ _CACHE_METADATA_IGNORED_SETTINGS = frozenset({
     # 2026-10-12): a cache plays back, resumes and exports on any device.
     "device",
 })
+# Settings added after caches already existed, hashed only when they differ
+# from the value every older cache was baked with. The 4.0 learned pressure
+# guess is hidden and off by default: off it changes nothing, so it must not
+# change any cache identity either; on, it changes results and is hashed.
+_IDENTITY_OMITTED_AT_DEFAULT = {
+    "pressure_learned_guess": False,
+}
+
+
+def _omitted_at_default(name, value) -> bool:
+    default = _IDENTITY_OMITTED_AT_DEFAULT.get(name, _IDENTITY_OMITTED_AT_DEFAULT)
+    return default is not _IDENTITY_OMITTED_AT_DEFAULT and value == default
+
+
 # Caches written before D1 hashed ``device`` into the settings signature.
 # Matching those against these spellings keeps them readable; the
 # preference stores one of them.
@@ -106,7 +120,7 @@ def scene_key_from_records(settings, scene_objects) -> str:
     h = hashlib.blake2b(digest_size=16)
     h.update(f"{SCENE_KEY_VERSION}|settings|".encode())
     for name, value in sorted(settings.items()):
-        if name in _SCENE_KEY_IGNORED_SETTINGS:
+        if name in _SCENE_KEY_IGNORED_SETTINGS or _omitted_at_default(name, value):
             continue
         h.update(f"{name}=".encode())
         _digest(h, value)
@@ -243,7 +257,8 @@ def _settings_values(settings, ignored) -> dict:
     return {name: _jsonable_setting(value_for(name)) for name in names
             if (not name.startswith("_")
                 and name not in ignored
-                and (isinstance(settings, dict) or hasattr(settings, name)))}
+                and (isinstance(settings, dict) or hasattr(settings, name))
+                and not _omitted_at_default(name, value_for(name)))}
 
 
 def _signature_of(values: dict) -> str:

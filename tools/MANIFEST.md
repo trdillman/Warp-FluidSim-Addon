@@ -33,6 +33,18 @@ launched by path from outside the repo (`wt_gate.ps1`, README/AGENTS/CI notes).
 | `check_demo_blends.py` | Executable all-demo gate: every tracked `demos/*.blend` reopens, resets, simulates (Blender) | gate |
 | `dam_break_cove.py` | Shared rocky-cove geometry for the dam_break builder/analyzer/checker | the three above, `tests/demos/test_dam_break_cove.py` |
 
+### `learned_guess/` (4.0 learned pressure guess; developer machine only)
+Pure-Warp scenes plus a PyTorch trainer; torch never ships. Datasets and
+checkpoints stay outside git. Tests: `tests/solver/test_learned_guess_tooling.py`.
+
+| File | Purpose |
+|---|---|
+| `scenes.py` | Deterministic seeded liquid scenes; disjoint train / held-out seed ranges |
+| `export_dataset.py` | Records the shipped inference features and the leaf-mean solved pressure per solve (Warp) |
+| `train.py` | Trains the `learned_guess_v1` network in PyTorch, matching the numpy reference |
+| `export_weights.py` | Checkpoint -> validated `learned_guess_v1` `.npz`, refused over 5 MB |
+| `evaluate.py` | Iterations (exact and production cadence), residuals and ABBA wall clock, guess off vs on; ship-gate verdict |
+
 ### `profiling/` (measurement tools, run by hand unless noted)
 | File | Purpose | Called by |
 |---|---|---|

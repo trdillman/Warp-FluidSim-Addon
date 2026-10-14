@@ -33,7 +33,7 @@ DIRECT_SETTING_FIELDS = (
     "particles_per_voxel", "count_stiffness",
     "relax_enabled", "relax_strength",
     "pressure_iterations", "pressure_tolerance", "pressure_threshold",
-    "pressure_preconditioner",
+    "pressure_preconditioner", "pressure_learned_guess",
     "viscosity_enabled", "viscosity_constant", "viscosity_from_particles",
     "viscosity_iterations", "viscosity_tolerance",
     "surface_tension_enabled", "surface_tension_coefficient",

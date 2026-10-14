@@ -743,6 +743,11 @@ class FluidSolver:
         if getattr(settings, "narrow_band_enabled", False):
             from .narrow_band_state import NarrowBand
             self.narrow_band = NarrowBand(self)
+        # Learned pressure guess (hidden 4.0 setting, RESET class). Built only
+        # when the setting is on; with it off the solver never imports it.
+        if getattr(settings, "pressure_learned_guess", False):
+            from .learned_guess import LearnedGuess
+            self.pressure_solver.learned_guess = LearnedGuess(self.grid, self.device)
 
     # Host configuration
 
@@ -918,6 +923,9 @@ class FluidSolver:
         self.whitewater.clear()
         if self.narrow_band is not None:
             self.narrow_band.reset()
+        guess = getattr(getattr(self, "pressure_solver", None), "learned_guess", None)
+        if guess is not None:
+            guess.reset()
         self.churn.zero()
         ww_density = getattr(self, "ww_density", None)
         if ww_density is not None:
@@ -1772,7 +1780,19 @@ class FluidSolver:
         self.stats.pressure_iterations = status["iterations"]
         self.stats.pressure_residual = status["residual"]
         self.stats.native_solver_message = self._native_solver_message()
+        self.stats.learned_guess_message = self._learned_guess_message()
         return bool(status["project_velocity"])
+
+    def _learned_guess_message(self):
+        """Live Readout text: "" (setting off), "on", or "off (reason)"."""
+        guess = self.pressure_solver.learned_guess
+        if guess is None:
+            return ""
+        if guess.active and int(self.settings.pressure_solver) == int(
+                ProjectNonDivergentSolver.JACOBI):
+            from .learned_guess import JACOBI_REASON
+            return f"off ({JACOBI_REASON})"
+        return guess.message
 
     def _native_solver_message(self):
         """Say which solves lost their CUDA-graph path, and why."""

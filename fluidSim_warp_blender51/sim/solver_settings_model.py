@@ -78,6 +78,8 @@ class SolverSettings:
     pressure_threshold: float = 0.0
     # "JACOBI" or "MULTIGRID" (sim.pressure.PRECONDITIONER_*); PCG only.
     pressure_preconditioner: str = "MULTIGRID"
+    # Learned PCG initial guess (4.0, hidden, off; sim.learned_guess).
+    pressure_learned_guess: bool = False
 
     viscosity_enabled: bool = False
     viscosity_solver: int = int(ViscositySolverEnum.PCG)

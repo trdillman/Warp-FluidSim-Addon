@@ -156,7 +156,9 @@ def _pre_d1_signature(settings):
     values = {f.name: _jsonable_setting(getattr(settings, f.name))
               for f in fields(settings)
               if not f.name.startswith("_")
-              and f.name != "live_surface_publish_cadence"}
+              and f.name != "live_surface_publish_cadence"
+              # added in 4.0, after D1: no pre-D1 cache can have hashed it
+              and f.name != "pressure_learned_guess"}
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"),
                          allow_nan=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

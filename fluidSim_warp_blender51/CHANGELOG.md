@@ -43,6 +43,13 @@
   are the cached particles, not the viewport/render spheres. Alembic still
   exports only the surface; on Blender 5.2 it writes point clouds as empty
   transforms. The zero-radius capacity padding is not written.
+- Experimental learned pressure initial guess, **hidden and off**. It did not
+  meet its ship gate: even a perfect one-value-per-tile guess saves at most
+  1.2x PCG iterations on the four demos, against the required 2x. No weights
+  ship; turned on (scripting only), it reports "Learned guess: off (weights
+  missing)" in the Live Readout. Off, results and cache identity are
+  unchanged. Training tools are in `tools/learned_guess/`; numbers are in
+  `docs/RELEASE_4_0_STATUS.md`.
 
 ### Corrections
 

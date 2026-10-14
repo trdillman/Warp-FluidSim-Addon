@@ -31,10 +31,10 @@ Two directions of flow exist, and a field uses one or the other:
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
 | WRITE_ONLY | 0 | UI writes it; no consumer read resolved statically |
-| READ_ONLY | 28 | something reads it; nothing resolved writes it |
-| INTERNAL | 8 | written outside the UI; no resolved reader |
+| READ_ONLY | 29 | something reads it; nothing resolved writes it |
+| INTERNAL | 9 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **224** | |
+| **total** | **226** | |
 
 ## Mirrored panels
 
@@ -130,6 +130,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `stat_surface_tension_status` | PRESENTATION | - | - | scene | - | scene | 0 | INTERNAL |
 | `stat_surface_tension_message` | PRESENTATION | - | - | scene | scene | scene | 0 | PUBLISHED |
 | `stat_native_solver_message` | PRESENTATION | - | - | scene | scene | scene | 0 | PUBLISHED |
+| `stat_learned_guess_message` | PRESENTATION | - | - | scene | - | scene | 0 | INTERNAL |
 | `time_scale` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `cfl` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `min_substeps` | LIVE | domain | domain | - | - | domain | 0 | OK |
@@ -172,6 +173,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `pressure_iterations` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `pressure_tolerance` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `pressure_preconditioner` | LIVE | domain | domain | domain | - | domain | 1 | OK |
+| `pressure_learned_guess` | RESET | - | domain | - | domain | domain | 0 | READ_ONLY |
 | `pressure_threshold` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `viscosity_enabled` | LIVE | domain | domain | - | domain | domain | 1 | OK |
 | `viscosity_solver` | LIVE | domain | domain | - | domain | domain | 0 | OK |
@@ -288,4 +290,5 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 | `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:512`, `fluidSim_warp_blender51/blender/scene_bridge.py:463` |
 | `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:513`, `fluidSim_warp_blender51/blender/scene_bridge.py:465` |
 | `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:514`, `fluidSim_warp_blender51/blender/scene_bridge.py:467` |
+| `stat_learned_guess_message` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:517`, `fluidSim_warp_blender51/blender/scene_bridge.py:473` |
 

@@ -1653,6 +1653,10 @@ class PressureSolver:
     _pcg_mg_gather_cmd = None  # compacts the V-cycle output for the r.z dot
     last_pcg_check_every = 0   # check interval the last solve_pcg ran with
     _residual_partials = None  # float64 scratch for measure_residual, lazy
+    # Optional learned initial guess (sim.learned_guess.LearnedGuess). Set by
+    # FluidSolver only when ``pressure_learned_guess`` is on; None otherwise,
+    # and an inactive guess leaves every solve on the zero-guess path.
+    learned_guess = None
 
     def __del__(self):
         # Cyclic validation/benchmark owners may reach GC without an explicit
@@ -1822,6 +1826,8 @@ class PressureSolver:
     def release(self):
         """Release captured PCG work and its native CUDA module lease."""
         self._release_native_pcg_dot()
+        if self.learned_guess is not None:
+            self.learned_guess.release()
         self._pcg_voxel_type = None
         self._pcg_cmd_kind = None
         self._pcg_apply_cmd = None
@@ -2350,9 +2356,14 @@ class PressureSolver:
         if int(settings.pressure_solver) == int(ProjectNonDivergentSolver.JACOBI):
             self.solve_jacobi(voxel_type, settings.pressure_iterations)
         else:
+            guess = self.learned_guess
+            if guess is not None and not guess.active:
+                guess = None
             self.solve_pcg(
                 voxel_type, settings.pressure_iterations,
-                settings.pressure_tolerance)
+                settings.pressure_tolerance, initial_guess=guess)
+            if guess is not None:
+                guess.observe(self, voxel_type)
         # Original FIELD semantics blend into the existing pressure field.
         # The callback is deliberately after solve (which initializes pressure)
         # and before threshold/projection (which consumes it).
@@ -2485,7 +2496,15 @@ class PressureSolver:
         return PCG_DEFAULT_CHECK_EVERY
 
     def solve_pcg(self, voxel_type, max_iterations, tolerance, use_coarse_guess=False,
-                  check_every=None):
+                  check_every=None, initial_guess=None):
+        """Solve A x = rhs on the fluid unknowns by (multigrid-)PCG.
+
+        ``x0`` is zero unless ``use_coarse_guess`` (electrostatic leaf guess)
+        or ``initial_guess`` (an object whose ``fill(self, voxel_type)``
+        writes ``self.x0`` and returns True) supplies one. When neither does,
+        the launches are exactly the historical zero-guess sequence, so the
+        result is bitwise unchanged.
+        """
         self.last_pcg_execution_mode = "not_run"
         g = self.grid
         full_n = self._dim()
@@ -2513,9 +2532,12 @@ class PressureSolver:
             return self.last_status
         work_n = min(full_n, 1 << (pressure_count - 1).bit_length())
         self._prepare_pcg_commands(work_n, voxel_type, x)
-        if use_coarse_guess:
+        guessed = bool(use_coarse_guess)
+        if guessed:
             self.coarse_initial_guess(voxel_type)
-        self._zero_pcg_vectors(full_n, x, zero_x0=not use_coarse_guess)
+        elif initial_guess is not None:
+            guessed = bool(initial_guess.fill(self, voxel_type))
+        self._zero_pcg_vectors(full_n, x, zero_x0=not guessed)
         fast_launch(
             k_initialize_pcg, dim=work_n,
             inputs=[self.rhs, self.x0, self.inv_diag, self.pressure_indices,
@@ -2525,7 +2547,7 @@ class PressureSolver:
                     self._pcg_compact_r, self._pcg_compact_z],
             device=self.device,
         )
-        if use_coarse_guess:
+        if guessed:
             fast_launch(
                 k_apply_matrix, dim=work_n,
                 inputs=[x, self.pressure_indices, self._pressure_count,
