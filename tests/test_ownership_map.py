@@ -37,7 +37,7 @@ GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 # then added the ``stat_native_solver_message`` readout (225 -> 226, REVIEW-016).
 # Removing Spatiotemporal FLIP dropped its 14 ``spacetime_*`` settings (226 -> 212).
 # Resolution Divisions added ``resolution_divisions`` (213 -> 214).
-EXPECTED_FIELD_COUNT = 217
+EXPECTED_FIELD_COUNT = 219
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested

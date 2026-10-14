@@ -58,6 +58,7 @@ Shared helpers (not tests). `conftest.py` puts this folder on `sys.path`; accept
 |---|---|---|
 | `_test_device.py` | Warp device choice shared by pytest and the Blender/headless scripts. | CUDA |
 | `settings_doubles.py` | Scene doubles shaped like the split FluidSim settings groups. | - |
+| `deck_doubles.py` | Recording stand-in for the `bpy` surface the Liquid Deck registers into (classes, draw handlers, keymaps, timers). | - |
 
 ## `validation/`
 
@@ -205,6 +206,10 @@ Operators, panels, guided setup and artist workflows tested against a stub `bpy`
 | `test_artist_mode_callback_ownership.py` | Scene-ownership regressions for Blender property mode callbacks. | - |
 | `test_artist_preview.py` | User actions must drive playback without resetting compatible progress. | - |
 | `test_artist_setup.py` | Focused contracts for transactional Guided Setup composition. | - |
+| `test_deck_gizmos_headless.py` | Liquid Deck gizmo drags write the panel property and classify as the panel edit does; domain handles preview then commit. | - |
+| `test_deck_lifecycle.py` | Liquid Deck registry teardown (50x register/unregister), load-post visibility for AUTO/ON/OFF, scene save stamp. | - |
+| `test_deck_parity.py` | Every Liquid Deck control targets an existing operator or property that a panel also draws. | - |
+| `test_deck_tokens.py` | Liquid Deck colour tokens keep text and controls readable on dark and light themes. | - |
 | `test_file_compat.py` | 2.0 recognizes .blend files saved before FluidSim 1.1 and says so. | - |
 | `test_operator_panel_behavior.py` | Operator and runtime regressions retained after the Properties UI migration. | CUDA |
 | `test_operator_poll_and_guards.py` | Guard regressions: operator polls, panel draw safety, released solvers, and out-of-domain topology boxes. | - |

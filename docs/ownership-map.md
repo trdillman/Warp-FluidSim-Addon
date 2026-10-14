@@ -22,7 +22,7 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 145 | UI writes exactly where the consumer reads |
+| OK | 147 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
@@ -34,7 +34,7 @@ Two directions of flow exist, and a field uses one or the other:
 | READ_ONLY | 28 | something reads it; nothing resolved writes it |
 | INTERNAL | 8 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **217** | |
+| **total** | **219** | |
 
 ## Mirrored panels
 
@@ -74,7 +74,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `spray_material` | OUTPUT | scene | scene | - | - | scene | 1 | OK |
 | `output_collection_name` | OUTPUT | scene | scene | scene | - | scene | 1 | OK |
 | `setup_mode` | AUTHORED_NEXT_RUN | - | - | scene | scene | scene | 0 | PUBLISHED |
-| `product_preset` | AUTHORED_NEXT_RUN | scene | scene | - | scene | scene | 0 | OK |
+| `product_preset` | AUTHORED_NEXT_RUN | scene | scene | scene | scene | scene | 0 | OK |
 | `active_preset_id` | AUTHORED_NEXT_RUN | - | - | scene | scene | scene | 0 | PUBLISHED |
 | `cache_format` | AUTHORED_NEXT_RUN | - | - | - | - | scene | 0 | UNOBSERVED |
 | `bake_start` | AUTHORED_NEXT_RUN | scene | scene | scene | - | scene | 0 | OK |
@@ -84,6 +84,8 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `bake_progress` | PRESENTATION | scene | scene | scene | - | scene | 2 | OK |
 | `bake_message` | PRESENTATION | - | scene | scene | scene | scene | 2 | PUBLISHED |
 | `show_overlay` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
+| `deck_shown` | PRESENTATION | scene | scene | scene | scene | scene | 2 | OK |
+| `deck_stage` | PRESENTATION | scene | scene | scene | - | scene | 1 | OK |
 | `report_path` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
 | `benchmark_frames` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
 | `benchmark_baseline` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
@@ -95,7 +97,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `cache_frame_start` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
 | `cache_frame_end` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
 | `status` | PRESENTATION | - | scene | scene | scene | scene | 3 | PUBLISHED |
-| `stat_particles` | PRESENTATION | - | scene | scene | scene | scene | 0 | PUBLISHED |
+| `stat_particles` | PRESENTATION | - | scene | scene | scene | scene | 1 | PUBLISHED |
 | `stat_voxels` | PRESENTATION | - | scene | scene | scene | scene | 0 | PUBLISHED |
 | `stat_liquid_voxels` | PRESENTATION | - | - | scene | - | scene | 0 | INTERNAL |
 | `stat_whitewater` | PRESENTATION | - | scene | scene | scene | scene | 0 | PUBLISHED |
@@ -108,8 +110,8 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `stat_whitewater_dropped` | PRESENTATION | - | - | scene | scene | scene | 0 | PUBLISHED |
 | `stat_whitewater_policy` | PRESENTATION | - | - | scene | scene | scene | 0 | PUBLISHED |
 | `stat_whitewater_status` | PRESENTATION | - | - | scene | scene | scene | 0 | PUBLISHED |
-| `stat_step_ms` | PRESENTATION | - | scene | scene | scene | scene | 0 | PUBLISHED |
-| `stat_substeps` | PRESENTATION | - | scene | scene | scene | scene | 0 | PUBLISHED |
+| `stat_step_ms` | PRESENTATION | - | scene | scene | scene | scene | 1 | PUBLISHED |
+| `stat_substeps` | PRESENTATION | - | scene | scene | scene | scene | 1 | PUBLISHED |
 | `stat_cfl_clamped` | PRESENTATION | - | - | scene | scene | scene | 0 | PUBLISHED |
 | `stat_capillary_dt` | PRESENTATION | - | - | scene | scene | scene | 0 | PUBLISHED |
 | `stat_capillary_substeps_required` | PRESENTATION | - | - | scene | scene | scene | 0 | PUBLISHED |

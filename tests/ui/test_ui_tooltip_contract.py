@@ -315,3 +315,14 @@ def test_ui_int_enums_describe_every_selectable_choice():
         if members[enum_name] - description_keys.get(enum_name, set())
     }
     assert not missing, f"UI enum choices need effect descriptions: {missing}"
+
+
+def test_liquid_deck_fields_have_actionable_tooltips():
+    """The Deck's scene toggle and wheel stage are drawn in the viewport header."""
+    deck_fields = {"deck_shown", "deck_stage"}
+    found = set()
+    for owner, field, call, line in _property_declarations(PROPERTIES):
+        if owner == "FLUIDSIM_PG_scene" and field in deck_fields:
+            _assert_actionable(owner, field, call, line)
+            found.add(field)
+    assert found == deck_fields

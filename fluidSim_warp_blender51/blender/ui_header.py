@@ -157,6 +157,20 @@ def draw_header_button(self, context):
     self.layout.popover(
         panel=FLUIDSIM_PT_header_popover.bl_idname, text="FluidSim", icon="MOD_FLUIDSIM"
     )
+    _draw_deck_toggle(self.layout, context)
+
+
+def _draw_deck_toggle(layout, context):
+    """The Liquid Deck show/hide toggle and wheel stage; absent when the Deck is Off."""
+    from .deck import deck_mode
+
+    settings = getattr(getattr(context, "scene", None), "fluidsim", None)
+    if settings is None or deck_mode(context) == "OFF":
+        return
+    row = layout.row(align=True)
+    row.prop(settings, "deck_shown", text="", icon="WINDOW")
+    if settings.deck_shown:
+        row.prop(settings, "deck_stage", text="")
 
 
 CLASSES = (
