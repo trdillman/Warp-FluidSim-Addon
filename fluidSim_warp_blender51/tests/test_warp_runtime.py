@@ -71,7 +71,7 @@ def test_probe_returns_actionable_import_error(monkeypatch):
     monkeypatch.setattr(warp_runtime, "_import_warp", fail)
     probe = warp_runtime.probe_runtime(force=True)
     assert probe.available is False
-    assert "bundled Warp runtime" in probe.message
+    assert "Install Warp" in probe.message
     assert "ModuleNotFoundError" in probe.last_error
 
 
@@ -112,7 +112,7 @@ def test_cuda_device_items_never_use_an_empty_identifier(monkeypatch):
     monkeypatch.setattr(warp_runtime, "_import_warp", fail)
     items = warp_runtime.cuda_device_items(force=True)
     assert items[0][0] == "__unavailable__"
-    assert "bundled Warp runtime" in items[0][2]
+    assert "Install Warp" in items[0][2]
 
 
 def test_probe_rejects_warp_below_the_floor(monkeypatch):

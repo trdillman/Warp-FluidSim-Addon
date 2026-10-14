@@ -16,6 +16,7 @@ include = [
   "tests/*.py",
   "version.py",
   "warp_discovery.py",
+  "warp_installer.py",
 ]
 exclude = ["wheels", "dist", "build"]
 

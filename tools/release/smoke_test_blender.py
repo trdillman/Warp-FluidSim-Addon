@@ -5,10 +5,23 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import sys
 import tempfile
 import time
 from dataclasses import replace
 from pathlib import Path
+
+# Smoke Blender is offline. The release harness extracts the locked wheel into
+# the isolated extension user directory before this script starts. That is
+# the smoke harness only. The preferences button installs into the extension's
+# own user directory and is not what placed this copy.
+_provisioned_warp = os.environ.get("BLENDER_USER_EXTENSIONS", "")
+if _provisioned_warp:
+    _local_site = str(
+        Path(_provisioned_warp) / ".user" / "fluidsim_ci" / "fluidsim_warp" / ".local"
+    )
+    if _local_site not in sys.path:
+        sys.path.insert(0, _local_site)
 
 import bpy
 import warp as wp
@@ -66,7 +79,7 @@ def _installed_module() -> str:
     return matches[0]
 
 
-def _assert_bundled_warp(module: str) -> tuple[Path, Path]:
+def _assert_installed_warp(module: str) -> tuple[Path, Path]:
     extension = importlib.import_module(module)
     extension_root = Path(extension.__file__).resolve().parent
     repository_value = os.environ.get("FLUIDSIM_CI_REPOSITORY", "")
@@ -74,8 +87,8 @@ def _assert_bundled_warp(module: str) -> tuple[Path, Path]:
     if not repository_value or not user_extensions_value:
         raise AssertionError("release smoke environment is not isolated")
     repository_root = Path(repository_value).resolve()
-    # Blender installs extension wheels into <extensions>/.local site-packages.
-    wheel_root = Path(user_extensions_value).resolve() / ".local"
+    # The offline smoke harness extracted Warp under the extension's own user .local dir.
+    wheel_root = Path(bpy.utils.extension_path_user(module, path=".local")).resolve()
     warp_path = Path(wp.__file__).resolve()
     if wp.__version__ != EXPECTED_WARP_VERSION:
         raise AssertionError(
@@ -87,11 +100,15 @@ def _assert_bundled_warp(module: str) -> tuple[Path, Path]:
         raise AssertionError(
             f"FluidSim loaded outside the isolated installed repository: {extension_root}"
         ) from exc
+    if extension_root in warp_path.parents:
+        raise AssertionError(
+            f"Warp must not ship inside the FluidSim extension: {warp_path}"
+        )
     try:
         warp_path.relative_to(wheel_root)
     except ValueError as exc:
         raise AssertionError(
-            f"Warp did not load from the extension's bundled wheel: {warp_path}"
+            f"Warp loaded outside the smoke provision directory: {warp_path}"
         ) from exc
     return extension_root, warp_path
 
@@ -649,7 +666,7 @@ def main() -> None:
             f"running {bpy.app.version_string}"
         )
     module = _installed_module()
-    extension_root, warp_path = _assert_bundled_warp(module)
+    extension_root, warp_path = _assert_installed_warp(module)
     _assert_packaged_entry_points(extension_root)
     extension_version = importlib.import_module(f"{module}.version")
     if extension_version.VERSION != EXPECTED_FLUIDSIM_VERSION:
@@ -669,6 +686,14 @@ def main() -> None:
         "fluidsim.refresh_runtime_probe",
         bpy.ops.fluidsim.refresh_runtime_probe(),
     )
+
+    # In smoke test (--offline-mode), invoking install_warp operator when certified
+    # Warp 1.17.0 is already installed reports success and writes nothing.
+    install_res = bpy.ops.fluidsim.install_warp()
+    if install_res != {"FINISHED"}:
+        raise AssertionError(
+            f"fluidsim.install_warp expected {{'FINISHED'}} when already installed, got {install_res}"
+        )
 
     _disable_and_verify(module)
     _enable_and_verify(module)

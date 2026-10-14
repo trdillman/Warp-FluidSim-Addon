@@ -5,6 +5,7 @@ can keep loading for weeks. This installs the release zip, warns about legacy
 copies that would shadow or confuse it, and runs a headless probe that prints
 the FluidSim version, the Warp build actually imported, and whether the CUDA
 runtime is usable. It exits non-zero when the installed build is not ready.
+Warp is downloaded only when ``--install-warp`` is explicitly requested.
 
     python tools/release/install_local.py --blender "C:/path/to/blender.exe"
 """
@@ -26,6 +27,7 @@ else:  # Direct execution: python tools/release/install_local.py.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ADDON_ROOT = REPO_ROOT / "fluidSim_warp_blender51"
 PROBE_MARKER = "FLUIDSIM_INSTALL_PROBE="
+INSTALL_WARP_MARKER = "FLUIDSIM_WARP_INSTALL="
 LEGACY_NAME = "fluidsim_warp_blender51"  # compared case-insensitively
 
 # Runs inside Blender. Prints one JSON line so the host side can parse it.
@@ -51,12 +53,45 @@ if len(modules) == 1:
 print("__MARKER__" + json.dumps(report))
 """.replace("__MARKER__", PROBE_MARKER)
 
+# Runs inside Blender. Online access is enabled only for this explicit install
+# request and restored before the process exits. The extension's installer
+# owns the download, checksum verification, destination checks, and writes.
+INSTALL_WARP_SCRIPT = r"""
+import importlib, json
+import bpy
+report = {"success": False}
+modules = [a.module for a in bpy.context.preferences.addons
+           if a.module.endswith(".fluidsim_warp") or a.module == "fluidsim_warp"]
+if len(modules) != 1:
+    report["message"] = "expected one enabled FluidSim extension, found " + repr(modules)
+else:
+    system = bpy.context.preferences.system
+    previous_online_access = system.use_online_access
+    try:
+        system.use_online_access = True
+        installer = importlib.import_module(modules[0] + ".warp_installer")
+        result = installer.install_warp()
+        report.update(
+            success=bool(result.success),
+            message=result.message,
+            version=result.version,
+            already_installed=bool(result.already_installed),
+        )
+    except Exception as exc:
+        report["message"] = f"Warp installation raised {type(exc).__name__}: {exc}"
+    finally:
+        system.use_online_access = previous_online_access
+print("__MARKER__" + json.dumps(report))
+""".replace("__MARKER__", INSTALL_WARP_MARKER)
+
 
 def release_identity() -> dict:
     """Read version.py without importing the add-on (which needs bpy)."""
     path = ADDON_ROOT / "version.py"
     namespace: dict = {}
-    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), namespace)
+    exec(  # noqa: S102 - read release constants without importing bpy
+        compile(path.read_text(encoding="utf-8"), str(path), "exec"), namespace
+    )
     return namespace
 
 
@@ -86,6 +121,13 @@ def parse_probe(output: str) -> dict | None:
     return None
 
 
+def parse_warp_install(output: str) -> dict | None:
+    for line in output.splitlines():
+        if line.startswith(INSTALL_WARP_MARKER):
+            return json.loads(line[len(INSTALL_WARP_MARKER):])
+    return None
+
+
 def check_probe(report: dict | None, expected_version: str) -> list[str]:
     """Return the reasons the installed build is not ready (empty when ready)."""
     if report is None:
@@ -109,6 +151,7 @@ def _run(command: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         command, capture_output=True, text=True, encoding="utf-8", errors="replace",
         env=_blender_process_environment(os.environ),
+        check=False,
     )
 
 
@@ -117,6 +160,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--blender", required=True, type=Path, help="blender executable")
     parser.add_argument("--zip", type=Path, default=None, help="extension zip (default: dist build)")
     parser.add_argument("--probe-only", action="store_true", help="skip install, only probe")
+    parser.add_argument(
+        "--install-warp",
+        action="store_true",
+        help="explicitly allow downloading certified Warp into the installed extension",
+    )
     args = parser.parse_args(argv)
 
     expected = release_identity()["VERSION_STRING"]
@@ -132,6 +180,22 @@ def main(argv: list[str] | None = None) -> int:
         if result.returncode != 0:
             print(result.stderr.strip(), file=sys.stderr)
             return result.returncode
+
+    if args.install_warp:
+        result = _run([str(args.blender), "--background", "--python-expr", INSTALL_WARP_SCRIPT])
+        if result.returncode != 0:
+            print(result.stdout[-2000:], result.stderr[-2000:], sep="\n", file=sys.stderr)
+            print(f"NOT READY: Warp installer exited {result.returncode}", file=sys.stderr)
+            return result.returncode
+        install_report = parse_warp_install(result.stdout)
+        if not install_report:
+            print(result.stdout[-2000:], result.stderr[-2000:], sep="\n", file=sys.stderr)
+            print("NOT READY: Warp installer produced no report", file=sys.stderr)
+            return 1
+        print(f"warp_install: {install_report.get('message')}")
+        if not install_report.get("success"):
+            print(f"NOT READY: {install_report.get('message')}", file=sys.stderr)
+            return 1
 
     appdata = os.environ.get("APPDATA")
     if appdata:
@@ -153,6 +217,12 @@ def main(argv: list[str] | None = None) -> int:
         print(result.stdout[-2000:], result.stderr[-2000:], sep="\n", file=sys.stderr)
     for problem in problems:
         print(f"NOT READY: {problem}", file=sys.stderr)
+    if problems and report and not report.get("warp_path") and not args.install_warp:
+        print(
+            "NEXT STEP: rerun with --install-warp to download the certified Warp "
+            "runtime into this extension, then probe again.",
+            file=sys.stderr,
+        )
     if not problems:
         print(f"READY: FluidSim {expected} installed and CUDA runtime available")
     return 1 if problems else 0

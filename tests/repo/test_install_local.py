@@ -33,6 +33,21 @@ def test_parse_probe_finds_marker_line_amid_blender_noise():
     assert install_local.parse_probe("no marker here") is None
 
 
+def test_parse_warp_install_finds_structured_result():
+    output = install_local.INSTALL_WARP_MARKER + json.dumps(
+        {"success": False, "message": "foreign Warp is active"}
+    )
+    assert install_local.parse_warp_install(output) == {
+        "success": False,
+        "message": "foreign Warp is active",
+    }
+
+
+def test_embedded_blender_scripts_compile():
+    compile(install_local.PROBE_SCRIPT, "<probe>", "exec")
+    compile(install_local.INSTALL_WARP_SCRIPT, "<install-warp>", "exec")
+
+
 def test_ready_report_has_no_problems():
     expected = install_local.release_identity()["VERSION_STRING"]
     assert install_local.check_probe(_report(), expected) == []
@@ -76,6 +91,25 @@ def test_failed_probe_cannot_report_ready(monkeypatch, capsys):
     assert "NOT READY: Blender probe exited 37" in captured.err
 
 
+def test_probe_only_is_read_only_and_gives_missing_warp_next_step(monkeypatch, capsys):
+    commands = []
+    report = _report(runtime_available=False, runtime_message="Warp is not installed", warp_path=None)
+
+    def run(command):
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command, 0, install_local.PROBE_MARKER + json.dumps(report), ""
+        )
+
+    monkeypatch.setattr(install_local, "_run", run)
+    monkeypatch.delenv("APPDATA", raising=False)
+    assert install_local.main(["--blender", "blender", "--probe-only"]) == 1
+    assert len(commands) == 1
+    assert install_local.PROBE_SCRIPT in commands[0]
+    captured = capsys.readouterr()
+    assert "NEXT STEP: rerun with --install-warp" in captured.err
+
+
 def test_failed_install_does_not_start_probe(monkeypatch, tmp_path, capsys):
     package = tmp_path / "extension.zip"
     package.write_bytes(b"fixture")
@@ -108,6 +142,75 @@ def test_successful_install_then_probe_reports_ready(monkeypatch, tmp_path, caps
     assert "install-file" in commands[0]
     assert "--python-expr" in commands[1]
     assert "READY:" in capsys.readouterr().out
+
+
+def test_explicit_warp_install_runs_between_extension_install_and_probe(
+    monkeypatch, tmp_path, capsys
+):
+    package = tmp_path / "extension.zip"
+    package.write_bytes(b"fixture")
+    commands = []
+
+    def run(command):
+        commands.append(command)
+        if install_local.INSTALL_WARP_SCRIPT in command:
+            output = install_local.INSTALL_WARP_MARKER + json.dumps(
+                {"success": True, "message": "Warp installed"}
+            )
+        elif install_local.PROBE_SCRIPT in command:
+            output = install_local.PROBE_MARKER + json.dumps(_report())
+        else:
+            output = "installed"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(install_local, "_run", run)
+    monkeypatch.delenv("APPDATA", raising=False)
+    assert install_local.main([
+        "--blender", "blender", "--zip", str(package), "--install-warp"
+    ]) == 0
+    assert "install-file" in commands[0]
+    assert install_local.INSTALL_WARP_SCRIPT in commands[1]
+    assert install_local.PROBE_SCRIPT in commands[2]
+    assert "warp_install: Warp installed" in capsys.readouterr().out
+
+
+def test_warp_install_refusal_stops_before_probe(monkeypatch, capsys):
+    commands = []
+
+    def run(command):
+        commands.append(command)
+        output = install_local.INSTALL_WARP_MARKER + json.dumps(
+            {"success": False, "message": "Refusing to overwrite foreign Warp"}
+        )
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(install_local, "_run", run)
+    monkeypatch.delenv("APPDATA", raising=False)
+    assert install_local.main([
+        "--blender", "blender", "--probe-only", "--install-warp"
+    ]) == 1
+    assert len(commands) == 1
+    assert install_local.INSTALL_WARP_SCRIPT in commands[0]
+    captured = capsys.readouterr()
+    assert "NOT READY: Refusing to overwrite foreign Warp" in captured.err
+
+
+def test_failed_warp_install_process_stops_before_probe(monkeypatch, capsys):
+    commands = []
+
+    def run(command):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 23, "partial output", "download failed")
+
+    monkeypatch.setattr(install_local, "_run", run)
+    monkeypatch.delenv("APPDATA", raising=False)
+    assert install_local.main([
+        "--blender", "blender", "--probe-only", "--install-warp"
+    ]) == 23
+    assert len(commands) == 1
+    captured = capsys.readouterr()
+    assert "NOT READY: Warp installer exited 23" in captured.err
+    assert "READY:" not in captured.out
 
 
 def test_install_and_probe_receive_repaired_environment(monkeypatch):

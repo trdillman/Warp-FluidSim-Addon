@@ -61,6 +61,29 @@ A full review of the add-on: about 80 fixes and 20 speed-ups.
   export, cache manifests and resume, static colliders, Bake panel and effect
   panel redraws, and display-fraction readback.
 
+### Warp installation
+
+- **Warp is no longer bundled.** The extension zip does not contain NVIDIA
+  Warp wheels. **Install Warp** in Add-on Preferences downloads the locked
+  Warp 1.17.0 wheel (CUDA 12) from PyPI, checks its SHA-256, and extracts
+  that file into the directory Blender gives this extension
+  (`bpy.utils.extension_path_user`). Pressing it again when that owned copy
+  is already 1.17.0 reports success and writes nothing. Warp loaded from
+  another add-on, or an older Warp in Blender's user site-packages, is left
+  untouched; remove that copy first. The button does nothing when Blender's
+  online access is off.
+- The extension now declares `network` permission for the PyPI download.
+- Updated THIRD_PARTY_NOTICES.md to reflect the new installation method.
+- **Repair Warp** restores a damaged certified copy owned by this extension.
+  The checked replacement is staged safely and applied after restarting Blender.
+- The local installation helper supports an explicit `--install-warp` step;
+  ordinary installation and `--probe-only` keep downloads disabled.
+- The certified Warp version (1.17.0, CUDA 12 build) is unchanged. The
+  installation change itself does not alter solver numerics or cache
+  compatibility; the reconciled candidate still requires its own runtime
+  qualification. The simulation and cache changes above apply independently.
+- After upgrading from a bundled-Warp release, press **Install Warp**.
+
 ## 3.1.0 — Play drives the simulation, VDB export, pressure-solve fix
 
 - **Changed: Play is the preview.** The Preview / Resume Preview button is
@@ -237,7 +260,6 @@ checkpoint.
   Use the Multigrid preconditioner where hydrostatic depth matters.
 - If a narrow-band reseed needs more particles than Max Particles allows, the
   band is left under-seeded and the bake prints a notice to the console.
-
 ## 2.1.0 — staged sidebar, collider walls that slide and grip, faster viscosity
 
 ### Upgrade notes

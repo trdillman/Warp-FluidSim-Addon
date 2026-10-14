@@ -7,12 +7,21 @@ checkpoint layer without rewriting the solver into a different architecture.
 
 - Extension ID: `fluidsim_warp` · manifest/runtime version `3.2.0`
 - Product platforms: Windows x64 and Linux x64
-- Current validation host: Blender `5.2.0` on Windows x64 with an NVIDIA
-  GeForce RTX 4080 SUPER
-- Runtime dependency: external NVIDIA Warp `1.16.0+cu12`; never bundled
+- Historical validation host: Blender `5.2.0` on Windows x64 with an NVIDIA
+  GeForce RTX 4080 SUPER (earlier evidence, not current candidate qualification)
+- Runtime dependency: NVIDIA Warp `1.17.0+cu12`, installed from Preferences (never bundled)
 - Solver backend policy: NVIDIA CUDA only; CPU is used only for surrounding
   package/runtime smoke evidence
-- Persistent cache policy: v2 writes/resume; v1 playback compatibility
+- Persistent cache policy: v3 writes/playback/resume; v1 and v2 are refused
+
+## Current installer candidate qualification
+
+The 3.2.0 candidate integrates the PR #19 installer change with current master.
+Historical solver, Windows/CUDA and GUI receipts below do not
+qualify its downloader, extension-owned runtime path, repair/restart, or
+registration integration. Candidate-specific checks and remaining gates are
+recorded in `../../docs/PR19_INTEGRATION_STATUS.md`. Release approval requires
+the current candidate package checks and GPU/GUI production gate.
 
 ---
 

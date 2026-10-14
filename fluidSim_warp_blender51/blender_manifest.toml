@@ -12,15 +12,13 @@ license = ["SPDX:GPL-3.0-or-later"]
 platforms = ["windows-x64", "linux-x64"]
 tags = ["Physics"]
 
-# NVIDIA Warp is bundled. tools/release/fetch_warp_wheels.py fills wheels/
-# from tools/release/wheels.lock.json before a build.
-wheels = [
-  "./wheels/warp_lang-1.17.0-py3-none-manylinux_2_28_x86_64.whl",
-  "./wheels/warp_lang-1.17.0-py3-none-win_amd64.whl",
-]
+# NVIDIA Warp is installed from PyPI via a button in Add-on Preferences.
+# The addon no longer bundles wheels; see tools/release/wheels.lock.json for
+# the certified version and checksums.
 
 [permissions]
 files = "Read and write simulation caches, exports, and user presets"
+network = "Download the certified NVIDIA Warp build from PyPI"
 
 [build]
 paths_exclude_pattern = [

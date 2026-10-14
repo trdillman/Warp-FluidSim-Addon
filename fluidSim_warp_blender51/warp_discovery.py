@@ -30,3 +30,22 @@ def enable_developer_override(path: str) -> bool:
     if value not in sys.path:
         sys.path.insert(0, value)
     return True
+
+
+def developer_override_active(path: str) -> bool:
+    """Recognize the authorized configured copy already loaded in this process.
+
+    Merely opting in or editing a preference cannot exempt an unrelated Warp.
+    This is a presentation check only; the runtime version gate still applies,
+    and the installer never gains ownership of an external directory.
+    """
+    if not developer_override_allowed() or not str(path or "").strip():
+        return False
+    candidate = Path(path).expanduser().resolve()
+    loaded = getattr(sys.modules.get("warp"), "__file__", None)
+    return bool(
+        candidate.is_dir()
+        and str(candidate) in sys.path
+        and loaded
+        and Path(loaded).resolve() == (candidate / "warp" / "__init__.py").resolve()
+    )

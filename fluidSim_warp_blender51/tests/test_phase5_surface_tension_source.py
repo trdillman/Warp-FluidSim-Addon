@@ -139,15 +139,11 @@ def test_zero_time_scale_particle_sanitizer_uses_a_safe_denominator():
     assert "/ safe_dt" in method
 
 
-def test_release_workflow_and_package_include_phase5_gates():
-    workflow = (ROOT.parent / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+def test_local_release_gate_and_package_include_phase5_gates():
     gate = (ROOT.parent / "tools/run_production_gate.py").read_text(encoding="utf-8")
     manifest = (ROOT / "blender_manifest.toml").read_text(encoding="utf-8")
     build = (TOOLS_RELEASE / "build_extension.py").read_text(encoding="utf-8")
     smoke = (TOOLS_RELEASE / "smoke_test_blender.py").read_text(encoding="utf-8")
-    # Hosted CI runs the kernels on Warp CPU; the release gate runs them on CUDA.
-    cpu_step = workflow[workflow.index("tools/release/validate_phase5_warp.py"):]
-    assert "--device cpu" in cpu_step.split("\n      - ", 1)[0]
     assert '"phase5"' in gate[gate.index("RELEASE_WARP_VALIDATORS = "):].split("\n", 1)[0]
     assert '"--device", "cuda:0"' in gate
     assert (TOOLS_RELEASE / "validate_phase5_blender.py").is_file()

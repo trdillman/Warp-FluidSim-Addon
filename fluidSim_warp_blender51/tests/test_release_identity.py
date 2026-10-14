@@ -83,7 +83,8 @@ def test_user_guide_declares_certified_support_matrix():
         "Windows x64",
         "Linux x64",
         "NVIDIA CUDA",
-        "Bundled NVIDIA Warp 1.17.0",
+        "NVIDIA Warp 1.17.0",
+        "Install Warp",
         "Cache v1 (1.0.x) is refused",
     ):
         assert text in guide

@@ -1,39 +1,44 @@
 # Third-Party Notices
 
-FluidSim Warp is distributed under GPL-3.0-or-later. Each FluidSim platform
-package bundles exactly one unmodified NVIDIA Warp wheel for that platform.
-It does not include Blender or any other third-party runtime binary.
+FluidSim Warp is distributed under GPL-3.0-or-later. The extension does not
+bundle NVIDIA Warp; instead, users install Warp via a button in Add-on
+Preferences that downloads the certified wheel from PyPI.
 
 NVIDIA Warp `warp-lang 1.17.0` (the PyPI build for CUDA 12, CUDA Toolkit 12.9)
 is the certified runtime. The Windows x64 and Linux x64 wheels are pinned by
-SHA-256 in `../tools/release/wheels.lock.json`, listed in
-`blender_manifest.toml`, and installed by Blender itself when the extension is
-installed. FluidSim performs no runtime download, `pip` invocation, or
-automatic dependency installation.
+filename, size, SHA-256, and HTTPS URL in `warp_wheels.lock.json` (the same
+document as `tools/release/wheels.lock.json` in the repository). When the
+user presses **Install Warp** in Add-on Preferences, FluidSim downloads that
+one wheel from PyPI, verifies its SHA-256 checksum, and extracts it into the
+directory Blender assigns to this extension. The download uses the extension's
+`network` permission and Blender's online-access flag. FluidSim does not
+install a floating or "latest" Warp, and it does not write into another
+add-on's directory or into Blender's user site-packages.
 
 ## Third-party components
 
 | Dependency or resource | Certified version/status | License or terms | Included in FluidSim ZIPs? |
 |---|---:|---|---:|
-| NVIDIA Warp (`warp-lang`) | 1.17.0 (CUDA 12 build) | Apache License, Version 2.0 | Yes, as the unmodified upstream wheel |
-| CUDA runtime/compiler components used by Warp | As shipped inside the Warp wheel | NVIDIA Software License Agreement | Yes, inside the Warp wheel |
-| NVIDIA libmathdx components used by Warp | As shipped inside the Warp wheel | NVIDIA upstream terms | Yes, inside the Warp wheel |
+| NVIDIA Warp (`warp-lang`) | 1.17.0 (CUDA 12 build) | Apache License, Version 2.0 | No. Installed from PyPI by the preferences button |
+| CUDA runtime/compiler components used by Warp | As shipped inside the Warp wheel | NVIDIA Software License Agreement | No. They arrive inside the installed Warp wheel |
+| NVIDIA libmathdx components used by Warp | As shipped inside the Warp wheel | NVIDIA upstream terms | No. They arrive inside the installed Warp wheel |
 | NumPy | Version supplied by Blender 5.2.0 or newer | BSD 3-Clause License | No separate FluidSim copy |
 | Blender Python API | Blender 5.2.0 or newer | GNU General Public License | No |
 
 The Warp wheel carries its own complete license inventory in
 `warp_lang-1.17.0.dist-info/licenses/`, including `LICENSE.md`,
-`cuda-LICENSE.txt`, `nvrtc-LICENSE.txt`, and `libmathdx-LICENSE.txt`. The wheel
-is redistributed byte-for-byte, so those notices travel with it and are
-installed alongside Warp.
+`cuda-LICENSE.txt`, `nvrtc-LICENSE.txt`, and `libmathdx-LICENSE.txt`. The
+preferences button installs that unmodified wheel, so those notices are
+installed alongside Warp. They are not copied into the FluidSim zip.
 
 ## Distribution and runtime policy
 
-- `blender_manifest.toml` declares exactly the locked Warp wheels; Blender's
-  split build puts only the matching platform wheel in each package.
-- Release inspection requires that one wheel, verifies its SHA-256 against the
-  lock, and rejects any other `.whl`, Blender runtime archive, or loose Warp
-  package directory inside the installable extension.
+- `blender_manifest.toml` declares `network` permission for the PyPI download.
+- `warp_wheels.lock.json` pins the exact wheel filenames, sizes, SHA-256
+  checksums, and PyPI URLs. The installer refuses any wheel that does not
+  match these checksums.
+- The Install Warp button is idempotent: pressing it when this extension's own
+  copy is already Warp 1.17.0 reports success and writes nothing.
 - A developer-only override (`FLUIDSIM_ALLOW_EXTERNAL_WARP=1`) can point at a
   Warp checkout for development; it is never used by release packages.
 

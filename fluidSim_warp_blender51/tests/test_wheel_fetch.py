@@ -16,10 +16,13 @@ SIZE = 164347636
 WINDOWS_WHEEL = "warp_lang-1.17.0-py3-none-win_amd64.whl"
 
 
-def test_lock_pins_exact_bundled_warp_wheels():
+def test_lock_pins_warp_wheels_for_user_installation():
+    """Verify the lock file contains valid wheel metadata for user installation."""
     manifest = tomllib.loads((ROOT / "blender_manifest.toml").read_text(encoding="utf-8"))
     lock = json.loads((TOOLS_RELEASE / "wheels.lock.json").read_text(encoding="utf-8"))
-    assert sorted(manifest["wheels"]) == [f"./wheels/{WHEEL}", f"./wheels/{WINDOWS_WHEEL}"]
+    # Manifest should not bundle wheels anymore
+    assert "wheels" not in manifest or manifest.get("wheels") == []
+    # But lock file should still pin the certified versions for user download
     assert lock["warp_version"] == "1.17.0"
     assert lock["distribution_version"] == "1.17.0+cu12"
     assert set(lock["files"]) == {WHEEL, WINDOWS_WHEEL}
@@ -29,7 +32,8 @@ def test_lock_pins_exact_bundled_warp_wheels():
     assert lock["files"][WHEEL]["source"] == "pypi"
 
 
-def test_default_fetch_target_is_the_bundled_wheels_directory():
+def test_default_fetch_target_is_the_wheels_directory():
+    """Verify fetch_warp_wheels still targets the wheels dir for development builds."""
     assert fetch_warp_wheels.WHEEL_DIR == ROOT / "wheels"
 
 
