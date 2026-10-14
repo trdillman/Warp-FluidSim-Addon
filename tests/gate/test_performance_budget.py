@@ -493,3 +493,39 @@ def test_resolved_quality_must_match_across_trials_of_one_variant():
 		[81, 81, 50], [88, 88, 56], [11, 11, 7])
 	result = evaluate_budget(runs)
 	assert result["status"] == "invalid"
+
+
+def _multigrid_campaign(**kwargs):
+	runs = _campaign(**kwargs)
+	for run in runs:
+		if run["label"] == "candidate":
+			run["effectiveSettings"]["pressure_preconditioner"] = "MULTIGRID"
+	return runs
+
+
+def test_4_0_multigrid_default_is_an_owned_change_with_the_plan_budget():
+	result = evaluate_budget(_multigrid_campaign(candidate=108.0))
+	assert result["status"] == "pass", result["reasons"]
+	demo = result["demos"]["dam_break"]
+	assert demo["budgetRatio"] == 1.10
+	assert demo["effectiveSettings"]["intendedChanges"]["pressure_preconditioner"] == {
+		"presentIn": "candidate", "value": "MULTIGRID", "budgetRatio": 1.10}
+	assert "pressure_preconditioner" not in demo["effectiveSettings"]["neutralAbsentFields"]
+
+
+def test_multigrid_allowance_does_not_widen_other_runs_or_exceed_ten_percent():
+	assert evaluate_budget(_campaign(candidate=108.0))["status"] == "regression"
+	result = evaluate_budget(_multigrid_campaign(candidate=112.0))
+	assert result["status"] == "regression"
+	assert any("10% budget" in reason
+			   for reason in result["demos"]["dam_break"]["reasons"])
+
+
+def test_multigrid_only_in_the_baseline_is_still_an_omission():
+	runs = _campaign()
+	for run in runs:
+		if run["label"] == "baseline":
+			run["effectiveSettings"]["pressure_preconditioner"] = "MULTIGRID"
+	result = evaluate_budget(runs)
+	assert result["status"] == "invalid"
+	assert any("pressure_preconditioner" in reason for reason in result["reasons"])

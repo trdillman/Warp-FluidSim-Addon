@@ -49,6 +49,12 @@ NEUTRAL_ABSENT_EFFECTIVE_SETTINGS = {
 	"pressure_preconditioner": "JACOBI",
 	"spacetime_enabled": False,
 }
+# Candidate-only settings that are owned release changes, not omissions:
+# field -> (candidate value, per-frame budget ratio for that demo). 4.0 makes
+# Multigrid the default preconditioner; RELEASE_4_0_PLAN.md allows it +10%.
+INTENDED_CANDIDATE_CHANGES = {
+	"pressure_preconditioner": ("MULTIGRID", 1.10),
+}
 # Settings that only one variant reports and that do nothing while their
 # switch holds the given value: field -> (switch, inert value). The switch
 # must itself be a neutral absence for the same variant.
@@ -325,7 +331,7 @@ def _invalid(reasons):
 
 
 def evaluate_budget(runs):
-	"""Validate raw reports and enforce the per-demo 5 percent budget.
+	"""Validate raw reports and enforce the per-demo budget (5%, or an owned change's).
 
 	A confirmed regression requires both host time and synchronized solver time
 	to exceed the limit with the two ABBA orders agreeing.  A host/solver
@@ -390,6 +396,8 @@ def evaluate_budget(runs):
 		common_effective = set.intersection(*effective_keys.values())
 		all_effective = set.union(*effective_keys.values())
 		neutral_absences = {}
+		intended_changes = {}
+		budget_ratio = BUDGET_RATIO
 		lattice_snap = None
 		if not common_effective:
 			invalid_reasons.append(
@@ -431,12 +439,21 @@ def evaluate_budget(runs):
 					"presentIn": present_labels[0],
 					"inertWhile": {switch: inert},
 				}
+			elif (present_labels == ["candidate"]
+					and field in INTENDED_CANDIDATE_CHANGES
+					and all(value == INTENDED_CANDIDATE_CHANGES[field][0]
+							for value in present_values)):
+				value, ratio = INTENDED_CANDIDATE_CHANGES[field]
+				intended_changes[field] = {
+					"presentIn": "candidate", "value": value, "budgetRatio": ratio}
+				budget_ratio = max(budget_ratio, ratio)
 			else:
 				invalid_reasons.append(
 					f"{demo}: effectiveSettings.{field} is an unsupported cross-version omission")
 		effective_settings_diagnostics[demo] = {
 			"commonFields": sorted(common_effective),
 			"neutralAbsentFields": neutral_absences,
+			"intendedChanges": intended_changes,
 		}
 		if lattice_snap:
 			effective_settings_diagnostics[demo]["latticeSnap"] = lattice_snap
@@ -559,19 +576,20 @@ def evaluate_budget(runs):
 				},
 			}
 		order_split = any(
-			(order_diagnostics[_ORDERS[0]][f"{metric}Ratio"] <= BUDGET_RATIO)
-			!= (order_diagnostics[_ORDERS[1]][f"{metric}Ratio"] <= BUDGET_RATIO)
+			(order_diagnostics[_ORDERS[0]][f"{metric}Ratio"] <= budget_ratio)
+			!= (order_diagnostics[_ORDERS[1]][f"{metric}Ratio"] <= budget_ratio)
 			for metric in ("host", "solver")
 		)
 		if order_split:
 			status = "inconclusive"
 			reasons = ["ABBA orders disagree on the budget direction"]
-		elif host_ratio <= BUDGET_RATIO and solver_ratio <= BUDGET_RATIO:
+		elif host_ratio <= budget_ratio and solver_ratio <= budget_ratio:
 			status = "pass"
 			reasons = []
-		elif host_ratio > BUDGET_RATIO and solver_ratio > BUDGET_RATIO:
+		elif host_ratio > budget_ratio and solver_ratio > budget_ratio:
 			status = "regression"
-			reasons = ["host and synchronized solver medians exceed the 5% budget"]
+			reasons = ["host and synchronized solver medians exceed the "
+					   f"{round((budget_ratio - 1.0) * 100)}% budget"]
 		else:
 			status = "inconclusive"
 			reasons = ["host and synchronized solver evidence disagree"]
@@ -590,6 +608,7 @@ def evaluate_budget(runs):
 			"passed": status == "pass",
 			"status": status,
 			"referenceVersion": REFERENCE_VERSIONS[demo],
+			"budgetRatio": budget_ratio,
 			"trials": counts,
 			"hostRatio": host_ratio,
 			"solverRatio": solver_ratio,
