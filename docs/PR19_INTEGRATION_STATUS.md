@@ -1,6 +1,16 @@
 # PR #19 integration status
 
-## Current integration (2026-10-13)
+## Follow-up release identity: 3.2.1
+
+The owner requested 3.2.1 to identify the explicit Warp installation feature.
+The follow-up updates release metadata, current documentation and changelog;
+solver behavior and the Warp pin are unchanged. The identity/manifest/build and
+cache resume-policy slice passed 64 tests, along with source verification and
+lint. The record below describes the original 3.2.0 integration and its runtime
+receipts; it is retained as history, not relabeled as a 3.2.1 runtime receipt.
+No tag or release publication is part of this version bump.
+
+## PR #19 merge evidence (2026-10-13)
 
 The owner requested reconciliation and merge of the Warp install change,
 while keeping GitHub workflows removed. The integration combines PR head

@@ -1,6 +1,6 @@
 # FluidSim Warp — User Guide
 
-FluidSim Warp 3.2.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
+FluidSim Warp 3.2.1 is a sparse-grid PIC/FLIP liquid simulator for Blender
 5.2.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
@@ -14,7 +14,7 @@ FluidSim Warp 3.2.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 | Area | Target |
 |---|---|
-| FluidSim | 3.2.0 |
+| FluidSim | 3.2.1 |
 | Blender | Blender 5.2.0 LTS or newer 5.2.x |
 | Operating systems | Windows x64 and Linux x64 |
 | GPU-gate certified | Windows 11 x64 on an NVIDIA GeForce RTX 4080 SUPER. Linux x64 is packaged from the same source but not certified |
@@ -874,7 +874,7 @@ voxel, topology expansion, and secondary surface-grid settings.
 
 Release 2.0.0 passed the GUI-inclusive production gate on Windows 11 with
 Blender 5.2.0 LTS and NVIDIA Warp 1.17.0 on an NVIDIA GeForce RTX 4080
-SUPER. The current 3.2.0 candidate installs that same Warp build from the
+SUPER. The current 3.2.1 candidate installs that same Warp build from the
 preferences button instead of shipping the wheel inside the extension; this
 historical gate does not qualify the installer change. The gate runs the CUDA
 pytest regressions, the CUDA self-validations, the GUI
