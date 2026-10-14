@@ -62,11 +62,11 @@ STEPS: tuple[Step, ...] = (
          "register_handlers", "unregister_handlers"),
     Step("render handlers", "blender.render",
          "register_handlers", "unregister_handlers"),
-    Step("viewport overlay", "blender.viewport_overlay",
-         "register_overlay", "unregister_overlay"),
     # Classes, draw handler, keymap items, timer and load-post handler, all owned
     # by blender.deck.registry.REGISTRY.
     Step("Liquid Deck", "blender.deck", "register", "unregister"),
+    Step("viewport overlay", "blender.viewport_overlay",
+         "register_overlay", "unregister_overlay"),
     # Deferred kernel prewarm: scheduled only once everything else registered,
     # cancelled first on teardown.
     Step("prewarm timer", "runtime.prewarm_timer",
