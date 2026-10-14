@@ -183,6 +183,15 @@ Spec: `SPEC-warp-118-surface.md`.
 - **USD point export spike.** Alembic writes an empty transform for a PointCloud on 5.2.
   Spike USD export of the points and whitewater; ship if Blender 5.2's exporter carries
   the attributes, otherwise record the result and keep OBJ/PLY.
+  *Result (lane L-usd): shipped as `fluidsim.export_usd`.* The 5.2 exporter writes
+  per-frame samples for handler-published points only when the same datablock is
+  rewritten in place and the object has a time-dependent modifier, so the exporter adds a
+  temporary Scene Time no-op modifier, reserves each point cloud at the cache range's
+  peak count and holds capacity (no shrink/replace) for the range, and raises if a
+  datablock is replaced anyway. Padding is trimmed (Delete Geometry on radius <= 0), the
+  render modifiers on point outputs are muted so USD gets points rather than spheres, and
+  cached attributes arrive as `primvars:fluidsim_*`. Proof: crown_splash frames 1-8 give
+  8 particle samples matching the manifest count and varying speed/age means.
 - **ABBA performance program.** Paired step-time comparison 4.0 vs 3.2.1 on all four
   demos; budget as in §Sequence.
 

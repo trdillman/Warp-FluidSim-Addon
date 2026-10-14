@@ -52,10 +52,30 @@ def sphere_mesh(frame: int) -> tuple[np.ndarray, np.ndarray]:
     return verts, np.asarray(tris, dtype=np.int32)
 
 
-def _payload(frame: int, settings_signature: str):
+def particle_line(frame: int, count: int) -> np.ndarray:
+    """``count`` particles on a line along +y, starting at x = 0.1 * frame."""
+    particles = np.zeros((count, 3), dtype=np.float32)
+    particles[:, 0] = 0.1 * frame
+    particles[:, 1] = 1.0e-3 * np.arange(count, dtype=np.float32)
+    return particles
+
+
+def particle_speed(frame: int, count: int) -> np.ndarray:
+    """The published ``speed`` attribute: 0.5 * frame on every particle."""
+    return np.full(count, 0.5 * frame, dtype=np.float32)
+
+
+def _payload(frame: int, settings_signature: str, particle_count=None):
     verts, tris = sphere_mesh(frame)
-    particles = np.asarray([[0.1 * frame, 0.0, 0.0], [0.1 * frame, 0.1, 0.0]],
-                           dtype=np.float32)
+    if particle_count is None:
+        particles = np.asarray([[0.1 * frame, 0.0, 0.0], [0.1 * frame, 0.1, 0.0]],
+                               dtype=np.float32)
+        output_attributes, particle_inventory = {}, ()
+    else:
+        particles = particle_line(frame, particle_count)
+        output_attributes = {
+            "particles": {"speed": particle_speed(frame, particle_count)}}
+        particle_inventory = ("speed",)
     n = len(particles)
     zeros = np.zeros(n, dtype=np.float32)
     return SimpleNamespace(
@@ -82,8 +102,9 @@ def _payload(frame: int, settings_signature: str):
             "life": np.zeros(0, dtype=np.float32),
             "type": np.zeros(0, dtype=np.int32),
         },
-        output_attributes={},
-        attribute_inventory={"surface": (), "particles": (), "whitewater": ("type",)},
+        output_attributes=output_attributes,
+        attribute_inventory={"surface": (), "particles": particle_inventory,
+                             "whitewater": ("type",)},
         whitewater_required=0,
         whitewater_available=0,
         whitewater_admitted=0,
@@ -94,8 +115,13 @@ def _payload(frame: int, settings_signature: str):
 
 
 def build_tiny_cache(base_dir, *, frame_start=1, frame_count=3,
-                     settings_signature=SETTINGS_SIGNATURE) -> Path:
-    """Write ``frame_count`` committed frames under ``base_dir`` and return it."""
+                     settings_signature=SETTINGS_SIGNATURE,
+                     particle_counts=None) -> Path:
+    """Write ``frame_count`` committed frames under ``base_dir`` and return it.
+
+    ``particle_counts`` (one per frame) swaps the two fixed particles for
+    :func:`particle_line` points carrying a cached ``speed`` attribute.
+    """
     base = Path(base_dir)
     base.mkdir(parents=True, exist_ok=True)
     frame_end = frame_start + frame_count - 1
@@ -115,7 +141,10 @@ def build_tiny_cache(base_dir, *, frame_start=1, frame_count=3,
     )
     for frame in range(frame_start, frame_end + 1):
         stamp = hashlib.sha256(f"tiny-frame-{frame}".encode()).hexdigest()
-        payload = _payload(frame, settings_signature)
+        payload = _payload(
+            frame, settings_signature,
+            None if particle_counts is None
+            else particle_counts[frame - frame_start])
         frame_path, frame_sha, frame_size = cache.write_frame_v3_atomic(
             base, payload, frame,
             scene_key_value="tiny-cache-scene",

@@ -8,6 +8,7 @@ from an owned payload and cannot reacquire solver or Warp state.
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
@@ -81,6 +82,9 @@ LEGACY_UNCLASSIFIED_COUNT_TAG = "fluidsim_legacy_unclassified_count"
 _POINT_CAPACITY_HEADROOM = 1.15
 _POINT_CAPACITY_PAD = 256
 _MIN_POINT_CAPACITY = 1024
+# Depth of active hold_point_capacity() blocks; while positive, a cloud that
+# could shrink keeps its datablock (an export samples one datablock per range).
+_CAPACITY_HOLDS = 0
 
 _MANAGED_ATTRIBUTE_NAMES = frozenset(
     {spec.blender_name for spec in ATTRIBUTE_SPECS.values()}
@@ -749,6 +753,11 @@ def _point_replacement_reason(pc, point_count, wants_color, attribute_keys=()):
     if (pc is None or getattr(pc, "users", 1) != 1
             or not hasattr(pc, "resize")):
         return "ownership"
+    if (_CAPACITY_HOLDS and point_count == 0
+            and pc.attributes.get(COLOR_ATTR) is not None):
+        # An empty frame has no colours to write; under a hold it keeps the
+        # colour schema (zero-filled) rather than replacing the datablock.
+        wants_color = True
     expected = _expected_point_schema(wants_color, attribute_keys)
     for name, (data_type, domain) in expected.items():
         attr = pc.attributes.get(name)
@@ -765,10 +774,51 @@ def _point_replacement_reason(pc, point_count, wants_color, attribute_keys=()):
     capacity = len(pc.points)
     if point_count > capacity:
         return "growth"
-    if (point_count * 2 < capacity
+    if (not _CAPACITY_HOLDS and point_count * 2 < capacity
             and _point_capacity_for(point_count) < capacity):
         return "shrink"
     return None
+
+
+@contextmanager
+def hold_point_capacity():
+    """Keep every point cloud's datablock while the block runs (no shrink).
+
+    Blender's USD exporter writes per-frame samples for a point cloud only
+    while the same datablock is rewritten; a replacement becomes a separate
+    prim. Growth and schema drift still replace: pair this with
+    :func:`reserve_point_capacity` for the range's largest frame.
+    """
+    global _CAPACITY_HOLDS
+    _CAPACITY_HOLDS += 1
+    try:
+        yield
+    finally:
+        _CAPACITY_HOLDS -= 1
+
+
+def reserve_point_capacity(obj, point_count):
+    """Grow a point-cloud output so ``point_count`` points publish in place.
+
+    Replaces the datablock once, keeping its attribute schema (and so its
+    materials), when the current capacity is too small; the new cloud holds
+    zero-radius padding until the next published frame. Returns whether the
+    datablock was replaced. Non-point-cloud outputs are left alone.
+    """
+    pc = getattr(obj, "data", None)
+    if getattr(obj, "type", None) != "POINTCLOUD" or pc is None:
+        return False
+    point_count = int(point_count)
+    if point_count <= len(pc.points):
+        return False
+    colors = (np.zeros((point_count, 4), dtype=np.float32)
+              if pc.attributes.get(COLOR_ATTR) is not None else None)
+    _swap_points(
+        obj, np.zeros((point_count, 3), dtype=np.float32), 0.0, colors,
+        reuse_datablock=False)
+    # Placeholders only: nothing is live until the next frame publishes.
+    obj[POINT_COUNT_TAG] = 0
+    return True
 
 
 def _needs_realloc(pc, point_count, wants_color, attribute_keys=()):

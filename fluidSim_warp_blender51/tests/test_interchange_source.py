@@ -61,6 +61,64 @@ def test_bake_stage_offers_alembic_and_playback_only_hides_baking():
     assert "fluidsim.export_frame" not in playback_branch
 
 
+def test_usd_export_follows_the_measured_sampling_recipe():
+    """Blender 5.2 writes USD time samples for handler-published points only
+    when the same datablock is rewritten in place and the object carries a
+    time-dependent modifier (4.0 plan section 7 spike)."""
+    source = _source("blender/interchange.py")
+    export = ast.get_source_segment(source, _function(source, "export_usd"))
+    assert "bpy.ops.wm.usd_export(" in export
+    assert "export_animation=True" in export
+    assert "selected_objects_only=True" in export
+    assert 'evaluation_mode="RENDER"' in export
+    # The 5.2 exporter has no frame-range arguments: it walks the scene range.
+    assert "_set_frame_range(scene, plan.start, plan.end)" in export
+    assert "self.frame_range" in source  # captured and restored
+    # One datablock per output for the whole range.
+    assert "hold_point_capacity()" in export
+    assert "reserve_point_capacity(" in export
+    assert "GeometryNodeInputSceneTime" in source
+    # Everything temporary is undone in a finally, as for Alembic.
+    tries = [node for node in ast.walk(_function(source, "export_usd"))
+             if isinstance(node, ast.Try) and node.finalbody]
+    assert tries
+    final = "\n".join(ast.get_source_segment(source, stmt)
+                      for stmt in tries[0].finalbody)
+    assert "restore()" in final and "remove()" in final
+
+
+def test_usd_export_writes_points_not_render_geometry():
+    """The add-on's particle render group realizes ico-spheres; USD gets the
+    cached points, so the samplers mute and later restore those modifiers."""
+    source = _source("blender/interchange.py")
+    samplers = source[source.index("class _UsdSamplers"):source.index("def export_usd(")]
+    assert "show_render = False" in samplers
+    remove = samplers[samplers.index("def remove("):]
+    assert ".show_render = shown" in remove
+
+
+def test_usd_operator_is_registered_and_offered_next_to_alembic():
+    source = _source("blender/interchange.py")
+    assert 'bl_idname = "fluidsim.export_usd"' in source
+    classes = source[source.index("CLASSES = ("):]
+    assert "FLUIDSIM_OT_export_usd" in classes[:classes.index(")")]
+    stages = _source("blender/ui_stages.py")
+    bake = stages[stages.index("class FLUIDSIM_STAGE_PT_bake("):]
+    bake = bake[:bake.index("class FLUIDSIM_STAGE_PT_bake_storage")]
+    assert bake.count("fluidsim.export_usd") == 2
+    playback_branch = bake[
+        bake.index("if _playback_only():"):bake.index('_prop(layout, scene, "export_attributes")')]
+    assert "fluidsim.export_usd" in playback_branch
+
+
+def test_usd_export_is_in_the_changelog():
+    changelog = _source("CHANGELOG.md")
+    section = changelog[changelog.index("## 4.0.0"):]
+    section = section[section.index("### Changes"):]
+    section = section[:section.index("\n### ", 1)]
+    assert "USD" in section
+
+
 def test_simulate_stage_and_status_strip_show_the_playback_only_text():
     stages = _source("blender/ui_stages.py")
     simulate = stages[stages.index("class FLUIDSIM_STAGE_PT_simulate("):]
