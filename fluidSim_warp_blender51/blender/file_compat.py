@@ -148,6 +148,49 @@ def stamp_domain_schema(objects=None, scenes=None) -> int:
     return stamped
 
 
+# Saving stamps each local scene's group with the release that wrote it, so a
+# load can tell a file saved by 4.0 or later (the Liquid Deck's AUTO mode shows
+# the Deck) from one saved by 3.x (AUTO keeps the Deck off, as 3.x looked).
+SCENE_SCHEMA_KEY = "scene_schema_version"
+CURRENT_SCENE_SCHEMA = 4
+
+
+def scene_saved_by_deck_release(scene) -> bool:
+    """Whether ``scene`` was saved by FluidSim 4.0 or later."""
+    group = _stored_scene_group(scene)
+    try:
+        return group is not None and int(group.get(SCENE_SCHEMA_KEY, 0)) >= CURRENT_SCENE_SCHEMA
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def stamp_scene_schema(scenes=None) -> int:
+    """Stamp every local scene with :data:`CURRENT_SCENE_SCHEMA`; returns the number stamped."""
+    data = getattr(bpy, "data", None)
+    scenes = getattr(data, "scenes", ()) if scenes is None else scenes
+    stamped = 0
+    for scene in scenes:
+        if getattr(scene, "library", None) is not None:
+            continue
+        getter = getattr(scene, "bl_system_properties_get", None)
+        if not callable(getter):
+            continue
+        try:
+            stored = getter(do_create=True)
+            if stored is None:
+                continue
+            if stored.get("fluidsim") is None:
+                stored["fluidsim"] = {}
+            group = stored.get("fluidsim")
+            if group.get(SCENE_SCHEMA_KEY) == CURRENT_SCENE_SCHEMA:
+                continue
+            group[SCENE_SCHEMA_KEY] = CURRENT_SCENE_SCHEMA
+        except (AttributeError, KeyError, TypeError):
+            continue
+        stamped += 1
+    return stamped
+
+
 def migrate_domain_resolution(objects=None, scenes=None, *, _evaluate_views=True) -> int:
     """Give a pre-3.0 domain object the Resolution Divisions its voxel size implied.
 
@@ -288,6 +331,7 @@ def _on_compat_load_pre(_arg):
 @persistent
 def _on_save_pre(_arg):
     stamp_domain_schema()
+    stamp_scene_schema()
 
 
 @persistent
