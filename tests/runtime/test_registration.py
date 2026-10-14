@@ -153,6 +153,8 @@ def test_unregister_is_safe_to_repeat(monkeypatch):
 
 def _top_level_functions(module: str) -> set[str]:
     path = _PACKAGE_DIR.joinpath(*module.split(".")).with_suffix(".py")
+    if not path.is_file():  # a package step, e.g. blender.deck
+        path = _PACKAGE_DIR.joinpath(*module.split("."), "__init__.py")
     tree = ast.parse(path.read_text(encoding="utf-8"))
     return {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
 

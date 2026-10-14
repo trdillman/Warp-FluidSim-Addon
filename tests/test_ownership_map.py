@@ -37,8 +37,9 @@ GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 # then added the ``stat_native_solver_message`` readout (225 -> 226, REVIEW-016).
 # Removing Spatiotemporal FLIP dropped its 14 ``spacetime_*`` settings (226 -> 212).
 # Resolution Divisions added ``resolution_divisions`` (213 -> 214).
-# Liquid Preview added five scene display settings (217 -> 222).
-EXPECTED_FIELD_COUNT = 222
+# Liquid Preview added five scene display settings (217 -> 222);
+# Liquid Deck added deck_shown and deck_stage (222 -> 224).
+EXPECTED_FIELD_COUNT = 224
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested

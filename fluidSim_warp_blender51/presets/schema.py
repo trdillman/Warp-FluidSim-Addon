@@ -162,6 +162,7 @@ SCENE_OWNED_SETTINGS = frozenset({
     "bake_message", "show_overlay", "liquid_preview_enabled",
     "liquid_preview_scale", "liquid_preview_radius_multiplier",
     "liquid_preview_absorption", "liquid_preview_whitewater",
+    "deck_shown", "deck_stage",
     "report_path", "benchmark_frames",
     "benchmark_baseline", "cache_enabled", "cache_path", "cache_compress",
     "cache_playback_enabled", "cache_use_custom_range", "cache_frame_start",

@@ -201,6 +201,16 @@ def _request_sync(self, context):
     _request_scene_update(context, SceneUpdate.SYNC)
 
 
+def _deck_shown_changed(self, context):
+    """Presentation only: redraw the 3D Views that draw (or stop drawing) the Deck."""
+    try:
+        from .blender.deck import sync_runtime
+
+        sync_runtime(context)
+    except Exception as exc:  # noqa: BLE001 - a property update must never raise
+        print(f"FluidSim Liquid Deck: could not refresh the viewport: {exc!r}")
+
+
 
 
 def _update_object_role(self, context):
@@ -1014,6 +1024,20 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Preview Whitewater", default=True,
         update=_redraw_liquid_preview,
         description="Enable to draw published foam, spray and bubbles on top of Liquid Preview; disable to show only the liquid body")
+    deck_shown: BoolProperty(
+        name="Liquid Deck", default=True,
+        update=_deck_shown_changed,
+        description="Enable to show the Liquid Deck bar, palette, wheel and handles in the 3D View; disable to hide them. Simulation results are unaffected")
+    deck_stage: EnumProperty(
+        name="Deck Stage",
+        items=(
+            ("SETUP", "Setup", "Radial wheel offers scene setup actions"),
+            ("SIMULATE", "Simulate", "Radial wheel offers transport and physics actions"),
+            ("LOOK", "Look", "Radial wheel offers surface, whitewater and display actions"),
+            ("BAKE", "Bake", "Radial wheel offers bake, cache and export actions"),
+        ),
+        default="SETUP",
+        description="Choose which six actions the Liquid Deck radial wheel offers; changes only the wheel, not the simulation")
     report_path: StringProperty(
         name="Report Path", subtype="FILE_PATH", default="//fluidsim_report.json",
         description="Set where validation and profiling JSON is written; changing it sends the next report to a different file")

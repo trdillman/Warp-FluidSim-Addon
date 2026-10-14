@@ -189,6 +189,21 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
             "use the effect stack, which stays available whether this is on or off"
         ),
     )
+    deck_mode: EnumProperty(
+        name="Liquid Deck",
+        items=(
+            ("AUTO", "Auto",
+             "Show the Liquid Deck in new files and files saved by FluidSim 4.0 or later; "
+             "files saved by 3.x open without it"),
+            ("ON", "On", "Show the Liquid Deck wherever the scene's Liquid Deck toggle is on"),
+            ("OFF", "Off", "Never show the Liquid Deck; the panels work as before"),
+        ),
+        default="AUTO",
+        description=(
+            "Choose when the in-viewport Liquid Deck (bar, palette, wheel and handles) "
+            "appears; Off hides it everywhere without changing any simulation setting"
+        ),
+    )
     developer_warp_path: StringProperty(
         name="External Warp Module Directory",
         subtype="DIR_PATH",
@@ -273,6 +288,14 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
         authoring.prop(self, "enable_effect_authoring")
         authoring.label(
             text="Off: artists use the effect stack. On: the Warp-code workspace and per-session edit trust appear.",
+            icon="INFO",
+        )
+
+        deck = layout.box()
+        deck.label(text="Liquid Deck", icon="WINDOW")
+        deck.prop(self, "deck_mode", expand=True)
+        deck.label(
+            text="Command palette: Ctrl+K. Radial wheel: Alt+Right Mouse (3D View).",
             icon="INFO",
         )
 

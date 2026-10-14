@@ -46,7 +46,7 @@ HANDLER_LISTS = (
 EXPECTED_HANDLERS = {
     "frame_change_post": {"_on_frame_change"},
     "load_pre": {"_on_load_pre", "_on_compat_load_pre"},
-    "load_post": {"_on_load_post"},
+    "load_post": {"_on_load_post", "_on_deck_load_post"},
     "blend_import_post": {"_on_blend_import_post"},
     "animation_playback_pre": {"_on_playback_pre"},
     "depsgraph_update_post": {"_on_interaction_state_update", "_on_imported_domain_update"},
@@ -56,6 +56,7 @@ EXPECTED_HANDLERS = {
     "render_cancel": {"_on_render_end"},
 }
 EXPECTED_HANDLER_MODULES = {
+    "load_post": {"_on_deck_load_post": "fluidSim_warp_blender51.blender.deck"},
     "blend_import_post": {"_on_blend_import_post": "fluidSim_warp_blender51.blender.file_compat"},
     "frame_change_post": {
         "_on_frame_change": "fluidSim_warp_blender51.blender.playback",
