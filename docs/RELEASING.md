@@ -1,8 +1,8 @@
 # Releasing FluidSim Warp
 
-A release needs two kinds of proof. Hosted CI runs on every pull request.
-The manual GPU gate runs once per release on a machine with an NVIDIA GPU.
-Either one alone is not enough.
+A release needs a passing local CPU/package gate on the exact release commit
+and a production GPU gate on a machine with an NVIDIA GPU. GitHub Actions
+workflows are disabled. Keep the local gate receipts with the review and release.
 
 ## Storage workflow
 
@@ -49,18 +49,35 @@ remain warnings.
 The default policy warns below 30 GiB free and retains known denied paths as
 never-probe. Storage-hook tests alone do not requalify GPU/GUI behavior.
 
-## What hosted CI proves
+## What the local gate proves
 
-`.github/workflows/ci.yml` runs on every pull request, on every push to
-`master` and on every `v*` tag. Its runners have no GPU. `CUDA_VISIBLE_DEVICES`
-is set to `-1`, so CUDA-only tests skip rather than fail.
+Run `tools/release/run_local_gate.py` from a clean checkout at the commit under
+review. Install the exact pins in `fluidSim_warp_blender51/requirements-dev.txt`
+in an isolated Python environment first. The gate checks those versions and
+sets `CUDA_VISIBLE_DEVICES=-1` for its children. It runs ruff, source/package
+metadata verification, compileall, the full pytest suite, and the phase 4,
+phase 5 and Custom Effects validators on Warp CPU. A failed command produces
+no pass receipt.
 
-| Job | Proves |
-| --- | --- |
-| `checks` | ruff is clean, and release metadata matches between `version.py`, `blender_manifest.toml`, the Warp lock and the delivery policy. Every module compiles and the full pytest suite passes. The whitewater, surface-tension and Custom Effects kernels compile and pass their validators on Warp **CPU**. |
-| `package` | The pinned Blender (checked by sha256) builds the `.zip` packages, validates them, installs the Linux one and smoke-tests it against its bundled, checksum-locked Warp wheel, then uninstalls it. |
+Supply a reviewed SHA-256 digest for the certified Blender executable.
+The gate checks its bytes, builds and inspects both platform packages, then
+installs, smoke-tests and uninstalls the package for the **host** platform in
+isolated Blender user directories. It writes `local-gate-report.json`, the
+package report, CPU validator reports and package checksums under `--output`.
+An approved digest must come from a retained, trusted Blender distribution;
+the digest argument is an input to review, not proof of provenance by itself.
 
-The packages and JSON reports are attached to each run as artifacts.
+Run the gate on both Windows and Linux before a cross-platform release. Each
+host smoke-tests its own package. Keep both receipts, Blender distribution
+checksums and the resulting packages. A Windows receipt alone does not prove
+Linux installation. Use an owned output path outside the checkout, for example:
+
+```bash
+python tools/release/run_local_gate.py --output <owned-output> \
+  --blender <certified-blender> --blender-sha256 <approved-executable-sha256>
+```
+
+`--checks-only` runs the CPU lane without claiming a package smoke pass.
 
 ## What only the GPU gate proves
 
@@ -131,23 +148,22 @@ expected; otherwise, a changed hash needs an explanation before release.
 
 1. **Version.** Set `VERSION` (and `BUILD_CHANNEL` if it changes) in
    `fluidSim_warp_blender51/version.py`. Set the same `version` in
-   `fluidSim_warp_blender51/blender_manifest.toml`. CI's verify step fails if
+   `fluidSim_warp_blender51/blender_manifest.toml`. The local verify step fails if
    the two disagree.
 2. **Changelog.** Add a section for the version to
    `fluidSim_warp_blender51/CHANGELOG.md`. Say what a user will notice, and
    call out any change that alters simulation results or breaks older files.
-3. **Pull request.** Open a pull request into `master` and wait for both CI
-   jobs to pass. Merge it.
+3. **Pull request.** Open a pull request into `master`. Run the local gate on
+   its exact commit on Windows and Linux, attach both receipts and reports for
+   owner review, then merge after review.
 4. **GPU gate.** On the merged commit, run the gate as described above. Also
    run `python tools/demos/analyze_demos.py`, which must report every demo check
    passing.
-5. **Tag.** Tag the merged commit `v<version>` and push the tag. CI runs again
-   on the tag and uploads the packages for that exact commit.
+5. **Tag.** Rerun both local gates on the merged commit, retain their packages
+   and receipts, then tag that exact commit `v<version>` and push the tag.
 6. **GitHub release.** Create the release from the tag and attach:
-   - the Windows and Linux `.zip` packages and `SHA256SUMS.txt`. Build them
-     with `python tools/release/build_extension.py --blender <blender>
-     --output dist` on the tagged commit, or take the Linux one from the
-     tag's CI run.
+   - the Windows and Linux `.zip` packages and `SHA256SUMS.txt` produced by
+     the local gate on the tagged commit, with both host receipts.
    - `artifacts/production_gate_manifest.json` from step 4.
 
    Paste the changelog section into the release notes.
@@ -182,11 +198,10 @@ package with a private path, or swap Warp's native libraries in process.
 
 ## Changing a pinned dependency
 
-- **Blender.** In `ci.yml`, update `BLENDER_VERSION` and `BLENDER_SHA256`
-  together, taking the hash from Blender's published `.sha256` file. CI
-  downloads from an official mirror, because `download.blender.org` answers
-  scripted downloads with a bot challenge. A test keeps `BLENDER_VERSION`
-  equal to `CERTIFIED_BLENDER_VERSION` in `version.py`.
+- **Blender.** Update `CERTIFIED_BLENDER_VERSION` in `version.py`, obtain
+  reviewed Windows and Linux distributions and published archive checksums,
+  and record the executable SHA-256 values used by the local gates. Retain the
+  distribution provenance with the gate receipts. Validate both platforms.
 - **Warp.** Update `CERTIFIED_WARP_VERSION` in `version.py` and the
   `warp-lang` pin in `fluidSim_warp_blender51/requirements-dev.txt`
   together; a test keeps them equal. A Warp change can alter results, so
