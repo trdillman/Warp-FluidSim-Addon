@@ -31,7 +31,7 @@
       "prerequisites": [],
       "safe_mode": true,
       "source": "offset = position - controller\ndistance = wp.length(offset)\nif distance > 1.0e-6 and distance < radius:\n    influence = wp.clamp(1.0 - distance / radius, 0.0, 1.0)\n    direction = offset / distance\n    particle_velocity[particle_index] = particle_velocity[particle_index] + direction * (strength * influence * solver_time_step)",
-      "stage": "AFTER_PARTICLE_TRANSFER"
+      "stage": "BEFORE_EMISSION"
     }
   ],
   "license": "GPL-3.0-or-later",
@@ -96,5 +96,5 @@
     "controller",
     "force"
   ],
-  "version": "1.0.0"
+  "version": "1.1.0"
 }

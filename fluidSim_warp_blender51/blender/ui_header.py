@@ -1,6 +1,6 @@
 """Viewport-header surfaces for the FluidSim workflow.
 
-A "FluidSim" popover in the 3D View header gives the live loop (Preview / Pause /
+A "FluidSim" popover in the 3D View header gives the live loop (Play / Pause /
 Restart, Quality, the physics an artist tunes while watching) without opening the
 sidebar, and a button that opens a dedicated FluidSim workspace.
 
@@ -187,5 +187,5 @@ def unregister():
     for cls in reversed(CLASSES):
         try:
             bpy.utils.unregister_class(cls)
-        except (RuntimeError, ValueError):
-            pass
+        except Exception as exc:  # noqa: BLE001 - report and keep walking
+            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")

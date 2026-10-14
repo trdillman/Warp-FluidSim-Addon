@@ -15,7 +15,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 
 ADDON_PREFIX = "fluidSim_warp_blender51"
@@ -33,6 +33,7 @@ HANDLER_LISTS = (
     "undo_post",
     "save_pre",
     "load_post",
+    "blend_import_post",
     "animation_playback_pre",
     "render_complete",
     "render_cancel",
@@ -44,16 +45,18 @@ HANDLER_LISTS = (
 # handler got through. Absence is the failure this catches.
 EXPECTED_HANDLERS = {
     "frame_change_post": {"_on_frame_change"},
-    "load_pre": {"_on_load_pre"},
+    "load_pre": {"_on_load_pre", "_on_compat_load_pre"},
     "load_post": {"_on_load_post"},
+    "blend_import_post": {"_on_blend_import_post"},
     "animation_playback_pre": {"_on_playback_pre"},
-    "depsgraph_update_post": {"_on_interaction_state_update"},
+    "depsgraph_update_post": {"_on_interaction_state_update", "_on_imported_domain_update"},
     "undo_post": {"_on_interaction_state_update"},
     "render_init": {"_on_render_init"},
     "render_complete": {"_on_render_end"},
     "render_cancel": {"_on_render_end"},
 }
 EXPECTED_HANDLER_MODULES = {
+    "blend_import_post": {"_on_blend_import_post": "fluidSim_warp_blender51.blender.file_compat"},
     "frame_change_post": {
         "_on_frame_change": "fluidSim_warp_blender51.blender.playback",
     },
@@ -61,6 +64,7 @@ EXPECTED_HANDLER_MODULES = {
         "_on_playback_pre": "fluidSim_warp_blender51.blender.playback",
     },
     "depsgraph_update_post": {
+        "_on_imported_domain_update": "fluidSim_warp_blender51.blender.file_compat",
         "_on_interaction_state_update":
             "fluidSim_warp_blender51.blender.pending_settings",
     },
@@ -69,6 +73,7 @@ EXPECTED_HANDLER_MODULES = {
             "fluidSim_warp_blender51.blender.pending_settings",
     },
     "load_pre": {
+        "_on_compat_load_pre": "fluidSim_warp_blender51.blender.file_compat",
         "_on_load_pre": "fluidSim_warp_blender51.blender.pending_settings",
     },
     "render_init": {

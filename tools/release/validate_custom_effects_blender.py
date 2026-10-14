@@ -20,8 +20,8 @@ try:
 except ImportError:  # Blender executes this file directly via --python.
     from tool_loading import load_addon_relative_tool
 
-import bpy
-import numpy as np
+import bpy  # noqa: E402
+import numpy as np  # noqa: E402
 
 DEMO_NAMES = (
     "05_custom_effects_vortex.blend",

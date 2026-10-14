@@ -35,7 +35,9 @@ GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 # dead snippet-library/shortcut UI fields (233 -> 227), the pre-1.1
 # ``schema_version`` stamp (227 -> 226) and the legacy ``snippets`` store (226 -> 225),
 # then added the ``stat_native_solver_message`` readout (225 -> 226, REVIEW-016).
-EXPECTED_FIELD_COUNT = 226
+# Removing Spatiotemporal FLIP dropped its 14 ``spacetime_*`` settings (226 -> 212).
+# Resolution Divisions added ``resolution_divisions`` (213 -> 214).
+EXPECTED_FIELD_COUNT = 217
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested
@@ -129,26 +131,47 @@ def test_map_covers_every_annotated_field_exactly_once():
 
 
 def test_every_field_declares_exactly_one_scope():
-    """No field may be left without a resolved effective/authoring owner.
+    """Every field has exactly one declaring class, and the map names it.
 
-    This is the Phase 0 gate condition from the proposal: no later phase
-    starts until every field has exactly one declared scope.
+    The class that declares a setting owns it. The generator reads that from
+    ``FLUIDSIM_PG_scene`` and ``FLUIDSIM_PG_domain`` and refuses a field
+    declared on both, so a row's owner is never a guess and never two answers.
     """
     rows = _parse_map_rows()
     undeclared = {
-        name: row["declared eff/auth"]
+        name: row["declared owner"]
         for name, row in rows.items()
-        if "?" in row["declared eff/auth"]
+        if "?" in row["declared owner"]
     }
     assert not undeclared, f"fields with no declared scope: {undeclared}"
 
     malformed = {
-        name: row["declared eff/auth"]
+        name: row["declared owner"]
         for name, row in rows.items()
-        if not re.fullmatch(r"(scene|domain)/(scene|domain)",
-                            row["declared eff/auth"])
+        if not re.fullmatch(r"scene|domain", row["declared owner"])
     }
     assert not malformed, f"unparseable declared scope: {malformed}"
+
+
+def test_declared_owner_is_the_declaring_class():
+    """The map's owner column is the class that declares the field, row by row."""
+    import ast
+
+    tree = ast.parse(
+        (REPO_ROOT / "fluidSim_warp_blender51" / "properties.py").read_text(
+            encoding="utf-8"))
+    declared = {}
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name in (
+                "FLUIDSIM_PG_scene", "FLUIDSIM_PG_domain"):
+            kind = "scene" if node.name == "FLUIDSIM_PG_scene" else "domain"
+            for statement in node.body:
+                if isinstance(statement, ast.AnnAssign):
+                    name = statement.target.id
+                    assert name not in declared, f"{name} is on both classes"
+                    declared[name] = kind
+    rows = _parse_map_rows()
+    assert {name: row["declared owner"] for name, row in rows.items()} == declared
 
 
 def test_broken_field_set_is_pinned():
@@ -233,26 +256,25 @@ def test_fault_verdicts_are_still_reachable():
         )
 
 
-def test_mirror_redirect_inventory_is_recorded():
-    """The map must state which mirrored panels lack owner_redirect.
+def test_mirrored_panel_inventory_is_recorded():
+    """The map must list the source panels mirrored under Physics Properties.
 
-    Those panels are why a field can be written to the scene group from two
-    different tabs and still miss a domain-group consumer; the split cannot be
-    reasoned about without the list.
+    A mirror re-draws a source panel in a second tab, so a field can be edited
+    from two places; the split cannot be reasoned about without the list.
     """
     text = MAP_PATH.read_text(encoding="utf-8")
-    assert "## Mirror redirection" in text
-    assert re.search(r"`owner_redirect=True` \(\d+ source panels\)", text)
-    assert re.search(r"Mirrored \*\*without\*\* redirect \(\d+\)", text)
+    assert "## Mirrored panels" in text
+    assert re.search(r"Source panels mirrored under Physics Properties \(\d+\)", text)
+    assert "owner_redirect" not in text
 
 
 def test_stage_helper_writes_count_as_ui_writes():
     """The Bake/Setup/Simulate/Look stages draw through ``_prop`` and must be seen.
 
-    ``_prop(layout, scene, "field")`` draws ``setting_owner(scene, "field")``.
-    The generator binds that write to the field's declared effective owner;
-    before it did, removing the Scene-tab cache panels left six cache fields
-    looking as if no panel could edit them.
+    ``_prop(layout, scene, "field")`` draws ``declaring_group(scene, "field")``.
+    The generator binds that write to the field's declaring class; before it
+    did, removing the Scene-tab cache panels left six cache fields looking as
+    if no panel could edit them.
     """
     rows = _parse_map_rows()
     for field in (

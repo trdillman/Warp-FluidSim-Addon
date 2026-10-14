@@ -75,8 +75,15 @@ def select_substeps(
         has_particles: bool,
         fluid_max_speed: float = 0.0,
         collider_max_speed: float = 0.0,
+        source_max_speed: float = 0.0,
 ) -> SubstepSchedule:
-    """Select a bounded frame schedule from explicit host-side evidence."""
+    """Select a bounded frame schedule from explicit host-side evidence.
+
+    ``source_max_speed`` is the fastest velocity an armed liquid source will
+    emit with this frame. Scheduling runs before emission, so without it an
+    empty scene picks one substep and the CFL clamp then destroys a fast
+    jet's momentum on its first frame (B39).
+    """
     cfl_required = 1
     capillary_required = 1
     capillary_limit = float("inf")
@@ -91,9 +98,11 @@ def select_substeps(
         capillary_required = required_capillary_substeps(
             frame_dt, capillary_limit)
 
-    if policy.adaptive and has_particles:
+    source_max_speed = max(0.0, source_max_speed)
+    if policy.adaptive and (has_particles or source_max_speed > 0.0):
         vmax = max(
-            max(0.0, fluid_max_speed) + policy.gravity_magnitude * frame_dt,
+            max(0.0, fluid_max_speed, source_max_speed)
+            + policy.gravity_magnitude * frame_dt,
             max(0.0, collider_max_speed),
         )
         if vmax >= 1.0e-6:
@@ -132,6 +141,10 @@ class FrameStats:
     initialized_voxels: int = 0
     total_voxels: int = 0
     active_particles: int = 0
+    #: Grid voxels flagged liquid; only populated while narrow-band FLIP is on.
+    liquid_voxels: int = 0
+    #: Set once a narrow-band reseed was clipped by the particle capacity.
+    narrow_band_reseed_overflow: bool = False
     total_particles: int = 0
     whitewater_particles: int = 0
     whitewater_foam: int = 0
@@ -185,6 +198,8 @@ class FrameStats:
             "initializedVoxels": self.initialized_voxels,
             "totalVoxels": self.total_voxels,
             "activeParticles": self.active_particles,
+            "liquidVoxels": self.liquid_voxels,
+            "narrowBandReseedOverflow": self.narrow_band_reseed_overflow,
             "totalParticles": self.total_particles,
             "whitewaterParticles": self.whitewater_particles,
             "whitewaterFoam": self.whitewater_foam,

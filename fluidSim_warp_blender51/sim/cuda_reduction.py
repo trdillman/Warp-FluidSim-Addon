@@ -256,6 +256,22 @@ def reset_cuda_module_cache():
     _MODULE_CACHE.reset()
 
 
+def _require_elements(call, name, array, expected, detail):
+    """Host-side bounds check for a raw-pointer kernel argument.
+
+    The kernels index device pointers directly, so a short array is an
+    out-of-bounds GPU access that nothing downstream can catch. This runs on
+    every pressure iteration: it reads ``array.size`` (a host attribute) and
+    never copies data or synchronises the device.
+    """
+    actual = int(array.size)
+    if actual < expected:
+        raise ValueError(
+            f"{call}: array {name!r} has {actual} elements but at least "
+            f"{expected} are required ({detail})"
+        )
+
+
 class CudaDotProduct:
     """Launch one persistent, graph-capturable dot-product reduction."""
 
@@ -287,7 +303,15 @@ class CudaDotProduct:
         self._active_kernel = None
 
     def launch(self, a, b, output, count):
-        """``*output += dot(a[:count], b[:count])``."""
+        """``*output += dot(a[:count], b[:count])``.
+
+        Raises ``ValueError`` before launching if ``a`` or ``b`` holds fewer
+        than ``count`` elements or ``output`` is empty.
+        """
+        detail = f"count={count}"
+        _require_elements("CudaDotProduct.launch", "a", a, count, detail)
+        _require_elements("CudaDotProduct.launch", "b", b, count, detail)
+        _require_elements("CudaDotProduct.launch", "output", output, 1, detail)
         self._launch(self._kernel, count, (
             ctypes.c_void_p(a.ptr),
             ctypes.c_void_p(b.ptr),
@@ -303,7 +327,17 @@ class CudaDotProduct:
         be at least the active count; any such ``dim`` gives the result
         ``launch(count=active)`` gives, bit for bit, so a captured launch can
         be replayed across active counts.
+
+        The active count is only known on device, so the host checks the bound
+        it can see: ``dim`` is at least the active count, so ``a`` and ``b``
+        must hold ``dim`` elements. Raises ``ValueError`` before launching if
+        they do not, or if ``num_leaves`` or ``output`` is empty.
         """
+        detail = f"dim={dim}"
+        _require_elements("CudaDotProduct.launch_active", "a", a, dim, detail)
+        _require_elements("CudaDotProduct.launch_active", "b", b, dim, detail)
+        _require_elements("CudaDotProduct.launch_active", "num_leaves", num_leaves, 1, detail)
+        _require_elements("CudaDotProduct.launch_active", "output", output, 1, detail)
         self._launch(self._active_kernel, dim, (
             ctypes.c_void_p(a.ptr),
             ctypes.c_void_p(b.ptr),

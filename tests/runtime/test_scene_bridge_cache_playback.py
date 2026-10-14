@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from settings_doubles import split_settings
+from settings_doubles import full_settings, split_settings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -82,7 +82,7 @@ def _scene(frame=7, *, playback=True):
         frame_start=1,
         frame_end=10,
         objects=(),
-        fluidsim=split_settings(SimpleNamespace(
+        fluidsim=split_settings(full_settings(
             live=True,
             cache_playback_enabled=playback,
             cache_use_custom_range=False,
@@ -426,6 +426,7 @@ def test_cache_playback_compares_only_the_frame_settings_signature(monkeypatch):
     fake_identity.signature_bundle = must_not_run
     fake_identity.scene_key = must_not_run
     fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.legacy_settings_signatures = lambda _scene: ()
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication")
     _install_cache_playback_modules(
@@ -446,7 +447,7 @@ def test_cache_playback_compares_only_the_frame_settings_signature(monkeypatch):
         })
 
 
-def test_cache_v2_playback_classifies_whitewater_types(monkeypatch):
+def test_cache_playback_classifies_whitewater_types(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=2)
     fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
@@ -460,6 +461,7 @@ def test_cache_v2_playback_classifies_whitewater_types(monkeypatch):
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity")
     fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.legacy_settings_signatures = lambda _scene: ()
     fake_cache.read_frame = lambda _base, _frame: frame_data
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication")
@@ -494,6 +496,7 @@ def test_cache_playback_reports_recoverable_render_sync_warning(monkeypatch):
         "fluidSim_warp_blender51.blender.cache_identity"
     )
     fake_identity.settings_signature = lambda _scene: "settings-sig"
+    fake_identity.legacy_settings_signatures = lambda _scene: ()
     warning = "Render input synchronization failed: RuntimeError: offline"
     fake_viewport = types.ModuleType(
         "fluidSim_warp_blender51.blender.output_publication"
@@ -535,6 +538,7 @@ def test_cache_playback_refuses_a_sequence_baked_from_other_settings(
     fake_identity = types.ModuleType(
         "fluidSim_warp_blender51.blender.cache_identity")
     fake_identity.settings_signature = lambda _scene: current[0]
+    fake_identity.legacy_settings_signatures = lambda _scene: ()
 
     fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
     drawn = []
@@ -1159,7 +1163,7 @@ def test_session_step_retains_only_latest_thousand_frame_stats(monkeypatch):
     assert sess.frame_stats[-1] == {"frame": 1001}
 
 
-def test_live_step_never_writes_legacy_cache(monkeypatch):
+def test_live_step_never_writes_a_cache_frame(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=7, playback=False)
     scene.fluidsim.cache_enabled = True
@@ -1181,11 +1185,11 @@ def test_live_step_never_writes_legacy_cache(monkeypatch):
     writes = []
     from fluidSim_warp_blender51.io import cache
 
-    for writer in ("write_frame", "write_frame_v2_atomic"):
-        monkeypatch.setattr(
-            cache, writer,
-            lambda *_args, **_kwargs: writes.append(scene.frame_current),
-            raising=False)
+    # The one frame writer there is. It must exist (no raising=False): a spy on
+    # a name the module no longer has would pass whatever the step wrote.
+    monkeypatch.setattr(
+        cache, "write_frame_v3_atomic",
+        lambda *_args, **_kwargs: writes.append(scene.frame_current))
     monkeypatch.setattr(cache, "settings_record", lambda _settings: {})
 
     scene_bridge.step_frame(
@@ -1445,7 +1449,7 @@ def test_playback_pre_replaces_session_owned_by_another_scene(monkeypatch):
     assert calls == [scene]
 
 
-def test_playback_pre_does_not_allocate_when_not_live(monkeypatch):
+def test_playback_pre_arms_a_paused_domain_scene_without_a_preview_step(monkeypatch):
     scene_bridge = _install_scene_bridge_stubs(monkeypatch)
     scene = _scene(frame=2, playback=False)
     scene.fluidsim.live = False
@@ -1453,9 +1457,25 @@ def test_playback_pre_does_not_allocate_when_not_live(monkeypatch):
     calls = _count_initialize(monkeypatch, sess)
 
     scene_bridge.playback._on_playback_pre(scene)
+
+    # Timeline Play is the preview: it arms and admits the simulation itself.
+    assert scene.fluidsim.live is True
+    assert calls == [scene]
+
+
+def test_playback_pre_does_not_allocate_without_a_domain(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=2, playback=False)
+    scene.fluidsim.live = False
+    scene.fluidsim.domain_object = None
+    sess = scene_bridge.session()
+    calls = _count_initialize(monkeypatch, sess)
+
+    scene_bridge.playback._on_playback_pre(scene)
     scene_bridge.playback.ensure_session_before_frames(scene, "render")
 
-    # Pressing play on a non-live scene must not build a GPU solver.
+    # Plain animation playback in a scene with no domain never builds a solver.
+    assert scene.fluidsim.live is False
     assert calls == []
 
 
@@ -1584,6 +1604,48 @@ def test_render_frame_restore_does_not_swallow_a_different_frame(monkeypatch):
     assert calls == ["sync", ("step", 6)]
 
 
+def test_cache_render_restore_republishes_the_restored_frame(monkeypatch):
+    """Review item B27: after a render, the outputs hold the last rendered
+    frame; marking the restore frame as published left them stale."""
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=5, playback=True)
+    scene_bridge.session()
+    published = []
+    monkeypatch.setattr(
+        scene_bridge.playback, "play_cache_frame",
+        lambda _sess, _scene, frame: published.append(frame))
+
+    scene_bridge.playback.arm_render_frame_restore(5)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert published == [5]
+
+
+def test_a_refused_catch_up_frame_keeps_the_frames_that_stepped(monkeypatch):
+    """Review item B28: frames 2 and 3 stepped before frame 4 hit the
+    topology capacity; rolling last_frame back to 1 made a retry step 2 and 3
+    a second time."""
+    from fluidSim_warp_blender51.sim.fields import TopologyCapacityError
+
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=4, playback=False)
+    sess = scene_bridge.session()
+    sess.solver = SimpleNamespace(frame=1, settings=SimpleNamespace(flip_ratio=0.9, cfl=1.0))
+    sess.scene_identity = id(scene)
+    sess.start_frame = 1
+    sess.last_frame = 1
+    monkeypatch.setattr(sess, "sync_scene", lambda *_args, **_kwargs: None)
+
+    def step(_scene, **kwargs):
+        if kwargs["timeline_frame"] == 4:
+            raise TopologyCapacityError(required=200, capacity=100)
+
+    monkeypatch.setattr(sess, "step", step)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+
+    assert sess.last_frame == 3
+
+
 def test_production_bake_failure_holds_cache_lease_through_cleanup(tmp_path):
     from fluidSim_warp_blender51.blender import production_bake
 
@@ -1631,15 +1693,18 @@ def test_production_bake_registry_is_scene_owned_and_compare_cleared():
     second = SimpleNamespace(status=production_bake.BakeStatus.CANCELLING)
 
     production_bake.register_active_bake(first_scene, first)
-    production_bake.register_active_bake(second_scene, second)
     try:
         assert production_bake.active_bake(first_scene) is first
-        assert production_bake.active_bake(second_scene) is second
         assert production_bake.bake_is_active(first_scene)
+        # One bake per process: the Solver Session is a singleton.
+        with pytest.raises(RuntimeError, match="only one bake"):
+            production_bake.register_active_bake(second_scene, second)
+        assert production_bake.active_bake(second_scene) is None
         production_bake.clear_active_bake(first_scene, second)
         assert production_bake.active_bake(first_scene) is first
         production_bake.clear_active_bake(first_scene, first)
         assert production_bake.active_bake(first_scene) is None
+        production_bake.register_active_bake(second_scene, second)
         assert production_bake.active_bake(second_scene) is second
     finally:
         production_bake.clear_active_bake(first_scene)
@@ -1865,3 +1930,90 @@ def test_release_session_no_argument_preserves_current_scene_compatibility(monke
 
     assert scene_bridge.release_session() is True
     assert not sess.active
+
+
+# --- B58: scene sync re-checks the narrow-band admission refusal -------------
+
+
+class _RecordingSyncSolver:
+    """Solver double that records what Session.sync_scene installs."""
+
+    def __init__(self, settings):
+        self.settings = settings
+        self.device = "cpu"
+        self.source_batches = []
+        self.collider_batches = []
+
+    def set_source_batch(self, sources, plans):
+        self.source_batches.append((sources, plans))
+
+    def set_colliders(self, colliders):
+        self.collider_batches.append(colliders)
+
+    def set_force_fields(self, _fields):
+        pass
+
+    def set_height_source(self, _height):
+        pass
+
+
+class _SyncInputs:
+    device = None
+
+    def begin_sync(self):
+        return 1
+
+    def gather_sources(self, _scene, _depsgraph=None, **_kwargs):
+        return ["gathered-source"]
+
+    def gather_source_plans(self, _scene, _depsgraph=None):
+        return ("gathered-plan",)
+
+    def gather_colliders(self, _scene, _depsgraph=None, **_kwargs):
+        return ["collider"]
+
+    def gather_force_fields(self, _scene, _depsgraph=None):
+        return []
+
+    def gather_height_source(self, _scene, _depsgraph=None):
+        return None
+
+
+def test_scene_sync_does_not_install_a_source_narrow_band_refuses(monkeypatch):
+    """Playback syncs the scene every frame, past the SYNC property callback.
+
+    A Scalar field source added during an admitted narrow-band run must not
+    reach the solver through that per-frame sync: the previously admitted
+    sources stay installed and the admission refusal is reported.
+    """
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(playback=False)
+    field = SimpleNamespace(
+        name="Heat",
+        fluidsim=SimpleNamespace(role="FIELD", field_operation="SCALAR"))
+    scene.objects = [field]
+    sess = scene_bridge.Session()
+    solver = _RecordingSyncSolver(
+        SolverSettings(device="cpu", narrow_band_enabled=True))
+    sess.solver = solver
+    sess.scene_inputs = _SyncInputs()
+    sess.scene_identity = scene_bridge.scene_identity(scene)
+
+    sess.sync_scene(scene, object())
+
+    assert solver.source_batches == []
+    # Colliders are not part of the refusal and keep following the scene.
+    assert solver.collider_batches == [["collider"]]
+    assert "Narrow-Band Particles cannot run" in sess.current_error(scene)
+    assert "Scalar / Temperature" in sess.current_error(scene)
+    assert "Narrow-Band Particles cannot run" in scene.fluidsim.status
+
+    # Removing the conflict lets the next sync install the scene's sources
+    # and retires the refusal it reported.
+    field.fluidsim.field_operation = "PRESSURE"
+    sess.sync_scene(scene, object())
+
+    assert solver.source_batches == [(["gathered-source"], ("gathered-plan",))]
+    assert sess.current_error(scene) == ""

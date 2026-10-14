@@ -31,7 +31,7 @@ def _annotated_fields(path, predicate):
 def _declared_fields():
     return (_annotated_fields(PKG / "properties.py",
                               lambda name: name.startswith("FLUIDSIM_PG_"))
-            | _annotated_fields(PKG / "sim" / "solver.py",
+            | _annotated_fields(PKG / "sim" / "solver_settings_model.py",
                                 lambda name: name == "SolverSettings")
             | NON_FIELD_ATTRIBUTES)
 

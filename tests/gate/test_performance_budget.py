@@ -415,3 +415,81 @@ def test_frame_one_is_excluded_from_trial_medians():
 	assert result["passed"] is True
 	assert result["status"] == "pass"
 	assert result["demos"]["chromatic_vortex"]["hostRatio"] == normal["demos"]["chromatic_vortex"]["hostRatio"]
+
+
+def _quality(unpadded, padded, leaves):
+	return {"voxel_size": 0.01, "unpadded_voxel_dimensions": unpadded,
+			"padded_voxel_dimensions": padded, "leaf_dimensions": leaves,
+			"total_domain_leaf_cells": leaves[0] * leaves[1] * leaves[2],
+			"liquid_sampling": 8.0}
+
+
+def _with_quality(baseline, candidate):
+	runs = _campaign()
+	for run in runs:
+		run["effectiveSettings"]["resolved_quality"] = dict(
+			baseline if run["label"] == "baseline" else candidate)
+	return runs
+
+
+def test_3_0_schema_changes_are_neutral_while_their_switches_are_off():
+	runs = _campaign()
+	for run in runs:
+		if run["label"] == "baseline":
+			run["effectiveSettings"].update(
+				spacetime_enabled=False, spacetime_seed=7, spacetime_variable_projection=True)
+		else:
+			run["effectiveSettings"].update(
+				narrow_band_enabled=False, narrow_band_voxels=3.0,
+				pressure_preconditioner="JACOBI")
+	result = evaluate_budget(runs)
+	assert result["status"] == "pass", result["reasons"]
+	fields = result["demos"]["dam_break"]["effectiveSettings"]["neutralAbsentFields"]
+	assert fields["narrow_band_voxels"] == {
+		"presentIn": "candidate", "inertWhile": {"narrow_band_enabled": False}}
+	assert fields["spacetime_seed"]["presentIn"] == "baseline"
+
+
+@pytest.mark.parametrize("switch, value", [
+	("narrow_band_enabled", True), ("pressure_preconditioner", "MGPCG")])
+def test_an_enabled_3_0_feature_is_not_a_neutral_absence(switch, value):
+	runs = _campaign()
+	for run in runs:
+		if run["label"] == "candidate":
+			run["effectiveSettings"].update(
+				narrow_band_enabled=False, narrow_band_voxels=3.0,
+				pressure_preconditioner="JACOBI")
+			run["effectiveSettings"][switch] = value
+	result = evaluate_budget(runs)
+	assert result["status"] == "invalid"
+	assert any(switch in reason for reason in result["reasons"])
+
+
+def test_resolution_divisions_lattice_snap_is_allowed_and_recorded():
+	runs = _with_quality(_quality([81, 81, 51], [88, 88, 56], [11, 11, 7]),
+						 _quality([80, 80, 50], [80, 80, 56], [10, 10, 7]))
+	result = evaluate_budget(runs)
+	assert result["status"] == "pass", result["reasons"]
+	snap = result["demos"]["crown_splash"]["effectiveSettings"]["latticeSnap"]
+	assert snap["baseline"]["padded_voxel_dimensions"] == [88, 88, 56]
+	assert snap["candidatePaddedCellRatio"] == round(80 * 80 / (88 * 88), 4)
+
+
+@pytest.mark.parametrize("candidate", [
+	_quality([78, 80, 50], [80, 80, 56], [10, 10, 7]),  # more than one voxel
+	{**_quality([80, 80, 50], [80, 80, 56], [10, 10, 7]), "voxel_size": 0.02},
+])
+def test_resolved_quality_beyond_a_lattice_snap_is_invalid(candidate):
+	runs = _with_quality(_quality([81, 81, 51], [88, 88, 56], [11, 11, 7]), candidate)
+	result = evaluate_budget(runs)
+	assert result["status"] == "invalid"
+	assert any("resolved_quality" in reason for reason in result["reasons"])
+
+
+def test_resolved_quality_must_match_across_trials_of_one_variant():
+	runs = _with_quality(_quality([81, 81, 51], [88, 88, 56], [11, 11, 7]),
+						 _quality([80, 80, 50], [80, 80, 56], [10, 10, 7]))
+	runs[1]["effectiveSettings"]["resolved_quality"] = _quality(
+		[81, 81, 50], [88, 88, 56], [11, 11, 7])
+	result = evaluate_budget(runs)
+	assert result["status"] == "invalid"

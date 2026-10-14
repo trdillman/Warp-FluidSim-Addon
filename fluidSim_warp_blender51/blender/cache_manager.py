@@ -12,9 +12,15 @@ import sys
 import tempfile
 import uuid
 
-from ..io.cache import LEGACY_CACHE_MESSAGE, detect_cache_format
+from ..io.cache import (
+    CACHE_FORMAT_VERSION,
+    LEGACY_CACHE_MESSAGE,
+    detect_cache_format,
+)
 from ..io.cache_schema import (
-    CacheManifestV2,
+    LEGACY_2X_CACHE_MESSAGE,
+    LEGACY_2X_FORMAT_VERSION,
+    CacheManifestV3,
     load_manifest,
     manifest_path,
     verified_contiguous_frames,
@@ -59,9 +65,9 @@ def assert_cache_path_mutable(path: Path | str) -> Path:
 def is_managed_cache_directory(path: Path | str) -> bool:
     """Return whether ``path`` contains only recognizable FluidSim cache state.
 
-    A manifest is authoritative.  A FluidSim 1.0 cache is recognized too, so
-    it can be freed before re-baking.  The limited partial patterns cover a
-    first-frame transaction interrupted before manifest commit without
+    A manifest is authoritative.  FluidSim 1.0 and 2.x caches are recognized
+    too, so they can be freed before re-baking.  The limited partial patterns
+    cover a first-frame transaction interrupted before manifest commit without
     treating an arbitrary existing directory as a cache.
     """
     base = Path(path).expanduser().resolve()
@@ -141,7 +147,7 @@ def _disk_size(path: Path) -> int:
     return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
 
 
-def _referenced_files(manifest: CacheManifestV2) -> set[str]:
+def _referenced_files(manifest: CacheManifestV3) -> set[str]:
     referenced = {"fluidsim_cache.json"}
     for entry in manifest.frames.values():
         referenced.add(entry.frame_file)
@@ -149,7 +155,7 @@ def _referenced_files(manifest: CacheManifestV2) -> set[str]:
     return referenced
 
 
-def _orphans(path: Path, manifest: CacheManifestV2) -> tuple[str, ...]:
+def _orphans(path: Path, manifest: CacheManifestV3) -> tuple[str, ...]:
     referenced = _referenced_files(manifest)
     candidates: set[str] = set()
     for directory, pattern in (("frames", "*.npz"), ("checkpoints", "*.npz")):
@@ -173,16 +179,23 @@ def inspect_cache(path: Path | str) -> CacheInspection:
             str(path), 0, None, None, (), None, None, 0, (), (), (), False,
             "Cache directory does not exist",
         )
-    v2_path = manifest_path(path)
-    if v2_path.is_file():
+    detected = detect_cache_format(path)
+    if detected == LEGACY_2X_FORMAT_VERSION:
+        # Refused, never read: its manifest does not parse as format 3.
+        return CacheInspection(
+            str(path), LEGACY_2X_FORMAT_VERSION, None, None, (), None, None,
+            _disk_size(path), (), (), (), False, LEGACY_2X_CACHE_MESSAGE,
+        )
+    manifest_file = manifest_path(path)
+    if manifest_file.is_file():
         try:
-            manifest = load_manifest(v2_path)
+            manifest = load_manifest(manifest_file)
             assert manifest is not None
         except ValueError as exc:
             return CacheInspection(
-                str(path), 2, None, None, (), None, None, _disk_size(path),
-                (), ("fluidsim_cache.json",), (), False,
-                f"Cache-v2 manifest is invalid: {exc}",
+                str(path), CACHE_FORMAT_VERSION, None, None, (), None, None,
+                _disk_size(path), (), ("fluidsim_cache.json",), (), False,
+                f"Cache-v3 manifest is invalid: {exc}",
             )
         missing: list[str] = []
         corrupt: list[str] = []
@@ -208,7 +221,7 @@ def inspect_cache(path: Path | str) -> CacheInspection:
         last = verified[-1] if verified else None
         return CacheInspection(
             path=str(path),
-            format_version=2,
+            format_version=CACHE_FORMAT_VERSION,
             frame_start=manifest.frame_start,
             frame_end=manifest.frame_end,
             committed_frames=manifest.committed_frames,
@@ -220,15 +233,15 @@ def inspect_cache(path: Path | str) -> CacheInspection:
             orphan_files=_orphans(path, manifest),
             compatible=compatible,
             message=(
-                f"Cache v2: {len(verified)} verified committed frame(s)"
+                f"Cache v3: {len(verified)} verified committed frame(s)"
                 if compatible else
-                "Cache v2 failed integrity verification"
+                "Cache v3 failed integrity verification"
             ),
             effect_signature=manifest.effect_signature,
             effect_inventory=tuple(dict(item) for item in manifest.effect_inventory),
         )
 
-    if detect_cache_format(path) == 1:
+    if detected == 1:
         return CacheInspection(
             str(path), 1, None, None, (), None, None, _disk_size(path),
             (), (), (), False, LEGACY_CACHE_MESSAGE,
@@ -275,7 +288,7 @@ def _copy_and_verify(source: Path, destination: Path) -> None:
     destination_inspection = inspect_cache(destination)
     if source_inspection.format_version != destination_inspection.format_version:
         raise RuntimeError("cache format changed during move")
-    if source_inspection.format_version == 2:
+    if source_inspection.format_version == CACHE_FORMAT_VERSION:
         if not destination_inspection.healthy or (
             destination_inspection.committed_frames
             != source_inspection.committed_frames
@@ -286,7 +299,8 @@ def _copy_and_verify(source: Path, destination: Path) -> None:
             load_manifest(manifest_path(destination)),  # type: ignore[arg-type]
         )
     elif _file_snapshot(source) != _file_snapshot(destination):
-        # No manifest to verify against: a partial or FluidSim 1.0 cache.
+        # No current manifest to verify against: a partial, FluidSim 1.0 or
+        # FluidSim 2.x cache moves as plain bytes.
         raise RuntimeError("copied cache failed byte-for-byte verification")
 
 
@@ -299,6 +313,11 @@ def move_cache(source: Path | str, destination: Path | str) -> Path:
     source = _require_managed_cache_directory(source)
     if destination.exists():
         raise FileExistsError(f"cache destination already exists: {destination}")
+    # Freeing the source after publishing would delete a destination nested
+    # inside it, losing both copies.
+    if destination.resolve().is_relative_to(source.resolve()):
+        raise ValueError(
+            f"cache destination {destination} is inside the cache being moved")
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp = destination.with_name(f".{destination.name}.fluidsim-copy-{uuid.uuid4().hex}")
     try:

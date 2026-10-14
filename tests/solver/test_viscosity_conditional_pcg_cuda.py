@@ -20,10 +20,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 wp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim import viscosity as V
-from fluidSim_warp_blender51.sim.constants import LEAF_VOLUME, VOXEL_FLUID
-from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
-from fluidSim_warp_blender51.sim.viscosity import ViscositySolver
+from fluidSim_warp_blender51.sim import viscosity as V  # noqa: E402
+from fluidSim_warp_blender51.sim.constants import LEAF_VOLUME, VOXEL_FLUID  # noqa: E402
+from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid  # noqa: E402
+from fluidSim_warp_blender51.sim.viscosity import ViscositySolver  # noqa: E402
 
 
 @pytest.fixture(scope="module")

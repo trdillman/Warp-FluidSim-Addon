@@ -30,6 +30,7 @@ import warp as wp
 
 from . import constants as C
 from .fields import (
+    leaf_linear_index,
     sample_scalar_trilinear,
     voxel_center_world,
     voxel_coord_of_flat,
@@ -40,11 +41,14 @@ from .registry import register_fn
 
 # Blend helper (BlendMode: 0 Add, 1 Replace, 2 Maximum, 3 Pull, 4 Blend)
 from .source_contracts import (
+    HEIGHT_SURFACE_SHAPE as _HEIGHT_SURFACE_SHAPE,
     MeshSource,
     SourceShape,
 )
 
 wp.set_module_options({"enable_backward": False})
+
+HEIGHT_SURFACE_SHAPE = wp.constant(_HEIGHT_SURFACE_SHAPE)
 
 
 @wp.func
@@ -210,6 +214,72 @@ def shape_local_sdf(shape: int, p: wp.vec3, half_extents: wp.vec3, radius: float
 def shape_sdf_world(s: SourceShape, pw: wp.vec3):
     pl = wp.transform_point(s.inv_xform, pw)
     return shape_local_sdf(s.shape, pl, s.half_extents, s.radius, s.height)
+
+
+@wp.func
+def height_surface_level(
+    pw: wp.vec3,
+    base_height: float,
+    back_mode: int,
+    profile: wp.array2d(dtype=float),
+    profile_res: wp.vec2i,
+    domain_min: wp.vec3,
+    domain_max: wp.vec3,
+):
+    """Height-source liquid level at ``pw``'s column (the shared height model).
+
+    FLAT is ``base_height``; PROFILE adds the bilinearly interpolated profile.
+    ``source_regions.height_surface_level`` is the host twin used for
+    planning, so fill, emission and planning agree on one surface.
+    """
+    h = base_height
+    if back_mode == 2 and profile_res[0] > 1 and profile_res[1] > 1:
+        fx = (pw[0] - domain_min[0]) / wp.max(domain_max[0] - domain_min[0], 1.0e-8)
+        fy = (pw[1] - domain_min[1]) / wp.max(domain_max[1] - domain_min[1], 1.0e-8)
+        fx = wp.clamp(fx, 0.0, 1.0) * float(profile_res[0] - 1)
+        fy = wp.clamp(fy, 0.0, 1.0) * float(profile_res[1] - 1)
+        x0 = int(wp.floor(fx))
+        y0 = int(wp.floor(fy))
+        x1 = wp.min(x0 + 1, profile_res[0] - 1)
+        y1 = wp.min(y0 + 1, profile_res[1] - 1)
+        tx = fx - float(x0)
+        ty = fy - float(y0)
+        h00 = profile[x0, y0]
+        h10 = profile[x1, y0]
+        h01 = profile[x0, y1]
+        h11 = profile[x1, y1]
+        h = base_height + (
+            h00 * (1.0 - tx) * (1.0 - ty)
+            + h10 * tx * (1.0 - ty)
+            + h01 * (1.0 - tx) * ty
+            + h11 * tx * ty
+        )
+    return h
+
+
+@wp.func
+def emission_shape_sdf(
+    s: SourceShape,
+    pw: wp.vec3,
+    height_profile: wp.array2d(dtype=float),
+    height_profile_res: wp.vec2i,
+    domain_min: wp.vec3,
+    domain_max: wp.vec3,
+):
+    """Signed membership for particle emission shapes.
+
+    Analytic shapes use their SDF. The derived height-profile emitter
+    (``HEIGHT_SURFACE_SHAPE``) is the domain column below the profiled level,
+    with ``s.height`` holding the base height.
+    """
+    if s.shape == HEIGHT_SURFACE_SHAPE:
+        if (pw[0] < domain_min[0] or pw[0] > domain_max[0]
+                or pw[1] < domain_min[1] or pw[1] > domain_max[1]
+                or pw[2] < domain_min[2]):
+            return 1.0
+        return pw[2] - height_surface_level(
+            pw, s.height, 2, height_profile, height_profile_res, domain_min, domain_max)
+    return shape_sdf_world(s, pw)
 
 
 @wp.func
@@ -466,6 +536,10 @@ def k_source_shapes_particle_demand(
     voxel_size: float,
     voxel_counts: wp.array(dtype=wp.int32),
     emission_state: wp.array(dtype=wp.int32),
+    height_profile: wp.array2d(dtype=float),
+    height_profile_res: wp.vec2i,
+    domain_min: wp.vec3,
+    domain_max: wp.vec3,
     demand: wp.array(dtype=wp.int32),
 ):
     """Per-voxel particle count :func:`k_source_shapes_particles` will emit.
@@ -489,7 +563,8 @@ def k_source_shapes_particle_demand(
             continue
         if s.emission_mode == 0 and s.armed == 0:
             continue
-        if shape_sdf_world(s, pw) > 0.0:
+        if emission_shape_sdf(
+                s, pw, height_profile, height_profile_res, domain_min, domain_max) > 0.0:
             continue
         want = int(s.emit_rate)
         if want > have:
@@ -535,6 +610,10 @@ def k_source_shapes_particles(
     offsets: wp.array(dtype=wp.int32),
     slot_base: wp.array(dtype=wp.int32),
     slot_limit: wp.array(dtype=wp.int32),
+    height_profile: wp.array2d(dtype=float),
+    height_profile_res: wp.vec2i,
+    domain_min: wp.vec3,
+    domain_max: wp.vec3,
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
     age: wp.array(dtype=float),
@@ -572,7 +651,8 @@ def k_source_shapes_particles(
         # after the firing substep so the region fills exactly once per run.
         if s.emission_mode == 0 and s.armed == 0:
             continue
-        d = shape_sdf_world(s, pw)
+        d = emission_shape_sdf(
+            s, pw, height_profile, height_profile_res, domain_min, domain_max)
         if d > 0.0:
             continue
         have = voxel_counts[tid]
@@ -816,30 +896,10 @@ def k_source_height(
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     pw = voxel_center_world(ijk, origin, voxel_size)
 
-    h = base_height
-    if back_mode == 2 and profile_res[0] > 1 and profile_res[1] > 1:
-        fx = (pw[0] - domain_min[0]) / wp.max(domain_max[0] - domain_min[0], 1.0e-8)
-        fy = (pw[1] - domain_min[1]) / wp.max(domain_max[1] - domain_min[1], 1.0e-8)
-        fx = wp.clamp(fx, 0.0, 1.0) * float(profile_res[0] - 1)
-        fy = wp.clamp(fy, 0.0, 1.0) * float(profile_res[1] - 1)
-        x0 = int(wp.floor(fx))
-        y0 = int(wp.floor(fy))
-        x1 = wp.min(x0 + 1, profile_res[0] - 1)
-        y1 = wp.min(y0 + 1, profile_res[1] - 1)
-        tx = fx - float(x0)
-        ty = fy - float(y0)
-        h00 = profile[x0, y0]
-        h10 = profile[x1, y0]
-        h01 = profile[x0, y1]
-        h11 = profile[x1, y1]
-        h = base_height + (
-            h00 * (1.0 - tx) * (1.0 - ty)
-            + h10 * tx * (1.0 - ty)
-            + h01 * (1.0 - tx) * ty
-            + h11 * tx * ty
-        )
     # back_mode 0 (Infinite) and 1 (Flat) both use base_height for the level;
     # Infinite refills continuously (handled by re-running each frame).
+    h = height_surface_level(
+        pw, base_height, back_mode, profile, profile_res, domain_min, domain_max)
 
     if pw[2] <= h:
         vt = voxel_type[tid]
@@ -1795,6 +1855,7 @@ def k_emit_compiled_source_particles(
     life_value: float,
     use_lifespan: int,
     capacity: int,
+    seed: int,
     voxel_counts: wp.array(dtype=wp.int32),
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
@@ -1811,6 +1872,15 @@ def k_emit_compiled_source_particles(
     result: wp.array(dtype=wp.int32),
     emission_state: wp.array(dtype=wp.int32),
 ):
+    """Top covered voxels up to their target occupancy.
+
+    Each particle is jittered inside its voxel like legacy shape emission;
+    stacking them on the centre left them inseparable (relaxation skips
+    zero-distance pairs). The random stream is keyed by the transaction
+    ``seed``, the voxel's global index and its occupancy before this pass,
+    never by slot or thread order, so the emitted positions are
+    reproducible even though slots are taken with an atomic cursor.
+    """
     if emission_state[1] == 0:
         return
     tid = wp.tid()
@@ -1828,8 +1898,11 @@ def k_emit_compiled_source_particles(
     if flat < 0:
         return
     desired = int(wp.ceil(float(target_per_voxel) * coverage[tid]))
-    missing = wp.max(0, desired - voxel_counts[flat])
+    have = voxel_counts[flat]
+    missing = wp.max(0, desired - have)
     center = voxel_center_world(ijk, origin, voxel_size)
+    voxel_key = ijk[0] + voxels_dim[0] * (ijk[1] + voxels_dim[1] * ijk[2])
+    state = wp.rand_init(seed + have * 7919, voxel_key)
     for sample in range(C.MAX_PARTICLES_PER_VOXEL):
         if sample >= missing:
             break
@@ -1839,7 +1912,11 @@ def k_emit_compiled_source_particles(
             result[1] = 1
             emission_state[3] = 1
             break
-        positions[slot] = center
+        positions[slot] = center + wp.vec3(
+            (wp.randf(state) - 0.5) * voxel_size,
+            (wp.randf(state) - 0.5) * voxel_size,
+            (wp.randf(state) - 0.5) * voxel_size,
+        )
         velocities[slot] = emission_velocity
         age[slot] = 0.0
         life[slot] = wp.where(use_lifespan != 0, life_value, 1.0e30)
@@ -1855,6 +1932,29 @@ def k_emit_compiled_source_particles(
         wp.atomic_add(voxel_counts, flat, 1)
         wp.atomic_add(result, 0, 1)
         wp.atomic_add(emission_state, 2, 1)
+
+
+@wp.kernel
+def k_mark_source_leaves(
+    source_leaf_coords: wp.array(dtype=wp.vec3i),
+    source_leaf_count: int,
+    leaves_dim: wp.vec3i,
+    leaf_flags: wp.array(dtype=wp.int32),
+):
+    """Flag exactly the compiled source leaves for the topology rebuild.
+
+    One thread per leaf coordinate. Writing the constant 1 is
+    order-independent, so concurrent duplicates are harmless.
+    """
+    tid = wp.tid()
+    if tid >= source_leaf_count:
+        return
+    lc = source_leaf_coords[tid]
+    if lc[0] < 0 or lc[1] < 0 or lc[2] < 0:
+        return
+    if lc[0] >= leaves_dim[0] or lc[1] >= leaves_dim[1] or lc[2] >= leaves_dim[2]:
+        return
+    leaf_flags[leaf_linear_index(lc, leaves_dim)] = 1
 
 
 @wp.kernel
@@ -1929,6 +2029,10 @@ def k_count_source_shapes_particles(
     num_leaves: wp.array(dtype=wp.int32),
     origin: wp.vec3,
     voxel_size: float,
+    height_profile: wp.array2d(dtype=float),
+    height_profile_res: wp.vec2i,
+    domain_min: wp.vec3,
+    domain_max: wp.vec3,
     scratch_counts: wp.array(dtype=wp.int32),
     emission_state: wp.array(dtype=wp.int32),
 ):
@@ -1943,7 +2047,8 @@ def k_count_source_shapes_particles(
         s = shapes[si]
         if s.enabled == 0 or s.stype != 0 or s.mode != 1 or (s.emission_mode == 0 and s.armed == 0):
             continue
-        if shape_sdf_world(s, pw) > 0.0:
+        if emission_shape_sdf(
+                s, pw, height_profile, height_profile_res, domain_min, domain_max) > 0.0:
             continue
         want = int(s.emit_rate)
         if want > have:

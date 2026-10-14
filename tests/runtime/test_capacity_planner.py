@@ -5,8 +5,14 @@ import numpy as np
 from fluidSim_warp_blender51.sim.capacity_planner import (
     CapacityVerdict,
     DemandQuality,
+    _snap_voxel_coarser,
     plan_initialization,
     suggest_configurations,
+)
+from fluidSim_warp_blender51.sim.memory_safety import estimate_solver_bytes
+from fluidSim_warp_blender51.sim.quality_contract import (
+    MIN_RESOLUTION_DIVISIONS,
+    voxel_size_for_divisions,
 )
 
 
@@ -196,6 +202,104 @@ def test_planner_exposes_domain_margin_and_balanced_alternatives_without_applyin
     assert tightened.changes["domain_max"] == (16.0, 16.0, 16.0)
 
 
+def test_suggestion_estimates_cost_apic_and_narrow_band_like_the_applied_settings():
+    # B51: the suggestion must cost the settings the solver will actually
+    # allocate after the option is applied, including the APIC affine buffers
+    # and the narrow-band arrays; otherwise the approved option is refused.
+    for extra in ({"sample_type": 2}, {"narrow_band_enabled": True},
+                  {"sample_type": 2, "narrow_band_enabled": True}):
+        authored = settings(
+            domain_min=(-2.0, -2.0, 0.0), domain_max=(2.0, 2.0, 4.0),
+            voxel_size=0.02, max_particles=1_000_000, leaf_capacity=8192,
+            **extra)
+        plan = plan_initialization(
+            authored,
+            (Footprint("src", 20_000_000, DemandQuality.EXACT, ((0, 0, 0),)),),
+            (), (), resources())
+
+        suggestions = suggest_configurations(plan, authored)
+
+        assert suggestions, extra
+        for item in suggestions:
+            applied = dict(authored, **item.changes)
+            after_apply = (
+                int(estimate_solver_bytes(applied)) + plan.staging_bytes
+                + applied["leaf_capacity"] * 512 * 4
+                + plan.additional_transaction_bytes)
+            assert item.estimated_bytes == after_apply, (extra, item.key)
+            assert after_apply <= item.budget_bytes, (extra, item.key)
+
+
+def _reference_expanded(dims, radius, coords):
+    """The original per-offset walk, kept as the equivalence oracle for P03."""
+    expanded = set()
+    for coord in coords:
+        for dz in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                for dx in range(-radius, radius + 1):
+                    item = (coord[0] + dx, coord[1] + dy, coord[2] + dz)
+                    if all(0 <= item[i] < dims[i] for i in range(3)):
+                        expanded.add(item)
+    return tuple(sorted(expanded))
+
+
+def test_vectorized_leaf_dilation_matches_the_per_offset_walk():
+    from fluidSim_warp_blender51.sim import capacity_planner as planner
+
+    rng = np.random.default_rng(20261012)
+    authored = settings(domain_max=(96.0, 64.0, 40.0))  # 12 x 8 x 5 leaves
+    dims = planner._leaf_dims(authored)
+    assert dims == (12, 8, 5)
+    for radius in range(0, 4):
+        expand = settings(domain_max=(96.0, 64.0, 40.0), topology_expand=radius)
+        assert planner._effective_topology_expand(expand) == radius
+        for count in (0, 1, 3, 40, 400):
+            # Include coords up to 4 leaves outside the domain on each side:
+            # ones within the radius still dilate into the domain.
+            raw = rng.integers(-4, np.asarray(dims) + 4, size=(count, 3))
+            coords = {tuple(int(v) for v in row) for row in raw}
+            got = planner._expanded_leaf_coords(expand, coords)
+            assert got == _reference_expanded(dims, radius, coords), (radius, count)
+            assert all(type(axis) is int for coord in got for axis in coord)
+    assert planner._expanded_leaf_coords(authored, ((-1, 0, 0),)) == ()
+    assert planner._expanded_leaf_coords(
+        settings(domain_max=(96.0, 64.0, 40.0), topology_expand=1),
+        ((-1, 0, 0),)) == ((0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1))
+
+
+def test_vectorized_seed_leaf_classification_matches_the_per_point_walk():
+    from fluidSim_warp_blender51.sim import capacity_planner as planner
+
+    rng = np.random.default_rng(7)
+    authored = settings(domain_min=(-1.0, -2.0, 0.5),
+                        domain_max=(31.0, 14.0, 24.5), voxel_size=0.5)
+    dims = planner._leaf_dims(authored)
+    points = rng.uniform((-6.0, -8.0, -4.0), (40.0, 20.0, 30.0), size=(5000, 3))
+    expected = set()
+    leaves = np.floor((points - np.asarray(authored["domain_min"]))
+                      / authored["voxel_size"] / 8.0).astype(np.int64)
+    for coord in leaves:
+        item = tuple(int(axis) for axis in coord)
+        if all(0 <= item[i] < dims[i] for i in range(3)):
+            expected.add(item)
+
+    got = planner._seed_leaf_coords(
+        authored, (points[:2500], 3, points[2500:].astype(np.float32),
+                   np.zeros((0, 3))))
+
+    float32_tail = np.floor((points[2500:].astype(np.float32).astype(np.float64)
+                             - np.asarray(authored["domain_min"]))
+                            / authored["voxel_size"] / 8.0).astype(np.int64)
+    expected_f32 = set()
+    for coord in np.concatenate((leaves[:2500], float32_tail)):
+        item = tuple(int(axis) for axis in coord)
+        if all(0 <= item[i] < dims[i] for i in range(3)):
+            expected_f32.add(item)
+    assert got == expected_f32
+    assert expected  # the fixture really lands points inside the domain
+    assert all(type(axis) is int for coord in got for axis in coord)
+
+
 def test_scene_signature_is_stable_for_equivalent_inputs_and_changes_with_demand():
     first = plan_initialization(
         settings(), (Footprint("source", 4, DemandQuality.EXACT),),
@@ -212,3 +316,81 @@ def test_scene_signature_is_stable_for_equivalent_inputs_and_changes_with_demand
 
     assert first.scene_signature == same.scene_signature
     assert first.scene_signature != changed.scene_signature
+
+
+# --- suggestions stay on the resolution-divisions lattice ----------------------
+
+
+def _lattice_divisions(voxel_size, longest):
+    divisions = round(longest / voxel_size)
+    assert abs(voxel_size - longest / divisions) < 1e-12
+    return divisions
+
+
+def _sweep_suggestions(authored, footprints, key):
+    """Yield (suggestion, plan) for ``key`` across a sweep of live budgets."""
+    unit = 1024**2
+    for free_mib in range(64, 8192, 64):
+        res = {"gpu_total_bytes": 16 * 1024**3, "gpu_free_bytes": free_mib * unit}
+        plan = plan_initialization(authored, footprints, (), (), res)
+        for item in suggest_configurations(plan, authored):
+            if item.key == key:
+                yield item, plan
+
+
+def test_coarser_resolution_is_on_the_divisions_lattice_and_never_finer():
+    authored = settings(
+        domain_max=(40.0, 20.0, 10.0), voxel_size=0.25, max_particles=1,
+        leaf_capacity=64)
+    footprints = (Footprint("src", 50_000, DemandQuality.UPPER_BOUND, ((1, 1, 1),)),)
+    longest = 40.0
+    base_divisions = 160
+
+    found = list(_sweep_suggestions(authored, footprints, "coarser_resolution"))
+
+    assert found
+    for item, plan in found:
+        voxel = item.changes["voxel_size"]
+        divisions = _lattice_divisions(voxel, longest)
+        assert voxel == voxel_size_for_divisions(divisions, longest)
+        assert MIN_RESOLUTION_DIVISIONS <= divisions < base_divisions
+        assert voxel > 0.25
+        candidate = dict(authored, **item.changes)
+        assert item.estimated_bytes == (
+            int(estimate_solver_bytes(candidate)) + plan.staging_bytes
+            + candidate["leaf_capacity"] * 512 * 4 + plan.additional_transaction_bytes)
+        assert item.estimated_bytes <= item.budget_bytes
+
+
+def test_balanced_voxel_is_lattice_snapped_for_the_tightened_domain():
+    authored = settings(
+        domain_max=(32.0, 32.0, 32.0), voxel_size=0.2, max_particles=1,
+        leaf_capacity=64)
+    footprints = (Footprint("center", 2, DemandQuality.UPPER_BOUND, ((10, 10, 10),)),)
+
+    found = list(_sweep_suggestions(authored, footprints, "balanced"))
+
+    assert found
+    for item, _plan in found:
+        lo = item.changes.get("domain_min", authored["domain_min"])
+        hi = item.changes.get("domain_max", authored["domain_max"])
+        longest = max(high - low for low, high in zip(lo, hi))
+        voxel = item.changes["voxel_size"]
+        divisions = _lattice_divisions(voxel, longest)
+        assert voxel == voxel_size_for_divisions(divisions, longest)
+        assert voxel >= 0.2 * (1 - 1e-9)  # never finer than the authored voxel
+        if divisions > MIN_RESOLUTION_DIVISIONS:
+            assert voxel >= 0.2 * 1.10 * (1 - 1e-9)  # never finer than the costed 10%
+
+
+def test_snap_rounds_toward_fewer_divisions_and_respects_the_minimum():
+    assert _snap_voxel_coarser(0.3, 10.0) == 10.0 / 33
+    assert _snap_voxel_coarser(0.25, 10.0) == 10.0 / 40  # exact lattice point kept
+    assert _snap_voxel_coarser(5.0, 10.0) == 10.0 / MIN_RESOLUTION_DIVISIONS
+
+
+def test_a_domain_already_at_minimum_divisions_offers_no_coarser_resolution():
+    authored = settings(voxel_size=1.0, max_particles=1, leaf_capacity=8)  # 8 divisions
+    footprints = (Footprint("src", 50_000, DemandQuality.UPPER_BOUND, ((0, 0, 0),)),)
+
+    assert not list(_sweep_suggestions(authored, footprints, "coarser_resolution"))

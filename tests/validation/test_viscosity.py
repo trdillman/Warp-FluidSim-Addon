@@ -7,11 +7,11 @@ import pytest
 
 wp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim.constants import LEAF_VOLUME
-from fluidSim_warp_blender51.sim import viscosity
-from fluidSim_warp_blender51.sim.viscosity import ViscositySolver
+from fluidSim_warp_blender51.sim.constants import LEAF_VOLUME  # noqa: E402
+from fluidSim_warp_blender51.sim import viscosity  # noqa: E402
+from fluidSim_warp_blender51.sim.viscosity import ViscositySolver  # noqa: E402
 
-from _subset_runner import run_subset
+from _subset_runner import run_subset  # noqa: E402
 
 
 def _fake_viscosity_solver(active_voxels=LEAF_VOLUME, capacity=LEAF_VOLUME * 8):
@@ -418,6 +418,7 @@ def test_solver_records_viscosity_convergence_the_way_it_records_pressure():
         stats=FrameStats(),
         device="cpu",
         pressure_solver=None,
+        _classify_collision_voxels=lambda: None,
     )
     stub._native_solver_message = MethodType(
         FluidSolver._native_solver_message, stub)

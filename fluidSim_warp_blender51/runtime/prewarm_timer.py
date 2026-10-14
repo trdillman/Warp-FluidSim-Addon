@@ -13,9 +13,12 @@ _FIRST_INTERVAL = 0.5
 
 def _background_prewarm():
     try:
-        from .warp_runtime import prewarm_simulation_kernels
+        from .warp_runtime import prewarm_simulation_kernels, probe_runtime
 
-        prewarm_simulation_kernels()
+        # Without CUDA (playback-only) there is nothing to compile; the probe's
+        # own Warp import is the only one attempted.
+        if probe_runtime().available:
+            prewarm_simulation_kernels()
     except Exception:  # noqa: BLE001
         pass
     return None

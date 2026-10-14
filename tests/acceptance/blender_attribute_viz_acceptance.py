@@ -12,8 +12,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from tools.repo_addon_loader import enable_repo_addon
-from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
+from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings  # noqa: E402
 
 
 CHECKS = []

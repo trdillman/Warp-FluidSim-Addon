@@ -12,6 +12,7 @@ class ParticleSampleType(IntEnum):
     """FLUIDSIM::Parameters::ParticleSampleType"""
     PIC = 0
     FLIP = 1
+    APIC = 2
 
 
 class ViscositySolver(IntEnum):
@@ -261,6 +262,7 @@ _ENUM_DESCRIPTIONS = {
     ParticleSampleType: {
         "PIC": "Use direct grid velocity on particles for smoother, more stable, but more dissipative motion",
         "FLIP": "Apply grid velocity changes to particles to preserve energy and detail, with more noise",
+        "APIC": "Carry each particle's local rotation and shear in an affine matrix; keeps swirling motion and detail with far less noise than FLIP",
     },
     ViscositySolver: {
         "JACOBI": "Use simple fixed-point viscosity iterations; predictable but usually slower to converge",

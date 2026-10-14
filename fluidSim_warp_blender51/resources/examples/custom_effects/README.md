@@ -30,15 +30,15 @@ The following 10 curated custom effect packages are bundled under `resources/exa
 
 | Package | Effect ID | Domain | Stage & Cadence | Category | Description |
 |---|---|---|---|---|---|
-| `thermal_updraft-1.0.0.fseffect` | `example.thermal_updraft` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Thermal | Convective thermal buoyancy accelerating warm particles upward based on temperature delta. |
-| `point_attractor-1.0.0.fseffect` | `example.point_attractor` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Forces | Central spherical attractor or repeller pulling fluid toward an artist Empty controller. |
-| `helical_vortex-1.0.0.fseffect` | `example.helical_vortex` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Forces | Spiraling corkscrew vortex combining tangential swirl with axial drive along a cylinder axis. |
-| `directional_wind-1.0.0.fseffect` | `example.directional_wind` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Forces | Aerodynamic drag and periodic gusting force within a localized controller bounding sphere. |
-| `centrifugal_spinner-1.0.0.fseffect` | `example.centrifugal_spinner` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Forces | Radial $\omega^2 r$ centrifugal ejection perpendicular to a rotating shaft. |
+| `thermal_updraft-1.0.0.fseffect` | `example.thermal_updraft` | `PARTICLES` | `BEFORE_EMISSION` / substep | Thermal | Convective thermal buoyancy accelerating warm particles upward based on temperature delta. |
+| `point_attractor-1.0.0.fseffect` | `example.point_attractor` | `PARTICLES` | `BEFORE_EMISSION` / substep | Forces | Central spherical attractor or repeller pulling fluid toward an artist Empty controller. |
+| `helical_vortex-1.0.0.fseffect` | `example.helical_vortex` | `PARTICLES` | `BEFORE_EMISSION` / substep | Forces | Spiraling corkscrew vortex combining tangential swirl with axial drive along a cylinder axis. |
+| `directional_wind-1.0.0.fseffect` | `example.directional_wind` | `PARTICLES` | `BEFORE_EMISSION` / substep | Forces | Aerodynamic drag and periodic gusting force within a localized controller bounding sphere. |
+| `centrifugal_spinner-1.0.0.fseffect` | `example.centrifugal_spinner` | `PARTICLES` | `BEFORE_EMISSION` / substep | Forces | Radial $\omega^2 r$ centrifugal ejection perpendicular to a rotating shaft. |
 | `surface_tension_bead-1.0.0.fseffect` | `example.surface_tension_bead` | `ACTIVE_VOXELS` | `BEFORE_PRESSURE` / substep | Surface | Damps grid velocity in sparsely filled surface voxels (from the live particle count) so sheets and droplets stay together. |
 | `viscous_heating-1.0.0.fseffect` | `example.viscous_heating` | `PARTICLES` | `AFTER_PARTICLE_UPDATE` / substep | Thermal | Friction dissipation converting high particle speeds into temperature increases. |
-| `periodic_ripples-1.0.0.fseffect` | `example.periodic_ripples` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Waves | Concentric circular traveling harmonic ripple waves radiating outward from a disturbance controller. |
-| `bounding_box_confinement-1.0.0.fseffect` | `example.bounding_box_confinement` | `PARTICLES` | `AFTER_PARTICLE_TRANSFER` / substep | Boundary | Smooth elastic restorative containment barrier keeping particles inside a 3D box. |
+| `periodic_ripples-1.0.0.fseffect` | `example.periodic_ripples` | `PARTICLES` | `BEFORE_EMISSION` / substep | Waves | Concentric circular traveling harmonic ripple waves radiating outward from a disturbance controller. |
+| `bounding_box_confinement-1.0.0.fseffect` | `example.bounding_box_confinement` | `PARTICLES` | `BEFORE_EMISSION` / substep | Boundary | Smooth elastic restorative containment barrier keeping particles inside a 3D box. |
 | `voxel_viscosity_decay-1.0.0.fseffect` | `example.voxel_viscosity_decay` | `ACTIVE_VOXELS` | `AFTER_PARTICLE_TRANSFER` / substep | Grid | Blends particle-splatted grid viscosity toward a base value by exp(−rate × time), so a thick fluid thins over the shot. Needs viscosity enabled with Viscosity From Particles. |
 
 ### How to use an example effect in Blender

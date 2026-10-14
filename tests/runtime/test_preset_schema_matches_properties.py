@@ -95,6 +95,17 @@ def test_preset_spec_agrees_with_the_property_it_assigns(key, declarations):
                     f"{where} clamps above {hard_max} but the preset schema admits "
                     f"{spec.maximum}")
 
+            # B56: Save Preset captures whatever the property holds, so the
+            # schema must also admit every value the property can store.
+            # Without a hard bound the property stores any value, and so must
+            # the schema.
+            assert spec.minimum == hard_min, (
+                f"{where} stores values down to {hard_min} but the preset "
+                f"schema rejects below {spec.minimum}")
+            assert spec.maximum == hard_max, (
+                f"{where} stores values up to {hard_max} but the preset "
+                f"schema rejects above {spec.maximum}")
+
         if kind == "EnumProperty":
             identifiers = {item[0] for item in kwargs["items"]}
             assert set(spec.choices) == identifiers, (

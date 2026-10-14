@@ -91,6 +91,18 @@ substeps
 voxel_size
 ```
 
+| Name | Meaning |
+|---|---|
+| `frame` | Timeline frame being simulated (the frame windows use the same clock). |
+| `time` | Simulated seconds since the simulation started. |
+| `real_time_step` | Simulated seconds per display frame: `time_scale / fps`. This is how far `time` advances each frame, so at Time Scale 2 and 24 fps it is 2/24, not 1/24. Use it for once-per-frame effects. |
+| `solver_time_step` | Simulated seconds per solver substep: `real_time_step / substeps`. Use it for every-substep effects. |
+| `time_scale` | The domain's Time Scale. Divide by it to get wall-clock (playback) seconds. |
+| `substeps` | Substeps taken this frame. |
+| `voxel_size` | Simulation voxel size in metres. |
+
+Both time steps are in simulated time, so a rate in 1/s (such as Voxel Cooling's) stays in step with the liquid at any Time Scale.
+
 Particle code additionally receives `particle_index`, `position`, and `velocity`. Voxel code receives sparse-coordinate context and `world_position`. Bound fields and typed parameters are explicit launch inputs rather than arbitrary global lookup.
 
 The static validator rejects imports, unsupported constructs, unknown names, undeclared field/parameter use, domain mismatches, illegal writes, unbounded loops, and unsafe capabilities in Safe mode.

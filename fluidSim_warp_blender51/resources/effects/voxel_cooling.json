@@ -3,7 +3,7 @@
   "built_in": true,
   "category": "Thermal",
   "cost_hint": "MEDIUM",
-  "description": "Runs on active sparse voxels and therefore requests topology. It provides a clear example of a grid-domain effect whose cadence is once per frame rather than every solver substep.",
+  "description": "Runs on active sparse voxels and therefore requests topology. It provides a clear example of a grid-domain effect whose cadence is once per frame rather than every solver substep. No solver phase reads grid temperature (it is cleared every substep and is separate from particle temperature), so this effect does not change the liquid's motion or output; use Temperature Lift to act on particle temperature.",
   "effect_abi_version": 1,
   "effect_api_version": 2,
   "effect_id": "fluidsim.voxel_cooling",

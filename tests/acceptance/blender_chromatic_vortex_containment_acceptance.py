@@ -15,7 +15,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 
 bpy.ops.wm.open_mainfile(filepath=os.path.join(REPO, "demos", "chromatic_vortex.blend"))
@@ -43,7 +43,7 @@ vessel_radii = [
 ]
 vessel_radius = max(vessel_radii)
 inner_radius = min(vessel_radii)
-from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings
+from fluidSim_warp_blender51.blender.scene_bridge import active_domain_settings  # noqa: E402
 
 settings = active_domain_settings(scene)
 voxel_size = float(settings.voxel_size)
@@ -59,7 +59,7 @@ source_corner_radius = max(
 assert source_corner_radius <= inner_radius - 0.5 * voxel_size, (
     "initial-fill boxes overlap the vessel collision wall")
 
-from fluidSim_warp_blender51.blender import scene_bridge
+from fluidSim_warp_blender51.blender import scene_bridge  # noqa: E402
 
 scene.fluidsim.live = False
 scene_bridge.release_session(scene)

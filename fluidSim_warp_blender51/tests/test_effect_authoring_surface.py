@@ -86,6 +86,8 @@ def test_boilerplate_generator_contains_variables_and_bounds(monkeypatch):
     monkeypatch.setitem(sys.modules, "bpy.props", fake_props)
 
     effects_module = ModuleType("fluidsim_testpkg.blender.effects")
+    effects_module.bound_parameter_keys = lambda _item, kernel: tuple(
+        k.strip() for k in kernel.parameter_keys_csv.split(",") if k.strip())
     fields_module = ModuleType("fluidsim_testpkg.sim.effects.fields")
     fields_module.FIELD_SPECS = {}
     source_module = ModuleType("fluidsim_testpkg.sim.effects.source")

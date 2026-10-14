@@ -31,21 +31,16 @@ DIRECT_SETTING_FIELDS = (
     "dissipation_rate", "dissipation_target", "attraction_enabled",
     "attraction_strength", "attraction_max_distance",
     "particles_per_voxel", "count_stiffness",
-    "spacetime_enabled", "spacetime_jitter_strength",
-    "spacetime_adaptive_jitter", "spacetime_phase_eta",
-    "spacetime_phase_threshold", "spacetime_reference_mass",
-    "spacetime_variable_projection", "spacetime_liquid_density",
-    "spacetime_gas_density", "spacetime_min_density",
-    "spacetime_local_cfl", "spacetime_max_local_substeps",
-    "spacetime_resync_surface", "spacetime_seed",
     "relax_enabled", "relax_strength",
     "pressure_iterations", "pressure_tolerance", "pressure_threshold",
+    "pressure_preconditioner",
     "viscosity_enabled", "viscosity_constant", "viscosity_from_particles",
     "viscosity_iterations", "viscosity_tolerance",
     "surface_tension_enabled", "surface_tension_coefficient",
     "surface_tension_density", "surface_tension_band_voxels",
     "surface_tension_safety", "surface_tension_smoothing_iterations",
     "species_enabled", "species_mixing_rate",
+    "narrow_band_enabled", "narrow_band_voxels",
     "surface_enabled",
     "particle_radius_scale", "surface_splat_radius",
     "surface_resolution_multiplier", "surface_voxel_size",
@@ -93,6 +88,26 @@ SETTING_ALIASES = {
 
 _ENUM_SETTING_FIELDS = None
 _SETTING_REGISTRY_VALIDATED = False
+
+# The only settings-group attributes that may be read with a default
+# (``getattr(group, name, default)``). Every other settings field is declared
+# by the group that owns it, so a read of it is direct attribute access and a
+# read from the wrong group raises instead of quietly yielding a default (the
+# way defects #1, #3 and #5 happened). ``tests/runtime/test_settings_read_allowlist.py``
+# fails on any defaulted read of a settings field outside this list.
+#   schema_version / active_snippet / snippets -- legacy snippet-era carriers.
+#       Neither settings group declares them; a pre-1.1 file may still hold them
+#       as stored IDProperties (see ``blender/file_compat.py``).
+#   stat_*  -- runtime statistics read during cache playback, where the solver
+#       that normally fills them has never run.
+OPTIONAL_SETTING_READS = frozenset({"schema_version", "active_snippet", "snippets"})
+OPTIONAL_SETTING_READ_PREFIXES = ("stat_",)
+
+
+def is_optional_setting_read(name: str) -> bool:
+    """True when ``name`` may be read from a settings group with a default."""
+    return name in OPTIONAL_SETTING_READS or name.startswith(
+        OPTIONAL_SETTING_READ_PREFIXES)
 
 
 def domain_bounds(scene) -> tuple:
@@ -156,7 +171,7 @@ def validate_setting_registry():
     global _SETTING_REGISTRY_VALIDATED
     if _SETTING_REGISTRY_VALIDATED:
         return
-    from ..sim.solver import SolverSettings
+    from ..sim.solver_settings_model import SolverSettings
 
     targets = {SETTING_ALIASES.get(name, name) for name in DIRECT_SETTING_FIELDS}
     targets.update(SETTING_ALIASES.get(target, target)
@@ -180,7 +195,9 @@ def scene_quality_fidelity(scene) -> float:
     from ..sim.quality_contract import quality_tier_fidelity
 
     fs_scene = getattr(scene, "fluidsim", None)
-    return quality_tier_fidelity(getattr(fs_scene, "quality", "PREVIEW"))
+    # No scene group at all resolves to the neutral tier; a group that lacks
+    # ``quality`` is a bug and raises rather than reading as PREVIEW.
+    return quality_tier_fidelity(None if fs_scene is None else fs_scene.quality)
 
 
 def _require_domain_group(fs):
@@ -222,7 +239,7 @@ def apply_scene_settings(fs, settings, fields=None, *, quality_fidelity=1.0):
     selected = None if fields is None else set(fields)
     for source in DIRECT_SETTING_FIELDS:
         target = SETTING_ALIASES.get(source, source)
-        if (selected is None or source in selected) and hasattr(fs, source):
+        if selected is None or source in selected:
             value = getattr(fs, source)
             if source in VECTOR_SETTING_FIELDS:
                 value = tuple(float(component) for component in value)
@@ -231,7 +248,7 @@ def apply_scene_settings(fs, settings, fields=None, *, quality_fidelity=1.0):
             setattr(settings, target, value)
     for target, (source, enum_type) in enum_setting_fields().items():
         declared_target = SETTING_ALIASES.get(target, target)
-        if (selected is None or source in selected) and hasattr(fs, source):
+        if selected is None or source in selected:
             setattr(settings, declared_target, enum_type[getattr(fs, source)])
     return settings
 
@@ -239,10 +256,7 @@ def apply_scene_settings(fs, settings, fields=None, *, quality_fidelity=1.0):
 def apply_gravity(scene, settings):
     fs = active_domain_settings(scene)
     _require_domain_group(fs)
-    if not hasattr(fs, "gravity"):
-        return settings
-    if (getattr(fs, "use_scene_gravity", False)
-            and getattr(scene, "use_gravity", False)):
+    if fs.use_scene_gravity and getattr(scene, "use_gravity", False):
         settings.gravity = tuple(float(value) for value in scene.gravity)
     else:
         settings.gravity = tuple(float(value) for value in fs.gravity)
@@ -259,7 +273,7 @@ def normalize_domain_boundary_settings(settings):
 def build_settings(scene):
     """Create SolverSettings without retaining Blender RNA/mathutils proxies."""
     from ..preferences import configured_device
-    from ..sim.solver import SolverSettings
+    from ..sim.solver_settings_model import SolverSettings
 
     fs = active_domain_settings(scene)
     settings = SolverSettings()

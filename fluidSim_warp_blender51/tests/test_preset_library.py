@@ -56,16 +56,77 @@ def test_user_cannot_override_builtin(tmp_path: Path):
         library.save_user_preset(_user_preset("preview_water"), tmp_path)
 
 
-def test_discovery_and_load_propagate_invalid_user_preset(tmp_path: Path):
+def test_one_invalid_user_preset_does_not_hide_the_healthy_ones(tmp_path: Path):
+    """B61: a malformed file is skipped with a diagnostic, not fatal to all."""
+    library.save_user_preset(_user_preset(), tmp_path)
+    library.save_user_preset(_user_preset("other_water"), tmp_path)
     (tmp_path / "broken.json").write_text(
         '{"schema_version": 1, "id": "broken"}',
         encoding="utf-8",
     )
+    (tmp_path / "garbage.json").write_text("{not json", encoding="utf-8")
+    duplicate = _user_preset("my_water").to_dict()
+    (tmp_path / "z_duplicate.json").write_text(
+        __import__("json").dumps(duplicate), encoding="utf-8")
 
-    with pytest.raises(ValueError):
-        library.discover_presets(tmp_path)
-    with pytest.raises(ValueError):
+    records = library.discover_presets(tmp_path)
+
+    users = [record.preset.id for record in records if record.source == "USER"]
+    assert users == ["my_water", "other_water"]
+    diagnostics = library.preset_diagnostics()
+    assert len(diagnostics) == 3
+    assert any("broken.json" in item for item in diagnostics)
+    assert any("garbage.json" in item for item in diagnostics)
+    assert any("z_duplicate.json" in item and "duplicate" in item
+               for item in diagnostics)
+    assert library.load_preset("USER:my_water", tmp_path) == _user_preset()
+    # Loading the broken preset by name still explains why it cannot load.
+    with pytest.raises(ValueError, match="broken.json"):
         library.load_preset("USER:broken", tmp_path)
+
+
+def test_cached_discovery_matches_a_fresh_scan_through_every_folder_change(
+        tmp_path: Path, monkeypatch):
+    """P16: discovery is cached, but never stale against the files on disk."""
+    reads = []
+    real_read = library._read
+    monkeypatch.setattr(library, "_read", lambda path: reads.append(path.name) or real_read(path))
+
+    def fresh():
+        library.invalidate_preset_cache()
+        records = library.discover_presets(tmp_path)
+        return records, library.preset_diagnostics()
+
+    def cached():
+        return library.discover_presets(tmp_path), library.preset_diagnostics()
+
+    library.invalidate_preset_cache()
+    first = cached()
+    reads.clear()
+    assert cached() == first
+    assert reads == []  # an unchanged folder is not re-read
+
+    def check():
+        got = cached()
+        assert got == fresh()
+        return got
+
+    path = library.save_user_preset(_user_preset(), tmp_path)  # add
+    assert [r.preset.id for r in check()[0] if r.source == "USER"] == ["my_water"]
+    edited = _user_preset().to_dict()
+    edited["settings"]["flip_ratio"] = 0.5
+    before = path.stat().st_mtime_ns
+    path.write_text(__import__("json").dumps(edited), encoding="utf-8")  # rewrite
+    # A same-size hand edit lands seconds later; make that explicit rather
+    # than rely on the file-time tick between two writes in this test.
+    __import__("os").utime(path, ns=(before + 2_000_000_000,) * 2)
+    users = [r for r in check()[0] if r.source == "USER"]
+    assert users[0].preset.settings["flip_ratio"] == 0.5
+    (tmp_path / "broken.json").write_text("{", encoding="utf-8")  # bad file
+    assert len(check()[1]) == 1
+    (tmp_path / "broken.json").unlink()  # delete
+    path.unlink()
+    assert check() == first
 
 
 @pytest.mark.parametrize("error", [ImportError("no bpy"), RuntimeError("no profile")])
@@ -237,6 +298,37 @@ def test_capture_scene_preset_snapshots_explicit_source():
 
     assert preset.settings["voxel_size"] == 0.08
     assert preset.settings["flip_ratio"] == 0.9
+
+
+@pytest.mark.parametrize("overrides", [
+    # 4 m domain at 1100 divisions: voxel 0.0036 and divisions above 1024.
+    {"resolution_divisions": 1100, "voxel_size": 4.0 / 1100},
+    # 0.3 m domain at 64 divisions: voxel 0.0047.
+    {"resolution_divisions": 64, "voxel_size": 0.3 / 64},
+    # The splat radius property stores up to 16.
+    {"surface_splat_radius": 12},
+])
+def test_save_preset_accepts_values_the_ui_can_store(tmp_path: Path, overrides):
+    """B56: Save Preset must not reject settings the properties can hold."""
+    valid = {key: _spec_valid_value(spec) for key, spec in library.SETTING_SPECS.items()}
+    valid.update(resolution_divisions=64, voxel_size=4.0 / 64, surface_splat_radius=2)
+    valid.update(overrides)
+    domain = SimpleNamespace(**valid)
+
+    preset = library.capture_scene_preset(
+        SimpleNamespace(fluidsim=domain),
+        identifier="fine_grid",
+        name="Fine Grid",
+        description="Captured from a UI-valid scene",
+        expected_scale="metres",
+        performance_cost="High",
+        source=domain,
+    )
+    library.save_user_preset(preset, tmp_path)
+
+    loaded = library.load_preset("USER:fine_grid", tmp_path)
+    for key, value in overrides.items():
+        assert loaded.settings[key] == pytest.approx(value)
 
 
 def test_apply_preset_rolls_back_on_assignment_failure():

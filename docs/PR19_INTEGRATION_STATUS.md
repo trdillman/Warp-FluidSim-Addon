@@ -1,5 +1,67 @@
 # PR #19 integration status
 
+## Current integration (2026-10-13)
+
+The owner requested reconciliation and merge of the Warp install change,
+while keeping GitHub workflows removed. The integration combines PR head
+`7f4f51329878f6de98971d63bf2b1c5d3f0d4650` with master
+`8b037aae48b12af60cd6d10212d4eae1956d1dff`. FluidSim remains **3.2.0**;
+current master features, cache-v3 behavior, registration and bundled demos
+are retained. Extension archives contain no Warp wheels. The explicit
+Preferences installer and `install_local.py --install-warp` provision the
+locked Warp 1.17.0 CUDA 12 runtime only into the extension-owned user directory.
+
+The deleted GitHub workflows remain deleted. Workflow-specific tests have
+been replaced by applicable local checks and a regression against workflow
+restoration. Historical artifact quota failures are not current merge gates.
+Local checks and an independent review qualify this integration; release
+tagging still requires the GPU/GUI evidence described in `RELEASING.md`.
+
+Fresh source checks: 146 focused tests passed; full CPU regression passed
+2,676 tests with 299 skipped; add-on and touched-tool lint, compilation and
+source/lock/manifest verification passed. All three Warp CPU validators passed.
+Independent source review found a loaded-runtime repair defect when owned
+version metadata is missing. Both regression cases failed before the fix;
+113 affected installer/runtime/discovery/build/helper checks passed afterward.
+The installer now stages any loaded owned runtime for restart independently
+of its version metadata. Independent correctness and intent review passed.
+
+Final affected installer/build/helper checks passed 96 tests, including deep
+Windows extraction, cross-volume repair promotion, cleanup and archive-member
+containment. The shared installer uses normalized extended Windows paths at
+filesystem boundaries; the runtime import path remains the extension-owned path.
+
+Isolated Blender 5.2.0 installer qualification passed all seven checks on the
+external F: drive. The final suite reuses a local wheel that matches the lock's
+SHA-256 and size on every transfer; installation, ownership, offline refusal,
+idempotency, damaged metadata, repair/restart and helper behavior remain real.
+This cached mode excludes network-transfer qualification. The preceding PyPI
+run installed Warp and staged the same verified repair wheel before its repeated
+downloads were stopped; its log/profile and the wheel are retained.
+
+The first environment attempt
+used a Blender 5.2.0 installation with foreign Warp preinstalled in its Python
+site; its ownership refusal produced 5 failures and 2 passes. Evidence is
+retained in `real-blender-installer.log`. The bounded fallback uses a private
+local copy of the same executable (matching SHA-256), with its copied foreign
+Warp preserved outside that runtime. The copied Python finds no Warp before
+installation; all profiles, temporary files and caches are private on F: and
+CUDA is hidden. Final Windows/Linux archives were built and inspected with no
+Warp wheels; the final Windows package passed two installed smoke runs and
+uninstalled cleanly. The smoke harness now isolates Python's user base as well
+as Blender's profile, and preserves background stdout/stderr on failure. Its
+user-base regression failed before the isolation fix and passed afterward.
+This is installer
+qualification, not CUDA solver, GUI or fresh official-archive provenance.
+Logs and packages are retained locally under
+`artifacts/pr19-integration-20261013/`. No tag or release publication is requested.
+
+## Historical candidate evidence (2026-10-09)
+
+The remaining sections record the earlier 2.2.0 proposal and its checks.
+Those results and blockers describe that historical candidate, not the
+current integration or current process availability.
+
 ## Candidate and preserved release
 
 Proposed FluidSim 2.2.0 reconciles installer head
@@ -71,8 +133,7 @@ passing receipts and failed-attempt evidence are retained. The isolated
 installer lane hides CUDA to avoid competing with other local GPU work; it
 cannot qualify solver execution, viewport behavior or GPU performance.
 
-Windows/CUDA and foreground GUI production qualification are **BLOCKED**:
-other Blender/Python processes are using the target GPU. Do not stop or alter
-those sessions. Do not merge or tag 2.2.0 until candidate-specific mandatory
-checks and owner/repository approval gates pass. No historical 2.1.0 receipt or
-metadata-only `release_ready` field waives these gates.
+At that time, Windows/CUDA and foreground GUI production qualification were
+blocked by other Blender/Python sessions using the target GPU. The earlier
+candidate was held pending its checks and owner approval. Historical receipts
+and metadata-only `release_ready` fields do not qualify a new release.

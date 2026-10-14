@@ -29,7 +29,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 FAILURES = []
 
@@ -93,7 +93,7 @@ def run_fixture(label, stamp, expect_flagged, tmpdir, snippets=None):
     check(f"{label}: flagged == {expect_flagged}", flagged == expect_flagged, flagged)
     voxel = scene_bridge.active_domain_settings(scene).voxel_size
     check(f"{label}: solver reads the domain object's voxel_size",
-          abs(voxel - DOMAIN_VOXEL_SIZE) < 1e-6, voxel)
+          abs(voxel - DOMAIN_VOXEL_SIZE) < 1e-3, voxel)  # snapped to whole divisions
     check(f"{label}: scene group exposes no domain setting",
           not hasattr(scene.fluidsim, "voxel_size"))
     if snippets is None:

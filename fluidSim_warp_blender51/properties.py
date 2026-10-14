@@ -20,6 +20,9 @@ from bpy.props import (
     StringProperty,
 )
 
+# The source UI schema the tagging operators stamp (``blender/sources.py``);
+# see ``CURRENT_SOURCE_UI_SCHEMA`` for what each version means.
+from .blender.scene_inputs import CURRENT_SOURCE_UI_SCHEMA as _CURRENT_SOURCE_UI_SCHEMA
 from .sim import constants as _C
 from .sim.enums import (
     BlendMode,
@@ -70,7 +73,6 @@ LIQUID_ATTR_ITEMS = (
 PARTICLE_ATTR_ITEMS = LIQUID_ATTR_ITEMS + (
     ("AGE", "Age", "Color by particle age"),
     ("LIFE", "Life", "Color by particle life span"),
-    ("TIME_OFFSET", "ST Time Offset", "Color by experimental ST-FLIP time residual"),
 )
 
 
@@ -199,6 +201,73 @@ def _request_sync(self, context):
     _request_scene_update(context, SceneUpdate.SYNC)
 
 
+
+
+def _update_object_role(self, context):
+    """A role chosen in the Role dropdown gets the schema the panel draws.
+
+    Below the current schema the runtime ignores the region and sampling
+    controls the Object panel shows for sources, sinks and field sources, so
+    a dropdown-tagged object is brought to the schema the "Set Selected as"
+    operators stamp; a new liquid source inherits Liquid Sampling as theirs do.
+    An object already at the sampling schema (4) keeps its sampling choice.
+    """
+    if (self.role in {"SOURCE", "SINK", "FIELD"}
+            and int(self.source_ui_schema_version) < _CURRENT_SOURCE_UI_SCHEMA):
+        schema = int(self.source_ui_schema_version)
+        if self.role == "SOURCE" and schema < 4:
+            self.source_sampling_mode = "INHERIT"
+            self.source_sampling_multiplier = 1.0
+        self.source_ui_schema_version = _CURRENT_SOURCE_UI_SCHEMA
+        if schema < 3:
+            # A Mesh geometry chosen before the role must survive the stamp.
+            _forward_legacy_geometry(self)
+    _request_reset(self, context)
+
+
+_MESH_REGION_KINDS = frozenset({"MESH_SOLID", "MESH_SHELL"})
+
+
+def _legacy_sink_mesh_kind(pg) -> str:
+    return ("MESH_SOLID" if getattr(pg, "sink_region_mode", "SOLID") == "SOLID"
+            else "MESH_SHELL")
+
+
+def _forward_legacy_geometry(pg) -> None:
+    """Carry a legacy ``geometry_mode = 'MESH'`` into the region kinds.
+
+    From source UI schema 3 the runtime reads only the Emission/Removal Region
+    kinds, so a script that writes the older ``geometry_mode`` (and
+    ``sink_region_mode``) would otherwise get an analytic box silently. An
+    analytic region kind is switched to the mesh kind the legacy fields mean
+    (see ``scene_inputs.legacy_region_kinds``); a region kind already chosen
+    is never overridden, and Analytic writes change nothing.
+    """
+    if getattr(pg, "geometry_mode", "ANALYTIC") != "MESH":
+        return
+    if getattr(pg, "source_region_kind", "ANALYTIC") == "ANALYTIC":
+        pg.source_region_kind = "MESH_SHELL"
+    if getattr(pg, "sink_region_kind", "ANALYTIC") == "ANALYTIC":
+        pg.sink_region_kind = _legacy_sink_mesh_kind(pg)
+
+
+def _update_geometry_mode(self, context):
+    """Legacy Region alias: a Mesh write reaches the schema-3 region kinds."""
+    if int(getattr(self, "source_ui_schema_version", 0) or 0) >= 3:
+        _forward_legacy_geometry(self)
+    _request_sync(self, context)
+
+
+def _update_sink_region_mode(self, context):
+    """Legacy Sink Region alias: solid/surface picks the mesh removal kind."""
+    if (int(getattr(self, "source_ui_schema_version", 0) or 0) >= 3
+            and getattr(self, "sink_region_kind", "ANALYTIC") in _MESH_REGION_KINDS):
+        desired = _legacy_sink_mesh_kind(self)
+        if self.sink_region_kind != desired:
+            self.sink_region_kind = desired
+    _request_sync(self, context)
+
+
 def _update_field_region_kind(self, context):
     """Keep field payload controls reachable for the selected coverage mode."""
     if self.field_region_kind != "VOLUME_GRID" and self.field_value_source != "CONSTANT":
@@ -288,27 +357,48 @@ def _on_cache_playback_changed(self, context):
 # cache so the returned items stay alive.
 _PRODUCT_PRESET_ITEMS = []
 
+# Without a placeholder default, Blender shows the first discovered preset and it
+# looks applied out of the box. Saved .blend files store the enum's integer value,
+# which used to be the preset's list position, so presets keep numbers 0..n-1 and
+# the placeholder takes a number outside that range.
+PRODUCT_PRESET_NONE = "NONE"
+PRODUCT_PRESET_NONE_NUMBER = 1_000_000
+_PRODUCT_PRESET_PLACEHOLDER = (
+    PRODUCT_PRESET_NONE, "Choose a preset…", "No preset selected; nothing has been applied",
+    "NONE", PRODUCT_PRESET_NONE_NUMBER,
+)
+
 
 def _product_preset_items(_self, _context):
     global _PRODUCT_PRESET_ITEMS
     try:
-        from .presets.library import discover_presets
+        from .presets.library import discover_presets, preset_diagnostics
 
         records = discover_presets()
-        items = [
+        placeholder = _PRODUCT_PRESET_PLACEHOLDER
+        skipped = preset_diagnostics()
+        if skipped:
+            # A broken user preset file is skipped, not fatal; say so where the
+            # user looks for the preset that went missing.
+            placeholder = placeholder[:2] + (
+                placeholder[2] + ". " + "; ".join(skipped),) + placeholder[3:]
+        items = [placeholder] + [
             (
                 f"{record.source}:{record.preset.id}",
                 record.preset.name,
                 f"{record.preset.description} Cost: {record.preset.performance_cost}. "
                 f"Scale: {record.preset.expected_scale}.",
+                "NONE",
+                number,
             )
-            for record in records
+            for number, record in enumerate(records)
         ]
     except Exception as exc:  # invalid user data must not break RNA drawing
-        items = [("BUILTIN:preview_water", "Preview Water", f"Preset scan failed: {exc}")]
-    _PRODUCT_PRESET_ITEMS = items or [
-        ("BUILTIN:preview_water", "Preview Water", "Fast live-preview defaults")
-    ]
+        items = [
+            _PRODUCT_PRESET_PLACEHOLDER,
+            ("BUILTIN:preview_water", "Preview Water", f"Preset scan failed: {exc}", "NONE", 0),
+        ]
+    _PRODUCT_PRESET_ITEMS = items
     return _PRODUCT_PRESET_ITEMS
 
 
@@ -342,7 +432,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
              "Source pressure, scalar, vector, or staggered velocity fields without emitting liquid"),
         ],
         default="NONE",
-        update=_request_reset,
+        update=_update_object_role,
     )
     # Source shape settings.
     shape: EnumProperty(
@@ -487,7 +577,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
              SourceGeometryMode.MESH.value),
         ],
         default=SourceGeometryMode.ANALYTIC.name,
-        update=_request_sync,
+        update=_update_geometry_mode,
         description="Choose an exact analytic shape or evaluated mesh triangles for the region; changing it replaces the geometry controls and membership method",
     )
     mesh_object: PointerProperty(
@@ -498,16 +588,21 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         description="Optional mesh object; empty uses this tagged object's mesh",
     )
     mesh_evaluation_mode: EnumProperty(
-        name="Mesh Evaluation",
+        # Applies to every evaluated input (mesh, points, volume, field), not
+        # only meshes; the identifier is kept so saved files read back.
+        name="Evaluation",
         items=_items(MeshEvaluationMode, {
             "FIRST_SIM_FRAME": (
-                "Capture evaluated geometry on the first simulated frame and retain it until reset"),
+                "Capture the input (mesh geometry, points, volume file and "
+                "transform, or field placement) on the first simulated frame "
+                "and retain it until reset"),
             "EVERY_SIM_FRAME": (
-                "Reevaluate modifiers, transforms, animation, and topology before every simulation frame"),
+                "Reevaluate the input, including modifiers, transforms, "
+                "animation, topology and VDB sequences, before every simulation frame"),
         }),
         default=MeshEvaluationMode.FIRST_SIM_FRAME.name,
         update=_request_reset,
-        description="Choose whether evaluated mesh geometry is captured once or refreshed every simulation frame; refreshing tracks animation but costs more CPU time",
+        description="Choose whether the input geometry is captured once on the first simulated frame or refreshed every simulation frame; refreshing tracks animation but costs more CPU time",
     )
     mesh_surface_thickness: FloatProperty(
         name="Surface Band",
@@ -528,7 +623,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
              MeshSinkRegionMode.SURFACE.value),
         ],
         default=MeshSinkRegionMode.SOLID.name,
-        update=_request_sync,
+        update=_update_sink_region_mode,
         description="Choose whether a mesh sink removes liquid from its validated interior or only near its triangle surface; changing it changes the removal region",
     )
     mesh_error: StringProperty(name="Mesh Error", default="")
@@ -580,7 +675,7 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         description="Set the viscosity attribute on emitted particles; higher values make those particles contribute thicker behavior when particle viscosity is enabled")
     density: FloatProperty(
         name="Density Attribute", default=1.0, min=0.0,
-        description="Set the density attribute on emitted particles, not physical liquid mass; higher or lower values affect density-based visualization and ST-FLIP weighting",
+        description="Set the density attribute on emitted particles, not physical liquid mass; higher or lower values affect density-based visualization",
         update=_request_sync)
     source_color: FloatVectorProperty(
         name="Source Color", size=4, subtype="COLOR",
@@ -667,13 +762,13 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
 
     Interface mode, the Quality tier, the domain designation, playback and
     cache plumbing, viewport/output presentation, and the read-only status
-    mirrors. Solver settings live on :class:`FLUIDSIM_PG_domain`. Apart from
-    their migration stamps, the two classes are disjoint, so reading a domain
-    setting off ``scene.fluidsim`` raises instead of returning a stale value.
-    The partition follows
-    ``pending_settings.setting_owner`` and is pinned by
-    tests/test_pending_settings_registry.py. Writing a domain setting here
-    raises too (see ``_reject_other_group_write``).
+    mirrors. Solver settings live on :class:`FLUIDSIM_PG_domain`. The two
+    classes are disjoint, so reading a domain setting off ``scene.fluidsim``
+    raises instead of returning a stale value. The class that declares a
+    setting owns it. ``presets.schema.SCENE_OWNED_SETTINGS`` is the bpy-free
+    copy of this class's field set, and
+    tests/runtime/test_pending_settings_registry.py pins the two equal. Writing
+    a domain setting here raises too (see ``_reject_other_group_write``).
     """
 
     def __setattr__(self, name, value):
@@ -824,6 +919,7 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     product_preset: EnumProperty(
         name="Preset",
         items=_product_preset_items,
+        default=PRODUCT_PRESET_NONE_NUMBER,
         description="Apply a validated built-in or user FluidSim preset",
     )
     active_preset_id: StringProperty(
@@ -835,7 +931,9 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     # Production bake
     cache_format: EnumProperty(
         name="Cache Format",
-        items=(("V2", "Resumable Cache v2", "Transactional frame cache with deterministic restart checkpoints"),),
+        # The "V2" identifier is kept so saved .blend files still resolve; the
+        # bake writes cache format v3.
+        items=(("V2", "Resumable Cache", "Transactional frame cache with deterministic restart checkpoints"),),
         default="V2",
         description="Choose the on-disk cache layout used for production bakes",
     )
@@ -849,7 +947,7 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     )
     checkpoint_interval: IntProperty(
         name="Checkpoint Interval", default=1, min=1, max=100,
-        description="Checkpoint cadence; current cache-v2 production guarantees commit one restart checkpoint per frame",
+        description="Checkpoint cadence; production bakes commit one restart checkpoint per frame",
     )
     bake_status: EnumProperty(
         name="Bake Status",
@@ -925,6 +1023,9 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     stat_voxels: IntProperty(
         default=0,
         description="Latest measured count of active sparse-grid voxels in the solver")
+    stat_liquid_voxels: IntProperty(
+        default=0,
+        description="Latest measured count of grid voxels flagged as liquid, including narrow-band interior voxels that hold no particles")
     stat_whitewater: IntProperty(
         default=0,
         description="Latest measured count of active whitewater (foam/bubble/spray) particles")
@@ -1005,6 +1106,49 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
 # Domain-level settings
 
 
+def _domain_longest_axis(group) -> float:
+    """Longest world-space AABB edge of the domain object that owns ``group``.
+
+    Mirrors ``blender.solver_settings.domain_bounds`` (``matrix_world`` applied to
+    ``bound_box``) and falls back to the default domain box with no object or a
+    zero-size one (an empty mesh), so the derived voxel size never becomes 0.
+    """
+    import math
+
+    from .blender.solver_settings import DEFAULT_DOMAIN_MAX, DEFAULT_DOMAIN_MIN
+
+    default = max(hi - lo for lo, hi in zip(DEFAULT_DOMAIN_MIN, DEFAULT_DOMAIN_MAX))
+    obj = getattr(group, "id_data", None)
+    corners = getattr(obj, "bound_box", None)
+    matrix = getattr(obj, "matrix_world", None)
+    if corners is None or matrix is None:
+        return default
+    from mathutils import Vector
+
+    world = [matrix @ Vector(corner) for corner in corners]
+    longest = max(
+        max(getattr(c, axis) for c in world) - min(getattr(c, axis) for c in world)
+        for axis in ("x", "y", "z"))
+    return longest if math.isfinite(longest) and longest > 0.0 else default
+
+
+def _get_voxel_size(self) -> float:
+    from .sim.quality_contract import voxel_size_for_divisions
+
+    return voxel_size_for_divisions(
+        self.resolution_divisions, _domain_longest_axis(self))
+
+
+def _set_voxel_size(self, value) -> None:
+    from .sim.quality_contract import divisions_for_voxel_size
+
+    self.resolution_divisions = divisions_for_voxel_size(
+        value, _domain_longest_axis(self))
+
+
+_MIN_VOXEL_SIZE = 1.0e-4
+
+
 class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     """Per-domain solver settings, bound to ``Object.fluidsim_domain``.
 
@@ -1044,11 +1188,14 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         description="Enable to use the scene gravity vector; disable to use the custom Gravity value below")
 
     # Domain / sparse grid
-    voxel_size: FloatProperty(
-        name="Voxel Size", default=0.05, min=0.005, soft_max=0.5, precision=4,
-        subtype="DISTANCE",
+    resolution_divisions: IntProperty(
+        name="Resolution Divisions", default=64, min=8, soft_min=16, soft_max=512,
         update=_request_rebuild,
-        description="Set simulation-grid cell size in world units; smaller values capture finer detail but allocate more leaves, particles, VRAM, and compute, while larger values simulate more coarsely and cheaply")
+        description="Set the number of simulation-grid cells along the longest domain axis; higher values capture finer detail but allocate more leaves, particles, VRAM, and compute, while resizing the domain changes the cell size and not the cell count")
+    voxel_size: FloatProperty(
+        name="Voxel Size", default=0.05, min=_MIN_VOXEL_SIZE, precision=4, subtype="DISTANCE",
+        get=_get_voxel_size, set=_set_voxel_size,
+        description="Effective simulation-grid cell size in world units, derived as the longest domain axis divided by Resolution Divisions; writing it sets the divisions that give the nearest cell size")
     leaf_capacity: IntProperty(
         name="Leaf Capacity", default=8192, min=64, max=262144,
         update=_request_rebuild,
@@ -1102,7 +1249,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     sample_type: EnumProperty(
         name="Transfer", items=_items(ParticleSampleType), default="FLIP",
         update=_request_live,
-        description="Choose the particle/grid velocity-transfer method; PIC is smoother and more dissipative, while FLIP preserves motion and can be noisier")
+        description="Choose the particle/grid velocity-transfer method; PIC is smoother and more dissipative, FLIP preserves motion and can be noisier, and APIC keeps rotation and swirl with little noise at 72 bytes of extra memory per particle")
     flip_ratio: FloatProperty(
         name="FLIP Ratio", default=0.97, min=0.0, max=1.0,
         update=_request_live,
@@ -1191,57 +1338,6 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_live,
         description="Scale anti-clumping pressure derived from particle counts; higher values separate crowded particles more strongly, while zero disables this correction")
 
-    # Spatiotemporal FLIP (experimental)
-    spacetime_enabled: BoolProperty(
-        name="Enable ST-FLIP (Experimental)", default=False, update=_request_reset,
-        description="Enable the experimental spatiotemporal FLIP path for large time steps; disable to use the standard FLIP path; changing this resets the solver")
-    spacetime_jitter_strength: FloatProperty(
-        name="Jitter", default=1.0, min=0.0, max=2.0, update=_request_live,
-        description="Scale ST-FLIP temporal sampling jitter; higher values spread samples more strongly, lower values reduce variation, and zero disables jitter")
-    spacetime_adaptive_jitter: BoolProperty(
-        name="Adaptive Jitter", default=True, update=_request_live,
-        description="Enable to reduce or expand jitter from local flow conditions; disable to use the fixed Jitter value everywhere")
-    spacetime_phase_eta: FloatProperty(
-        name="Phase Eta", default=0.5, min=0.01, soft_max=2.0, update=_request_live,
-        description="Set the ST-FLIP phase-correction response; higher values correct phase differences more aggressively, while lower values preserve more temporal variation")
-    spacetime_phase_threshold: FloatProperty(
-        name="Phase Threshold", default=0.5, min=0.0, max=1.0,
-        update=_request_live,
-        description="Set the phase difference that triggers correction; higher values correct only larger mismatches, while lower values correct more particles")
-    spacetime_reference_mass: FloatProperty(
-        name="Reference Mass", default=0.0, min=0.0, soft_max=64.0,
-        update=_request_reset,
-        description="Override the ST-FLIP reference particle mass; higher values make each reference sample heavier, while zero derives mass from liquid density and voxel sampling")
-    spacetime_variable_projection: BoolProperty(
-        name="Variable Projection (Experimental)", default=False, update=_request_live,
-        description="Enable density-weighted variable-coefficient pressure projection for ST-FLIP; disable to use the standard constant-coefficient projection")
-    spacetime_liquid_density: FloatProperty(
-        name="Liquid Density", default=1.0, min=1.0e-6, soft_max=10.0,
-        update=_request_live,
-        description="Set liquid density used by variable projection; higher values increase liquid inertia relative to gas, while lower values reduce the contrast")
-    spacetime_gas_density: FloatProperty(
-        name="Gas Density", default=0.0, min=0.0, soft_max=1.0,
-        update=_request_live,
-        description="Set background gas density for variable projection; higher values strengthen gas coupling, while zero treats gas as negligible")
-    spacetime_min_density: FloatProperty(
-        name="Min Density", default=0.05, min=1.0e-6, soft_max=1.0,
-        update=_request_live,
-        description="Clamp the minimum density used by variable projection; higher values improve conditioning but blur density contrast, while lower values preserve contrast with greater numerical risk")
-    spacetime_local_cfl: FloatProperty(
-        name="Local CFL", default=1.0, min=0.0, soft_max=4.0,
-        update=_request_live,
-        description="Set the local ST-FLIP travel limit per substep; lower values create more local substeps for accuracy, while higher values permit larger, cheaper steps")
-    spacetime_max_local_substeps: IntProperty(
-        name="Max Local Substeps", default=64, min=1, max=256,
-        update=_request_live,
-        description="Cap ST-FLIP local temporal subdivisions; higher values handle faster motion more accurately at greater cost, while lower values can clamp local integration")
-    spacetime_resync_surface: BoolProperty(
-        name="Resync Surface", default=True, update=_request_surface_refresh,
-        description="Enable to rebuild surface state after ST-FLIP temporal resynchronization; disable to save work but allow visible surface lag")
-    spacetime_seed: IntProperty(
-        name="Seed", default=1729, min=0, max=2147483647, update=_request_reset,
-        description="Set the deterministic ST-FLIP jitter sequence; changing it produces a different sampling pattern without changing overall strength")
-
     # Pressure
     pressure_solver: EnumProperty(
         name="Solver", items=_items(ProjectNonDivergentSolver), default="PCG",
@@ -1255,6 +1351,17 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         name="Tolerance", default=1.0e-5, min=0.0, precision=8,
         update=_request_live,
         description="Set the pressure residual required for early convergence; lower values demand a more accurate solve and may take longer, while higher values stop sooner")
+    # Default is JACOBI, not the spec's MULTIGRID: the multigrid speed targets are
+    # unmeasured and the demo hash must hold until the beta re-baseline. See
+    # docs/specs/3.0/SPEC-multigrid-pressure.md, "Settings".
+    pressure_preconditioner: EnumProperty(
+        name="Preconditioner",
+        items=[
+            ("JACOBI", "Jacobi", "Use the diagonal preconditioner; the cheapest per iteration, but it needs more iterations on large or finely resolved domains"),
+            ("MULTIGRID", "Multigrid", "Use a multigrid V-cycle preconditioner; each iteration costs more but far fewer are needed on large or finely resolved domains"),
+        ],
+        default="JACOBI", update=_request_live,
+        description="Choose the preconditioner for the PCG pressure solver; Multigrid can converge in fewer iterations on large domains, while Jacobi is cheaper per iteration. Used only by the PCG solver")
     pressure_threshold: FloatProperty(
         name="Threshold", default=0.0, min=0.0, max=1.0,
         update=_request_live,
@@ -1319,6 +1426,15 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         name="Mixing Strength", default=8.0, min=0.0, soft_max=40.0,
         update=_request_live,
         description="Control how quickly nearby liquid particle colors approach their local mixture; zero preserves source colors")
+
+    # Narrow-band particles (Setup stage; solver support lands in a later stop)
+    narrow_band_enabled: BoolProperty(
+        name="Narrow-Band Particles", default=False, update=_request_reset,
+        description="Keep particles only near the liquid surface and carry the deep interior on the grid, which needs far fewer particles in deep water; blocked by color mixing, viscosity from particles, scalar field sources and attribute export, and resets the solver")
+    narrow_band_voxels: FloatProperty(
+        name="Band Width", default=3.0, min=1.0, soft_min=2.0, soft_max=6.0,
+        update=_request_reset,
+        description="Set how many simulation voxels below the liquid surface keep particles; narrower bands save more particles but can make the surface pop below 2 voxels, and above 6 there is little saving")
 
     # Surface
     surface_enabled: BoolProperty(
@@ -1657,7 +1773,5 @@ def unregister():
     for cls in reversed(CLASSES):
         try:
             bpy.utils.unregister_class(cls)
-        except (RuntimeError, ValueError):
-            # Already unregistered (e.g. a partially-rolled-back register()):
-            # unregister() must remain safe to call on a partial state.
-            pass
+        except Exception as exc:  # noqa: BLE001 - report and keep walking
+            print(f"FluidSim: could not unregister {cls.__name__}: {exc!r}")

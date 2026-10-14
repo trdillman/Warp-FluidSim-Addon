@@ -9,7 +9,7 @@ import bpy
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 
 PUBLIC_OPERATOR_FIELDS = {

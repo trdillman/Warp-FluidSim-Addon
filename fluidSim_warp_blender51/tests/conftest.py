@@ -66,6 +66,43 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.cuda)
 
 
+@pytest.fixture
+def demo_gallery_module():
+    """``blender.demo_gallery``, imported against a stand-in ``bpy`` outside Blender.
+
+    The stand-in and every add-on module imported against it are removed
+    afterwards, so later tests never inherit an empty ``bpy``. Same scoping as
+    ``_import_demo_gallery`` in ``test_demo_gallery_contract.py``, which needs
+    the module at collection time and so cannot use a fixture.
+    """
+    import importlib
+
+    package = "fluidSim_warp_blender51"
+    try:
+        import bpy  # noqa: F401  (inside Blender the real module is used)
+    except ImportError:
+        pass
+    else:
+        yield importlib.import_module(f"{package}.blender.demo_gallery")
+        return
+
+    def in_package(name: str) -> bool:
+        return name == package or name.startswith(f"{package}.")
+
+    already_loaded = {name for name in sys.modules if in_package(name)}
+    sys.modules["bpy"] = ModuleType("bpy")
+    try:
+        yield importlib.import_module(f"{package}.blender.demo_gallery")
+    finally:
+        sys.modules.pop("bpy", None)
+        for name in [n for n in sys.modules if in_package(n) and n not in already_loaded]:
+            module = sys.modules.pop(name)
+            parent_name, _, child = name.rpartition(".")
+            parent = sys.modules.get(parent_name)
+            if parent is not None and getattr(parent, child, None) is module:
+                delattr(parent, child)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _writable_warp_kernel_cache(tmp_path_factory):
     """Keep optional Warp compilation tests hermetic and sandbox-writable."""

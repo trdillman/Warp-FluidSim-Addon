@@ -65,16 +65,6 @@ def installed_user_entries() -> tuple[tuple[InstalledEffectPackage, ...], tuple[
     return tuple(entries), tuple(diagnostics)
 
 
-def installed_user_definitions():
-    """Compatibility result used by older callers: definitions plus path/message pairs."""
-
-    entries, diagnostics = installed_user_entries()
-    return (
-        tuple(item.definition for item in entries),
-        tuple((Path(item.source), item.message) for item in diagnostics),
-    )
-
-
 def library_snapshot() -> EffectLibrarySnapshot:
     installed, read_diagnostics = installed_user_entries()
     merged = merge_effect_definitions(

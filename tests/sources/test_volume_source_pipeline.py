@@ -17,12 +17,18 @@ class Accessor:
     def __init__(self, role): self.role = role
     def getValue(self, coord):
         x,y,z = coord
-        if self.role == "fog": return 1.0 if x < 2 else 0.0
-        if self.role == "sdf": return float(x) - 1.5
-        if self.role == "scalar": return float(x+y+z)
-        if self.role == "vx": return float(x)
-        if self.role == "vy": return float(y)
-        if self.role == "vz": return float(z)
+        if self.role == "fog":
+            return 1.0 if x < 2 else 0.0
+        if self.role == "sdf":
+            return float(x) - 1.5
+        if self.role == "scalar":
+            return float(x+y+z)
+        if self.role == "vx":
+            return float(x)
+        if self.role == "vy":
+            return float(y)
+        if self.role == "vz":
+            return float(z)
         return (float(x),float(y),float(z))
 
 
@@ -55,10 +61,13 @@ def context():
 
 
 def test_volume_grids_flatten_mask_sdf_scalar_vector_and_release_trees(tmp_path,monkeypatch):
-    path = tmp_path/"fixture.vdb"; path.write_bytes(b"fixture")
+    path = tmp_path/"fixture.vdb"
+    path.write_bytes(b"fixture")
     refs = []
     def read(_path,name):
-        grid = Grid(name); refs.append(weakref.ref(grid)); return grid
+        grid = Grid(name)
+        refs.append(weakref.ref(grid))
+        return grid
     monkeypatch.setitem(sys.modules,"openvdb",types.SimpleNamespace(read=read))
     region = SourceCompiler().compile((plan(
         path,mask_grid="fog",sdf_grid="sdf",scalar_grid="scalar",
@@ -72,7 +81,8 @@ def test_volume_grids_flatten_mask_sdf_scalar_vector_and_release_trees(tmp_path,
 
 
 def test_volume_staggered_compilation_samples_each_face_position(tmp_path, monkeypatch):
-    path = tmp_path / "staggered.vdb"; path.write_bytes(b"fixture")
+    path = tmp_path / "staggered.vdb"
+    path.write_bytes(b"fixture")
     monkeypatch.setitem(sys.modules, "openvdb", types.SimpleNamespace(
         read=lambda _path, name: Grid(name)))
     region = SourceCompiler().compile((staggered_plan(path),), context()).sources[0].region
@@ -87,7 +97,8 @@ def test_volume_staggered_compilation_samples_each_face_position(tmp_path, monke
 
 
 def test_volume_plan_bounds_contribute_transformed_active_topology(tmp_path, monkeypatch):
-    path = tmp_path / "bounds.vdb"; path.write_bytes(b"fixture")
+    path = tmp_path / "bounds.vdb"
+    path.write_bytes(b"fixture")
     monkeypatch.setitem(sys.modules, "openvdb", types.SimpleNamespace(
         read=lambda _path, _name: Grid("fog")))
     transform = tuple(np.array(((2,0,0,1),(0,3,0,2),(0,0,4,3),(0,0,0,1)),
@@ -98,7 +109,8 @@ def test_volume_plan_bounds_contribute_transformed_active_topology(tmp_path, mon
 
 
 def test_volume_vector_component_grids_compile_to_vector_and_staggered(tmp_path, monkeypatch):
-    path = tmp_path / "components.vdb"; path.write_bytes(b"fixture")
+    path = tmp_path / "components.vdb"
+    path.write_bytes(b"fixture")
     monkeypatch.setitem(sys.modules, "openvdb", types.SimpleNamespace(
         read=lambda _path, name: Grid(name)))
     region_plan = VolumeRegionPlan(
@@ -115,7 +127,8 @@ def test_volume_vector_component_grids_compile_to_vector_and_staggered(tmp_path,
 
 
 def test_vdb_authored_grid_transform_composes_with_plan_transform(tmp_path, monkeypatch):
-    path = tmp_path / "transformed.vdb"; path.write_bytes(b"fixture")
+    path = tmp_path / "transformed.vdb"
+    path.write_bytes(b"fixture")
 
     class Transform:
         def isLinear(self): return True
@@ -137,7 +150,8 @@ def test_vdb_authored_grid_transform_composes_with_plan_transform(tmp_path, monk
 
 
 def test_missing_grid_is_actionable_not_silently_partial(tmp_path,monkeypatch):
-    path = tmp_path/"fixture.vdb"; path.write_bytes(b"fixture")
+    path = tmp_path/"fixture.vdb"
+    path.write_bytes(b"fixture")
     def read(_path,name): raise RuntimeError("grid not found")
     monkeypatch.setitem(sys.modules,"openvdb",types.SimpleNamespace(read=read))
     region = SourceCompiler().compile((plan(path,scalar_grid="missing"),),context()).sources[0].region

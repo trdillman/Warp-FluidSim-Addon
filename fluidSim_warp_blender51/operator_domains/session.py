@@ -82,10 +82,7 @@ class FLUIDSIM_OT_release(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        from ..blender import production_bake
-
-        if production_bake.bake_is_active(getattr(context, "scene", None)):
-            cls.poll_message_set("Production Bake owns this scene")
+        if not _runtime._bake_poll(cls, context):
             return False
         sess = _runtime._bridge().session()
         if not sess.active:
@@ -147,6 +144,8 @@ class FLUIDSIM_OT_apply_capacity_suggestion(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        if not _runtime._bake_poll(cls, context):
+            return False
         plan = _runtime._owned_capacity_plan(getattr(context, "scene", None))
         if not getattr(plan, "suggestions", ()):
             cls.poll_message_set("Initialize first to calculate safe capacity options")
@@ -280,6 +279,8 @@ class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        if not _runtime._bake_poll(cls, context):
+            return False
         return bool(getattr(getattr(context, "scene", None), "fluidsim", None))
 
     def execute(self, context):
@@ -493,7 +494,7 @@ class _PreviewStart(_RestartConfirmation):
     """Prepare the current simulation and start Blender playback"""
 
     bl_idname = "fluidsim.preview_start"
-    bl_label = "Preview"
+    bl_label = "Play"
     _cache_preview = False
     allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
 
@@ -535,7 +536,7 @@ class _PreviewStart(_RestartConfirmation):
 
 class FLUIDSIM_OT_preview_start(_PreviewStart, bpy.types.Operator):
     bl_idname = "fluidsim.preview_start"
-    bl_label = "Preview"
+    bl_label = "Play"
     allow_restart: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
 
 
@@ -543,7 +544,7 @@ class FLUIDSIM_OT_cache_preview_start(_PreviewStart, bpy.types.Operator):
     """Validate the cached frame and start Blender playback"""
 
     bl_idname = "fluidsim.cache_preview_start"
-    bl_label = "Preview Cache"
+    bl_label = "Play Cache"
     _cache_preview = True
 
     @classmethod
@@ -563,7 +564,11 @@ class FLUIDSIM_OT_cache_preview_start(_PreviewStart, bpy.types.Operator):
 
 
 class FLUIDSIM_OT_preview_pause(bpy.types.Operator):
-    """Pause playback, keeping the current simulation and frame"""
+    """Pause playback, keeping the current simulation and frame.
+
+    Disarming lets the paused timeline be scrubbed without stepping or
+    resetting the solver; Play (or the spacebar) re-arms and resumes it.
+    """
 
     bl_idname = "fluidsim.preview_pause"
     bl_label = "Pause"
@@ -574,7 +579,7 @@ class FLUIDSIM_OT_preview_pause(bpy.types.Operator):
                 if context.window.screen.is_animation_playing:
                     bpy.ops.screen.animation_cancel(restore_frame=False)
             context.scene.fluidsim.live = False
-            context.scene.fluidsim.status = "Preview paused"
+            context.scene.fluidsim.status = "Paused - press Play to resume"
             return {"FINISHED"}
         except Exception as exc:
             context.scene.fluidsim.live = False
@@ -697,6 +702,9 @@ class FLUIDSIM_OT_cache_playback_start(bpy.types.Operator):
         fs = getattr(getattr(context, "scene", None), "fluidsim", None)
         if fs is None:
             cls.poll_message_set("The active scene has no FluidSim settings")
+            return False
+        # Cache playback releases the shared solver session.
+        if not _runtime._bake_poll(cls, context):
             return False
         return not bool(getattr(fs, "cache_playback_enabled", False))
 

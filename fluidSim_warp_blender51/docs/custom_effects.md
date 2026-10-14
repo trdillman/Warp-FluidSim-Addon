@@ -88,14 +88,14 @@ Policy rejection occurs before compilation or solver allocation and returns proc
 
 The canonical effect fingerprint contains API/ABI identity, package identity/version, enabled effective order, source, stage, cadence, frame window, field access, typed parameter values, controller snapshots, and expert capability state.
 
-Cache-v2 manifests, frame payloads, checkpoints, bake reports, headless reports, and support reports carry:
+Cache-v3 manifests, frame payloads, checkpoints, bake reports, headless reports, and support reports carry:
 
 ```text
 effect_signature
 effect_inventory
 ```
 
-Production Bake is blocked when the live draft differs from the applied stack. Resume rejects a mismatch with `EFFECT_SIGNATURE_MISMATCH`. Older cache-v2 data without effect identity remains playable, but it cannot be used as a resume source when active Custom Effects would execute. Cache-v1 remains playback-only.
+Production Bake is blocked when the live draft differs from the applied stack. Resume rejects a mismatch with `EFFECT_SIGNATURE_MISMATCH`. Caches from 2.x and 1.0.x are refused rather than played or resumed (bake again; see migrating_to_3_0.md).
 
 ## Effect packages
 

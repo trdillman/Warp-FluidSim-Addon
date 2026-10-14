@@ -10,14 +10,18 @@ FACTOR sliders stay within 0..1).
 import ast
 import pathlib
 
+from fluidSim_warp_blender51.blender import solver_settings
+from fluidSim_warp_blender51.sim import constants as C
+from fluidSim_warp_blender51.sim import enums
+
 PKG = pathlib.Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 
-# Known RNA/solver divergences, carried to the 2.1 handoff: aligning the
-# solver side changes headless viscosity and whitewater baselines.
-KNOWN_RNA_SOLVER_DIVERGENCES = {"viscosity_constant", "ww_bubble_drag", "ww_spray_drag"}
 # Settings whose literal fallbacks must equal the declared default.
 FALLBACK_CHECKED = ("surface_resolution_multiplier", "surface_leaf_capacity_scale",
                     "surface_max_dense_dim", "surface_smooth_iterations")
+# Settings projected to the solver by a path other than DIRECT_SETTING_FIELDS or
+# the enum table in blender/solver_settings.py.
+ALSO_PROJECTED = {"gravity": "apply_gravity"}
 
 
 def _tree(rel):
@@ -29,15 +33,43 @@ def _class(tree, name):
                 if isinstance(node, ast.ClassDef) and node.name == name)
 
 
+def _names(tree):
+    """Names a default expression may use: the constants module (as ``C`` and
+    ``_C``), the enum classes the file imports from ``sim/enums.py`` and the
+    file's own module-level literal constants."""
+    names = {"C": C, "_C": C, "int": int, "float": float}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Constant)):
+            names[node.targets[0].id] = node.value.value
+        if (isinstance(node, ast.ImportFrom) and node.level
+                and node.module in ("enums", "sim.enums")):
+            for alias in node.names:
+                names[alias.asname or alias.name] = getattr(enums, alias.name)
+    return names
+
+
+def _evaluate(node, names):
+    try:
+        return ast.literal_eval(node)
+    except ValueError:
+        return eval(compile(ast.Expression(node), "<default>", "eval"),
+                    {"__builtins__": {}}, names)
+
+
 def _solver_defaults():
+    """Every ``SolverSettings`` field that has a plain default, evaluated: literals,
+    ``C.DEFAULT_*`` constants and ``int(SomeEnum.MEMBER)`` expressions alike."""
+    tree = _tree("sim/solver_settings_model.py")
+    names = _names(tree)
     defaults = {}
-    for item in _class(_tree("sim/solver.py"), "SolverSettings").body:
+    for item in _class(tree, "SolverSettings").body:
         if (isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
                 and item.value is not None):
-            try:
-                defaults[item.target.id] = ast.literal_eval(item.value)
-            except ValueError:
-                pass
+            if isinstance(item.value, ast.Call) and getattr(item.value.func, "id", "") == "dc_field":
+                continue  # a field(...) with a factory or hidden default, not a setting
+            defaults[item.target.id] = _evaluate(item.value, names)
     return defaults
 
 
@@ -63,27 +95,73 @@ def _keywords(call):
     return values
 
 
+def _rna_defaults(group):
+    """``{name: default}`` for every property of ``group`` that declares one,
+    evaluated the same way as the solver side (constants and enum members too)."""
+    names = _names(_tree("properties.py"))
+    defaults = {}
+    for (cls, name), call in _rna_properties().items():
+        if cls != group:
+            continue
+        for kw in call.keywords:
+            if kw.arg == "default":
+                defaults[name] = _evaluate(kw.value, names)
+    return defaults
+
+
 def _same(a, b):
+    if isinstance(a, str) or isinstance(b, str) or isinstance(a, bool) or isinstance(b, bool):
+        return a == b
     if isinstance(a, (tuple, list)) or isinstance(b, (tuple, list)):
         return len(a) == len(b) and all(float(x) == float(y) for x, y in zip(a, b))
     return float(a) == float(b)
 
 
+def _projection():
+    """``(rna name, solver field, enum class or None)`` for every setting that
+    ``blender/solver_settings.py`` projects onto ``SolverSettings``, including the
+    renamed ones (``SETTING_ALIASES``) and the enum-valued ones."""
+    aliases = solver_settings.SETTING_ALIASES
+    pairs = [(name, aliases.get(name, name), None)
+             for name in solver_settings.DIRECT_SETTING_FIELDS]
+    for target, (source, enum_type) in solver_settings.enum_setting_fields().items():
+        pairs.append((source, aliases.get(target, target), enum_type))
+    pairs.extend((name, name, None) for name in ALSO_PROJECTED)
+    return pairs
+
+
 def test_rna_defaults_match_solver_defaults():
+    """The Blender property default is the one default: the solver dataclass must
+    equal it for every projected setting, enum, string and constant-backed ones
+    included, so a headless ``SolverSettings()`` bakes what the UI shows."""
     solver = _solver_defaults()
-    divergent = set()
-    compared = 0
-    for (cls, name), call in _rna_properties().items():
-        if cls not in ("FLUIDSIM_PG_domain", "FLUIDSIM_PG_scene") or name not in solver:
+    rna = _rna_defaults("FLUIDSIM_PG_domain")
+    missing, divergent = [], []
+    for source, target, enum_type in _projection():
+        if source not in rna or target not in solver:
+            missing.append(f"{source}->{target}")
             continue
-        default = _keywords(call).get("default")
-        if default is None or isinstance(default, str) or isinstance(solver[name], str):
-            continue
-        compared += 1
-        if not _same(default, solver[name]):
-            divergent.add(name)
-    assert compared > 100
-    assert divergent == KNOWN_RNA_SOLVER_DIVERGENCES
+        value = solver[target]
+        if enum_type is not None and not isinstance(value, str):
+            value = enum_type(value).name
+        if not _same(rna[source], value):
+            divergent.append(f"{source}->{target}: rna={rna[source]!r} solver={solver[target]!r}")
+    assert not missing, "not found: " + ", ".join(missing)
+    assert not divergent, "default divergences:\n" + "\n".join(divergent)
+    assert len(_projection()) > 100
+
+
+def test_every_shared_setting_name_is_projected():
+    """A field that exists on a settings group and on ``SolverSettings`` under the
+    same name must be reached through the projection, so it cannot go unchecked
+    by the default-agreement test above."""
+    solver = _solver_defaults()
+    projected = {source for source, _target, _enum in _projection()}
+    shared = []
+    for group in ("FLUIDSIM_PG_domain", "FLUIDSIM_PG_scene"):
+        shared.extend(f"{group}.{name}" for name in _rna_defaults(group)
+                      if name in solver and name not in projected)
+    assert not shared, "same-name fields outside the projection: " + ", ".join(shared)
 
 
 def test_literal_fallbacks_match_declared_defaults():

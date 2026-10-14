@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "support"))
 from _test_device import script_device  # noqa: E402
 
-from tools.repo_addon_loader import ADDON_NAME, enable_repo_addon
+from tools.repo_addon_loader import ADDON_NAME, enable_repo_addon  # noqa: E402
 
 FAILURES = []
 
@@ -352,10 +352,13 @@ def main():
     # -- panels draw headlessly? (registration check) ------------------------------
     panel_ids = [
         "FLUIDSIM_PT_scene_control", "FLUIDSIM_PT_scene_pending",
-        "FLUIDSIM_PT_scene_runtime_stats", "FLUIDSIM_PT_scene_domain",
-        "FLUIDSIM_PT_scene_simulation", "FLUIDSIM_PT_sim_pressure",
-        "FLUIDSIM_PT_sim_viscosity", "FLUIDSIM_PT_scene_surface",
-        "FLUIDSIM_PT_scene_whitewater", "FLUIDSIM_PT_scene_outputs",
+        "FLUIDSIM_PT_scene_runtime_stats", "FLUIDSIM_PT_physics_domain_scene_domain",
+        "FLUIDSIM_PT_physics_domain_scene_simulation",
+        "FLUIDSIM_PT_physics_domain_sim_pressure",
+        "FLUIDSIM_PT_physics_domain_sim_viscosity",
+        "FLUIDSIM_PT_physics_surface_scene_surface",
+        "FLUIDSIM_PT_physics_whitewater_scene_whitewater",
+        "FLUIDSIM_PT_scene_outputs",
         "FLUIDSIM_PT_viewport_status", "FLUIDSIM_PT_header_popover",
         "FLUIDSIM_STAGE_PT_bake",
         "FLUIDSIM_STAGE_PT_bake_storage", "FLUIDSIM_PT_scene_diagnostics",

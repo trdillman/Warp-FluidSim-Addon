@@ -16,10 +16,19 @@ Paths preserved from the original kernel inventory:
   ``solve_pcg(..., use_coarse_guess=True)``. This is real, reachable code,
   but ``project_frame`` (the only production caller) never passes
   ``use_coarse_guess=True``, so it is currently exercised only by tests, not
-  by the shipped pipeline. There is no restriction/prolongation V-cycle: the
-  registered ``fluidSimProjectNonDivergentSampleDown``/
-  ``fluidSimProjectNonDivergentExpandVelocityIntoCollision`` kernels have no
-  call sites anywhere in this module and do not implement one.
+  by the shipped pipeline. Its leaf reductions are gathers (one thread per
+  leaf, fixed voxel order), not atomics.
+- multigrid-preconditioned CG (``PressureSolver.preconditioner =
+  "MULTIGRID"``): one symmetric V-cycle replaces the Jacobi preconditioner.
+  Four levels per leaf (8^3, 4^3, 2^3 and 1 cell per leaf), damped-Jacobi
+  smoothing with equal pre/post counts, restriction = 0.25 x the gathered sum
+  of the eight children, piecewise-constant prolongation masked to fluid. Every
+  kernel is an atomic-free gather with a fixed summation order, so the
+  preconditioner is bitwise deterministic and records inside the existing
+  CUDA graph capture. The registered
+  ``fluidSimProjectNonDivergentSampleDown``/
+  ``fluidSimProjectNonDivergentExpandVelocityIntoCollision`` kernels still
+  have no call sites; the V-cycle uses the ``k_mg_*`` kernels instead.
 - pressure threshold + scale, velocity expansion into collision
 
 No bpy imports allowed here.
@@ -28,7 +37,7 @@ No bpy imports allowed here.
 from __future__ import annotations
 
 import math
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 
 import warp as wp
 from .fastlaunch import launch as fast_launch
@@ -38,6 +47,7 @@ wp.set_module_options({"enable_backward": False})
 from .constants import LEAF_VOLUME, VOXEL_COLLISION, VOXEL_FLUID
 from .enums import ProjectNonDivergentSolver
 from .fields import (
+    leaf_linear_index,
     voxel_coord_of_flat,
     voxel_flat_index,
 )
@@ -61,6 +71,35 @@ PRESSURE_STATUS_CODES = {
     PRESSURE_STATUS_INVALID: 6,
 }
 
+# A PCG solve is "stalled" only when this many iterations pass without the
+# residual improving on the best value seen in the solve. The CG residual
+# 2-norm is not monotone: on a resting Jacobi column it rises ~1.3x by
+# iteration 25 and then converges. Comparing each check to the previous one
+# stopped those solves at iteration 25 and projected an unconverged pressure,
+# sinking the column ~25% in 30 frames (docs/JACOBI_COLUMN_DIAGNOSIS_20261010.md).
+PCG_STALL_WINDOW = 100
+
+# Multigrid-preconditioned CG (lane C). The PCG preconditioner is selected by
+# the plain attribute ``PressureSolver.preconditioner``. A symmetric V-cycle
+# needs equal pre/post smoothing counts and the same smoother on both sides,
+# so these three constants are the single source of truth for the V-cycle.
+PRECONDITIONER_JACOBI = "JACOBI"
+PRECONDITIONER_MULTIGRID = "MULTIGRID"
+MG_PRE_SMOOTH = 2
+MG_POST_SMOOTH = 2
+MG_OMEGA = 0.67
+# Hierarchy: level l (0 = the pressure grid) has leaf side 8 >> l voxels, so
+# 512, 64, 8 and 1 cells per leaf. The coarsest level is solved by a fixed
+# number of damped-Jacobi sweeps from a zero guess.
+MG_LEVELS = 4
+MG_FINE_SHIFT = 3
+MG_COARSE_SWEEPS = 16
+# Check interval a MULTIGRID solve picks for itself when the caller passes
+# none: it must be odd and divide ``max_iterations`` to keep the conditional
+# graph (largest first). Jacobi keeps the caller's value / 25 exactly.
+MG_CHECK_EVERY_CANDIDATES = (5, 3)
+PCG_DEFAULT_CHECK_EVERY = 25
+
 
 @wp.func
 def finite_pressure_value(value: float) -> float:
@@ -76,71 +115,6 @@ def bounded_pressure_gradient(p_hi: float, p_lo: float, inv_h: float, limit: flo
         g = 0.0
     return wp.clamp(g, -limit, limit)
 
-
-
-@wp.func
-def st_phase_from_mass(weight_sum: float, reference_mass: float, eta_phi: float) -> float:
-    denom = wp.max(reference_mass * wp.max(eta_phi, 1.0e-6), 1.0e-8)
-    x = weight_sum / denom
-    if x <= 0.0:
-        return 0.0
-    return wp.min(wp.sqrt(x), 1.0)
-
-
-@wp.func
-def st_face_beta(
-    axis: wp.int32,
-    flat: wp.int32,
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-) -> float:
-    weight = wu[flat]
-    if axis == 1:
-        weight = wv[flat]
-    elif axis == 2:
-        weight = ww[flat]
-    phi = st_phase_from_mass(weight, reference_mass, eta_phi)
-    rho = rho_liquid * phi + rho_gas * (1.0 - phi)
-    return 1.0 / wp.max(rho, wp.max(eps_rho, 1.0e-8))
-
-
-@wp.func
-def st_beta_for_cell_face(
-    tid: wp.int32,
-    ijk: wp.vec3i,
-    axis: wp.int32,
-    step: wp.int32,
-    leaf_table: wp.array(dtype=wp.int32),
-    voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i,
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-) -> float:
-    face_flat = tid
-    if step > 0:
-        face_ijk = wp.vec3i(ijk[0], ijk[1], ijk[2])
-        if axis == 0:
-            face_ijk = wp.vec3i(ijk[0] + 1, ijk[1], ijk[2])
-        elif axis == 1:
-            face_ijk = wp.vec3i(ijk[0], ijk[1] + 1, ijk[2])
-        else:
-            face_ijk = wp.vec3i(ijk[0], ijk[1], ijk[2] + 1)
-        face_flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, face_ijk)
-    if face_flat < 0:
-        return 0.0
-    return st_face_beta(axis, face_flat, wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
 
 # Divergence + matrix helpers
 
@@ -238,17 +212,28 @@ def k_compute_divergence(
     for axis in range(3):
         hi = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, 1)
         lo_n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
+        # A missing neighbour (domain edge or unallocated leaf) is a solid
+        # wall to k_project, which zeroes that face; count it as zero here
+        # too, or pressure compensates for a flux projection then deletes.
+        # Branch rather than wp.where: both wp.where operands are evaluated,
+        # which read index -1.
         f_lo = float(0.0)
         f_hi = float(0.0)
         if axis == 0:
-            f_lo = u[tid]
-            f_hi = wp.where(hi >= 0, u[hi], 0.0)
+            if lo_n >= 0:
+                f_lo = u[tid]
+            if hi >= 0:
+                f_hi = u[hi]
         elif axis == 1:
-            f_lo = v[tid]
-            f_hi = wp.where(hi >= 0, v[hi], 0.0)
+            if lo_n >= 0:
+                f_lo = v[tid]
+            if hi >= 0:
+                f_hi = v[hi]
         else:
-            f_lo = w[tid]
-            f_hi = wp.where(hi >= 0, w[hi], 0.0)
+            if lo_n >= 0:
+                f_lo = w[tid]
+            if hi >= 0:
+                f_hi = w[hi]
         # solid neighbors: face takes collider velocity component
         if lo_n >= 0 and (voxel_type[lo_n] & VOXEL_COLLISION) != 0:
             f_lo = collision_vel[lo_n][axis]
@@ -416,151 +401,6 @@ def k_jacobi_iteration(
     x_out[tid] = acc * inv_diag[tid]
 
 
-
-
-# ST-FLIP variable-coefficient pressure matrix from space-time accumulators
-
-
-@wp.kernel
-def k_compute_inverse_diagonal_st(
-    voxel_type: wp.array(dtype=wp.int32),
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
-    leaf_table: wp.array(dtype=wp.int32),
-    leaf_coords: wp.array(dtype=wp.vec3i),
-    voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i,
-    num_leaves: wp.array(dtype=wp.int32),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-    inv_diag: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
-        return
-    vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0:
-        inv_diag[tid] = 0.0
-        return
-    ijk = voxel_coord_of_flat(leaf_coords, tid)
-    diag = float(0.0)
-    for axis in range(3):
-        for step in range(-1, 2, 2):
-            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
-            solid = wp.int32(0)
-            if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
-                solid = 1
-            if n < 0:
-                solid = 1
-            if solid == 0:
-                diag += st_beta_for_cell_face(
-                    tid, ijk, axis, step, leaf_table, voxels_dim, leaves_dim,
-                    wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
-    if diag > 0.0:
-        inv_diag[tid] = 1.0 / diag
-    else:
-        inv_diag[tid] = 0.0
-
-
-@wp.kernel
-def k_apply_matrix_st(
-    x: wp.array(dtype=float),
-    voxel_type: wp.array(dtype=wp.int32),
-    inv_diag: wp.array(dtype=float),
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
-    leaf_table: wp.array(dtype=wp.int32),
-    leaf_coords: wp.array(dtype=wp.vec3i),
-    voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i,
-    num_leaves: wp.array(dtype=wp.int32),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-    ax: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
-        return
-    vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0 or inv_diag[tid] == 0.0:
-        ax[tid] = 0.0
-        return
-    ijk = voxel_coord_of_flat(leaf_coords, tid)
-    acc = float(0.0)
-    for axis in range(3):
-        for step in range(-1, 2, 2):
-            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
-            solid = wp.int32(0)
-            if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
-                solid = 1
-            if n < 0:
-                solid = 1
-            if solid == 0:
-                beta = st_beta_for_cell_face(
-                    tid, ijk, axis, step, leaf_table, voxels_dim, leaves_dim,
-                    wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
-                acc += beta * x[tid]
-                if n >= 0:
-                    nvt = voxel_type[n]
-                    if (nvt & VOXEL_FLUID) != 0 and (nvt & VOXEL_COLLISION) == 0:
-                        acc -= beta * x[n]
-    ax[tid] = acc
-
-
-@wp.kernel
-def k_jacobi_iteration_st(
-    x_in: wp.array(dtype=float),
-    rhs: wp.array(dtype=float),
-    voxel_type: wp.array(dtype=wp.int32),
-    inv_diag: wp.array(dtype=float),
-    wu: wp.array(dtype=float),
-    wv: wp.array(dtype=float),
-    ww: wp.array(dtype=float),
-    leaf_table: wp.array(dtype=wp.int32),
-    leaf_coords: wp.array(dtype=wp.vec3i),
-    voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i,
-    num_leaves: wp.array(dtype=wp.int32),
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-    x_out: wp.array(dtype=float),
-):
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
-        return
-    vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0 or inv_diag[tid] == 0.0:
-        x_out[tid] = 0.0
-        return
-    ijk = voxel_coord_of_flat(leaf_coords, tid)
-    acc = rhs[tid]
-    for axis in range(3):
-        for step in range(-1, 2, 2):
-            n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
-            solid = wp.int32(0)
-            if n >= 0 and (voxel_type[n] & VOXEL_COLLISION) != 0:
-                solid = 1
-            if n < 0:
-                solid = 1
-            if solid == 0 and n >= 0:
-                nvt = voxel_type[n]
-                if (nvt & VOXEL_FLUID) != 0 and (nvt & VOXEL_COLLISION) == 0:
-                    beta = st_beta_for_cell_face(
-                        tid, ijk, axis, step, leaf_table, voxels_dim, leaves_dim,
-                        wu, wv, ww, reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho)
-                    acc += beta * x_in[n]
-    x_out[tid] = acc * inv_diag[tid]
 
 # PCG scalar update kernels (device-resident alpha/beta)
 
@@ -814,7 +654,9 @@ def k_prepare_pcg_conditional_loop(
         reason = 1
     condition[0] = keep_going
     iterations[0] = 0
+    # [0] best residual of this solve, [1] the iteration that reached it
     last_residual[0] = res_sq
+    last_residual[1] = 0.0
     stats[0] = res_sq
     stats[1] = rz[0]
     stats[2] = 0.0
@@ -834,6 +676,7 @@ def k_finish_pcg_conditional_batch(
     last_residual: wp.array(dtype=float),
     batch: int,
     max_iterations: int,
+    stall_window: int,
     tolerance_squared: wp.array(dtype=float),
     stats: wp.array(dtype=float),
 ):
@@ -850,13 +693,16 @@ def k_finish_pcg_conditional_batch(
         reason = 1
     elif rz_value < -1.0e-20 or wp.abs(rz_value) < 1.0e-30 or wp.abs(p_ap_value) < 1.0e-30:
         reason = 2
-    elif res_sq >= last_residual[0] * (1.0 - 1.0e-6):
-        reason = 3
-    elif iteration >= max_iterations:
-        reason = 5
     else:
-        keep_going = 1
-        last_residual[0] = res_sq
+        if res_sq < last_residual[0] * (1.0 - 1.0e-6):
+            last_residual[0] = res_sq
+            last_residual[1] = float(iteration)
+        if iteration - int(last_residual[1]) >= stall_window:
+            reason = 3
+        elif iteration >= max_iterations:
+            reason = 5
+        else:
+            keep_going = 1
     condition[0] = keep_going
     iterations[0] = iteration
     stats[0] = res_sq
@@ -913,16 +759,26 @@ def k_build_leaf_aggregates(
     leaf_rhs: wp.array(dtype=float),
     leaf_fluid: wp.array(dtype=wp.int32),
 ):
-    """fluidSimProjectNonDivergentElectrostaticBuildLeafAggregates8/16/32."""
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
+    """fluidSimProjectNonDivergentElectrostaticBuildLeafAggregates8/16/32.
+
+    A gather, one thread per leaf: the leaf's voxels are summed in a fixed
+    order into ``leaf_rhs`` / ``leaf_fluid`` (added onto their current
+    contents, like the former per-voxel atomics). Atomic float adds made the
+    sum order, and so the coarse guess, nondeterministic.
+    """
+    slot = wp.tid()
+    if slot >= num_leaves[0]:
         return
-    vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0:
-        return
-    leaf = tid // LEAF_VOLUME
-    wp.atomic_add(leaf_rhs, leaf, rhs[tid])
-    wp.atomic_add(leaf_fluid, leaf, 1)
+    base = slot * LEAF_VOLUME
+    total = float(0.0)
+    count = wp.int32(0)
+    for local in range(LEAF_VOLUME):
+        vt = voxel_type[base + local]
+        if (vt & VOXEL_FLUID) != 0 and (vt & VOXEL_COLLISION) == 0:
+            total += rhs[base + local]
+            count += 1
+    leaf_rhs[slot] = leaf_rhs[slot] + total
+    leaf_fluid[slot] = leaf_fluid[slot] + count
 
 
 @wp.kernel
@@ -998,14 +854,437 @@ def k_sample_down_residual(
     leaf_rhs: wp.array(dtype=float),
 ):
     """fluidSimProjectNonDivergentSampleDown: restrict fine residual to the
-    leaf level (used by the V-cycle path)."""
+    leaf level.
+
+    A gather, one thread per leaf in a fixed voxel order (see
+    ``k_build_leaf_aggregates``); added onto ``leaf_rhs``.
+    """
+    slot = wp.tid()
+    if slot >= num_leaves[0]:
+        return
+    base = slot * LEAF_VOLUME
+    total = float(0.0)
+    for local in range(LEAF_VOLUME):
+        vt = voxel_type[base + local]
+        if (vt & VOXEL_FLUID) != 0 and (vt & VOXEL_COLLISION) == 0:
+            total += r[base + local]
+    leaf_rhs[slot] = leaf_rhs[slot] + total
+
+
+# Multigrid V-cycle preconditioner (every kernel is an atomic-free gather)
+#
+# Level l keeps the leaf layout of the pressure grid with the leaf side halved
+# per level: ``cells = slot << (3 * shift) | k << (2 * shift) | j << shift | i``
+# with ``shift`` = 3, 2, 1, 0 for l = 0..3. Every kernel guards on the device
+# side ``num_leaves`` so launch dims can be fixed from the leaf capacity.
+
+
+@wp.func
+def mg_unknown(vt: wp.int32) -> wp.int32:
+    """1 for a pressure unknown (fluid, not collision), else 0."""
+    if (vt & VOXEL_FLUID) != 0:
+        if (vt & VOXEL_COLLISION) == 0:
+            return 1
+    return 0
+
+
+@wp.func
+def mg_cell_neighbor(
+    cell: wp.int32,
+    shift: wp.int32,
+    axis: wp.int32,
+    step: wp.int32,
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    leaves_dim: wp.vec3i,
+) -> wp.int32:
+    """Neighbouring cell on ``axis`` at a multigrid level, or -1 when it is
+    outside the domain or in an unallocated leaf (a solid wall)."""
+    cell_shift = 3 * shift
+    mask = (1 << shift) - 1
+    local = cell & ((1 << cell_shift) - 1)
+    stride = 1 << (axis * shift)
+    c = (local >> (axis * shift)) & mask
+    nc = c + step
+    if nc >= 0 and nc <= mask:
+        return cell + step * stride
+    slot = cell >> cell_shift
+    lc = leaf_coords[slot]
+    o = wp.vec3i(lc[0], lc[1], lc[2])
+    if axis == 0:
+        o = wp.vec3i(lc[0] + step, lc[1], lc[2])
+    elif axis == 1:
+        o = wp.vec3i(lc[0], lc[1] + step, lc[2])
+    else:
+        o = wp.vec3i(lc[0], lc[1], lc[2] + step)
+    if o[0] < 0 or o[1] < 0 or o[2] < 0:
+        return wp.int32(-1)
+    if o[0] >= leaves_dim[0] or o[1] >= leaves_dim[1] or o[2] >= leaves_dim[2]:
+        return wp.int32(-1)
+    nslot = leaf_table[leaf_linear_index(o, leaves_dim)]
+    if nslot < 0:
+        return wp.int32(-1)
+    return (nslot << cell_shift) + local + ((nc & mask) - c) * stride
+
+
+@wp.func
+def mg_apply_a(
+    x: wp.array(dtype=float),
+    vtype: wp.array(dtype=wp.int32),
+    inv_diag: wp.array(dtype=float),
+    cell: wp.int32,
+    shift: wp.int32,
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    leaves_dim: wp.vec3i,
+) -> float:
+    """(A x)[cell] for an unknown with ``inv_diag != 0``; same arithmetic as
+    ``k_apply_matrix`` (diag * x minus the unknown neighbours)."""
+    acc = (1.0 / inv_diag[cell]) * x[cell]
+    for axis in range(3):
+        for step in range(-1, 2, 2):
+            n = mg_cell_neighbor(cell, shift, axis, step, leaf_table, leaf_coords, leaves_dim)
+            if n >= 0:
+                if mg_unknown(vtype[n]) == 1:
+                    acc -= x[n]
+    return acc
+
+
+@wp.kernel
+def k_mg_build_types(
+    src_type: wp.array(dtype=wp.int32),
+    dst_shift: int,
+    num_leaves: wp.array(dtype=wp.int32),
+    dst_type: wp.array(dtype=wp.int32),
+):
+    """Coarse cell type from its eight children (one level finer, same leaf):
+    fluid if any child is a pressure unknown, solid only if every child is
+    solid, otherwise air."""
     tid = wp.tid()
+    cell_shift = 3 * dst_shift
+    if tid >= (num_leaves[0] << cell_shift):
+        return
+    slot = tid >> cell_shift
+    local = tid & ((1 << cell_shift) - 1)
+    mask = (1 << dst_shift) - 1
+    ci = local & mask
+    cj = (local >> dst_shift) & mask
+    ck = local >> (2 * dst_shift)
+    src_shift = dst_shift + 1
+    base = slot << (3 * src_shift)
+    any_unknown = wp.int32(0)
+    all_solid = wp.int32(1)
+    for c in range(2):
+        for b in range(2):
+            for a in range(2):
+                child = (base + (2 * ci + a) + ((2 * cj + b) << src_shift)
+                         + ((2 * ck + c) << (2 * src_shift)))
+                vt = src_type[child]
+                if mg_unknown(vt) == 1:
+                    any_unknown = 1
+                if (vt & VOXEL_COLLISION) == 0:
+                    all_solid = 0
+    if any_unknown == 1:
+        dst_type[tid] = VOXEL_FLUID
+    elif all_solid == 1:
+        dst_type[tid] = VOXEL_COLLISION
+    else:
+        dst_type[tid] = 0
+
+
+@wp.kernel
+def k_mg_inverse_diagonal(
+    vtype: wp.array(dtype=wp.int32),
+    shift: int,
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    inv_diag: wp.array(dtype=float),
+):
+    """1 / (#non-solid neighbours) for unknowns, 0 elsewhere. Air neighbours
+    count (free-surface Dirichlet); solid, unallocated and out-of-domain
+    neighbours do not (Neumann), as in ``k_compute_inverse_diagonal``."""
+    tid = wp.tid()
+    if tid >= (num_leaves[0] << (3 * shift)):
+        return
+    if mg_unknown(vtype[tid]) == 0:
+        inv_diag[tid] = 0.0
+        return
+    diag = float(0.0)
+    for axis in range(3):
+        for step in range(-1, 2, 2):
+            n = mg_cell_neighbor(tid, shift, axis, step, leaf_table, leaf_coords, leaves_dim)
+            if n >= 0:
+                if (vtype[n] & VOXEL_COLLISION) == 0:
+                    diag += 1.0
+    if diag > 0.0:
+        inv_diag[tid] = 1.0 / diag
+    else:
+        inv_diag[tid] = 0.0
+
+
+@wp.func
+def mg_work_cell(
+    tid: wp.int32,
+    shift: wp.int32,
+    use_idx: wp.int32,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    num_leaves: wp.array(dtype=wp.int32),
+) -> wp.int32:
+    """Cell a work thread owns at a level, or -1 when it owns none.
+
+    ``use_idx != 0`` walks a compact list of active cells (the pressure
+    solver's unknown index at the finest level, where only a few percent of
+    the allocated cells are unknowns); otherwise one thread per cell."""
+    if use_idx != 0:
+        if tid >= count[0]:
+            return -1
+        cell = indices[tid]
+        if cell >= (num_leaves[0] << (3 * shift)):
+            return -1
+        return cell
+    if tid >= (num_leaves[0] << (3 * shift)):
+        return -1
+    return tid
+
+
+@wp.kernel
+def k_mg_smooth_zero(
+    b: wp.array(dtype=float),
+    vtype: wp.array(dtype=wp.int32),
+    inv_diag: wp.array(dtype=float),
+    omega: float,
+    num_leaves: wp.array(dtype=wp.int32),
+    shift: int,
+    use_idx: int,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    x_out: wp.array(dtype=float),
+):
+    """First damped-Jacobi sweep from x = 0: ``x = omega * b / diag``."""
+    tid = mg_work_cell(wp.tid(), shift, use_idx, indices, count, num_leaves)
+    if tid < 0:
+        return
+    inv = inv_diag[tid]
+    if mg_unknown(vtype[tid]) == 0 or inv == 0.0:
+        x_out[tid] = 0.0
+        return
+    x_out[tid] = omega * inv * b[tid]
+
+
+@wp.kernel
+def k_mg_smooth(
+    x_in: wp.array(dtype=float),
+    b: wp.array(dtype=float),
+    vtype: wp.array(dtype=wp.int32),
+    inv_diag: wp.array(dtype=float),
+    omega: float,
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    shift: int,
+    use_idx: int,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    x_out: wp.array(dtype=float),
+):
+    """One damped-Jacobi sweep: ``x_out = x_in + omega * (b - A x_in) / diag``."""
+    tid = mg_work_cell(wp.tid(), shift, use_idx, indices, count, num_leaves)
+    if tid < 0:
+        return
+    inv = inv_diag[tid]
+    if mg_unknown(vtype[tid]) == 0 or inv == 0.0:
+        x_out[tid] = 0.0
+        return
+    ax = mg_apply_a(x_in, vtype, inv_diag, tid, shift, leaf_table, leaf_coords, leaves_dim)
+    x_out[tid] = x_in[tid] + omega * inv * (b[tid] - ax)
+
+
+@wp.kernel
+def k_mg_residual(
+    x: wp.array(dtype=float),
+    b: wp.array(dtype=float),
+    vtype: wp.array(dtype=wp.int32),
+    inv_diag: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    shift: int,
+    use_idx: int,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    res_out: wp.array(dtype=float),
+):
+    """``res_out = b - A x`` at active unknowns (``k_mg_restrict_sum`` reads
+    only those, so other cells need no clearing). Kept apart from the
+    restriction so the stencil is evaluated once per fine cell by many threads
+    instead of eight times by one thread."""
+    tid = mg_work_cell(wp.tid(), shift, use_idx, indices, count, num_leaves)
+    if tid < 0:
+        return
+    if mg_unknown(vtype[tid]) == 0 or inv_diag[tid] == 0.0:
+        res_out[tid] = 0.0
+        return
+    ax = mg_apply_a(x, vtype, inv_diag, tid, shift, leaf_table, leaf_coords, leaves_dim)
+    res_out[tid] = b[tid] - ax
+
+
+@wp.kernel
+def k_mg_restrict_sum(
+    res: wp.array(dtype=float),
+    fine_vtype: wp.array(dtype=wp.int32),
+    fine_inv_diag: wp.array(dtype=float),
+    num_leaves: wp.array(dtype=wp.int32),
+    fine_shift: int,
+    coarse_b: wp.array(dtype=float),
+):
+    """``coarse_b = 0.25 * sum over the 8 children of res``: a gather, one
+    thread per coarse cell, children visited in a fixed order. Only active
+    fine unknowns contribute."""
+    tid = wp.tid()
+    coarse_shift = fine_shift - 1
+    cell_shift = 3 * coarse_shift
+    if tid >= (num_leaves[0] << cell_shift):
+        return
+    slot = tid >> cell_shift
+    local = tid & ((1 << cell_shift) - 1)
+    mask = (1 << coarse_shift) - 1
+    ci = local & mask
+    cj = (local >> coarse_shift) & mask
+    ck = local >> (2 * coarse_shift)
+    base = slot << (3 * fine_shift)
+    acc = float(0.0)
+    for c in range(2):
+        for bb in range(2):
+            for a in range(2):
+                child = (base + (2 * ci + a) + ((2 * cj + bb) << fine_shift)
+                         + ((2 * ck + c) << (2 * fine_shift)))
+                if mg_unknown(fine_vtype[child]) == 1:
+                    if fine_inv_diag[child] != 0.0:
+                        acc += res[child]
+    coarse_b[tid] = 0.25 * acc
+
+
+@wp.func
+def mg_prolonged(
+    x: wp.array(dtype=float),
+    e: wp.array(dtype=float),
+    inv_diag: wp.array(dtype=float),
+    cell: wp.int32,
+    shift: wp.int32,
+) -> float:
+    """``(x + P e)[cell]``: piecewise-constant prolongation from the parent
+    coarse cell, applied where ``inv_diag != 0`` (active unknowns) only."""
+    xv = x[cell]
+    if inv_diag[cell] != 0.0:
+        d = shift - 1
+        cell_shift = 3 * shift
+        slot = cell >> cell_shift
+        local = cell & ((1 << cell_shift) - 1)
+        mask = (1 << shift) - 1
+        i = local & mask
+        j = (local >> shift) & mask
+        k = local >> (2 * shift)
+        parent = (slot << (3 * d)) + (i >> 1) + ((j >> 1) << d) + ((k >> 1) << (2 * d))
+        xv = xv + e[parent]
+    return xv
+
+
+@wp.kernel
+def k_mg_smooth_prolong(
+    x_in: wp.array(dtype=float),
+    e: wp.array(dtype=float),
+    b: wp.array(dtype=float),
+    vtype: wp.array(dtype=wp.int32),
+    inv_diag: wp.array(dtype=float),
+    omega: float,
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    shift: int,
+    use_idx: int,
+    indices: wp.array(dtype=wp.int32),
+    count: wp.array(dtype=wp.int32),
+    x_out: wp.array(dtype=float),
+):
+    """First post-smoothing sweep with the coarse-grid correction folded in:
+    one damped-Jacobi sweep from ``x_in + P e``, which is never stored. Same
+    arithmetic as a separate prolongation followed by ``k_mg_smooth``."""
+    tid = mg_work_cell(wp.tid(), shift, use_idx, indices, count, num_leaves)
+    if tid < 0:
+        return
+    inv = inv_diag[tid]
+    if mg_unknown(vtype[tid]) == 0 or inv == 0.0:
+        x_out[tid] = 0.0
+        return
+    xc = mg_prolonged(x_in, e, inv_diag, tid, shift)
+    acc = (1.0 / inv) * xc
+    for axis in range(3):
+        for step in range(-1, 2, 2):
+            n = mg_cell_neighbor(tid, shift, axis, step, leaf_table, leaf_coords, leaves_dim)
+            if n >= 0:
+                if mg_unknown(vtype[n]) == 1:
+                    acc -= mg_prolonged(x_in, e, inv_diag, n, shift)
+    x_out[tid] = xc + omega * inv * (b[tid] - acc)
+
+
+@wp.kernel
+def k_mg_update_xr_indexed(
+    p: wp.array(dtype=float),
+    ap: wp.array(dtype=float),
+    alpha: wp.array(dtype=float),
+    pressure_indices: wp.array(dtype=wp.int32),
+    pressure_count: wp.array(dtype=wp.int32),
+    num_leaves: wp.array(dtype=wp.int32),
+    x: wp.array(dtype=float),
+    r: wp.array(dtype=float),
+    compact_r: wp.array(dtype=float),
+):
+    """``x += alpha p``, ``r -= alpha Ap`` over the compact unknowns. Like
+    ``k_update_xr_preconditioned`` without the fused Jacobi ``z``: the V-cycle
+    produces ``z`` afterwards."""
+    work_tid = wp.tid()
+    if work_tid >= pressure_count[0]:
+        compact_r[work_tid] = 0.0
+        return
+    tid = pressure_indices[work_tid]
     if tid >= num_leaves[0] * LEAF_VOLUME:
         return
-    vt = voxel_type[tid]
-    if (vt & VOXEL_FLUID) == 0 or (vt & VOXEL_COLLISION) != 0:
+    a = alpha[0]
+    x[tid] = x[tid] + a * p[tid]
+    ri = r[tid] - a * ap[tid]
+    r[tid] = ri
+    compact_r[work_tid] = ri
+
+
+@wp.kernel
+def k_mg_gather_z(
+    z: wp.array(dtype=float),
+    pressure_indices: wp.array(dtype=wp.int32),
+    pressure_count: wp.array(dtype=wp.int32),
+    num_leaves: wp.array(dtype=wp.int32),
+    set_p: int,
+    p: wp.array(dtype=float),
+    compact_z: wp.array(dtype=float),
+):
+    """Compact the V-cycle output for the r.z reduction (zero beyond the
+    unknown count); with ``set_p`` also start the search direction ``p = z``."""
+    work_tid = wp.tid()
+    if work_tid >= pressure_count[0]:
+        compact_z[work_tid] = 0.0
         return
-    wp.atomic_add(leaf_rhs, tid // LEAF_VOLUME, r[tid])
+    tid = pressure_indices[work_tid]
+    if tid >= num_leaves[0] * LEAF_VOLUME:
+        return
+    zi = z[tid]
+    compact_z[work_tid] = zi
+    if set_p != 0:
+        p[tid] = zi
 
 
 # Projection + post ops
@@ -1096,90 +1375,6 @@ def k_project(
             else:
                 w[tid] = w[tid] - g
 
-
-
-
-@wp.kernel
-def k_project_st(
-    x: wp.array(dtype=float),
-    voxel_type: wp.array(dtype=wp.int32),
-    wu_mass: wp.array(dtype=float),
-    wv_mass: wp.array(dtype=float),
-    ww_mass: wp.array(dtype=float),
-    leaf_table: wp.array(dtype=wp.int32),
-    leaf_coords: wp.array(dtype=wp.vec3i),
-    voxels_dim: wp.vec3i,
-    leaves_dim: wp.vec3i,
-    num_leaves: wp.array(dtype=wp.int32),
-    voxel_size: float,
-    max_gradient: float,
-    reference_mass: float,
-    eta_phi: float,
-    rho_liquid: float,
-    rho_gas: float,
-    eps_rho: float,
-    collision_vel: wp.array(dtype=wp.vec3),
-    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
-    wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
-):
-    """Variable-coefficient ST-FLIP projection.
-
-    Uses beta_f = 1/max(rho(phi_f), eps_rho), with phi_f read from the same
-    face P2G accumulators used for velocity normalization.  This is the folded
-    q=p*dt discretization of Eq. (14)-(16) in the add-on's pressure units.
-    """
-    tid = wp.tid()
-    if tid >= num_leaves[0] * LEAF_VOLUME:
-        return
-    ijk = voxel_coord_of_flat(leaf_coords, tid)
-    vt = voxel_type[tid]
-    inv_h = 1.0 / voxel_size
-    here_fluid = (vt & VOXEL_FLUID) != 0 and (vt & VOXEL_COLLISION) == 0
-    here_solid = (vt & VOXEL_COLLISION) != 0
-    limit = wp.max(max_gradient, 1.0e-6)
-    x_here = float(0.0)
-    if here_fluid:
-        x_here = finite_pressure_value(x[tid])
-    for axis in range(3):
-        n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
-        n_fluid = wp.int32(0)
-        n_solid = wp.int32(0)
-        x_n = float(0.0)
-        if n >= 0:
-            nvt = voxel_type[n]
-            if (nvt & VOXEL_COLLISION) != 0:
-                n_solid = 1
-            elif (nvt & VOXEL_FLUID) != 0:
-                n_fluid = 1
-                x_n = finite_pressure_value(x[n])
-        else:
-            n_solid = 1
-        if here_solid or n_solid != 0:
-            vel_c = wp.vec3(0.0, 0.0, 0.0)
-            if here_solid:
-                vel_c = collision_vel[tid]
-            elif n >= 0:
-                vel_c = collision_vel[n]
-            if axis == 0:
-                u[tid] = vel_c[0]
-                wu[tid] = solid_face_weight(wu[tid], here_solid, n_solid)
-            elif axis == 1:
-                v[tid] = vel_c[1]
-                wv[tid] = solid_face_weight(wv[tid], here_solid, n_solid)
-            else:
-                w[tid] = vel_c[2]
-                ww[tid] = solid_face_weight(ww[tid], here_solid, n_solid)
-        elif here_fluid or n_fluid != 0:
-            beta = st_face_beta(axis, tid, wu_mass, wv_mass, ww_mass,
-                                reference_mass, eta_phi,
-                                rho_liquid, rho_gas, eps_rho)
-            g = bounded_pressure_gradient(beta * x_here, beta * x_n, inv_h, limit)
-            if axis == 0:
-                u[tid] = u[tid] - g
-            elif axis == 1:
-                v[tid] = v[tid] - g
-            else:
-                w[tid] = w[tid] - g
 
 
 @wp.kernel
@@ -1306,6 +1501,34 @@ def k_pressure_scale(
     x[tid] = x[tid] * scale
 
 
+# Fixed partial-sum count for ``measure_residual``: fixed, so the reduction
+# order (and therefore the reported residual) is the same on every call.
+RESIDUAL_PARTIALS = 65536
+
+
+@wp.kernel
+def k_residual_partial_squares(
+    rhs: wp.array(dtype=float),
+    ap: wp.array(dtype=float),
+    n: int,
+    stride: int,
+    partials: wp.array(dtype=wp.float64),
+):
+    """Strided partial sums of ``(rhs - ap)^2`` for the residual norm.
+
+    The difference is formed in float32, exactly as the old host readback
+    did; only the accumulation is widened to float64.
+    """
+    tid = wp.tid()
+    acc = wp.float64(0.0)
+    i = tid
+    while i < n:
+        d = wp.float64(rhs[i] - ap[i])
+        acc += d * d
+        i += stride
+    partials[tid] = acc
+
+
 
 register_fn(k_compute_divergence,
             "fluidSimProjectNonDivergentComputeDivergence",
@@ -1325,19 +1548,12 @@ register_fn(k_apply_matrix,
             "fluidSimProjectNonDivergentApplyMatrix16",
             "fluidSimProjectNonDivergentApplyMatrix32",
             strategy="tiled")
-register_fn(k_compute_inverse_diagonal_st,
-            "fluidSimProjectNonDivergentPreConditionerSpatiotemporal")
-register_fn(k_apply_matrix_st,
-            "fluidSimProjectNonDivergentApplyMatrixSpatiotemporal")
 for _w in (2, 4, 8, 16, 32):
     register_fn(k_jacobi_iteration,
                 f"fluidSimProjectNonDivergentJacobi{_w}_original",
                 f"fluidSimProjectNonDivergentJacobi{_w}_optimizedUnroll",
                 strategy="tiled",
                 notes="unroll-width variants collapse to one kernel")
-register_fn(k_jacobi_iteration_st,
-            "fluidSimProjectNonDivergentJacobiSpatiotemporal",
-            strategy="tiled")
 register_fn(k_initialize_pcg, "fluidSimProjectNonDivergentInitializePcg")
 register_fn(k_compute_alpha, "fluidSimProjectNonDivergentComputeAlpha")
 register_fn(k_update_xr, "fluidSimProjectNonDivergentUpdateXR")
@@ -1364,10 +1580,9 @@ register_fn(k_solve_leaf_potential_jacobi,
             strategy="tiled")
 register_fn(k_sample_up_leaf_potential, "fluidSimProjectNonDivergentSampleUp")
 register_fn(k_sample_down_residual, "fluidSimProjectNonDivergentSampleDown",
-            notes="No call sites; no restriction/prolongation V-cycle is "
-                  "wired into this module despite the kernel name.")
+            notes="Leaf-level gather reduction (no atomics); no call sites. "
+                  "The multigrid V-cycle uses the k_mg_* kernels.")
 register_fn(k_project, "fluidSimProjectNonDivergentProject")
-register_fn(k_project_st, "fluidSimProjectNonDivergentProjectSpatiotemporal")
 register_fn(k_expand_velocity_into_collision,
             "fluidSimProjectNonDivergentExpandVelocityIntoCollision",
             notes="No call sites in this module.")
@@ -1379,11 +1594,65 @@ register_fn(k_pressure_scale, "fluidSimPressureScale")
 # Host-orchestrated solver driver (GPU-resident state)
 
 
+class _MGView(namedtuple(
+        "_MGView", "shift vtype inv_diag b x t dim use_idx indices count")):
+    """One level of a V-cycle: cell types, inverse diagonal, right-hand side,
+    solution, and the ping-pong temporary. Level 0 aliases the caller's
+    arrays; coarse levels alias ``_MGLevel`` storage. ``dim`` is the launch
+    dim of the level's work kernels; with ``use_idx`` they walk the compact
+    cell list ``indices`` (device count ``count``) instead of every cell."""
+
+    __slots__ = ()
+
+
+class _MGLevel:
+    """Device storage for one coarse multigrid level (levels 1..MG_LEVELS-1).
+
+    ``shift`` is log2 of the level's leaf side (2, 1, 0 for 4^3, 2^3, 1 cell
+    per leaf), so a level holds ``capacity << (3 * shift)`` cells of each of
+    five arrays: cell type, inverse diagonal, rhs, solution and temporary.
+    Allocated once and never resized: captured graphs bake the pointers.
+    """
+
+    __slots__ = ("shift", "vtype", "inv_diag", "b", "x", "t")
+
+    def __init__(self, shift, leaf_capacity, device):
+        n = max(1, leaf_capacity << (3 * shift))
+        self.shift = shift
+        self.vtype = wp.zeros(n, dtype=wp.int32, device=device)
+        self.inv_diag = wp.zeros(n, dtype=float, device=device)
+        self.b = wp.zeros(n, dtype=float, device=device)
+        self.x = wp.zeros(n, dtype=float, device=device)
+        self.t = wp.zeros(n, dtype=float, device=device)
+
+    def nbytes(self):
+        return sum(
+            a.size * wp.types.type_size_in_bytes(a.dtype)
+            for a in (self.vtype, self.inv_diag, self.b, self.x, self.t))
+
+
 class PressureSolver:
     """Owns pressure work buffers and runs Jacobi or PCG projections."""
 
     # Captured CUDA graphs kept alive at once, evicted least-recently-used.
     _PCG_GRAPH_CAPACITY = 8
+
+    # PCG preconditioner kind: "JACOBI" (default, fused into the PCG kernels)
+    # or "MULTIGRID" (symmetric V-cycle, see ``_apply_mg_vcycle``). Plain
+    # attribute on purpose: no RNA / SolverSettings wiring in this lane.
+    preconditioner = PRECONDITIONER_JACOBI
+    # Class-level smoothing counts; tests override them per instance.
+    _mg_pre_smooth = MG_PRE_SMOOTH
+    _mg_post_smooth = MG_POST_SMOOTH
+    # Multigrid state. Class-level defaults so a solver built without
+    # ``__init__`` (release-path tests) still reads a coherent "no MG" state.
+    _mg_levels = None          # [None, level1, level2, level3] once allocated
+    _mg_voxel_type = None      # level-0 voxel_type the hierarchy was built for
+    _mg_leaf_n = 0             # launch-dim leaf count (pow2, <= grid.capacity)
+    _pcg_cmd_kind = None       # preconditioner the recorded PCG commands serve
+    _pcg_mg_gather_cmd = None  # compacts the V-cycle output for the r.z dot
+    last_pcg_check_every = 0   # check interval the last solve_pcg ran with
+    _residual_partials = None  # float64 scratch for measure_residual, lazy
 
     def __del__(self):
         # Cyclic validation/benchmark owners may reach GC without an explicit
@@ -1435,9 +1704,17 @@ class PressureSolver:
         self.pcg_stats = wp.zeros(5, dtype=float, device=device)
         self._pcg_condition = wp.zeros(1, dtype=wp.int32, device=device)
         self._pcg_iterations = wp.zeros(1, dtype=wp.int32, device=device)
-        self._pcg_last_checked_res = wp.zeros(1, dtype=float, device=device)
+        self._pcg_last_checked_res = wp.zeros(2, dtype=float, device=device)
         self._pcg_tol_sq = wp.zeros(1, dtype=float, device=device)
         self._pcg_voxel_type = None
+        self._pcg_cmd_kind = None
+        self._pcg_mg_gather_cmd = None
+        self._mg_levels = None
+        self._mg_voxel_type = None
+        self._mg_leaf_n = 0
+        self._mg_work_n = 0
+        self._mg_graphs = OrderedDict()
+        self.last_pcg_check_every = 0
         self._pcg_apply_cmd = None
         self._pcg_update_cmd = None
         self._pcg_update_p_cmd = None
@@ -1538,6 +1815,7 @@ class PressureSolver:
         self._pcg_dot = None
         self._pcg_graphs.clear()
         self._pcg_conditional_graphs.clear()
+        self._mg_graphs.clear()
         if dot is not None:
             dot.release()
 
@@ -1545,12 +1823,44 @@ class PressureSolver:
         """Release captured PCG work and its native CUDA module lease."""
         self._release_native_pcg_dot()
         self._pcg_voxel_type = None
+        self._pcg_cmd_kind = None
         self._pcg_apply_cmd = None
         self._pcg_update_cmd = None
         self._pcg_update_p_cmd = None
+        self._pcg_mg_gather_cmd = None
         self._pcg_alpha_cmds = None
         self._pcg_beta_cmds = None
         self._pcg_pack_cmds = None
+
+    def _pcg_kind(self):
+        """The validated preconditioner kind (``JACOBI`` or ``MULTIGRID``)."""
+        kind = self.preconditioner
+        if kind not in (PRECONDITIONER_JACOBI, PRECONDITIONER_MULTIGRID):
+            raise ValueError(
+                f"unknown PCG preconditioner {kind!r}; expected "
+                f"{PRECONDITIONER_JACOBI!r} or {PRECONDITIONER_MULTIGRID!r}")
+        return kind
+
+    def _pcg_graph_key_tail(self):
+        """Key suffix that keeps preconditioner variants apart in both graph
+        caches. Empty for Jacobi, so Jacobi keys stay ``(n, batch, x)``.
+
+        A MULTIGRID capture bakes the V-cycle's launch dims (``_mg_leaf_n``)
+        and its smoothing counts into the graph, so all of them belong in the
+        key; a Jacobi graph can then never be replayed for a MULTIGRID solve
+        or the other way round.
+        """
+        if self._pcg_cmd_kind == PRECONDITIONER_MULTIGRID:
+            return ("MG", self._mg_leaf_n, self._mg_pre_smooth,
+                    self._mg_post_smooth, MG_COARSE_SWEEPS)
+        return ()
+
+    def _set_pcg_cmd_dims(self, work_n):
+        self._pcg_apply_cmd.set_dim(work_n)
+        self._pcg_update_cmd.set_dim(work_n)
+        self._pcg_update_p_cmd.set_dim(work_n)
+        if self._pcg_mg_gather_cmd is not None:
+            self._pcg_mg_gather_cmd.set_dim(work_n)
 
     def _record_pcg_iterations(self, work_n, batch, start_parity):
         parity = start_parity
@@ -1566,6 +1876,10 @@ class PressureSolver:
                     self._pcg_p_ap_accum, work_n)
             self._pcg_alpha_cmds[parity].launch()
             self._pcg_update_cmd.launch()
+            if self._pcg_cmd_kind == PRECONDITIONER_MULTIGRID:
+                # z = M^-1 r (symmetric V-cycle), then compact it for r.z
+                self._apply_mg_vcycle(self.r, self.z)
+                self._pcg_mg_gather_cmd.launch()
             rz_out = self._pcg_rz_b if parity == 0 else self._pcg_rz_a
             if self._pcg_dot is None:
                 wp.utils.array_inner(
@@ -1582,7 +1896,7 @@ class PressureSolver:
     def _launch_pcg_batch(self, work_n, batch):
         """Launch an unchanged fixed-coefficient PCG batch as one CUDA graph."""
         start_parity = 0 if self.rz is self._pcg_rz_a else 1
-        key = (work_n, batch, start_parity)
+        key = (work_n, batch, start_parity) + self._pcg_graph_key_tail()
         graph = self._pcg_graphs.get(key)
         if graph is not None:
             self._pcg_graphs.move_to_end(key)
@@ -1593,9 +1907,7 @@ class PressureSolver:
             # every time the tail-iteration batch minted a fresh key.
             if len(self._pcg_graphs) >= self._PCG_GRAPH_CAPACITY:
                 self._pcg_graphs.popitem(last=False)
-            self._pcg_apply_cmd.set_dim(work_n)
-            self._pcg_update_cmd.set_dim(work_n)
-            self._pcg_update_p_cmd.set_dim(work_n)
+            self._set_pcg_cmd_dims(work_n)
             wp.synchronize_device(self.device)
             with wp.ScopedCapture(device=self.device) as capture:
                 self._record_pcg_iterations(work_n, batch, start_parity)
@@ -1606,13 +1918,11 @@ class PressureSolver:
             self.rz, self.rz_new = self.rz_new, self.rz
 
     def _get_pcg_conditional_graphs(self, work_n, batch, max_iterations):
-        self._pcg_apply_cmd.set_dim(work_n)
-        self._pcg_update_cmd.set_dim(work_n)
-        self._pcg_update_p_cmd.set_dim(work_n)
+        self._set_pcg_cmd_dims(work_n)
         # No tolerance here: it scales with the active voxel count, so keying
         # on it re-captured on almost every solve. The loop reads it from
         # _pcg_tol_sq, which k_prepare_pcg_conditional_loop writes per solve.
-        key = (work_n, batch, max_iterations)
+        key = (work_n, batch, max_iterations) + self._pcg_graph_key_tail()
         graphs = self._pcg_conditional_graphs.get(key)
         if graphs is not None:
             self._pcg_conditional_graphs.move_to_end(key)
@@ -1635,7 +1945,8 @@ class PressureSolver:
                     inputs=[self.residual, self._pcg_rz_b, self._pcg_rz_a,
                             self.p_ap, self._pcg_condition,
                             self._pcg_iterations, self._pcg_last_checked_res,
-                            batch, max_iterations, self._pcg_tol_sq,
+                            batch, max_iterations,
+                            self._pcg_stall_window(batch), self._pcg_tol_sq,
                             self.pcg_stats],
                     device=self.device,
                 )
@@ -1668,10 +1979,56 @@ class PressureSolver:
         self.rz_new = self._pcg_rz_b
         return self.pcg_stats.numpy()
 
-    def _prepare_pcg_commands(self, n, voxel_type, x):
-        if self._pcg_voxel_type is voxel_type:
-            return
+    def _prepare_update_cmds(self, n, kind, x):
+        """Record the preconditioner-specific part of the PCG iteration.
+
+        JACOBI fuses ``z = D^-1 r`` into the x/r update. MULTIGRID updates x
+        and r only; the V-cycle and a compaction of its output follow in
+        ``_record_pcg_iterations``.
+        """
         g = self.grid
+        if kind == PRECONDITIONER_MULTIGRID:
+            self._pcg_update_cmd = fast_launch(
+                k_mg_update_xr_indexed, dim=n,
+                inputs=[self.p_dir, self.ap, self.alpha,
+                        self.pressure_indices, self._pressure_count,
+                        g.num_leaves, x, self.r, self._pcg_compact_r],
+                device=self.device, record_cmd=True,
+            )
+            self._pcg_mg_gather_cmd = fast_launch(
+                k_mg_gather_z, dim=n,
+                inputs=[self.z, self.pressure_indices, self._pressure_count,
+                        g.num_leaves, 0, self.p_dir, self._pcg_compact_z],
+                device=self.device, record_cmd=True,
+            )
+        else:
+            self._pcg_update_cmd = fast_launch(
+                k_update_xr_preconditioned, dim=n,
+                inputs=[self.p_dir, self.ap, self.alpha, self.inv_diag,
+                        self.pressure_indices, self._pressure_count,
+                        g.num_leaves, x, self.r, self.z,
+                        self._pcg_compact_r, self._pcg_compact_z],
+                device=self.device, record_cmd=True,
+            )
+            self._pcg_mg_gather_cmd = None
+        self._pcg_cmd_kind = kind
+
+    def _prepare_pcg_commands(self, n, voxel_type, x):
+        kind = self._pcg_kind()
+        same_voxel_type = self._pcg_voxel_type is voxel_type
+        if same_voxel_type and self._pcg_cmd_kind == kind:
+            return
+        if kind == PRECONDITIONER_MULTIGRID and (
+                self._mg_voxel_type is not voxel_type):
+            raise RuntimeError(
+                "MULTIGRID preconditioner is not built for this voxel_type; "
+                "call build_preconditioner(voxel_type) after selecting it")
+        g = self.grid
+        if same_voxel_type:
+            # Only the preconditioner changed: the shared commands, and every
+            # captured graph (their keys carry the kind), stay valid.
+            self._prepare_update_cmds(n, kind, x)
+            return
         self._pcg_voxel_type = voxel_type
         self._pcg_apply_cmd = fast_launch(
             k_apply_matrix, dim=n,
@@ -1681,14 +2038,7 @@ class PressureSolver:
                     self._pcg_compact_p, self._pcg_compact_ap],
             device=self.device, record_cmd=True,
         )
-        self._pcg_update_cmd = fast_launch(
-            k_update_xr_preconditioned, dim=n,
-            inputs=[self.p_dir, self.ap, self.alpha, self.inv_diag,
-                    self.pressure_indices, self._pressure_count,
-                    g.num_leaves, x, self.r, self.z,
-                    self._pcg_compact_r, self._pcg_compact_z],
-            device=self.device, record_cmd=True,
-        )
+        self._prepare_update_cmds(n, kind, x)
         self._pcg_update_p_cmd = fast_launch(
             k_update_p_indexed, dim=n,
             inputs=[self.z, self.beta, self.pressure_indices,
@@ -1726,6 +2076,230 @@ class PressureSolver:
         self._pcg_graphs.clear()
         self._pcg_conditional_graphs.clear()
 
+    # -- multigrid V-cycle ---------------------------------------------------
+
+    def _ensure_mg_levels(self):
+        """Allocate the coarse levels once; captured graphs bake their
+        pointers, so they are never reallocated or resized."""
+        if self._mg_levels is None:
+            capacity = self.grid.capacity
+            self._mg_levels = [None] + [
+                _MGLevel(MG_FINE_SHIFT - level, capacity, self.device)
+                for level in range(1, MG_LEVELS)
+            ]
+        return self._mg_levels
+
+    def mg_extra_bytes_per_leaf(self):
+        """Device bytes per leaf slot held by levels 1.. (level 0 reuses the
+        pressure solver's own arrays)."""
+        levels = self._ensure_mg_levels()
+        total = sum(lv.nbytes() for lv in levels[1:])
+        return total / float(self.grid.capacity)
+
+    def _mg_dim(self, shift):
+        """Launch dim of a level: fixed from the leaf capacity bucket, with the
+        device-side ``num_leaves`` guard doing the exact clipping."""
+        return self._mg_leaf_n << (3 * shift)
+
+    def _build_mg_hierarchy(self, voxel_type):
+        """(Re)build the coarse cell types and inverse diagonals for
+        ``voxel_type``. Level 0 is the pressure solver's own ``voxel_type`` and
+        ``inv_diag``; levels 1.. are derived from it, one level at a time.
+
+        The six launches are replayed from a captured graph once the launch
+        dims (a power-of-two leaf bucket) repeat: they only depend on device
+        data, so a rebuild per pressure solve is one graph launch, not six
+        host-side launches."""
+        g = self.grid
+        self._ensure_mg_levels()
+        if self._mg_voxel_type is not voxel_type:
+            self._mg_graphs.clear()
+        self._mg_voxel_type = voxel_type
+        self._mg_leaf_n = min(
+            g.capacity, 1 << (max(1, g.active_leaf_count) - 1).bit_length())
+        self._launch_mg_cached(("hier", self._mg_leaf_n),
+                               lambda: self._record_mg_hierarchy(voxel_type))
+
+    def _record_mg_hierarchy(self, voxel_type):
+        g = self.grid
+        src = voxel_type
+        for level in range(1, MG_LEVELS):
+            lv = self._mg_levels[level]
+            fast_launch(
+                k_mg_build_types, dim=self._mg_dim(lv.shift),
+                inputs=[src, lv.shift, g.num_leaves, lv.vtype],
+                device=self.device,
+            )
+            fast_launch(
+                k_mg_inverse_diagonal, dim=self._mg_dim(lv.shift),
+                inputs=[lv.vtype, lv.shift, g.leaf_table, g.leaf_coords,
+                        g.leaves_dim, g.num_leaves, lv.inv_diag],
+                device=self.device,
+            )
+            src = lv.vtype
+
+    def _launch_mg_cached(self, key, record):
+        """Run ``record`` (a fixed launch sequence) as a cached CUDA graph.
+
+        The first call per key runs eagerly (loading the kernels); the second
+        captures and replays; later calls only replay. CPU devices and a
+        failed capture fall back to the eager launches."""
+        graphs = self._mg_graphs
+        entry = graphs.get(key)
+        if entry is not None and entry is not True and entry is not False:
+            graphs.move_to_end(key)
+            wp.capture_launch(entry)
+            return
+        if (entry is False or not wp.get_device(self.device).is_cuda):
+            record()
+            return
+        if entry is None:
+            # Modules are loaded by the eager pass; capturing cold kernels
+            # would race the module load.
+            if len(graphs) >= self._PCG_GRAPH_CAPACITY:
+                graphs.popitem(last=False)
+            graphs[key] = True
+            record()
+            return
+        try:
+            wp.synchronize_device(self.device)
+            with wp.ScopedCapture(device=self.device) as capture:
+                record()
+        except Exception:
+            graphs[key] = False
+            record()
+            return
+        graphs[key] = capture.graph
+        wp.capture_launch(capture.graph)
+
+    def _mg_level_views(self, r, z):
+        """Per-level ``_MGView``s for one V-cycle. Level 0 solves ``A z = r``
+        on the caller's arrays with ``pressure_tmp`` as its ping-pong partner,
+        so the fine level costs no extra memory."""
+        levels = self._mg_levels
+        g = self.grid
+        # Inside the PCG start graph the fine level walks the compact unknown
+        # list (``_mg_work_n`` launch threads); a direct call walks all cells.
+        work_n = self._mg_work_n
+        views = [_MGView(MG_FINE_SHIFT, self._mg_voxel_type, self.inv_diag,
+                         r, z, self.pressure_tmp,
+                         work_n if work_n else self._mg_dim(MG_FINE_SHIFT),
+                         1 if work_n else 0,
+                         self.pressure_indices, self._pressure_count)]
+        for lv in levels[1:]:
+            views.append(_MGView(lv.shift, lv.vtype, lv.inv_diag, lv.b, lv.x,
+                                 lv.t, self._mg_dim(lv.shift), 0,
+                                 self.pressure_indices, self._pressure_count))
+        return views
+
+    def _mg_sweeps(self, lv, bufs, done, count):
+        """Run ``count`` damped-Jacobi sweeps on level ``lv``, ping-ponging
+        between ``bufs``. ``done`` sweeps already ran; sweep ``k`` (1-based)
+        writes ``bufs[(k - 1) & 1]``, and the very first one starts from a
+        zero guess. Returns the new sweep count."""
+        g = self.grid
+        for _ in range(count):
+            if done == 0:
+                fast_launch(
+                    k_mg_smooth_zero, dim=lv.dim,
+                    inputs=[lv.b, lv.vtype, lv.inv_diag, MG_OMEGA,
+                            g.num_leaves, lv.shift, lv.use_idx, lv.indices,
+                            lv.count, bufs[0]],
+                    device=self.device,
+                )
+            else:
+                fast_launch(
+                    k_mg_smooth, dim=lv.dim,
+                    inputs=[bufs[(done - 1) & 1], lv.b, lv.vtype, lv.inv_diag,
+                            MG_OMEGA, g.leaf_table, g.leaf_coords,
+                            g.leaves_dim, g.num_leaves, lv.shift, lv.use_idx,
+                            lv.indices, lv.count, bufs[done & 1]],
+                    device=self.device,
+                )
+            done += 1
+        return done
+
+    def _mg_vcycle_level(self, views, level):
+        """Recursive symmetric V-cycle on ``views[level]``; the result lands in
+        that level's ``x``. The sweeps ping-pong between ``x`` and ``t`` and
+        the first buffer is chosen so the last sweep writes ``x``."""
+        g = self.grid
+        lv = views[level]
+        if level == MG_LEVELS - 1:
+            sweeps = MG_COARSE_SWEEPS
+            bufs = (lv.x, lv.t) if sweeps & 1 else (lv.t, lv.x)
+            self._mg_sweeps(lv, bufs, 0, sweeps)
+            return
+        pre = self._mg_pre_smooth
+        post = self._mg_post_smooth
+        bufs = (lv.x, lv.t) if (pre + post) & 1 else (lv.t, lv.x)
+        done = self._mg_sweeps(lv, bufs, 0, pre)
+        cur = bufs[(done - 1) & 1]
+        # The other ping-pong buffer is free until the first post sweep, so
+        # it holds the fine residual between the two restriction kernels.
+        res = bufs[done & 1]
+        coarse = views[level + 1]
+        fast_launch(
+            k_mg_residual, dim=lv.dim,
+            inputs=[cur, lv.b, lv.vtype, lv.inv_diag, g.leaf_table,
+                    g.leaf_coords, g.leaves_dim, g.num_leaves, lv.shift,
+                    lv.use_idx, lv.indices, lv.count, res],
+            device=self.device,
+        )
+        fast_launch(
+            k_mg_restrict_sum, dim=coarse.dim,
+            inputs=[res, lv.vtype, lv.inv_diag, g.num_leaves, lv.shift,
+                    coarse.b],
+            device=self.device,
+        )
+        self._mg_vcycle_level(views, level + 1)
+        # First post sweep applies the coarse correction on the fly.
+        fast_launch(
+            k_mg_smooth_prolong, dim=lv.dim,
+            inputs=[cur, coarse.x, lv.b, lv.vtype, lv.inv_diag, MG_OMEGA,
+                    g.leaf_table, g.leaf_coords, g.leaves_dim, g.num_leaves,
+                    lv.shift, lv.use_idx, lv.indices, lv.count,
+                    bufs[done & 1]],
+            device=self.device,
+        )
+        self._mg_sweeps(lv, bufs, done + 1, post - 1)
+
+    def _record_mg_start(self, work_n):
+        g = self.grid
+        self._mg_work_n = work_n
+        try:
+            self._apply_mg_vcycle(self.r, self.z)
+        finally:
+            self._mg_work_n = 0
+        fast_launch(
+            k_mg_gather_z, dim=work_n,
+            inputs=[self.z, self.pressure_indices, self._pressure_count,
+                    g.num_leaves, 1, self.p_dir, self._pcg_compact_z],
+            device=self.device,
+        )
+
+    def _apply_mg_vcycle(self, r, z):
+        """Apply one symmetric V-cycle: ``z = M^-1 r`` on full-layout arrays.
+
+        ``r`` and ``z`` are full-layout float arrays (``grid.voxel_capacity``);
+        ``r`` is read only at pressure unknowns and ``z`` is overwritten (not
+        accumulated) at the active voxels, so no zeroing is needed. The whole
+        call is a fixed launch sequence with no atomics, no host readback and
+        no synchronization, which makes it CUDA-graph capturable and bitwise
+        deterministic. Call ``build_preconditioner(voxel_type)`` with
+        ``preconditioner = "MULTIGRID"`` first.
+        """
+        if self._mg_levels is None or self._mg_voxel_type is None:
+            raise RuntimeError(
+                "multigrid hierarchy is not built; call build_preconditioner "
+                "with preconditioner='MULTIGRID' first")
+        if self._mg_pre_smooth < 1 or self._mg_post_smooth < 1:
+            raise ValueError(
+                "multigrid needs at least one pre and one post smoothing "
+                f"sweep (got {self._mg_pre_smooth}/{self._mg_post_smooth})")
+        views = self._mg_level_views(r, z)
+        self._mg_vcycle_level(views, 0)
+
     def _make_status(
         self, converged, reason, residual, iterations,
         project_velocity=None,
@@ -1761,7 +2335,7 @@ class PressureSolver:
 
     def project_frame(self, velocity, voxel_type, collision_velocity,
                       voxel_counts, settings, *, max_gradient,
-                      reference_mass=None, pressure_source=None):
+                      pressure_source=None):
         """Build, solve, and safely apply one pressure projection."""
         resolved_quality = getattr(settings, "resolved_quality", None)
         rest_count = (resolved_quality.rest_particle_count
@@ -1772,37 +2346,9 @@ class PressureSolver:
             rest_count=rest_count,
             count_stiffness=settings.count_stiffness,
         )
-        st_projection = bool(
-            settings.spacetime_enabled
-            and settings.spacetime_variable_projection)
-        if reference_mass is None:
-            configured_mass = float(settings.spacetime_reference_mass)
-            reference_mass = (
-                configured_mass
-                if configured_mass > 0.0 and math.isfinite(configured_mass)
-                else max(1.0, float(rest_count)))
-        st_args = {
-            "reference_mass": reference_mass,
-            "eta_phi": settings.spacetime_phase_eta,
-            "rho_liquid": settings.spacetime_liquid_density,
-            "rho_gas": settings.spacetime_gas_density,
-            "eps_rho": settings.spacetime_min_density,
-        }
-        if st_projection:
-            self.build_preconditioner_st(voxel_type, velocity, **st_args)
-        else:
-            self.build_preconditioner(voxel_type)
+        self.build_preconditioner(voxel_type)
         if int(settings.pressure_solver) == int(ProjectNonDivergentSolver.JACOBI):
-            if st_projection:
-                self.solve_jacobi_st(
-                    voxel_type, settings.pressure_iterations, velocity,
-                    **st_args)
-            else:
-                self.solve_jacobi(voxel_type, settings.pressure_iterations)
-        elif st_projection:
-            self.solve_pcg_st(
-                voxel_type, settings.pressure_iterations,
-                settings.pressure_tolerance, velocity, **st_args)
+            self.solve_jacobi(voxel_type, settings.pressure_iterations)
         else:
             self.solve_pcg(
                 voxel_type, settings.pressure_iterations,
@@ -1816,14 +2362,9 @@ class PressureSolver:
             return self.last_status
         if settings.pressure_threshold > 0.0:
             self.apply_threshold(settings.pressure_threshold)
-        if st_projection:
-            self.project_st(
-                velocity, voxel_type, collision_velocity,
-                max_gradient=max_gradient, **st_args)
-        else:
-            self.project(
-                velocity, voxel_type, collision_velocity,
-                max_gradient=max_gradient)
+        self.project(
+            velocity, voxel_type, collision_velocity,
+            max_gradient=max_gradient)
         return self.last_status
 
     def build_rhs(self, vel, voxel_type, collision_vel, voxel_counts,
@@ -1846,202 +2387,15 @@ class PressureSolver:
 
     def build_preconditioner(self, voxel_type):
         g = self.grid
+        kind = self._pcg_kind()
         fast_launch(
             k_compute_inverse_diagonal, dim=self._dim(),
             inputs=[voxel_type, g.leaf_table, g.leaf_coords, g.voxels_dim,
                     g.leaves_dim, g.num_leaves, self.inv_diag],
             device=self.device,
         )
-
-
-
-    def build_preconditioner_st(self, voxel_type, vel, reference_mass=8.0,
-                                eta_phi=0.5, rho_liquid=1.0,
-                                rho_gas=0.0, eps_rho=0.05):
-        g = self.grid
-        fast_launch(
-            k_compute_inverse_diagonal_st, dim=self._dim(),
-            inputs=[voxel_type, vel.wu, vel.wv, vel.ww,
-                    g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                    g.num_leaves, reference_mass, eta_phi,
-                    rho_liquid, rho_gas, eps_rho, self.inv_diag],
-            device=self.device,
-        )
-
-    def solve_jacobi_st(self, voxel_type, iterations, vel, reference_mass=8.0,
-                        eta_phi=0.5, rho_liquid=1.0, rho_gas=0.0,
-                        eps_rho=0.05):
-        g = self.grid
-        n = self._dim()
-        src, dst = self.pressure, self.pressure_tmp
-        src[:n].zero_()
-        for _ in range(iterations):
-            fast_launch(
-                k_jacobi_iteration_st, dim=n,
-                inputs=[src, self.rhs, voxel_type, self.inv_diag,
-                        vel.wu, vel.wv, vel.ww,
-                        g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                        g.num_leaves, reference_mass, eta_phi,
-                        rho_liquid, rho_gas, eps_rho, dst],
-                device=self.device,
-            )
-            src, dst = dst, src
-        if src is not self.pressure:
-            wp.copy(self.pressure, src, count=n)
-        self.last_iterations = iterations
-        # Same fix as solve_jacobi: report the real residual instead of a
-        # -1.0 placeholder, measured against the ST variable-coefficient
-        # operator this solve actually used (measure_residual() applies the
-        # constant-coefficient one).
-        residual = self._measure_residual_st(
-            voxel_type, vel, reference_mass, eta_phi, rho_liquid, rho_gas,
-            eps_rho)
-        self.last_residual = residual if math.isfinite(residual) else math.inf
-        self.last_residual_squared = (
-            residual * residual if math.isfinite(residual) else math.inf)
-        self._set_pressure_status(
-            PRESSURE_STATUS_JACOBI, PRESSURE_STATUS_JACOBI, True)
-        return self.last_status
-
-    def _measure_residual_st(self, voxel_type, vel, reference_mass, eta_phi,
-                             rho_liquid, rho_gas, eps_rho):
-        """L2 norm of (rhs - A_st*pressure); one readback, like measure_residual()."""
-        import numpy as _np
-
-        g = self.grid
-        n = self._dim()
-        self.ap[:n].zero_()
-        fast_launch(
-            k_apply_matrix_st, dim=n,
-            inputs=[self.pressure, voxel_type, self.inv_diag,
-                    vel.wu, vel.wv, vel.ww,
-                    g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                    g.num_leaves, reference_mass, eta_phi,
-                    rho_liquid, rho_gas, eps_rho, self.ap],
-            device=self.device,
-        )
-        r = self.rhs[:n].numpy() - self.ap[:n].numpy()
-        return float(_np.linalg.norm(r))
-
-    def solve_pcg_st(self, voxel_type, max_iterations, tolerance, vel,
-                     reference_mass=8.0, eta_phi=0.5, rho_liquid=1.0,
-                     rho_gas=0.0, eps_rho=0.05, check_every=25):
-        """PCG solve for the ST-FLIP variable-coefficient pressure matrix."""
-        g = self.grid
-        n = self._dim()
-        x = self.pressure
-        self._zero_pcg_vectors(n, x, zero_x0=True)
-        fast_launch(
-            k_initialize_pcg, dim=n,
-            inputs=[self.rhs, self.x0, self.inv_diag,
-                    self.pressure_indices, self._pressure_count, 0,
-                    g.num_leaves,
-                    x, self.r, self.z, self.p_dir,
-                    self._pcg_compact_r, self._pcg_compact_z],
-            device=self.device,
-        )
-        check_every = max(1, int(check_every))
-        tol_sq = tolerance * tolerance * max(1, n)
-        status = PRESSURE_STATUS_MAX_ITERATIONS
-        failure = "max_iterations"
-        pressure_valid = False
-        wp.utils.array_inner(self.r, self.z, out=self.rz, count=n)
-        wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
-        last_checked_res = float(self.residual.numpy()[0])
-        res_sq = last_checked_res
-        it = 0
-        if not math.isfinite(last_checked_res):
-            status = PRESSURE_STATUS_INVALID
-            failure = "non_finite_residual"
-        elif last_checked_res < tol_sq:
-            status = PRESSURE_STATUS_CONVERGED
-            failure = PRESSURE_STATUS_CONVERGED
-            pressure_valid = True
-        while it < max_iterations and status == PRESSURE_STATUS_MAX_ITERATIONS:
-            batch = min(check_every, max_iterations - it)
-            for _ in range(batch):
-                fast_launch(
-                    k_apply_matrix_st, dim=n,
-                    inputs=[self.p_dir, voxel_type, self.inv_diag,
-                            vel.wu, vel.wv, vel.ww,
-                            g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                            g.num_leaves, reference_mass, eta_phi,
-                            rho_liquid, rho_gas, eps_rho, self.ap],
-                    device=self.device,
-                )
-                wp.utils.array_inner(self.p_dir, self.ap, out=self.p_ap, count=n)
-                fast_launch(k_compute_alpha, dim=1,
-                          inputs=[self.rz, self.p_ap, self.alpha],
-                          device=self.device)
-                fast_launch(
-                    k_update_xr, dim=n,
-                    inputs=[self.p_dir, self.ap, self.alpha, g.num_leaves,
-                            x, self.r],
-                    device=self.device,
-                )
-                fast_launch(
-                    k_apply_preconditioner, dim=n,
-                    inputs=[self.r, self.inv_diag, g.num_leaves, self.z],
-                    device=self.device,
-                )
-                wp.utils.array_inner(self.r, self.z, out=self.rz_new, count=n)
-                fast_launch(k_compute_beta, dim=1,
-                          inputs=[self.rz_new, self.rz, self.beta],
-                          device=self.device)
-                fast_launch(
-                    k_update_p, dim=n,
-                    inputs=[self.z, self.beta, g.num_leaves, self.p_dir],
-                    device=self.device,
-                )
-                wp.copy(self.rz, self.rz_new)
-                it += 1
-            wp.utils.array_inner(self.r, self.r, out=self.residual, count=n)
-            fast_launch(k_pack_pcg_stats, dim=1,
-                      inputs=[self.residual, self.rz, self.p_ap,
-                              self.pcg_stats],
-                      device=self.device)
-            stats = self.pcg_stats.numpy()
-            res_sq = float(stats[0])
-            rz_cur = float(stats[1])
-            p_ap_cur = float(stats[2])
-            if (not math.isfinite(res_sq) or not math.isfinite(rz_cur)
-                    or not math.isfinite(p_ap_cur)):
-                status = PRESSURE_STATUS_INVALID
-                failure = "non_finite_residual"
-            elif res_sq < tol_sq:
-                status = PRESSURE_STATUS_CONVERGED
-                failure = PRESSURE_STATUS_CONVERGED
-                pressure_valid = True
-            elif (rz_cur < -1.0e-20 or abs(rz_cur) < 1.0e-30
-                    or abs(p_ap_cur) < 1.0e-30):
-                status = PRESSURE_STATUS_SINGULAR
-                failure = "singular_system"
-            elif res_sq >= last_checked_res * (1.0 - 1.0e-6):
-                status = PRESSURE_STATUS_STALLED
-                failure = "stalled"
-            else:
-                last_checked_res = res_sq
-        self.last_iterations = it
-        if not math.isfinite(res_sq):
-            status = PRESSURE_STATUS_INVALID
-            failure = "non_finite_residual"
-            res_sq = math.inf
-        self.last_residual_squared = res_sq
-        self.last_residual = math.sqrt(max(0.0, res_sq)) if math.isfinite(res_sq) else math.inf
-        # A finite stalled/iteration-limited solution is useful best effort:
-        # projecting it reduces divergence. The previous fail-open path
-        # discarded all progress, zeroed pressure, and advected the completely
-        # unprojected velocity field. Singular/non-finite systems remain
-        # fail-closed because their pressure field is not trustworthy.
-        pressure_valid = pressure_valid or (
-            math.isfinite(res_sq)
-            and status in (PRESSURE_STATUS_MAX_ITERATIONS,
-                           PRESSURE_STATUS_STALLED)
-        )
-        if not pressure_valid:
-            self.pressure[:n].zero_()
-        self._set_pressure_status(status, failure, pressure_valid)
-        return self.last_status
+        if kind == PRECONDITIONER_MULTIGRID:
+            self._build_mg_hierarchy(voxel_type)
 
     def coarse_initial_guess(self, voxel_type, iterations=32):
         """Electrostatic leaf-aggregate long-range guess (multigrid path)."""
@@ -2052,7 +2406,7 @@ class PressureSolver:
         self.leaf_pot[:n_leaf].zero_()
         self.leaf_pot_tmp[:n_leaf].zero_()
         fast_launch(
-            k_build_leaf_aggregates, dim=self._dim(),
+            k_build_leaf_aggregates, dim=self._leaf_dim(),
             inputs=[self.rhs, voxel_type, g.num_leaves, self.leaf_rhs, self.leaf_fluid],
             device=self.device,
         )
@@ -2104,8 +2458,34 @@ class PressureSolver:
             PRESSURE_STATUS_JACOBI, PRESSURE_STATUS_JACOBI, True)
         return self.last_status
 
+    @staticmethod
+    def _pcg_stall_window(check_every):
+        """Iterations without a new best residual that count as a stall.
+
+        Never shorter than one check interval, so a stall always needs at
+        least one checkpoint that failed to improve on the best residual.
+        """
+        return max(PCG_STALL_WINDOW, int(check_every))
+
+    def _resolve_check_every(self, check_every, max_iterations):
+        """Residual-check interval of one ``solve_pcg``.
+
+        An explicit caller value is honored as is. With none, JACOBI keeps the
+        historical 25. MULTIGRID converges in a handful of iterations, so 25
+        would overshoot by several V-cycles; it picks the largest candidate
+        that is odd and divides ``max_iterations`` (the CUDA conditional graph
+        needs both), and falls back to 25 when there is none.
+        """
+        if check_every is not None:
+            return max(1, int(check_every))
+        if self._pcg_kind() == PRECONDITIONER_MULTIGRID:
+            for candidate in MG_CHECK_EVERY_CANDIDATES:
+                if max_iterations > 0 and max_iterations % candidate == 0:
+                    return candidate
+        return PCG_DEFAULT_CHECK_EVERY
+
     def solve_pcg(self, voxel_type, max_iterations, tolerance, use_coarse_guess=False,
-                  check_every=25):
+                  check_every=None):
         self.last_pcg_execution_mode = "not_run"
         g = self.grid
         full_n = self._dim()
@@ -2163,7 +2543,14 @@ class PressureSolver:
                         self._pcg_compact_r, self._pcg_compact_z],
                 device=self.device,
             )
-        check_every = max(1, int(check_every))
+        if self._pcg_cmd_kind == PRECONDITIONER_MULTIGRID:
+            # z0 = M^-1 r0 replaces the Jacobi z the initializer wrote, and
+            # p0 = z0 (the compaction also feeds the r.z reduction below).
+            self._launch_mg_cached(
+                ("start", work_n) + self._pcg_graph_key_tail(),
+                lambda: self._record_mg_start(work_n))
+        check_every = self._resolve_check_every(check_every, max_iterations)
+        self.last_pcg_check_every = check_every
         tol_sq = tolerance * tolerance * max(1, full_n)
         status = PRESSURE_STATUS_MAX_ITERATIONS
         failure = "max_iterations"
@@ -2174,7 +2561,9 @@ class PressureSolver:
         wp.utils.array_inner(
             self._pcg_compact_r, self._pcg_compact_r,
             out=self.residual, count=work_n)
-        last_checked_res = 0.0
+        best_res = 0.0
+        best_it = 0
+        stall_window = self._pcg_stall_window(check_every)
         res_sq = 0.0
         it = 0
         use_conditional = (
@@ -2218,12 +2607,12 @@ class PressureSolver:
                 failure = "max_iterations"
         else:
             self.last_pcg_execution_mode = "host_batched"
-            last_checked_res = float(self.residual.numpy()[0])
-            res_sq = last_checked_res
-            if not math.isfinite(last_checked_res):
+            best_res = float(self.residual.numpy()[0])
+            res_sq = best_res
+            if not math.isfinite(best_res):
                 status = PRESSURE_STATUS_INVALID
                 failure = "non_finite_residual"
-            elif last_checked_res < tol_sq:
+            elif best_res < tol_sq:
                 status = PRESSURE_STATUS_CONVERGED
                 failure = PRESSURE_STATUS_CONVERGED
                 pressure_valid = True
@@ -2259,11 +2648,14 @@ class PressureSolver:
                     or abs(p_ap_cur) < 1.0e-30):
                 status = PRESSURE_STATUS_SINGULAR
                 failure = "singular_system"
-            elif res_sq >= last_checked_res * (1.0 - 1.0e-6):
-                status = PRESSURE_STATUS_STALLED
-                failure = "stalled"
             else:
-                last_checked_res = res_sq
+                # mirrors k_finish_pcg_conditional_batch
+                if res_sq < best_res * (1.0 - 1.0e-6):
+                    best_res = res_sq
+                    best_it = it
+                if it - best_it >= stall_window:
+                    status = PRESSURE_STATUS_STALLED
+                    failure = "stalled"
         self.last_iterations = it
         if not math.isfinite(res_sq):
             status = PRESSURE_STATUS_INVALID
@@ -2284,10 +2676,9 @@ class PressureSolver:
     def measure_residual(self, voxel_type):
         """L2 norm of (rhs - A*pressure) for the current pressure solution.
 
-        Used by validation/diagnostics; performs one readback.
+        Used by validation/diagnostics. The norm is reduced on the device and
+        only the scalar is read back; the rhs and A*p arrays stay resident.
         """
-        import numpy as _np
-
         full_n = self._dim()
         work_n = self._build_pressure_index(voxel_type)
         self.ap[:full_n].zero_()
@@ -2300,8 +2691,18 @@ class PressureSolver:
                         self._pcg_compact_p, self._pcg_compact_ap],
                 device=self.device,
             )
-        r = self.rhs[:full_n].numpy() - self.ap[:full_n].numpy()
-        return float(_np.linalg.norm(r))
+        partials = min(RESIDUAL_PARTIALS, full_n)
+        if self._residual_partials is None:
+            self._residual_partials = wp.zeros(
+                RESIDUAL_PARTIALS, dtype=wp.float64, device=self.device)
+        fast_launch(
+            k_residual_partial_squares, dim=partials,
+            inputs=[self.rhs, self.ap, full_n, partials,
+                    self._residual_partials],
+            device=self.device,
+        )
+        squared = wp.utils.array_sum(self._residual_partials[:partials])
+        return math.sqrt(float(squared))
 
     def apply_threshold(self, relative_threshold):
         if relative_threshold <= 0.0:
@@ -2328,22 +2729,6 @@ class PressureSolver:
             device=self.device,
         )
 
-
-
-    def project_st(self, vel, voxel_type, collision_vel, max_gradient=1.0e6,
-                   reference_mass=8.0, eta_phi=0.5, rho_liquid=1.0,
-                   rho_gas=0.0, eps_rho=0.05):
-        g = self.grid
-        fast_launch(
-            k_project_st, dim=self._dim(),
-            inputs=[self.pressure, voxel_type, vel.wu, vel.wv, vel.ww,
-                    g.leaf_table, g.leaf_coords, g.voxels_dim, g.leaves_dim,
-                    g.num_leaves, g.voxel_size, max_gradient,
-                    reference_mass, eta_phi, rho_liquid, rho_gas, eps_rho,
-                    collision_vel,
-                    vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww],
-            device=self.device,
-        )
 
     def project(self, vel, voxel_type, collision_vel, max_gradient=1.0e6):
         g = self.grid

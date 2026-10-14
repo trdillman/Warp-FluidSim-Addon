@@ -56,10 +56,12 @@ class ClassificationPolicy:
             raise ValueError("whitewater classification thresholds must be finite")
         if self.foam_band <= 0.0:
             raise ValueError("whitewater foam band must be positive")
-        if not 0.0 <= self.spray_exit_height < self.spray_enter_height:
-            raise ValueError("spray exit height must be below spray enter height")
-        if not 0.0 <= self.bubble_exit_depth < self.bubble_enter_depth:
-            raise ValueError("bubble exit depth must be below bubble enter depth")
+        # Equal enter/exit thresholds are valid: that is zero hysteresis, which
+        # the Type Hysteresis property allows (min=0.0).
+        if not 0.0 <= self.spray_exit_height <= self.spray_enter_height:
+            raise ValueError("spray exit height must not exceed spray enter height")
+        if not 0.0 <= self.bubble_exit_depth <= self.bubble_enter_depth:
+            raise ValueError("bubble exit depth must not exceed bubble enter depth")
         if self.min_spray_speed < 0.0 or self.spray_exit_speed < 0.0:
             raise ValueError("whitewater spray speeds must be non-negative")
         if self.spray_exit_speed > self.min_spray_speed:

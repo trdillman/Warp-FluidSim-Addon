@@ -85,6 +85,45 @@ def test_successful_replacement_clears_previous_runtime_error(monkeypatch):
     assert item.status == 'APPLIED'
 
 
+class _Diagnostics(list):
+    def add(self):
+        item = SimpleNamespace()
+        self.append(item)
+        return item
+
+
+def test_test_draft_shows_warnings_without_invalidating_the_effect(monkeypatch):
+    # B68: a successful candidate's advisory warnings (e.g. a particle
+    # velocity write the transfer overwrites) were dropped; errors still block.
+    from fluidSim_warp_blender51.sim.effects.schema import EffectIssue
+
+    _install_bpy_stub(monkeypatch)
+    effects = _reload_module('fluidSim_warp_blender51.blender.effects')
+    instance = EffectInstanceV2('drafted', builtin_effect_definitions()[0])
+    kernel = SimpleNamespace(kernel_id='vortex_force', error_line=0, error_column=0)
+    item = SimpleNamespace(instance_id='drafted', effect_id=instance.definition.effect_id,
+                           diagnostics=_Diagnostics(), kernels=[kernel], runtime_error='',
+                           draft_fingerprint='draft', status='DRAFT')
+    scene = SimpleNamespace(fluidsim_effects=SimpleNamespace(items=[item]))
+    warning = EffectIssue('PARTICLE_VELOCITY_WRITE_OVERWRITTEN', 'replaced by G2P',
+                          severity='WARNING', effect_id=instance.definition.effect_id,
+                          instance_id='drafted', kernel_id='vortex_force', line=2)
+    monkeypatch.setattr(effects, 'refresh_stack_state', lambda scene: None)
+    monkeypatch.setattr(effects, 'scene_effect_instances', lambda scene: (instance,))
+    monkeypatch.setattr(effects, 'build_effect_candidate', lambda scene, device: SimpleNamespace(
+        success=True, issues=(warning,), compiled_effects=(), sandbox_reports=()))
+
+    result = effects.test_draft(scene, device='cpu')
+
+    assert result.success is True
+    assert item.status == 'TESTED'
+    assert [(d.code, d.severity) for d in item.diagnostics] == [
+        ('PARTICLE_VELOCITY_WRITE_OVERWRITTEN', 'WARNING')]
+    assert kernel.error_line == 0
+    effects._mirror_issues(scene.fluidsim_effects, (replace(warning, severity='ERROR'),))
+    assert item.status == 'INVALID' and kernel.error_line == 2
+
+
 def test_revoked_trust_pauses_and_cannot_publish_hot_bindings(monkeypatch, tmp_path):
     bpy = _install_bpy_stub(monkeypatch)
     effects = _reload_module('fluidSim_warp_blender51.blender.effects')
@@ -105,10 +144,40 @@ def test_revoked_trust_pauses_and_cannot_publish_hot_bindings(monkeypatch, tmp_p
     signature = scene.fluidsim_effects.applied_signature
     bindings = []
     solver = SimpleNamespace(update_custom_effect_runtime_bindings=lambda instances: bindings.append(instances) or True)
-    monkeypatch.setattr(scene_bridge, 'session', lambda: SimpleNamespace(active=True, owns_scene=lambda s: True, solver=solver))
+    released = []
+    monkeypatch.setattr(scene_bridge, 'session', lambda: SimpleNamespace(
+        active=True, owns_scene=lambda s: not released, solver=solver,
+        release=lambda s: released.append(s)))
     effects.untrust_effect(scene, 0)
     assert not scene.fluidsim.live
+    assert released == [scene]
     assert scene.fluidsim_effects.applied_signature == signature
     assert not effects._try_live_parameter_update(scene)
     assert not bindings
     assert item.status == 'UNTRUSTED'
+
+
+def test_untrusted_draft_edit_keeps_the_trusted_applied_effect_running(monkeypatch, tmp_path):
+    # Regression (9bbebb0): editing a running built-in's kernel source makes
+    # the *draft* untrusted, but the solver still runs the applied built-in.
+    # That must block Apply, not release the live session.
+    bpy = _install_bpy_stub(monkeypatch)
+    effects = _reload_module('fluidSim_warp_blender51.blender.effects')
+    from fluidSim_warp_blender51.blender import scene_bridge, playback
+    applied = EffectInstanceV2('vortex', builtin_effect_definitions()[0])
+    edited = replace(applied, definition=replace(applied.definition, built_in=False))
+    item = SimpleNamespace(instance_id='vortex', runtime_error='', display_name='Vortex', enabled=True)
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(live=True, snippets=[], cache_playback_enabled=False),
+                            fluidsim_effects=SimpleNamespace(items=[item], migration_complete=True))
+    monkeypatch.setattr(effects, 'trust_store_for_scene', lambda scene: TrustStore(tmp_path / 'trust.json'))
+    monkeypatch.setattr(playback, 'bpy', bpy)
+    effects._publish_applied_state(scene, (applied,))
+    released = []
+    monkeypatch.setattr(scene_bridge, 'session', lambda: SimpleNamespace(
+        active=True, owns_scene=lambda s: True, release=lambda s: released.append(s)))
+    monkeypatch.setattr(effects, 'scene_effect_instances', lambda scene: (edited,))
+    effects.refresh_stack_state(scene)
+    assert item.status == 'UNTRUSTED'
+    assert 'not trusted' in scene.fluidsim_effects.blocking_reason
+    assert released == []
+    assert scene.fluidsim.live

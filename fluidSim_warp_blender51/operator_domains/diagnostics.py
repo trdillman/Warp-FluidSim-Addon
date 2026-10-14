@@ -60,7 +60,10 @@ class FLUIDSIM_OT_run_benchmark(_FLUIDSIM_OT_session_base, bpy.types.Operator):
         try:
             from ..diagnostics import benchmark as bench
 
-            result = bench.run_benchmark(frames=fs.benchmark_frames)
+            result = bench.run_benchmark(
+                frames=fs.benchmark_frames,
+                device=_runtime._configured_device(),
+            )
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Benchmark failed: {exc}")
             return {"CANCELLED"}

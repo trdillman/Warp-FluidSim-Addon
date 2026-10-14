@@ -84,11 +84,14 @@ def test_particle_emission_saturates_device_and_host_counts(cuda_device):
     offsets = wp.zeros(512, dtype=wp.int32, device=device)
     slot_base = wp.zeros(1, dtype=wp.int32, device=device)
     slot_limit = wp.zeros(1, dtype=wp.int32, device=device)
+    # Height-profile emitter inputs (unused by this analytic box).
+    height_inputs = [wp.zeros((2, 2), dtype=float, device=device), wp.vec2i(2, 2),
+                     wp.vec3(0.0), wp.vec3(0.8)]
 
     wp.launch(
         k_source_shapes_particle_demand, dim=512,
         inputs=[shapes, 1, leaf_coords, num_leaves, wp.vec3(0.0), 0.1,
-                voxel_counts, emission_state],
+                voxel_counts, emission_state, *height_inputs],
         outputs=[demand],
         device=device,
     )
@@ -102,7 +105,8 @@ def test_particle_emission_saturates_device_and_host_counts(cuda_device):
     wp.launch(
         k_source_shapes_particles, dim=512,
         inputs=[shapes, 1, leaf_coords, num_leaves, wp.vec3(0.0), 0.1,
-                voxel_counts, 1, 0, 0, offsets, slot_base, slot_limit],
+                voxel_counts, 1, 0, 0, offsets, slot_base, slot_limit,
+                *height_inputs],
         outputs=[particles.position, particles.velocity,
                  particles.attr("age"), particles.attr("life"),
                  particles.attr("temperature"), particles.attr("viscosity"),
@@ -263,7 +267,8 @@ def test_skipped_surface_publish_preserves_existing_mesh(monkeypatch):
 
 def test_whitewater_compaction_is_frame_batched_without_substep_readback():
     substep_source = inspect.getsource(FluidSolver._whitewater)
-    finalize_source = inspect.getsource(FluidSolver._finalize_whitewater)
+    finalize_source = (inspect.getsource(FluidSolver._finalize_whitewater)
+                       + inspect.getsource(FluidSolver._splat_whitewater_density))
     frame_source = inspect.getsource(FluidSolver.step_frame)
 
     assert "synchronize_device" not in substep_source
@@ -333,6 +338,8 @@ def test_whitewater_finalization_uses_fixed_active_work_across_capacities(monkey
             _nvox=1,
             device="cuda:0",
         )
+        solver._splat_whitewater_density = types.MethodType(
+            FluidSolver._splat_whitewater_density, solver)
 
         active_count = FluidSolver._finalize_whitewater(solver)
         results.append((

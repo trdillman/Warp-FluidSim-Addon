@@ -43,7 +43,6 @@ def cube(name, location):
 
 def run():
     import addon_utils
-    import fluidSim_warp_blender51 as addon
     from fluidSim_warp_blender51.blender import scene_bridge
     from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
 

@@ -3,7 +3,7 @@
   "built_in": true,
   "category": "Thermal",
   "cost_hint": "MEDIUM",
-  "description": "A two-kernel effect: the first applies lift after particle-to-grid transfer; the second cools temperature after particle update. It demonstrates one artist effect spanning two solver stages.",
+  "description": "A two-kernel effect: the first applies lift before particle-to-grid transfer; the second cools temperature after particle update. It demonstrates one artist effect spanning two solver stages.",
   "effect_abi_version": 1,
   "effect_api_version": 2,
   "effect_id": "fluidsim.temperature_lift",
@@ -35,7 +35,7 @@
       "prerequisites": [],
       "safe_mode": true,
       "source": "direction_length = wp.length(direction)\nif direction_length > 1.0e-6:\n    direction_n = direction / direction_length\n    excess = particle_temperature[particle_index] - ambient\n    particle_velocity[particle_index] = particle_velocity[particle_index] + direction_n * (excess * buoyancy * solver_time_step)",
-      "stage": "AFTER_PARTICLE_TRANSFER"
+      "stage": "BEFORE_EMISSION"
     },
     {
       "cadence": "EVERY_SUBSTEP",
@@ -144,5 +144,5 @@
     "multi-stage",
     "temperature"
   ],
-  "version": "1.0.0"
+  "version": "1.1.0"
 }

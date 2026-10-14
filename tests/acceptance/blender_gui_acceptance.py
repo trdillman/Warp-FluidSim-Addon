@@ -21,7 +21,6 @@ mode verifies the loaded/enabled add-on and leaves Blender open.
 import json
 import os
 import sys
-import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -33,7 +32,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 ARTIFACTS = os.path.join(REPO_ROOT, "artifacts")
 os.makedirs(ARTIFACTS, exist_ok=True)
@@ -60,15 +59,25 @@ PANEL_IDS = [
     "FLUIDSIM_PT_scene_lifecycle",
     "FLUIDSIM_PT_scene_control", "FLUIDSIM_PT_scene_pending",
     "FLUIDSIM_PT_scene_setup",
-    "FLUIDSIM_PT_scene_runtime_stats", "FLUIDSIM_PT_scene_domain",
-    "FLUIDSIM_PT_scene_simulation", "FLUIDSIM_PT_sim_time",
-    "FLUIDSIM_PT_sim_gravity", "FLUIDSIM_PT_sim_pressure",
-    "FLUIDSIM_PT_sim_viscosity", "FLUIDSIM_PT_sim_surface_tension",
-    "FLUIDSIM_PT_sim_color_mixing", "FLUIDSIM_PT_sim_relax",
-    "FLUIDSIM_PT_sim_limits", "FLUIDSIM_PT_sim_forces",
-    "FLUIDSIM_PT_sim_dissipation", "FLUIDSIM_PT_sim_attraction",
-    "FLUIDSIM_PT_sim_spacetime", "FLUIDSIM_PT_scene_surface",
-    "FLUIDSIM_PT_scene_whitewater", "FLUIDSIM_PT_scene_outputs",
+    "FLUIDSIM_PT_scene_runtime_stats",
+    # Domain, surface and whitewater controls are registered only as Physics
+    # tab mirrors (ui_physics._make_panel_mirrors) since the 3.0 split.
+    "FLUIDSIM_PT_physics_domain_scene_domain",
+    "FLUIDSIM_PT_physics_domain_scene_simulation",
+    "FLUIDSIM_PT_physics_domain_sim_time",
+    "FLUIDSIM_PT_physics_domain_sim_gravity",
+    "FLUIDSIM_PT_physics_domain_sim_pressure",
+    "FLUIDSIM_PT_physics_domain_sim_viscosity",
+    "FLUIDSIM_PT_physics_domain_sim_surface_tension",
+    "FLUIDSIM_PT_physics_domain_sim_color_mixing",
+    "FLUIDSIM_PT_physics_domain_sim_relax",
+    "FLUIDSIM_PT_physics_domain_sim_limits",
+    "FLUIDSIM_PT_physics_domain_sim_forces",
+    "FLUIDSIM_PT_physics_domain_sim_dissipation",
+    "FLUIDSIM_PT_physics_domain_sim_attraction",
+    "FLUIDSIM_PT_physics_surface_scene_surface",
+    "FLUIDSIM_PT_physics_whitewater_scene_whitewater",
+    "FLUIDSIM_PT_scene_outputs",
     "FLUIDSIM_PT_scene_diagnostics",
     "FLUIDSIM_PT_object_role", "FLUIDSIM_PT_object_source",
     "FLUIDSIM_PT_object_collider", "FLUIDSIM_PT_object_force",
@@ -487,8 +496,8 @@ def _run_phase(phase, scene):
         _draw_all_panels_smoke("addon enabled, solver inactive")
         _assert_panel_state(
             "FLUIDSIM_PT_viewport_status",
-            "Basic Preview action",
-            operator_id="fluidsim.preview_start",
+            "Basic Play action",
+            operator_id="screen.animation_play",
         )
         _assert_panel_state(
             "FLUIDSIM_PT_header_popover",
@@ -633,8 +642,8 @@ def _run_phase(phase, scene):
         scene.fluidsim_effects.items[-1].enabled = False
         _assert_panel_state(
             "FLUIDSIM_PT_custom_effects",
-            "Basic effect Preview action",
-            operator_id="fluidsim.preview_start",
+            "Basic effect Play action",
+            operator_id="screen.animation_play",
         )
         _assert_panel_state(
             "FLUIDSIM_PT_custom_effects",
@@ -691,8 +700,12 @@ def _run_phase(phase, scene):
         STATE["frame_at_play"] = scene.frame_current
         STATE["solver_frame_at_play"] = sess.solver.frame
         STATE["t_play_start"] = time.perf_counter()
-        result = bpy.ops.fluidsim.preview_start()
-        check("Preview starts", result == {"FINISHED"} and fs.live,
+        # Blender's own Play must arm and admit the simulation by itself:
+        # there is no Preview step in front of timeline playback any more.
+        fs.live = False
+        with bpy.context.temp_override(**_view3d_override()):
+            result = bpy.ops.screen.animation_play()
+        check("native Play arms simulation", result == {"FINISHED"} and fs.live,
               scene.fluidsim.status)
         owner_windows = [
             window for window in bpy.context.window_manager.windows
@@ -819,16 +832,24 @@ def _run_phase(phase, scene):
               and pending_settings.pending_presentation(scene)["action"] == "NONE",
               revert_result)
 
-        # Viewport screenshot (viewport-visible proof).
-        try:
-            override = _view3d_override()
-            with bpy.context.temp_override(**override):
-                bpy.ops.screen.screenshot_area(filepath=SCREENSHOT_PATH)
-            ok, detail = _image_has_visible_content(
-                SCREENSHOT_PATH, min_width=320, min_height=200)
-            check("viewport screenshot", ok, detail)
-        except Exception as exc:  # noqa: BLE001
-            check("viewport screenshot", False, repr(exc))
+        # Viewport proof. The offscreen draw runs on every platform; the window
+        # grab is skipped on Linux, which has no window screenshot to take.
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        if scripts_dir not in sys.path:
+            sys.path.append(scripts_dir)
+        from _offscreen_view3d import check_view3d_offscreen
+
+        check("viewport offscreen draw", *check_view3d_offscreen(_view3d_override()))
+        if not sys.platform.startswith("linux"):
+            try:
+                override = _view3d_override()
+                with bpy.context.temp_override(**override):
+                    bpy.ops.screen.screenshot_area(filepath=SCREENSHOT_PATH)
+                ok, detail = _image_has_visible_content(
+                    SCREENSHOT_PATH, min_width=320, min_height=200)
+                check("viewport screenshot", ok, detail)
+            except Exception as exc:  # noqa: BLE001
+                check("viewport screenshot", False, repr(exc))
         STATE["phase"] = "workspace"
         return 0.3
 

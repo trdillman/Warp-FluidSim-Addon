@@ -15,12 +15,11 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 
 ADDON_NAME = "fluidSim_warp_blender51"

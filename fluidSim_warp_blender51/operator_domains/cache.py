@@ -43,10 +43,18 @@ def _update_bake_rna(scene, controller) -> bool:
     return True
 
 
+_DEFAULT_BAKE_TIMER_INTERVAL = 0.05
+_MIN_BAKE_TIMER_INTERVAL = 0.001
+
+
 class _FLUIDSIM_OT_production_bake_modal:
     resume_existing = False
     restart_existing = False
+    rebake = False
+    rebake_frame = 0
     _timer = None
+    _timer_interval = _DEFAULT_BAKE_TIMER_INTERVAL
+    _window = None
     _run = None
     _window_manager = None
 
@@ -60,6 +68,9 @@ class _FLUIDSIM_OT_production_bake_modal:
         return _runtime._runtime_poll(cls)
 
     def execute(self, context):
+        if _runtime._unsaved_relative_cache_path(context.scene):
+            self.report({"ERROR"}, _runtime.UNSAVED_RELATIVE_CACHE_MESSAGE)
+            return {"CANCELLED"}
         from ..blender.cache_bake import BakeRun
 
         self._window_manager = context.window_manager
@@ -70,11 +81,14 @@ class _FLUIDSIM_OT_production_bake_modal:
                 context.scene,
                 resume=self.resume_existing,
                 restart=bool(self.restart_existing),
+                rebake_from=int(self.rebake_frame) if self.rebake else None,
             )
             self._run = run
             _update_bake_rna(run.scene, run.controller)
+            self._window = context.window
+            self._timer_interval = _DEFAULT_BAKE_TIMER_INTERVAL
             self._timer = self._window_manager.event_timer_add(
-                0.05, window=context.window
+                self._timer_interval, window=self._window
             )
             self._window_manager.modal_handler_add(self)
         except Exception as exc:  # noqa: BLE001
@@ -99,16 +113,43 @@ class _FLUIDSIM_OT_production_bake_modal:
         return {"RUNNING_MODAL"}
 
     def _advance(self, failure):
-        """Tick the run once; a failure to settle its cache fails the bake."""
+        """Tick the run once; a failure to settle its cache fails the bake.
+
+        Returns the controller's suggested delay before the next tick, or
+        ``None`` when it has no suggestion (or the tick failed).
+        """
         from ..blender.production_bake import BakeStatus
 
         try:
-            self._run.tick()
+            return self._run.tick()
         except Exception as exc:  # noqa: BLE001
             controller = self._run.controller
             controller.status = BakeStatus.FAILED
             controller.error = f"{type(exc).__name__}: {exc}"
             controller.message = f"{failure}: {exc}"
+            return None
+
+    def _retime(self, context, delay):
+        """Re-arm the modal timer at the controller's suggested delay.
+
+        A fixed 50 ms timer capped light frames at 20 per second although the
+        controller asks to be ticked again after 10 ms. The timer is replaced
+        only when the suggestion changes.
+        """
+        if delay is None or self._timer is None:
+            return
+        try:
+            delay = max(_MIN_BAKE_TIMER_INTERVAL, float(delay))
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(delay) or math.isclose(delay, self._timer_interval):
+            return
+        window_manager = self._window_manager or context.window_manager
+        previous = self._timer
+        self._timer = window_manager.event_timer_add(
+            delay, window=self._window or context.window)
+        self._timer_interval = delay
+        window_manager.event_timer_remove(previous)
 
     def _finish(self, context, *, scene_available=None):
         from ..blender.production_bake import BakeStatus
@@ -153,27 +194,33 @@ class _FLUIDSIM_OT_production_bake_modal:
         run = self._run
         if not _scene_is_available(run.scene, run.scene_key):
             return self._cancel_removed_scene(context)
-        if event.type in {"ESC", "RIGHTMOUSE"} and event.value == "PRESS":
+        # Esc only (owner decision D3): the bake runs in the background, so
+        # right-click must reach Blender for selection and context menus.
+        if event.type == "ESC" and event.value == "PRESS":
             run.request_cancel()
             _update_bake_rna(run.scene, run.controller)
             return {"RUNNING_MODAL"}
         if event.type != "TIMER":
             return {"PASS_THROUGH"}
-        self._advance("Production bake failed")
+        delay = self._advance("Production bake failed")
         _update_bake_rna(run.scene, run.controller)
         if run.finished:
             return self._finish(context)
+        self._retime(context, delay)
         return {"RUNNING_MODAL"}
 
     def cancel(self, context):
+        # Blender requires Operator.cancel to return None (it calls this when a
+        # file is opened mid-bake); a returned set raised inside Blender.
         run = self._run
         if run is None:
-            return {"CANCELLED"}
+            return
         if not _scene_is_available(run.scene, run.scene_key):
-            return self._cancel_removed_scene(context)
+            self._cancel_removed_scene(context)
+            return
         run.request_cancel()
         self._advance("Production bake cleanup failed")
-        return self._finish(context)
+        self._finish(context)
 
 
 class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Operator):
@@ -187,7 +234,7 @@ class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Opera
         name="Restart Existing Cache",
         default=False,
         options={"SKIP_SAVE"},
-        description="Delete only FluidSim cache-v2 artifacts before baking",
+        description="Delete only FluidSim cache artifacts before baking",
     )
     expected_cache_path: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
@@ -220,12 +267,40 @@ class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Opera
 
 
 class FLUIDSIM_OT_bake_resume(_FLUIDSIM_OT_production_bake_modal, bpy.types.Operator):
-    """Resume from the last verified committed checkpoint"""
+    """Resume from the last verified committed checkpoint, or re-bake from a frame"""
 
     bl_idname = "fluidsim.bake_resume"
     bl_label = "Resume Production Bake"
     bl_options = {"REGISTER"}
     resume_existing = True
+    # "Re-bake from frame N": keep the frames before N, replace the rest. Offered
+    # when Resume was refused because a source or collider animation changed.
+    rebake: BoolProperty(
+        name="Re-bake From Frame",
+        default=False,
+        options={"SKIP_SAVE"},
+        description="Keep the baked frames before the chosen frame and bake from it onward",
+    )
+    rebake_frame: IntProperty(
+        name="Frame",
+        default=0,
+        min=-1048574,
+        max=1048574,
+        options={"SKIP_SAVE"},
+        description="First frame to bake again",
+    )
+
+    def invoke(self, context, _event):
+        if not self.rebake:
+            return self.execute(context)
+        return context.window_manager.invoke_props_dialog(self, width=480)
+
+    def draw(self, _context):
+        layout = self.layout
+        layout.label(text=f"Re-bake From Frame {int(self.rebake_frame)}?", icon="ERROR")
+        layout.label(
+            text=f"Frames {int(self.rebake_frame)} onward in this cache are replaced.")
+        layout.label(text="Earlier frames are kept.", icon="INFO")
 
 
 class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):
@@ -273,7 +348,7 @@ class FLUIDSIM_OT_cache_integrity_scan(bpy.types.Operator):
 
 
 class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
-    """Remove only files not referenced by the committed cache-v2 manifest"""
+    """Remove only files not referenced by the committed cache manifest"""
 
     bl_idname = "fluidsim.cache_remove_orphans"
     bl_label = "Remove Cache Orphans"

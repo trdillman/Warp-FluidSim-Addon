@@ -75,11 +75,17 @@ class BenchmarkResult:
         }
 
 
-def default_benchmark_settings():
-    """Deterministic dam-break scenario used for benchmark comparisons."""
+def default_benchmark_settings(device: str = ""):
+    """Deterministic dam-break scenario used for benchmark comparisons.
+
+    ``device`` selects the compute device (the add-on's configured CUDA
+    device); empty keeps the SolverSettings default.
+    """
     from ..sim.solver import SolverSettings
 
     settings = SolverSettings()
+    if device:
+        settings.device = str(device)
     settings.domain_min = (-1.0, -1.0, 0.0)
     settings.domain_max = (1.0, 1.0, 2.0)
     settings.voxel_size = 0.05
@@ -109,11 +115,16 @@ def run_benchmark(
     settings=None,
     sources=None,
     progress=None,
+    device: str = "",
 ) -> BenchmarkResult:
-    """Run the benchmark scenario and return aggregated results."""
+    """Run the benchmark scenario and return aggregated results.
+
+    ``device`` applies to the default scenario only; explicit ``settings``
+    carry their own device.
+    """
     from ..sim.solver import FluidSolver
 
-    settings = settings or default_benchmark_settings()
+    settings = settings or default_benchmark_settings(device)
     sources = sources if sources is not None else default_benchmark_sources()
 
     solver = FluidSolver(settings)

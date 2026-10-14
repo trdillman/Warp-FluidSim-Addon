@@ -380,8 +380,21 @@ def _online_access_block_reason() -> str | None:
     )
 
 
+def _filesystem_path(path: Path) -> Path:
+    """Allow long Windows paths even when Blender's executable is not opted in."""
+    if os.name != "nt":
+        return path
+    absolute = str(path.resolve())
+    if absolute.startswith("\\\\?\\"):
+        return Path(absolute)
+    if absolute.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + absolute[2:])
+    return Path("\\\\?\\" + absolute)
+
+
 def _clear_owned_warp(site_packages: Path) -> None:
     """Remove a Warp tree this extension previously extracted. Nothing else."""
+    site_packages = _filesystem_path(site_packages)
     if not site_packages.is_dir():
         return
     for child in site_packages.iterdir():
@@ -464,14 +477,20 @@ def _apply_pending_repair(destination: Path) -> bool:
             "Open Add-on Preferences and press Repair Warp again."
         )
 
-    with tempfile.TemporaryDirectory(prefix="fluidsim-warp-repair-") as tmpdir:
+    with tempfile.TemporaryDirectory(
+        prefix="fluidsim-warp-repair-",
+        dir=_filesystem_path(Path(tempfile.gettempdir())),
+    ) as tmpdir:
         extracted = Path(tmpdir) / "site-packages"
         _extract_wheel(pending, extracted)
         if _owned_distribution_version(extracted) != CERTIFIED_WARP_VERSION:
             raise RuntimeError("Pending Warp repair does not contain the certified runtime")
         _clear_owned_warp(destination)
         for child in extracted.iterdir():
-            shutil.move(str(child), str(destination / child.name))
+            shutil.move(
+                str(_filesystem_path(child)),
+                str(_filesystem_path(destination / child.name)),
+            )
 
     pending.unlink()
     pid_marker.unlink(missing_ok=True)
@@ -480,11 +499,12 @@ def _apply_pending_repair(destination: Path) -> bool:
 
 def _extract_wheel(wheel: Path, destination: Path) -> None:
     """Extract one wheel into ``destination``, rejecting members that escape it."""
+    destination = _filesystem_path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(wheel) as archive:
         for info in archive.infolist():
             relative = Path(info.filename)
-            if relative.is_absolute() or ".." in relative.parts:
+            if relative.anchor or ".." in relative.parts:
                 raise RuntimeError(
                     f"Wheel member escapes the install directory: {info.filename}"
                 )
@@ -642,9 +662,7 @@ def install_warp(
 
         report("Installing Warp...")
         try:
-            if repairing_certified or (
-                owned_version and _owned_warp_is_loaded(destination)
-            ):
+            if repairing_certified or _owned_warp_is_loaded(destination):
                 _stage_pending_repair(wheel_path, destination, wheel_info)
                 return InstallResult(
                     success=True,

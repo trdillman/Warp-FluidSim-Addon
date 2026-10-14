@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 FAILURES = []
 REPORT = {"schema": "fluidsim-phase4-live-interaction-v1", "checks": []}
@@ -61,8 +61,6 @@ def main():
     domain_settings.surface_enabled = False
     fs.show_surface = False
     fs.show_particles = False
-    domain_settings.spacetime_enabled = True
-    domain_settings.spacetime_reference_mass = 0.0
     domain_settings.particles_per_voxel = 8
 
     result = bpy.ops.fluidsim.initialize()
@@ -74,7 +72,6 @@ def main():
 
     solver = sess.solver
     particle_state = solver.particles
-    initial_reference = solver.spacetime.reference_mass_cached
     t0 = time.perf_counter()
     domain_settings.flip_ratio = 0.35
     domain_settings.gravity = (0.0, 0.0, -3.0)
@@ -99,11 +96,9 @@ def main():
           and solver.particles is particle_state)
     sampling_pending = pending_settings.pending_presentation(scene)
     check("liquid sampling stages Reset without mutating live rest density",
-          initial_reference > 0.0
-          and solver.settings.particles_per_voxel == 8
-          and abs(solver.spacetime.reference_mass_cached - initial_reference) < 1.0e-6
+          solver.settings.particles_per_voxel == 8
           and sampling_pending["action"] == "RESET_PENDING",
-          f"{initial_reference} -> {solver.spacetime.reference_mass_cached}; {sampling_pending}")
+          f"{sampling_pending}")
     check("sampling Reset change can be discarded",
           bpy.ops.fluidsim.revert_pending() == {"FINISHED"}
           and domain_settings.particles_per_voxel == 8)
@@ -145,9 +140,9 @@ def main():
               and frame_two is not None and "settings_signature" in frame_one
               and "settings_signature" in frame_two)
         check(
-            "cache-v2 records a complete manifest transaction",
+            "cache-v3 records a complete manifest transaction",
             metadata is not None
-            and metadata.get("format_version") == 2
+            and metadata.get("format_version") == 3
             and metadata.get("frame_count") == 2
             and metadata.get("last_committed_frame") == 2
             and str(frame_one["settings_signature"])
@@ -156,6 +151,39 @@ def main():
             == metadata.get("settings_signature"),
             json.dumps(metadata, default=str)[:500],
         )
+
+    # Decision D2: a live edit made while a bake runs is held off the baking
+    # solver, then reaches the restored preview session when the bake closes.
+    with tempfile.TemporaryDirectory(prefix="fluidsim_phase4_hold_") as cache_dir:
+        fs.cache_path = cache_dir
+        held_iterations = int(domain_settings.pressure_iterations) + 7
+        run = cache_bake.BakeRun(scene, start=1, end=2)
+        try:
+            while not run.finished and run.controller.status.value != "RUNNING":
+                run.tick()
+            baking = run.controller.backend.sess
+            domain_settings.pressure_iterations = held_iterations
+            check("mid-bake live edit is held off the baking solver",
+                  baking.solver.settings.pressure_iterations != held_iterations
+                  and "Production Bake" in fs.status,
+                  f"baking={baking.solver.settings.pressure_iterations} status={fs.status!r}")
+            while not run.finished:
+                run.tick()
+            check("bake with a held edit completes",
+                  run.controller.status.value == "COMPLETE", run.controller.message)
+        finally:
+            run.close()
+        restored = scene_bridge.session()
+        check("held edit reaches the restored session when the bake ends",
+              restored.active
+              and restored.solver.settings.pressure_iterations == held_iterations,
+              getattr(getattr(restored.solver, "settings", None),
+                      "pressure_iterations", None))
+        check("bake hold notice clears when the bake ends",
+              "Production Bake" not in fs.status
+              and pending_settings.pending_presentation(scene)["action"] == "NONE",
+              repr(fs.status))
+    sess = scene_bridge.session()
 
     # Interactive frame-change playback uses the same pre-step seam.
     scene.frame_set(1)
@@ -169,7 +197,18 @@ def main():
     advanced_particles = advanced_solver.particles
     sess.last_frame = 2
     advanced_solver.frame = max(2, int(advanced_solver.frame))
+    applied_voxel = float(advanced_solver.settings.voxel_size)
+    # voxel_size is derived (longest domain axis / resolution_divisions), so
+    # writing 0.1 selects the nearest whole division count; the authored cell
+    # is whatever the domain reads back, not the literal 0.1. Guided Setup
+    # fits the domain to the preset's 0.12 m cell (B79), so 0.1 does not
+    # divide it evenly.
     domain_settings.voxel_size = 0.1
+    authored_voxel = float(domain_settings.voxel_size)
+    check("allocation edit changes the authored cell size",
+          abs(authored_voxel - 0.1) < 0.01
+          and abs(authored_voxel - applied_voxel) > 1e-6,
+          f"authored={authored_voxel} applied={applied_voxel}")
     pending = pending_settings.pending_presentation(scene)
     check("mid-run allocation edit stays pending", pending["action"] == "REINIT_PENDING"
           and sess.solver is advanced_solver and sess.solver.particles is advanced_particles,
@@ -177,7 +216,7 @@ def main():
     scene.frame_set(scene.frame_start)
     check("timeline rewind applies pending reinitialize", sess.active
           and sess.solver is not advanced_solver
-          and abs(sess.solver.settings.voxel_size - 0.1) < 1e-8
+          and abs(sess.solver.settings.voxel_size - authored_voxel) < 1e-6
           and pending_settings.pending_presentation(scene)["action"] == "NONE",
           pending_settings.pending_presentation(scene))
 

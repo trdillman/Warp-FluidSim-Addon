@@ -16,7 +16,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 DEMOS = os.path.join(REPO, "demos")
 SCENES = ("dam_break", "crown_splash", "chromatic_vortex", "paddle_stir")
@@ -302,10 +302,11 @@ def check_scene(name):
 
         domain = bpy.data.objects.get("DamBreak Domain")
         source = bpy.data.objects.get("DamBreak Source Column")
-        near = lambda actual, expected: all(
-            abs(float(a) - float(e)) < 1.0e-4
-            for a, e in zip(actual, expected)
-        )
+        def near(actual, expected):
+            return all(
+                abs(float(a) - float(e)) < 1.0e-4
+                for a, e in zip(actual, expected)
+            )
         reservoir_lo = np.asarray(cove.RESERVOIR_LO)
         reservoir_hi = np.asarray(cove.RESERVOIR_HI)
         # The apron slab and training walls only show the domain boundary; a

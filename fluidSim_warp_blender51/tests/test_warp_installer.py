@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import io
 import json
@@ -43,6 +44,28 @@ def test_wheel_lock_exists_and_has_valid_structure():
         assert isinstance(meta["size"], int)
         assert meta["size"] > 0
         assert meta["url"].startswith("https://")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows filesystem path limit")
+def test_extract_and_clear_owned_warp_with_long_paths(tmp_path):
+    from fluidSim_warp_blender51 import warp_installer
+
+    destination = tmp_path / ("extension-profile-" * 7) / ".local"
+    member = "warp_lang-1.17.0.dist-info/licenses/licenses/reproducible_floating_sums-LICENSE.txt"
+    assert len(str(destination / member)) > 260
+    wheel = tmp_path / "test.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("warp/__init__.py", "__version__ = '1.17.0'\n")
+        archive.writestr(member, "license evidence")
+    warp_installer._extract_wheel(wheel, destination)
+    extended = pathlib.Path("\\\\?\\" + str(destination.resolve()))
+    assert (extended / member).read_text() == "license evidence"
+    unrelated = destination / "keep.txt"
+    unrelated.write_text("preserve")
+    warp_installer._clear_owned_warp(destination)
+    assert not (extended / "warp").exists()
+    assert not (extended / "warp_lang-1.17.0.dist-info").exists()
+    assert unrelated.read_text() == "preserve"
 
 
 def test_get_wheel_info_returns_info_for_supported_platforms():
@@ -206,6 +229,50 @@ def test_install_warp_repairs_a_corrupted_owned_certified_copy(tmp_path, monkeyp
     )
 
 
+@pytest.mark.parametrize("missing", ["dist-info", "init"])
+def test_loaded_owned_warp_with_missing_metadata_is_staged(tmp_path, monkeypatch, missing):
+    """Damaged version metadata must never allow writes over loaded native code."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    _seed_owned_warp(tmp_path, "1.17.0")
+    init = tmp_path / "warp" / "__init__.py"
+    (tmp_path / "warp" / "native.dll").write_bytes(b"loaded-native-code")
+    if missing == "dist-info":
+        (tmp_path / "warp_lang-1.17.0.dist-info").rmdir()
+    else:
+        init.unlink()
+    before = _snapshot(tmp_path)
+    _isolate_install(monkeypatch, tmp_path, importable=init.resolve())
+    monkeypatch.setitem(sys.modules, "warp", SimpleNamespace(__file__=str(init)))
+    assert warp_installer._owned_distribution_version(tmp_path) is None
+    payload = b"certified-locked-test-wheel"
+    info = mock.Mock(
+        filename="certified.whl", size=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        url="https://files.pythonhosted.org/packages/locked/warp.whl",
+    )
+    monkeypatch.setattr(warp_installer, "get_wheel_info_for_platform", lambda platform=None: info)
+    monkeypatch.setattr(
+        warp_installer, "_download_wheel",
+        lambda _url, destination, **_kwargs: destination.write_bytes(payload),
+    )
+    monkeypatch.setattr(warp_installer, "_online_access_block_reason", lambda: None)
+    extract = mock.Mock()
+    clear = mock.Mock()
+    monkeypatch.setattr(warp_installer, "_extract_wheel", extract)
+    monkeypatch.setattr(warp_installer, "_clear_owned_warp", clear)
+
+    result = warp_installer.install_warp(force_reinstall=True)
+
+    assert result.success is True
+    assert "Restart Blender" in result.message
+    extract.assert_not_called()
+    clear.assert_not_called()
+    for relative, content in before.items():
+        assert (tmp_path / relative).read_bytes() == content
+    assert warp_installer._pending_repair_path(tmp_path).read_bytes() == payload
+
+
 def test_pending_repair_rejects_tampering_before_deleting_owned_files(
     tmp_path,
     monkeypatch,
@@ -238,7 +305,8 @@ def test_pending_repair_rejects_tampering_before_deleting_owned_files(
         assert (tmp_path / relative).read_bytes() == content
 
 
-def test_pending_repair_extracts_outside_a_deep_owned_path(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cross_volume", [False, True])
+def test_pending_repair_extracts_outside_a_deep_owned_path(tmp_path, monkeypatch, cross_volume):
     """Fresh repair extraction does not amplify a deep Windows extension path."""
     from fluidSim_warp_blender51 import warp_installer
 
@@ -252,6 +320,10 @@ def test_pending_repair_extracts_outside_a_deep_owned_path(tmp_path, monkeypatch
             "# installed\n",
         )
         archive.writestr("warp_lang-1.17.0.dist-info/METADATA", "Name: warp-lang\n")
+        archive.writestr(
+            "warp_lang-1.17.0.dist-info/licenses/licenses/reproducible_floating_sums-LICENSE.txt",
+            "license evidence",
+        )
     info = mock.Mock(
         sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
         size=wheel.stat().st_size,
@@ -271,12 +343,38 @@ def test_pending_repair_extracts_outside_a_deep_owned_path(tmp_path, monkeypatch
         extract_wheel(source, destination)
 
     monkeypatch.setattr(warp_installer, "_extract_wheel", guarded_extract)
+    if cross_volume:
+        monkeypatch.setattr(
+            warp_installer.shutil.os, "rename",
+            mock.Mock(side_effect=OSError(errno.EXDEV, "cross-volume promotion")),
+        )
 
     warp_installer.ensure_installed_warp_on_path()
 
     assert len(extraction_targets) == 1
     assert (owned / "warp" / "examples" / "benchmarks").is_dir()
     assert not warp_installer._pending_repair_path(owned).exists()
+    license_path = (
+        warp_installer._filesystem_path(owned)
+        / "warp_lang-1.17.0.dist-info/licenses/licenses/reproducible_floating_sums-LICENSE.txt"
+    )
+    assert license_path.read_text() == "license evidence"
+    warp_installer._clear_owned_warp(owned)
+    assert not license_path.exists()
+
+
+@pytest.mark.parametrize("member", ["../escape.txt", "/escape.txt"])
+def test_wheel_extraction_rejects_escaping_members(tmp_path, member):
+    from fluidSim_warp_blender51 import warp_installer
+
+    unrelated = tmp_path / "escape.txt"
+    unrelated.write_text("preserve")
+    wheel = tmp_path / "unsafe.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(member, "overwrite")
+    with pytest.raises(RuntimeError, match="escapes the install directory"):
+        warp_installer._extract_wheel(wheel, tmp_path / "owned")
+    assert unrelated.read_text() == "preserve"
 
 
 def test_pending_repair_keeps_old_wheel_if_pid_guard_cannot_be_committed(

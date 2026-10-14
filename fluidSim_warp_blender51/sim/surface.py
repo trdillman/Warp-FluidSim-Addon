@@ -291,8 +291,7 @@ class SurfacePipeline:
                 int(s.surface_filter_type), int(s.surface_filter_iterations), round(float(s.surface_filter_strength), 6),
                 int(s.surface_dilate_iterations), round(float(s.surface_dilate_strength), 6), int(s.surface_erode_iterations),
                 round(float(s.surface_erode_strength), 6), int(s.surface_smooth_type), int(s.surface_smooth_iterations),
-                round(float(s.surface_smooth_strength), 6), bool(getattr(s, "spacetime_enabled", False)),
-                bool(getattr(s, "spacetime_resync_surface", True)), self.topology_generation)
+                round(float(s.surface_smooth_strength), 6), self.topology_generation)
 
     def build_key(self):
         solver = self.solver
@@ -376,12 +375,15 @@ class SurfacePipeline:
                     radius / h, band_voxels, smoothing,
                     sdf_filter_iterations),
             )
-        else:
+        elif grid is solver.grid:
             # Mirrors SurfaceTensionSolver.apply()'s own check-and-release: once
             # the capillary band is inactive (tension disabled or coefficient
             # <= 0), the propagation scratch it fed is unused for the rest of
             # the solver session unless tension comes back on, so drop it here
-            # rather than holding it for the session's lifetime.
+            # rather than holding it for the session's lifetime.  Only a
+            # solver-grid build can tell: a separate render grid never carries
+            # the band, and releasing there made the next solver build with
+            # tension on allocate the scratch again every frame (P11).
             self.release_band_buffers()
         # Equal to far_distance in "ball" mode: the reset below writes
         # far_distance into every cell, so a candidate at or beyond it can never
@@ -491,6 +493,9 @@ class SurfacePipeline:
             self.nvox = solver._nvox
         else:
             grid.begin_topology(); grid.mark_points(positions, solver.particles.count, solver._np_dim())
+            narrow_band = getattr(solver, "narrow_band", None)
+            if narrow_band is not None:
+                narrow_band.mark_render_leaves(grid)
             grid.expand(max(1, int(getattr(solver.settings, "topology_expand", 1))))
             grid.finalize_topology(sync=True)
             self.nvox = max(1, grid.active_voxel_count)
@@ -502,6 +507,9 @@ class SurfacePipeline:
         return (
             int(getattr(solver, "frame", 0)),
             round(float(getattr(solver, "sim_time", 0.0)), 12),
+            # A topology rebuild re-ranks leaf slots without moving time, so a
+            # frame-end SDF would otherwise be read through the new leaf table.
+            int(getattr(getattr(solver, "grid", None), "topology_generation", 0)),
             round(float(s.voxel_size), 12),
             round(float(s.particle_radius_scale), 6),
             int(s.surface_splat_radius),
@@ -516,6 +524,20 @@ class SurfacePipeline:
     def invalidate_solver_sdf(self):
         """Mark the simulation SDF stale after particle positions change."""
         self.solver_sdf_key = None
+
+    def advance_solver_sdf_key(self, previous_key):
+        """Keep a current SDF current across a frame/time advance.
+
+        The key stands in for "these particle positions": the solver moves
+        frame or time without touching particles at the end of a substep and
+        of a frame, so an SDF built for ``previous_key`` (whitewater builds
+        one after advection) still describes them. Every position change has
+        its own explicit invalidation or a topology generation in the key, so
+        those still force a rebuild (P11).
+        """
+        key = getattr(self, "solver_sdf_key", None)
+        if key is not None and key == previous_key:
+            self.solver_sdf_key = self.solver_sdf_build_key()
 
     def invalidate_particle_state(self):
         """Invalidate every surface product after an out-of-step particle edit."""
@@ -540,6 +562,9 @@ class SurfacePipeline:
             self.build_sdf(
                 solver.grid, self.sdf, self.tmp, solver._nvox, positions,
                 float(s.voxel_size))
+            narrow_band = getattr(solver, "narrow_band", None)
+            if narrow_band is not None:
+                narrow_band.union_into_solver_sdf(self.sdf)
         except Exception as exc:  # noqa: BLE001 - dependency boundary
             self.solver_sdf_key = None
             self.solver_sdf_error = f"Simulation liquid SDF unavailable: {exc}"
@@ -566,6 +591,9 @@ class SurfacePipeline:
             self.nvox = solver._nvox
         else:
             self.build_sdf(self.grid, self.render_sdf, self.render_tmp, self.rebuild_topology(positions), positions, float(self.grid.voxel_size))
+            narrow_band = getattr(solver, "narrow_band", None)
+            if narrow_band is not None:
+                narrow_band.union_into_render_sdf(self.grid, self.render_sdf)
         self.built_key = self.build_key()
         self.invalidate()
         return True
@@ -584,7 +612,11 @@ class SurfacePipeline:
             cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
             if (sdf_ready and s.surface_enabled
                     and cadence == int(SurfaceUpdateCadence.SUBSTEP)):
-                self.build(build_render=True, build_lowres=not s.whitewater_enabled)
+                # Like FRAME cadence, keep the solver SDF only on request (P11):
+                # its consumers (surface tension, whitewater, effects) build it
+                # on demand through ensure_solver_sdf_current.
+                self.build(build_render=True, build_lowres=bool(
+                    getattr(s, "surface_build_lowres_sdf", False)))
         return sdf_ready
 
     def after_frame(self):

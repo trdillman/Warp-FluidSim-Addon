@@ -11,6 +11,7 @@ import numpy as np
 import warp as wp
 from .fastlaunch import launch as fast_launch
 
+from .checkpoint_state import host_prefix
 from .constants import LEAF_VOLUME
 
 
@@ -118,6 +119,35 @@ def k_compact_int_scatter(
 
 
 @wp.kernel
+def k_compact_mat33_scatter(
+    alive: wp.array(dtype=wp.int32),
+    offsets: wp.array(dtype=wp.int32),
+    count_in: wp.array(dtype=wp.int32),
+    source: wp.array(dtype=wp.mat33),
+    target: wp.array(dtype=wp.mat33),
+):
+    tid = wp.tid()
+    if tid < count_in[0] and alive[tid] != 0:
+        target[offsets[tid]] = source[tid]
+
+
+@wp.kernel
+def k_zero_mat33_tail(
+    count: wp.array(dtype=wp.int32),
+    values: wp.array(dtype=wp.mat33),
+):
+    """Zero every slot at or beyond the live count.
+
+    Emission claims fresh slots past the count without writing the affine
+    channel, so the channel must already be zero there ("emission writes zero
+    affine").  Compaction leaves stale matrices in that tail; this restores it.
+    """
+    tid = wp.tid()
+    if tid >= count[0]:
+        values[tid] = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+@wp.kernel
 def k_last_offset_count(
     alive: wp.array(dtype=wp.int32),
     offsets: wp.array(dtype=wp.int32),
@@ -170,7 +200,18 @@ class ParticleSystem:
         # Kernels receive stable typed placeholders when a channel is disabled.
         self._dummy_vec4 = wp.zeros(1, dtype=wp.vec4, device=device)
         self._dummy_int = wp.zeros(1, dtype=wp.int32, device=device)
-        # ST-FLIP residual: delta_t = t_global - t_particle.
+        # APIC affine matrix (world units, 1/s), double buffered for compaction.
+        # Allocated lazily, zeroed, only while the APIC transfer is active
+        # (``ensure_affine``).  Invariant: every slot at or beyond ``count`` is
+        # zero, so emission needs no explicit write.  ``_affine2_bound`` is the
+        # end of the rows the spare buffer may still hold from when it was the
+        # primary; compaction zeroes up to it after the swap (B36).
+        self.affine = None
+        self._affine2 = None
+        self._affine2_bound = 0
+        self._dummy_affine = wp.zeros(1, dtype=wp.mat33, device=device)
+        # Per-particle time residual channel. Always zero since the removal of
+        # ST-FLIP; kept because it is a public cache/checkpoint/effects channel.
         self.time_offset = wp.zeros(n, dtype=float, device=device)
         self._position2 = wp.zeros(n, dtype=wp.vec3, device=device)
         self._velocity2 = wp.zeros(n, dtype=wp.vec3, device=device)
@@ -194,6 +235,30 @@ class ParticleSystem:
         self.host_count = 0
         self.next_uid = 1
 
+    @property
+    def affine_allocated(self) -> bool:
+        return self.affine is not None
+
+    def ensure_affine(self):
+        """Allocate the zeroed affine channel if needed and return it."""
+        if self.affine is None:
+            self.affine = wp.zeros(
+                self.capacity, dtype=wp.mat33, device=self.device)
+            self._affine2 = wp.zeros(
+                self.capacity, dtype=wp.mat33, device=self.device)
+            self._affine2_bound = 0
+        return self.affine
+
+    def release_affine(self) -> None:
+        """Free the affine channel (non-APIC transfer: nothing maintains it)."""
+        self.affine = None
+        self._affine2 = None
+        self._affine2_bound = 0
+
+    def affine_for_kernels(self):
+        """The real channel, or a length-1 placeholder when not allocated."""
+        return self.affine if self.affine is not None else self._dummy_affine
+
     def has_optional_channel(self, name: str) -> bool:
         return name in self.vec4_attrs or name in self.int_attrs
 
@@ -209,7 +274,7 @@ class ParticleSystem:
         raise KeyError(name)
 
     def attr(self, name: str) -> wp.array:
-        if name in {"time_offset", "st_time_offset"}:
+        if name == "time_offset":
             return self.time_offset
         if name in self.attrs:
             return self.attrs[name]
@@ -233,6 +298,10 @@ class ParticleSystem:
         self.time_offset.zero_()
         for value in (*self.vec4_attrs.values(), *self.int_attrs.values()):
             value.zero_()
+        if self.affine is not None:
+            self.affine.zero_()
+            self._affine2.zero_()
+            self._affine2_bound = 0
         self.host_count = 0
         self.next_uid = 1
 
@@ -253,8 +322,12 @@ class ParticleSystem:
             for name in self.int_attrs:
                 wp.copy(grown.int_attrs[name], self.int_attrs[name], count=count)
             wp.copy(grown.time_offset, self.time_offset, count=count)
+            if self.affine is not None:
+                wp.copy(grown.ensure_affine(), self.affine, count=count)
             wp.copy(grown.alive, self.alive, count=count)
             wp.copy(grown.voxel_index, self.voxel_index, count=count)
+        if self.affine is not None:
+            grown.ensure_affine()
         wp.copy(grown.count, self.count, count=1)
         grown.host_count = count
         grown.next_uid = int(self.next_uid)
@@ -265,10 +338,17 @@ class ParticleSystem:
         result = {}
         for name, value in self.vec4_attrs.items():
             result[f"particle_attr_{name}"] = np.ascontiguousarray(
-                value.numpy()[:count], dtype=np.float32)
+                host_prefix(value, count), dtype=np.float32)
         for name, value in self.int_attrs.items():
             result[f"particle_attr_{name}"] = np.ascontiguousarray(
-                value.numpy()[:count], dtype=np.int32)
+                host_prefix(value, count), dtype=np.int32)
+        # Empty (0, 9) means "no affine state" (non-APIC writer); it is only
+        # persisted while the channel is allocated, i.e. under APIC.
+        if self.affine is not None and count:
+            result["particle_affine"] = np.ascontiguousarray(
+                host_prefix(self.affine, count).reshape(count, 9), dtype=np.float32)
+        else:
+            result["particle_affine"] = np.zeros((0, 9), dtype=np.float32)
         return result
 
     def restore_checkpoint_prefix(self, arrays, count: int) -> None:
@@ -300,6 +380,18 @@ class ParticleSystem:
             if value.dtype.kind == "f" and not np.all(np.isfinite(value)):
                 raise ValueError(f"{name} contains non-finite values")
             normalized[name] = value
+        affine_rows = None
+        saved_affine = arrays.get("particle_affine") if hasattr(
+            arrays, "get") else None
+        if saved_affine is not None and np.asarray(saved_affine).shape[0] != 0:
+            saved_affine = np.ascontiguousarray(saved_affine, dtype=np.float32)
+            if saved_affine.shape != (count, 9):
+                raise ValueError(
+                    f"particle_affine has shape {saved_affine.shape}; "
+                    f"expected {(count, 9)}")
+            if not np.all(np.isfinite(saved_affine)):
+                raise ValueError("particle_affine contains non-finite values")
+            affine_rows = saved_affine
         alive = normalized["particle_alive"]
         if np.any((alive != 0) & (alive != 1)):
             raise ValueError("particle_alive must contain only 0 or 1")
@@ -318,7 +410,17 @@ class ParticleSystem:
                 *self.vec4_attrs.values(), *self._vec4_attrs2.values(),
                 *self.int_attrs.values(), *self._int_attrs2.values()):
             value.zero_()
+        if self.affine is not None:
+            self.affine.zero_()
+            self._affine2.zero_()
+            self._affine2_bound = 0
         if count:
+            if self.affine is not None and affine_rows is not None:
+                # A checkpoint from another transfer mode carries no affine
+                # (or it is dropped by a non-APIC solver): zero is valid.
+                wp.copy(self.affine, wp.array(
+                    affine_rows.reshape(count, 3, 3), dtype=wp.mat33,
+                    device=self.device), count=count)
             wp.copy(self.position, wp.array(
                 normalized["particle_position"], dtype=wp.vec3, device=self.device),
                 count=count)
@@ -387,6 +489,11 @@ class ParticleSystem:
                 self.alive, self.scan_tmp, count_in,
                 self.int_attrs[name], self._int_attrs2[name],
             ], device=self.device)
+        if self.affine is not None:
+            fast_launch(k_compact_mat33_scatter, dim=n, inputs=[
+                self.alive, self.scan_tmp, count_in,
+                self.affine, self._affine2,
+            ], device=self.device)
         self.position, self._position2 = self._position2, self.position
         self.velocity, self._velocity2 = self._velocity2, self.velocity
         self.time_offset, self._time_offset2 = self._time_offset2, self.time_offset
@@ -398,8 +505,19 @@ class ParticleSystem:
         for name in self.int_attrs:
             self.int_attrs[name], self._int_attrs2[name] = (
                 self._int_attrs2[name], self.int_attrs[name])
+        if self.affine is not None:
+            self.affine, self._affine2 = self._affine2, self.affine
         if count_out is self._count2:
             wp.copy(self.count, self._count2)
+        if self.affine is not None:
+            # The new primary was the spare: besides the rows this compaction
+            # left past ``count`` it can hold rows up to the bound it had as
+            # primary, beyond a smaller hint now.  Emission and reseeding
+            # append there and rely on zero affine.
+            stale = max(n, self._affine2_bound)
+            fast_launch(k_zero_mat33_tail, dim=stale,
+                        inputs=[self.count, self.affine], device=self.device)
+            self._affine2_bound = n
         fast_launch(k_reset_alive, dim=n, inputs=[self.count, self.alive],
                   device=self.device)
 

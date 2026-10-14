@@ -193,9 +193,17 @@ def k_staggered_to_magnitude(
     xp = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0] + 1, ijk[1], ijk[2]))
     yp = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1] + 1, ijk[2]))
     zp = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, wp.vec3i(ijk[0], ijk[1], ijk[2] + 1))
-    ux1 = wp.where(xp >= 0, u[xp], ux0)
-    uy1 = wp.where(yp >= 0, v[yp], uy0)
-    uz1 = wp.where(zp >= 0, w[zp], uz0)
+    # Branches, not wp.where: both wp.where operands are evaluated, which
+    # read index -1 at a positive edge.
+    ux1 = ux0
+    uy1 = uy0
+    uz1 = uz0
+    if xp >= 0:
+        ux1 = u[xp]
+    if yp >= 0:
+        uy1 = v[yp]
+    if zp >= 0:
+        uz1 = w[zp]
     c = wp.vec3(0.5 * (ux0 + ux1), 0.5 * (uy0 + uy1), 0.5 * (uz0 + uz1))
     dst[tid] = wp.length(c)
 
@@ -516,8 +524,12 @@ def k_sdf_to_gradient(
             hi = wp.vec3i(ijk[0], ijk[1], ijk[2] + 1)
         flo = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, lo)
         fhi = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, hi)
-        vlo = wp.where(flo >= 0, sdf[flo], c)
-        vhi = wp.where(fhi >= 0, sdf[fhi], c)
+        vlo = c
+        vhi = c
+        if flo >= 0:
+            vlo = sdf[flo]
+        if fhi >= 0:
+            vhi = sdf[fhi]
         d = (vhi - vlo) * inv2h
         if a == 0:
             g = wp.vec3(d, g[1], g[2])

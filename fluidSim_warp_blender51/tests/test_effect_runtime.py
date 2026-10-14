@@ -374,6 +374,123 @@ def test_runtime_bindable_parameter_update_preserves_compiled_runtime_state(monk
     assert seen == [48.54]
 
 
+_DAMP_SOURCE = "particle_velocity[particle_index] = particle_velocity[particle_index] * factor"
+
+
+def _compiled_particle_entry(device, *, access=FieldAccess.READ_WRITE_CURRENT,
+                             expert=False):
+    """Compile a real particle-velocity kernel and wrap it as a runtime entry."""
+    from fluidsim_testpkg.sim.effects.compiler import compile_effect
+    from fluidsim_testpkg.sim.effects.runtime import EffectRuntimeEntry
+
+    factor = ParameterDefinitionV2("factor", "Factor", ParameterKind.FLOAT, 0.5)
+    kernel = KernelDefinitionV2(
+        kernel_id="damp", label="Damp", domain=EffectDomain.PARTICLES,
+        stage=EffectStage.BEFORE_EMISSION, cadence=EffectCadence.EVERY_SUBSTEP,
+        source=_DAMP_SOURCE,
+        fields=(FieldBindingV2("particle_velocity", access),),
+        parameter_keys=("factor",))
+    definition = EffectDefinitionV2(
+        effect_id="test.launch", version="1.0.0", name="Launch", summary="s",
+        description="d", category="Tests", author="Tests",
+        license="GPL-3.0-or-later", parameters=(factor,), kernels=(kernel,))
+    instance = EffectInstanceV2(
+        "launch-1", definition, safe_mode=not expert, expert_acknowledged=expert)
+    compiled = compile_effect(instance, device=device)
+    assert compiled.success, compiled.issues
+    return EffectRuntimeEntry(instance, compiled, compiled.kernels[0], 0, 0)
+
+
+def _particle_solver(device, *, live=5, capacity=8):
+    from types import SimpleNamespace
+
+    import numpy as np
+    import warp as wp
+
+    refreshes = []
+    velocity = np.arange(capacity * 3, dtype=np.float32).reshape(capacity, 3)
+    particles = SimpleNamespace(
+        position=wp.zeros(capacity, dtype=wp.vec3, device=device),
+        velocity=wp.array(velocity, dtype=wp.vec3, device=device),
+        alive=wp.array(np.ones(capacity, dtype=np.int32), dtype=wp.int32, device=device),
+        count=wp.array([live], dtype=wp.int32, device=device),
+        capacity=capacity,
+        attrs={},
+        refresh_host_count=lambda: refreshes.append(True) or live,
+    )
+    solver = SimpleNamespace(particles=particles, settings=SimpleNamespace(voxel_size=0.1))
+    return solver, velocity, refreshes
+
+
+def _counting_synchronize(monkeypatch):
+    import warp as wp
+
+    syncs = []
+    original = wp.synchronize_device
+
+    def counting(device=None):
+        syncs.append(device)
+        return original(device)
+
+    monkeypatch.setattr(wp, "synchronize_device", counting)
+    return syncs
+
+
+def test_safe_launch_skips_host_count_readback_and_device_sync(monkeypatch):
+    # P13: every launch refreshed the particle count from the device (unused:
+    # the launch spans capacity under the kernel's count guard) and blocked
+    # on wp.synchronize_device.
+    from fluidsim_testpkg.sim.effects.runtime import launch_compiled_kernel
+
+    entry = _compiled_particle_entry("cpu")
+    solver, velocity, refreshes = _particle_solver("cpu")
+    syncs = _counting_synchronize(monkeypatch)
+
+    elements, _duration = launch_compiled_kernel(entry, solver, {"frame": 1}, "cpu")
+
+    assert (refreshes, syncs) == ([], [])
+    assert elements == 8
+    expected = velocity.copy()
+    expected[:5] *= 0.5
+    assert (solver.particles.velocity.numpy() == expected).all()
+
+
+def test_expert_launch_still_synchronizes_so_faults_name_the_effect(monkeypatch):
+    from fluidsim_testpkg.sim.effects.runtime import launch_compiled_kernel
+
+    entry = _compiled_particle_entry(
+        "cpu", access=FieldAccess.UNSAFE_ARBITRARY, expert=True)
+    solver, _velocity, refreshes = _particle_solver("cpu")
+    syncs = _counting_synchronize(monkeypatch)
+
+    launch_compiled_kernel(entry, solver, {"frame": 1}, "cpu")
+
+    assert refreshes == []
+    assert syncs == ["cpu"]
+
+
+def test_unsynchronized_launch_matches_synchronized_result_cpu(monkeypatch):
+    _assert_sync_equivalence(monkeypatch, "cpu")
+
+
+def test_unsynchronized_launch_matches_synchronized_result_cuda(monkeypatch, cuda_device):
+    _assert_sync_equivalence(monkeypatch, cuda_device)
+
+
+def _assert_sync_equivalence(monkeypatch, device):
+    from fluidsim_testpkg.sim.effects import runtime
+
+    entry = _compiled_particle_entry(device)
+    results = []
+    for force_sync in (True, False):
+        monkeypatch.setattr(runtime, "_launch_needs_sync", lambda _entry, f=force_sync: f)
+        solver, _velocity, _refreshes = _particle_solver(device, live=97, capacity=128)
+        for _ in range(3):
+            runtime.launch_compiled_kernel(entry, solver, {"frame": 1}, device)
+        results.append(solver.particles.velocity.numpy())
+    assert results[0].tobytes() == results[1].tobytes()
+
+
 def test_runtime_binding_update_rejects_non_bindable_and_structural_changes():
     locked = ParameterDefinitionV2(
         key="locked",

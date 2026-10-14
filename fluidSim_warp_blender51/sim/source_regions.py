@@ -19,6 +19,7 @@ import warp as wp
 
 from . import constants as C
 from .capacity_planner import DemandQuality
+from .source_contracts import analytic_world_half_extents
 from .enums import (
     BlendMode,
     SourceEvaluationCadence,
@@ -61,6 +62,36 @@ def _k_query_compiled_mesh(
                 coverage[tid] = 1.0
 
 
+@wp.kernel
+def _k_query_compiled_mesh_parity(
+        mesh_id: wp.uint64,
+        points: wp.array(dtype=wp.vec3),
+        solid: int,
+        shell_width: float,
+        coverage: wp.array(dtype=float),
+        sdf: wp.array(dtype=float)):
+    """CPU-BVH staging matching the NumPy fallback's semantics.
+
+    Unsigned closest distance plus orientation-independent ray parity for
+    solids, like ``SourceCompiler._mesh_inside``; the CUDA kernel above keeps
+    its winding-number sign unchanged.
+    """
+    tid = wp.tid()
+    point = points[tid]
+    query = wp.mesh_query_point_no_sign(mesh_id, point, 1.0e20)
+    if query.result:
+        closest = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
+        distance = wp.length(closest - point)
+        sdf[tid] = distance
+        if solid != 0:
+            inside = wp.mesh_query_point_sign_parity(mesh_id, point, 1.0e20, 3, 0.1)
+            if inside.result and inside.sign < 0.0:
+                sdf[tid] = -distance
+                coverage[tid] = 1.0
+        elif distance <= shell_width:
+            coverage[tid] = 1.0
+
+
 def _owned_array(value, dtype, shape_tail=()):
     if value is None:
         return None
@@ -76,6 +107,13 @@ def _owned_array(value, dtype, shape_tail=()):
             f"array must have shape {expected}; received {array.shape}")
     array.setflags(write=False)
     return array
+
+
+# Every array-valued field of any region plan; all are part of the cache key.
+_REGION_ARRAY_FIELDS = (
+    "vertices", "triangles", "positions", "velocities", "temperature",
+    "viscosity", "density", "lifespan", "profile",
+)
 
 
 def _array_digest(value):
@@ -127,10 +165,9 @@ class AnalyticRegionPlan:
         default=SourceRegionKind.ANALYTIC_SDF, init=False)
 
     def bounds(self):
-        extent = max(
-            abs(float(self.radius)), abs(float(self.height)),
-            *(abs(float(v)) for v in self.half_extents),
-        ) + max(0.0, float(self.feather))
+        extent = np.asarray(analytic_world_half_extents(
+            self.shape, self.rotation, self.half_extents, self.radius,
+            self.height, self.feather), dtype=np.float64)
         p = np.asarray(self.position, dtype=np.float64)
         return tuple(p - extent), tuple(p + extent)
 
@@ -295,6 +332,51 @@ class HeightRegionPlan:
             raise ValueError(
                 "INFINITE height back mode is not defined by source_shape_spec; "
                 "it remains hidden and unsupported")
+
+
+# The height model shared by planning, topology and emission. Liquid fills
+# from the domain floor up to ``base_height`` (FLAT) or ``base_height`` plus
+# the bilinearly interpolated profile (PROFILE), exactly the level
+# ``source_kernels.height_surface_level`` evaluates on the GPU. Topology keeps
+# a four-voxel safety band above the highest point of that surface.
+HEIGHT_TOPOLOGY_BAND_VOXELS = 4.0
+
+
+def height_profile_peak(back_mode, profile):
+    """Highest profile offset the surface can reach (0 for a flat source)."""
+    if (int(back_mode) != SourceHeightBackMode.PROFILE or profile is None
+            or min(np.shape(profile)) < 2):
+        return 0.0
+    return max(0.0, float(np.max(profile)))
+
+
+def height_topology_top(base_height, back_mode, profile, voxel_size):
+    """World z up to which a height source needs active topology."""
+    return (float(base_height) + height_profile_peak(back_mode, profile)
+            + HEIGHT_TOPOLOGY_BAND_VOXELS * float(voxel_size))
+
+
+def height_surface_level(x, y, base_height, back_mode, profile, domain_min, domain_max):
+    """Surface level at world (x, y); NumPy twin of the GPU height function."""
+    x = np.asarray(x, np.float64)
+    y = np.asarray(y, np.float64)
+    if (int(back_mode) != SourceHeightBackMode.PROFILE or profile is None
+            or min(np.shape(profile)) < 2):
+        return np.full(np.broadcast(x, y).shape, float(base_height))
+    profile = np.asarray(profile, np.float64)
+    res_x, res_y = profile.shape
+    fx = np.clip((x - domain_min[0]) / max(domain_max[0] - domain_min[0], 1.0e-8),
+                 0.0, 1.0) * (res_x - 1)
+    fy = np.clip((y - domain_min[1]) / max(domain_max[1] - domain_min[1], 1.0e-8),
+                 0.0, 1.0) * (res_y - 1)
+    x0 = np.floor(fx).astype(np.int64)
+    y0 = np.floor(fy).astype(np.int64)
+    x1 = np.minimum(x0 + 1, res_x - 1)
+    y1 = np.minimum(y0 + 1, res_y - 1)
+    tx, ty = fx - x0, fy - y0
+    return float(base_height) + (
+        profile[x0, y0] * (1.0 - tx) * (1.0 - ty) + profile[x1, y0] * tx * (1.0 - ty)
+        + profile[x0, y1] * (1.0 - tx) * ty + profile[x1, y1] * tx * ty)
 
 
 RegionPlan = Union[
@@ -565,12 +647,16 @@ class CompiledSourceBatch:
     required_leaf_coords: np.ndarray
     diagnostics: tuple[SourceDiagnostic, ...]
     device_bytes: int
+    # (included source indices, device leaf coords, count) uploaded for
+    # topology marking; owned by SourcePipeline.mark_source_topology.
+    topology_upload: object = field(default=None, repr=False)
 
     @property
     def footprints(self) -> tuple[CompiledSourceFootprint, ...]:
         return tuple(_compiled_footprint(source) for source in self.sources)
 
     def release(self):
+        self.topology_upload = None
         for source in self.sources:
             source.region.release()
 
@@ -589,6 +675,9 @@ class SourceCompiler:
         # cadence. Edits, domain changes, and reset/session changes replace and
         # release the prior upload instead of leaking an unreachable cache row.
         self._source_keys: dict[SourceKey, str] = {}
+        # id(region plan) -> (region plan, content digest) for the plans of
+        # the latest compile call; see _region_digest.
+        self._region_digests: dict[int, tuple] = {}
         self.compile_count = 0
         self.cache_hits = 0
 
@@ -601,19 +690,35 @@ class SourceCompiler:
             region.release()
         self._cache.clear()
         self._source_keys.clear()
+        self._region_digests.clear()
 
     def _diagnostic(self, plan, severity, code, message):
         return SourceDiagnostic(severity, code, message, plan.stable_id)
 
-    def _cache_key(self, plan, context):
+    def _region_digest(self, region, current):
+        """Content digest of one region plan, memoized by object identity.
+
+        Region plans are frozen and own read-only array copies, so the same
+        object always has the same content; re-hashing a large unchanged
+        plan on every compile was pure overhead. ``current`` collects the
+        memo for this call only, so the table never outlives its plans.
+        """
+        cached = self._region_digests.get(id(region))
+        if cached is None or cached[0] is not region:
+            # repr() summarizes large NumPy arrays, so every region array is
+            # digested in full; an interior edit must never reuse a stale upload.
+            parts = [repr(region), *(_array_digest(getattr(region, name, None))
+                                     for name in _REGION_ARRAY_FIELDS)]
+            cached = (region, sha256("|".join(parts).encode("utf8")).hexdigest())
+        current[id(region)] = cached
+        return cached[1]
+
+    def _cache_key(self, plan, context, current=None):
         region = plan.region
         parts = [
             str(plan.stable_id), str(int(plan.operation)), str(int(plan.lifecycle)),
-            str(int(plan.cadence)), str(int(region.kind)), repr(region),
-            _array_digest(getattr(region, "vertices", None)),
-            _array_digest(getattr(region, "triangles", None)),
-            _array_digest(getattr(region, "positions", None)),
-            _array_digest(getattr(region, "profile", None)),
+            str(int(plan.cadence)), str(int(region.kind)),
+            self._region_digest(region, {} if current is None else current),
             repr((context.origin, context.voxel_size, context.domain_min,
                   context.domain_max, context.session_generation,
                   context.device, context.upload)),
@@ -626,16 +731,32 @@ class SourceCompiler:
         compiled, diagnostics = [], []
         if context.voxel_size <= 0.0:
             raise ValueError("voxel size must be positive")
+        occurrences: dict[SourceKey, int] = {}
+        in_use: set[str] = set()
+        digests: dict[int, tuple] = {}
         for plan in plans:
             if not plan.activation.active(context.frame):
                 continue
-            key = self._cache_key(plan, context)
+            # A duplicated object (Shift+D copies its stored identity) can
+            # submit two plans with one stable id. Give each occurrence its
+            # own cache slot: sharing one let the second compile release the
+            # first region's uploads while it was still in this batch.
+            occurrence = occurrences.get(plan.stable_id, 0)
+            occurrences[plan.stable_id] = occurrence + 1
+            slot = plan.stable_id
+            if occurrence:
+                slot = SourceKey(f"{plan.stable_id}#duplicate{occurrence}")
+                diagnostics.append(self._diagnostic(
+                    plan, "WARNING", "DUPLICATE_SOURCE_ID",
+                    "Another source shares this source identity; duplicated objects should be given their own identity"))
+            key = self._cache_key(plan, context, digests)
             region = self._cache.get(key)
             if region is not None:
                 self.cache_hits += 1
             else:
-                previous = self._source_keys.get(plan.stable_id)
-                if previous is not None and previous != key:
+                previous = self._source_keys.get(slot)
+                if (previous is not None and previous != key
+                        and previous not in in_use):
                     stale = self._cache.pop(previous, None)
                     if stale is not None:
                         stale.release()
@@ -643,9 +764,11 @@ class SourceCompiler:
                 self.compile_count += 1
                 if not any(d.severity == "ERROR" for d in region.diagnostics):
                     self._cache[key] = region
-                    self._source_keys[plan.stable_id] = key
+                    self._source_keys[slot] = key
+            in_use.add(key)
             diagnostics.extend(region.diagnostics)
             compiled.append(CompiledSource(plan, region))
+        self._region_digests = digests
         coords = [source.region.leaf_coords for source in compiled
                   if len(source.region.leaf_coords)]
         required = (np.unique(np.concatenate(coords), axis=0).astype(np.int32)
@@ -1005,8 +1128,40 @@ class SourceCompiler:
             result[ps:ps + len(p)] = (hits & 1).astype(bool)
         return result
 
+    @classmethod
+    def _compile_mesh_cpu_bvh(cls, points, vertices, triangles, solid, shell_width):
+        """Warp CPU BVH staging with the NumPy fallback's exact decisions.
+
+        The BVH runs in float32. Voxels whose BVH distance sits within a
+        float32-scale tolerance of the coverage decision (the shell width, or
+        the surface for solids) are recomputed with the float64 NumPy path,
+        so coverage matches the full NumPy result instead of tie-breaking
+        differently on grid-aligned meshes. SDF magnitudes elsewhere differ
+        from the NumPy values only at float32 rounding (~1e-7); no runtime
+        kernel reads the compiled mesh SDF.
+        """
+        coverage, sdf = cls._compile_mesh_gpu(
+            points, vertices, triangles, solid, shell_width, "cpu",
+            kernel=_k_query_compiled_mesh_parity)
+        scale = max(1.0, float(np.max(np.abs(vertices))),
+                    float(np.max(np.abs(points))))
+        threshold = 0.0 if solid else float(shell_width)
+        near = np.nonzero(np.abs(np.abs(sdf) - threshold) <= 1.0e-5 * scale)[0]
+        if len(near):
+            exact = np.asarray(points, np.float64)[near]
+            distances = cls._mesh_distances(exact, vertices, triangles)
+            if solid:
+                inside = cls._mesh_inside(exact, vertices, triangles)
+                sdf[near] = np.where(inside, -distances, distances)
+                coverage[near] = inside
+            else:
+                sdf[near] = distances
+                coverage[near] = distances <= shell_width
+        return coverage, sdf
+
     @staticmethod
-    def _compile_mesh_gpu(points, vertices, triangles, solid, shell_width, device):
+    def _compile_mesh_gpu(points, vertices, triangles, solid, shell_width, device,
+                          kernel=None):
         """Use Warp's mesh BVH for production-scale static mesh compilation."""
         points = np.ascontiguousarray(points, dtype=np.float32)
         vertices = np.ascontiguousarray(vertices, dtype=np.float32)
@@ -1018,7 +1173,7 @@ class SourceCompiler:
         device_coverage = wp.zeros(len(points), dtype=float, device=device)
         device_sdf = wp.zeros(len(points), dtype=float, device=device)
         wp.launch(
-            _k_query_compiled_mesh, dim=len(points),
+            kernel or _k_query_compiled_mesh, dim=len(points),
             inputs=[mesh.id, device_points, int(bool(solid)), float(shell_width),
                     device_coverage, device_sdf],
             device=device,
@@ -1085,11 +1240,18 @@ class SourceCompiler:
         flat = points.reshape(-1,3)
         requested_width = max(0.0, float(region.shell_half_width))
         width = max(requested_width, context.voxel_size * 0.5)
-        use_gpu_bvh = str(context.device).startswith("cuda") and comparisons > 500_000
-        if use_gpu_bvh:
+        on_cuda = str(context.device).startswith("cuda")
+        if on_cuda and comparisons > 500_000:
             flat_coverage, flat_sdf = self._compile_mesh_gpu(
                 flat, region.vertices, region.triangles, region.solid, width,
                 context.device)
+            coverage = flat_coverage.reshape(len(leaves), C.LEAF_VOLUME)
+            sdf = flat_sdf.reshape(len(leaves), C.LEAF_VOLUME)
+        elif not on_cuda and comparisons > 500_000:
+            # CPU-staged admission: the Cartesian NumPy path took seconds per
+            # mesh (13-17 s for a 960-triangle sphere) on Initialize/Reset.
+            flat_coverage, flat_sdf = self._compile_mesh_cpu_bvh(
+                flat, region.vertices, region.triangles, region.solid, width)
             coverage = flat_coverage.reshape(len(leaves), C.LEAF_VOLUME)
             sdf = flat_sdf.reshape(len(leaves), C.LEAF_VOLUME)
         else:
@@ -1117,46 +1279,130 @@ class SourceCompiler:
         points = CompiledPoints(r.positions, r.velocities, r.temperature,
                                 r.viscosity, r.density, r.lifespan)
         if plan.lifecycle == SourceLifecycle.DIRECT_APPEND:
-            return CompiledRegion(r.kind, key, np.empty((0,3),np.int32),
-                                  np.empty((0,C.LEAF_VOLUME),np.float32), points=points)
+            region = CompiledRegion(r.kind, key, np.empty((0,3),np.int32),
+                                    np.empty((0,C.LEAF_VOLUME),np.float32), points=points)
+            # No coverage, but the leaves holding the points must be active on
+            # the frame they are appended: topology is rebuilt before
+            # emission, so otherwise they get no grid support until the next
+            # rebuild sees them. Planning counts them here; the runtime marks
+            # the uploaded points on the GPU instead (see
+            # SourcePipeline.mark_source_topology), keeping large packets off
+            # the host on every recompile.
+            if not context.upload:
+                region.topology_leaf_coords = self._point_leaves(r.positions, context)
+            return region
         leaves = self._candidate_leaves(r.bounds(), context)
         rejected = self._preflight_leaves(plan, leaves, context, output_arrays=1)
         if rejected is not None:
             rejected.cache_key = key
             return rejected
-        voxels, centers = self._voxel_points(leaves, context)
-        coverage = np.zeros((len(leaves), C.LEAF_VOLUME), np.float32)
         radius = max(float(r.rasterize_radius), context.voxel_size * 0.5)
-        if len(r.positions) and len(leaves):
-            for position in r.positions:
-                distance = np.linalg.norm(centers-position, axis=-1)
-                coverage = np.maximum(coverage, (distance <= radius).astype(np.float32))
+        coverage = self._rasterize_points(r.positions, leaves, context, radius)
         return CompiledRegion(r.kind, key, leaves, coverage, points=points)
+
+    @staticmethod
+    def _point_leaves(positions, context):
+        """Unique flat leaves containing in-domain points (domain voxel range)."""
+        if not len(positions):
+            return np.empty((0, 3), np.int32)
+        origin = np.asarray(context.origin, np.float64)
+        voxels = np.floor((np.asarray(positions, np.float64) - origin)
+                          / context.voxel_size).astype(np.int64)
+        domain_lo = np.floor((np.asarray(context.domain_min) - origin)
+                             / context.voxel_size).astype(np.int64)
+        domain_hi = np.ceil((np.asarray(context.domain_max) - origin)
+                            / context.voxel_size).astype(np.int64) - 1
+        inside = np.all((voxels >= domain_lo) & (voxels <= domain_hi), axis=1)
+        leaves = np.floor_divide(voxels[inside], C.LEAF_DIM)
+        if not len(leaves):
+            return np.empty((0, 3), np.int32)
+        # Row-wise np.unique is slow for large packets; deduplicate a linear
+        # key over the leaves' bounding box instead (same sorted result).
+        low = leaves.min(axis=0)
+        dims = leaves.max(axis=0) - low + 1
+        relative = leaves - low
+        keys = np.unique((relative[:, 0] * dims[1] + relative[:, 1]) * dims[2]
+                         + relative[:, 2])
+        unique = np.stack((keys // (dims[1] * dims[2]),
+                           (keys // dims[2]) % dims[1],
+                           keys % dims[2]), axis=1) + low
+        return np.ascontiguousarray(unique, dtype=np.int32)
+
+    @staticmethod
+    def _rasterize_points(positions, leaves, context, radius, max_rows=1_000_000):
+        """Cover candidate voxels whose centre lies within ``radius`` of a point.
+
+        Each point visits only the voxel stencil around it rather than every
+        candidate voxel, so the work is points x stencil instead of points x
+        region. Centres and distances use the same float64 arithmetic as
+        :meth:`_voxel_points`, so coverage equals the former full scan.
+        """
+        coverage = np.zeros((len(leaves), C.LEAF_VOLUME), np.float32)
+        if not len(positions) or not len(leaves):
+            return coverage
+        leaves = np.asarray(leaves, np.int64)
+        leaf_lo = leaves.min(axis=0)
+        leaf_dims = leaves.max(axis=0) - leaf_lo + 1
+        rows = np.full(int(np.prod(leaf_dims)), -1, np.int64)
+        relative = leaves - leaf_lo
+        rows[(relative[:, 0] * leaf_dims[1] + relative[:, 1]) * leaf_dims[2]
+             + relative[:, 2]] = np.arange(len(leaves))
+        origin = np.asarray(context.origin)
+        voxel_size = context.voxel_size
+        # A centre within radius lies at most ceil(radius/h) + 2 voxels from the
+        # point's own voxel on each axis (half-voxel centre offset + flooring).
+        reach = int(math.ceil(radius / voxel_size)) + 2
+        span = np.arange(-reach, reach + 1, dtype=np.int64)
+        stencil = np.stack(np.meshgrid(span, span, span, indexing="ij"),
+                           axis=-1).reshape(-1, 3)
+        # Drop stencil voxels no point of the base voxel can reach. The
+        # per-axis gap is under-estimated by a whole voxel (|d| - 1), so float
+        # rounding can never exclude a voxel the exact test would accept.
+        gap = np.maximum(np.abs(stencil) - 1, 0) * voxel_size
+        stencil = stencil[np.sum(gap * gap, axis=1) <= radius * radius]
+        chunk = max(1, int(max_rows) // len(stencil))
+        for start in range(0, len(positions), chunk):
+            points = positions[start:start + chunk]
+            base = np.floor((points.astype(np.float64) - origin)
+                            / voxel_size).astype(np.int64)
+            voxels = (base[:, None, :] + stencil[None, :, :]).reshape(-1, 3)
+            owner = np.repeat(np.arange(len(points)), len(stencil))
+            leaf = np.floor_divide(voxels, C.LEAF_DIM)
+            relative = leaf - leaf_lo
+            inside = np.all((relative >= 0) & (relative < leaf_dims), axis=1)
+            voxels, owner, leaf, relative = (
+                voxels[inside], owner[inside], leaf[inside], relative[inside])
+            row = rows[(relative[:, 0] * leaf_dims[1] + relative[:, 1])
+                       * leaf_dims[2] + relative[:, 2]]
+            candidate = row >= 0
+            voxels, owner, leaf, row = (
+                voxels[candidate], owner[candidate], leaf[candidate], row[candidate])
+            centers = origin + (voxels + 0.5) * voxel_size
+            hit = np.linalg.norm(centers - points[owner], axis=-1) <= radius
+            local = voxels[hit] - leaf[hit] * C.LEAF_DIM
+            # Flat in-leaf order is x fastest (see _voxel_points).
+            coverage[row[hit], local[:, 0] + C.LEAF_DIM * (
+                local[:, 1] + C.LEAF_DIM * local[:, 2])] = 1.0
+        return coverage
 
     def _compile_height(self, plan, context, key):
         r = plan.region
-        # Match FluidSolver._rebuild_topology's four-voxel height safety band;
-        # planner/compiler topology must not under-count the runtime contributor.
+        # The shared height model: the same topology top as
+        # FluidSolver._rebuild_topology and the same bilinear surface the GPU
+        # fills and emits to, so planning never under-counts the runtime.
         bounds = (context.domain_min,
                   (context.domain_max[0], context.domain_max[1],
-                   min(context.domain_max[2],
-                       r.base_height + 4.0 * context.voxel_size)))
+                   min(context.domain_max[2], height_topology_top(
+                       r.base_height, r.back_mode, r.profile, context.voxel_size))))
         leaves = self._candidate_leaves(bounds, context)
         rejected = self._preflight_leaves(plan, leaves, context, output_arrays=2)
         if rejected is not None:
             rejected.cache_key = key
             return rejected
         _, points = self._voxel_points(leaves, context)
-        if r.back_mode == SourceHeightBackMode.PROFILE:
-            x = np.clip((points[...,0]-context.domain_min[0]) /
-                        max(context.domain_max[0]-context.domain_min[0],1e-12),0,1)
-            y = np.clip((points[...,1]-context.domain_min[1]) /
-                        max(context.domain_max[1]-context.domain_min[1],1e-12),0,1)
-            ix = np.rint(x*(r.profile.shape[0]-1)).astype(int)
-            iy = np.rint(y*(r.profile.shape[1]-1)).astype(int)
-            top = r.base_height + r.profile[ix,iy]
-        else:
-            top = r.base_height
+        top = height_surface_level(
+            points[..., 0], points[..., 1], r.base_height, r.back_mode,
+            r.profile, context.domain_min, context.domain_max)
         coverage = (points[...,2] <= top).astype(np.float32)
         sdf = (points[...,2]-top).astype(np.float32)
         region = CompiledRegion(r.kind, key, leaves, coverage, sdf=sdf)
@@ -1189,7 +1435,13 @@ class SourceCompiler:
 
     @staticmethod
     def _sample_dense_volume(values, coords, index_min, background=0.0):
-        """Vectorized trilinear staging sample from an OpenVDB dense window."""
+        """Vectorized trilinear staging sample from an OpenVDB dense window.
+
+        Samples outside the active window read the grid background, as
+        OpenVDB's accessor does: clamping into the one-voxel pad lands on a
+        background cell. Weighting them to zero instead turned exterior
+        level-set padding into false coverage (zero passes ``sdf <= 0``).
+        """
         values = np.asarray(values)
         vector = values.ndim == 4
         pad_width = ((1, 1), (1, 1), (1, 1)) + (((0, 0),) if vector else ())
@@ -1204,16 +1456,15 @@ class SourceCompiler:
             for dy in range(2):
                 for dx in range(2):
                     sample = base + (dx, dy, dz)
-                    valid = np.all((sample >= 0) & (sample < limits), axis=1)
                     clipped = np.minimum(np.maximum(sample, 0), limits - 1)
                     weight = ((fraction[:, 0] if dx else 1.0 - fraction[:, 0])
                               * (fraction[:, 1] if dy else 1.0 - fraction[:, 1])
                               * (fraction[:, 2] if dz else 1.0 - fraction[:, 2]))
                     gathered = padded[clipped[:, 0], clipped[:, 1], clipped[:, 2]]
                     if vector:
-                        result += gathered * (weight * valid)[:, None]
+                        result += gathered * weight[:, None]
                     else:
-                        result += gathered * weight * valid
+                        result += gathered * weight
         return result
 
     def _compile_volume(self, plan, context, key):

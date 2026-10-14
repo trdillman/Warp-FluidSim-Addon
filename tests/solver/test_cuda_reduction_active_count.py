@@ -13,8 +13,8 @@ import pytest
 
 wp = pytest.importorskip("warp")
 
-from fluidSim_warp_blender51.sim.constants import LEAF_VOLUME
-from fluidSim_warp_blender51.sim.cuda_reduction import CudaDotProduct
+from fluidSim_warp_blender51.sim.constants import LEAF_VOLUME  # noqa: E402
+from fluidSim_warp_blender51.sim.cuda_reduction import CudaDotProduct  # noqa: E402
 
 
 def _launch_dims(dot, n, capacity):

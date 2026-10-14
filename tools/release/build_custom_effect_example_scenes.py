@@ -19,7 +19,6 @@ delete the installed Warp wheels from the real Blender profile.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import tempfile
@@ -32,7 +31,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from tools.repo_addon_loader import enable_repo_addon
+from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = os.path.join(
     REPO_ROOT, "fluidSim_warp_blender51", "resources", "examples", "custom_effects", "scenes"

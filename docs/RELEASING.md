@@ -1,8 +1,8 @@
 # Releasing FluidSim Warp
 
-A release needs two kinds of proof. Hosted CI runs on every pull request.
-The manual GPU gate runs once per release on a machine with an NVIDIA GPU.
-Either one alone is not enough.
+A release needs local source/package checks and a manual GPU gate on a
+machine with an NVIDIA GPU. GitHub Actions workflows have been removed;
+historical CI results and artifact uploads are not current merge gates.
 
 ## Storage workflow
 
@@ -49,18 +49,18 @@ remain warnings.
 The default policy warns below 30 GiB free and retains known denied paths as
 never-probe. Storage-hook tests alone do not requalify GPU/GUI behavior.
 
-## What hosted CI proves
+## Local source and package checks
 
-`.github/workflows/ci.yml` runs on every pull request, on every push to
-`master` and on every `v*` tag. Its runners have no GPU. `CUDA_VISIBLE_DEVICES`
-is set to `-1`, so CUDA-only tests skip rather than fail.
+Run these checks locally on the candidate commit and retain their logs.
+For CPU-only regression checks, set `CUDA_VISIBLE_DEVICES=-1`; those results
+do not qualify CUDA execution or the foreground GUI.
 
-| Job | Proves |
+| Check | Proves |
 | --- | --- |
-| `checks` | ruff is clean, and release metadata matches between `version.py`, `blender_manifest.toml`, the Warp lock and the delivery policy. Every module compiles and the full pytest suite passes. The whitewater, surface-tension and Custom Effects kernels compile and pass their validators on Warp **CPU**. |
-| `package` | The pinned Blender (checked by sha256) builds the `.zip` packages, validates them, installs the Linux one and smoke-tests it with the locked Warp wheel provisioned into this extension's own user directory (the zip itself has no wheels), then uninstalls it. |
+| Source | ruff is clean, and release metadata matches between `version.py`, `blender_manifest.toml`, the Warp lock and the delivery policy. Every module compiles and the full pytest suite passes. The whitewater, surface-tension and Custom Effects kernels compile and pass their validators on Warp **CPU**. |
+| Package | The certified Blender builds and validates the platform `.zip` packages. Run the install/smoke/uninstall lane on the host platform with the locked Warp wheel provisioned into this extension's own user directory; the zip itself has no wheels. |
 
-The packages and JSON reports are attached to each run as artifacts.
+Keep the packages, checksums and JSON reports as local qualification evidence.
 
 ## What only the GPU gate proves
 
@@ -87,7 +87,42 @@ It prints `FULL-PRODUCTION-GATE-PASS` when it succeeds. It then writes
 - the sha256 of the demo analysis report
 
 Every run deletes the old manifest first, and only a passing `--include-gui`
-run writes a new one. If the manifest's commit is not the tagged commit, the
+run writes a new one.
+
+Validation is scoped to what changed. The release needs one passing
+`--include-gui` run on the release commit, and its `demo_artifact_sha256` must
+match the reference recorded for that line (a different hash means simulation
+results changed and needs an explanation, not a rerun). Demo bakes are bitwise
+deterministic since d2a6b6d, so repeating the run proves nothing new; the old
+three-consecutive-passes rule is retired.
+
+The paired performance budget (about twenty minutes of Blender trials) is only
+measured when it has to be. By default the gate reuses
+`artifacts/performance_budget/summary.json` when it passed and no budget
+source changed since the commit it measured: the add-on (minus its docs and
+Markdown), `tools/repo_addon_loader.py`, the benchmark tools, the budget evaluator,
+`tools/demos`, and the saved paddle/vortex scenes that the gate does not rebuild.
+Documentation, rebuilt dam/crown blends and test-only commits therefore keep the
+measured budget. The manifest records `performance_budget_reused` and
+`performance_budget_measured_at`. `--measure-budget` forces a fresh
+measurement; `--reuse-budget` fails instead of measuring.
+
+For changes that do not touch solver or simulation output, run the focused
+tests for the area (for example `tests/gate` for gate tooling) or `--quick`;
+a full gate is only needed for the release commit or a change to simulation
+results.
+
+`--quick` is the tier for localized changes: hygiene, the Python and CUDA
+checks, the release validators and the background acceptance scripts, ending
+in `QUICK-GATE-PASS` (about six minutes). It skips the demo rebuild, GUI lanes
+and budget, writes no manifest and is never release evidence. In every tier
+the independent Python checks run in parallel, and the background acceptance
+scripts share one Blender session (`tools/gate/run_blender_batch.py`); any
+script that does not pass there is rerun alone, and that run decides. Every
+step prints its wall time, summarised at the end and in
+`artifacts/gate_timing.json`.
+
+If the manifest's commit is not the tagged commit, the
 gate has not been run for this release. The demo report hash only changes when
 simulation results change. After a solver or Warp change a new hash is
 expected; otherwise, a changed hash needs an explanation before release.
@@ -96,23 +131,23 @@ expected; otherwise, a changed hash needs an explanation before release.
 
 1. **Version.** Set `VERSION` (and `BUILD_CHANNEL` if it changes) in
    `fluidSim_warp_blender51/version.py`. Set the same `version` in
-   `fluidSim_warp_blender51/blender_manifest.toml`. CI's verify step fails if
-   the two disagree.
+   `fluidSim_warp_blender51/blender_manifest.toml`. The local source verifier
+   fails if the two disagree.
 2. **Changelog.** Add a section for the version to
    `fluidSim_warp_blender51/CHANGELOG.md`. Say what a user will notice, and
    call out any change that alters simulation results or breaks older files.
-3. **Pull request.** Open a pull request into `master` and wait for both CI
-   jobs to pass. Merge it.
+3. **Pull request.** Open a pull request into `master`, resolve conflicts,
+   complete the applicable local source/package checks and owner review,
+   then merge it. Do not restore the removed GitHub workflows.
 4. **GPU gate.** On the merged commit, run the gate as described above. Also
    run `python tools/demos/analyze_demos.py`, which must report every demo check
    passing.
-5. **Tag.** Tag the merged commit `v<version>` and push the tag. CI runs again
-   on the tag and uploads the packages for that exact commit.
+5. **Tag.** After release qualification, tag the merged commit `v<version>`
+   and push the tag. Build packages locally from that exact commit.
 6. **GitHub release.** Create the release from the tag and attach:
    - the Windows and Linux `.zip` packages and `SHA256SUMS.txt`. Build them
      with `python tools/release/build_extension.py --blender <blender>
-     --output dist` on the tagged commit, or take the Linux one from the
-     tag's CI run.
+     --output dist` on the tagged commit.
    - `artifacts/production_gate_manifest.json` from step 4.
 
    Paste the changelog section into the release notes.
@@ -159,11 +194,9 @@ Warp's native libraries in process.
 
 ## Changing a pinned dependency
 
-- **Blender.** In `ci.yml`, update `BLENDER_VERSION` and `BLENDER_SHA256`
-  together, taking the hash from Blender's published `.sha256` file. CI
-  downloads from an official mirror, because `download.blender.org` answers
-  scripted downloads with a bot challenge. A test keeps `BLENDER_VERSION`
-  equal to `CERTIFIED_BLENDER_VERSION` in `version.py`.
+- **Blender.** Update `CERTIFIED_BLENDER_VERSION` in `version.py` and the
+  corresponding local harness defaults together. Obtain Blender from an
+  official distribution and verify its published SHA-256 before qualification.
 - **Warp.** Update `CERTIFIED_WARP_VERSION` in `version.py` and the
   `warp-lang` pin in `fluidSim_warp_blender51/requirements-dev.txt`
   together; a test keeps them equal. A Warp change can alter results, so

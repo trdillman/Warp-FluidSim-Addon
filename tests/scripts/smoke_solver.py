@@ -10,7 +10,7 @@ import warp as wp
 
 wp.init()
 
-from fluidSim_warp_blender51.sim.solver import (
+from fluidSim_warp_blender51.sim.solver import (  # noqa: E402
     FluidSolver, SolverSettings, SourceShapeDesc,
 )
 

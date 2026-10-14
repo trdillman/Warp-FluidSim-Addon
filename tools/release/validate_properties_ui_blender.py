@@ -14,19 +14,60 @@ from types import SimpleNamespace
 
 import bpy
 
+# The Scene tab registers scene-owned panels only; every domain control is a
+# Physics tab mirror (see PHYSICS_MIRROR_SOURCES below).
 EXPECTED_SCENE_ROOTS = {
     "FLUIDSIM_PT_scene_lifecycle": (1, True),
     "FLUIDSIM_PT_scene_control": (2, False),
     "FLUIDSIM_PT_scene_setup": (10, False),
-    "FLUIDSIM_PT_scene_domain": (20, False),
-    "FLUIDSIM_PT_scene_height": (30, True),
-    "FLUIDSIM_PT_scene_simulation": (40, True),
     "FLUIDSIM_PT_custom_effects": (50, True),
-    "FLUIDSIM_PT_scene_surface": (60, True),
-    "FLUIDSIM_PT_scene_whitewater": (70, True),
     "FLUIDSIM_PT_scene_outputs": (80, False),
     "FLUIDSIM_PT_scene_diagnostics": (100, True),
 }
+# Source panel ids (the Scene-tab draw functions) mirrored into Physics
+# Properties, per mirror group. A mirror id is
+# ``FLUIDSIM_PT_physics_<group>_<source id without FLUIDSIM_PT_>``.
+PHYSICS_MIRROR_SOURCES = {
+    "domain": (
+        "FLUIDSIM_PT_scene_domain",
+        "FLUIDSIM_PT_scene_capacity",
+        "FLUIDSIM_PT_scene_height",
+        "FLUIDSIM_PT_scene_simulation",
+        "FLUIDSIM_PT_sim_time",
+        "FLUIDSIM_PT_sim_gravity",
+        "FLUIDSIM_PT_sim_pressure",
+        "FLUIDSIM_PT_sim_viscosity",
+        "FLUIDSIM_PT_sim_surface_tension",
+        "FLUIDSIM_PT_sim_color_mixing",
+        "FLUIDSIM_PT_sim_relax",
+        "FLUIDSIM_PT_sim_limits",
+        "FLUIDSIM_PT_sim_forces",
+        "FLUIDSIM_PT_sim_dissipation",
+        "FLUIDSIM_PT_sim_attraction",
+        "FLUIDSIM_PT_output_attributes",
+        "FLUIDSIM_PT_attrs_surface",
+        "FLUIDSIM_PT_attrs_particles",
+        "FLUIDSIM_PT_attrs_whitewater",
+        "FLUIDSIM_PT_diagnostics_profiling",
+    ),
+    "surface": (
+        "FLUIDSIM_PT_scene_surface",
+        "FLUIDSIM_PT_surface_resolution",
+        "FLUIDSIM_PT_surface_reconstruct",
+        "FLUIDSIM_PT_surface_filters",
+    ),
+    "whitewater": (
+        "FLUIDSIM_PT_scene_whitewater",
+        "FLUIDSIM_PT_whitewater_emission",
+        "FLUIDSIM_PT_whitewater_classification",
+        "FLUIDSIM_PT_whitewater_life",
+        "FLUIDSIM_PT_whitewater_dynamics",
+    ),
+}
+
+
+def _mirror_id(group: str, source_id: str) -> str:
+    return f"FLUIDSIM_PT_physics_{group}_{source_id[len('FLUIDSIM_PT_'):]}"
 EXPECTED_OBJECT_ROOTS = {
     "FLUIDSIM_PT_object_role": 0,
     "FLUIDSIM_PT_object_region": 10,
@@ -48,39 +89,10 @@ ALL_AUTHORED_SCENE_PANELS = (
     "FLUIDSIM_PT_scene_live_timeline",
     "FLUIDSIM_PT_scene_setup",
     "FLUIDSIM_PT_scene_presets",
-    "FLUIDSIM_PT_scene_domain",
-    "FLUIDSIM_PT_scene_capacity",
-    "FLUIDSIM_PT_scene_height",
-    "FLUIDSIM_PT_scene_simulation",
-    "FLUIDSIM_PT_sim_time",
-    "FLUIDSIM_PT_sim_gravity",
-    "FLUIDSIM_PT_sim_pressure",
-    "FLUIDSIM_PT_sim_viscosity",
-    "FLUIDSIM_PT_sim_surface_tension",
-    "FLUIDSIM_PT_sim_relax",
-    "FLUIDSIM_PT_sim_limits",
-    "FLUIDSIM_PT_sim_forces",
-    "FLUIDSIM_PT_sim_dissipation",
-    "FLUIDSIM_PT_sim_attraction",
-    "FLUIDSIM_PT_sim_spacetime",
-    "FLUIDSIM_PT_scene_surface",
-    "FLUIDSIM_PT_surface_resolution",
-    "FLUIDSIM_PT_surface_reconstruct",
-    "FLUIDSIM_PT_surface_filters",
-    "FLUIDSIM_PT_scene_whitewater",
-    "FLUIDSIM_PT_whitewater_emission",
-    "FLUIDSIM_PT_whitewater_classification",
-    "FLUIDSIM_PT_whitewater_life",
-    "FLUIDSIM_PT_whitewater_dynamics",
     "FLUIDSIM_PT_scene_outputs",
     "FLUIDSIM_PT_output_display",
     "FLUIDSIM_PT_output_materials",
-    "FLUIDSIM_PT_output_attributes",
-    "FLUIDSIM_PT_attrs_surface",
-    "FLUIDSIM_PT_attrs_particles",
-    "FLUIDSIM_PT_attrs_whitewater",
     "FLUIDSIM_PT_scene_diagnostics",
-    "FLUIDSIM_PT_diagnostics_profiling",
     "FLUIDSIM_PT_diagnostics_benchmark",
     "FLUIDSIM_PT_diagnostics_report",
     "FLUIDSIM_PT_custom_effects",
@@ -362,6 +374,21 @@ def _assert_metadata() -> dict[str, dict[str, object]]:
     for removed in REMOVED_PANEL_IDS:
         if hasattr(bpy.types, removed):
             raise AssertionError(f"deleted panel is still registered: {removed}")
+    for group, source_ids in PHYSICS_MIRROR_SOURCES.items():
+        for source_id in source_ids:
+            if hasattr(bpy.types, source_id):
+                raise AssertionError(
+                    f"Scene Properties still registers the domain panel {source_id}")
+            mirror_id = _mirror_id(group, source_id)
+            mirror = _panel_metadata(mirror_id)
+            if (mirror["space"], mirror["region"], mirror["context"]) != (
+                "PROPERTIES",
+                "WINDOW",
+                "physics",
+            ):
+                raise AssertionError(
+                    f"{mirror_id} is not a Physics Properties panel: {mirror}")
+            records[mirror_id] = mirror
     for panel_id, (order, parent, closed) in EXPECTED_STAGE_PANELS.items():
         stage = _panel_metadata(panel_id)
         if (stage["space"], stage["region"]) != ("VIEW_3D", "UI"):
@@ -421,6 +448,33 @@ def _ensure_domain():
     return domain.fluidsim_domain
 
 
+def _draw_physics_mirrors(module_name: str, group: str, source_ids) -> dict[str, list]:
+    """Draw Physics mirrors of ``source_ids`` with their poll's object active."""
+    output_publication = importlib.import_module(
+        f"{module_name}.blender.output_publication")
+    scene = bpy.context.scene
+    previous = bpy.context.view_layer.objects.active
+    if group == "domain":
+        target = scene.fluidsim.domain_object
+    else:
+        output_publication.ensure_output_shells(scene)
+        target = output_publication.output_object(scene, {
+            "surface": output_publication.SURFACE_NAME,
+            "whitewater": output_publication.WHITEWATER_NAME,
+        }[group])
+    if target is None:
+        raise AssertionError(f"no object to draw the {group} Physics mirrors")
+    _activate_object(target)
+    try:
+        return {
+            _mirror_id(group, source_id): _draw(_mirror_id(group, source_id), bpy.context)
+            for source_id in source_ids
+        }
+    finally:
+        if previous is not None:
+            _activate_object(previous)
+
+
 def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
     scene = bpy.context.scene
     ds = _ensure_domain()
@@ -437,9 +491,6 @@ def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
 
     draw_ids = (
         "FLUIDSIM_PT_scene_control",
-        "FLUIDSIM_PT_scene_domain",
-        "FLUIDSIM_PT_sim_surface_tension",
-        "FLUIDSIM_PT_whitewater_classification",
         "FLUIDSIM_PT_output_display",
         "FLUIDSIM_STAGE_PT_bake",
         "FLUIDSIM_PT_object_role",
@@ -449,6 +500,15 @@ def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
         "FLUIDSIM_PT_viewport_status",
     )
     draws = {panel_id: _draw(panel_id, bpy.context) for panel_id in draw_ids}
+    # Domain controls draw from the Physics mirrors, which poll on the active
+    # object's kind: the domain object for the domain group, the generated
+    # whitewater output object for the whitewater group.
+    domain_mirror = _mirror_id("domain", "FLUIDSIM_PT_scene_domain")
+    draws.update(_draw_physics_mirrors(
+        module_name, "domain",
+        ("FLUIDSIM_PT_scene_domain", "FLUIDSIM_PT_sim_surface_tension")))
+    draws.update(_draw_physics_mirrors(
+        module_name, "whitewater", ("FLUIDSIM_PT_whitewater_classification",)))
 
     effects_module = importlib.import_module(f"{module_name}.blender.effects")
     effects_module.add_builtin_effect(scene, "fluidsim.velocity_damping")
@@ -467,10 +527,12 @@ def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
 
     scene_props = {
         event["property"]
-        for event in draws["FLUIDSIM_PT_scene_domain"]
+        for event in draws[domain_mirror]
         if event["kind"] == "prop"
     }
-    if not {"voxel_size", "particles_per_voxel", "max_particles"}.issubset(scene_props):
+    # Resolution Divisions replaced the Voxel Size control (voxel_size is derived).
+    if not {"resolution_divisions", "particles_per_voxel", "max_particles"}.issubset(
+            scene_props):
         raise AssertionError(f"Domain panel omitted primary controls: {sorted(scene_props)}")
     def _operators(panel_id):
         return {
@@ -480,7 +542,8 @@ def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
         }
 
     artist_ops = _operators("FLUIDSIM_PT_custom_effects")
-    if not {"fluidsim.preview_start", "fluidsim.apply_changes"}.issubset(artist_ops):
+    # 9bbebb0 retired the Preview button: Blender's own Play drives the simulation.
+    if not {"screen.animation_play", "fluidsim.apply_changes"}.issubset(artist_ops):
         raise AssertionError(f"Custom Effects artist actions are incomplete: {sorted(artist_ops)}")
     effect_ops = _operators("FLUIDSIM_PT_effect_engineering")
     if not {
@@ -516,8 +579,6 @@ def _configure_all_authored_scene_states(work_dir: Path) -> None:
         "omnidirectional_force_strength": 1.0,
         "dissipation_enabled": True,
         "attraction_enabled": True,
-        "spacetime_enabled": True,
-        "spacetime_variable_projection": True,
         "surface_enabled": True,
         "surface_resolution_mode": "CUSTOM",
         "surface_filter_iterations": 1,
@@ -548,6 +609,12 @@ def _assert_all_authored_draws(module_name: str, work_dir: Path) -> dict[str, in
         for panel_id in ALL_AUTHORED_SCENE_PANELS:
             events = _draw(panel_id, bpy.context)
             result[panel_id] = len(events)
+        # Every domain panel is drawn through its Physics mirror.
+        for group, source_ids in PHYSICS_MIRROR_SOURCES.items():
+            for panel_id, events in _draw_physics_mirrors(
+                module_name, group, source_ids
+            ).items():
+                result[panel_id] = len(events)
     return result
 
 
@@ -567,7 +634,7 @@ def _assert_launcher_strip(module_name: str) -> dict[str, object]:
     if "fluidsim.open_scene_properties" in operators:
         raise AssertionError("launcher strip still offers the Scene Properties jump")
     if not operators & {
-        "fluidsim.preview_start", "fluidsim.preview_pause",
+        "screen.animation_play", "fluidsim.preview_pause",
         "fluidsim.cache_preview_start", "fluidsim.bake_cancel",
     }:
         raise AssertionError(f"launcher strip has no transport action: {operators}")
@@ -625,7 +692,7 @@ def _assert_header_popover(module_name: str) -> dict[str, object]:
             raise AssertionError(f"header popover omitted {missing}: {domain_props}")
         domain_ops = operators(domain_events)
         if not domain_ops & {
-            "fluidsim.preview_start", "fluidsim.preview_pause",
+            "screen.animation_play", "fluidsim.preview_pause",
             "fluidsim.cache_preview_start", "fluidsim.bake_cancel",
         }:
             raise AssertionError(f"header popover has no transport action: {domain_ops}")

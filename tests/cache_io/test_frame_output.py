@@ -300,6 +300,81 @@ def test_surface_velocity_samples_mac_grid_with_one_device_readback(cuda_device)
     assert host_output_operation_counts()["device_readbacks"] == 1
 
 
+def test_surface_velocity_and_nearest_channels_share_one_target_upload(
+        cuda_device, monkeypatch):
+    """P18: velocity-family and nearest-transfer surface channels uploaded the
+    same surface vertices to the device twice per published frame."""
+    import warp as wp
+
+    from fluidSim_warp_blender51.sim import frame_output
+    from fluidSim_warp_blender51.sim.attributes import OUTPUT_TOGGLE_NAMES
+    from fluidSim_warp_blender51.sim.fields import MacVelocityField, SparseGrid
+
+    device = cuda_device
+    real_wp = frame_output.wp
+    uploads = []
+
+    class _ArrayMeta(type):
+        def __instancecheck__(cls, obj):
+            return isinstance(obj, real_wp.array)
+
+    class _CountingArray(metaclass=_ArrayMeta):
+        def __new__(cls, data=None, *args, **kwargs):
+            if isinstance(data, np.ndarray) and kwargs.get("dtype") is real_wp.vec3:
+                uploads.append(len(data))
+            return real_wp.array(data, *args, **kwargs)
+
+    class _WarpSpy:
+        array = _CountingArray
+
+        def __getattr__(self, name):
+            return getattr(real_wp, name)
+
+    def solver():
+        grid = SparseGrid(
+            origin=(0.0, 0.0, 0.0), size=(0.8, 0.8, 0.8),
+            voxel_size=0.1, leaf_capacity=4, device=device)
+        grid.begin_topology()
+        grid.mark_world_box((0.0, 0.0, 0.0), (0.79, 0.79, 0.79))
+        assert grid.finalize_topology() == 1
+        velocity = MacVelocityField(grid)
+        for array, value in zip((velocity.u, velocity.v, velocity.w), (1.0, 2.0, 3.0)):
+            array.fill_(value)
+        for weights in (velocity.wu, velocity.wv, velocity.ww):
+            weights.fill_(1.0)
+        positions = np.array([[0.1, 0.1, 0.1], [0.6, 0.6, 0.6]], np.float32)
+        ages = wp.array(np.array([5.0, 9.0], np.float32), dtype=wp.float32, device=device)
+        particles = SimpleNamespace(
+            position=wp.array(positions, dtype=wp.vec3, device=device),
+            velocity=wp.zeros(2, dtype=wp.vec3, device=device),
+            refresh_host_count=lambda: 2,
+            attr=lambda _name: ages,
+        )
+        return SimpleNamespace(
+            frame=1, device=device, grid=grid, vel=velocity, particles=particles,
+            settings=SimpleNamespace(voxel_size=0.1, frame_rate=24.0, time_scale=1.0))
+
+    def toggles(enabled):
+        settings = SimpleNamespace()
+        for key, name in OUTPUT_TOGGLE_NAMES["surface"].items():
+            setattr(settings, name, key in enabled)
+        return settings
+
+    verts = np.array([[0.15, 0.15, 0.15], [0.55, 0.55, 0.55]], np.float32)
+    expected_velocity = HostFrame(solver()).output_attributes(
+        toggles({"velocity"}), "surface", positions=verts)["velocity"]
+    expected_age = HostFrame(solver()).output_attributes(
+        toggles({"age"}), "surface", positions=verts)["age"]
+
+    monkeypatch.setattr(frame_output, "wp", _WarpSpy())
+    combined = HostFrame(solver()).output_attributes(
+        toggles({"velocity", "age"}), "surface", positions=verts)
+
+    assert uploads == [len(verts)], "surface targets uploaded more than once"
+    np.testing.assert_array_equal(combined["velocity"], expected_velocity)
+    np.testing.assert_array_equal(combined["age"], expected_age)
+
+
 def test_opt_in_surface_particle_channels_share_one_gpu_nearest_map():
     """Every enabled nearest channel must reuse one device lookup per frame."""
     import warp as wp
@@ -505,18 +580,12 @@ def test_host_frame_owns_live_surface_publication_cadence():
 
 def test_solver_reset_invalidates_frame_zero_host_snapshot():
     from fluidSim_warp_blender51.sim.solver import FluidSolver
-    from fluidSim_warp_blender51.sim.spacetime import SpaceTimeState
 
     calls = {}
     solver = FluidSolver.__new__(FluidSolver)
     solver.frame = 0
     solver._host_frame_cache = None
-    solver.settings = SimpleNamespace(
-        spacetime_seed=0,
-        spacetime_reference_mass=0.0,
-        spacetime_enabled=False,
-    )
-    solver.spacetime = SpaceTimeState(solver.settings, None)
+    solver.settings = SimpleNamespace()
     solver.particles = SimpleNamespace(
         clear=lambda: None, host_count=1, refresh_host_count=lambda: 1,
         position=_Array([[1, 2, 3]], calls, "positions"),
@@ -731,7 +800,6 @@ def test_live_payload_reads_attribute_inventory_from_designated_domain():
         whitewater_attribute_velocity=True,
         surface_attribute_velocity=True,
     ))
-    domain_settings = fs.domain_object.fluidsim_domain
     fs.particles_attribute_age = False
     fs.whitewater_attribute_velocity = False
     fs.surface_attribute_velocity = False
@@ -740,7 +808,50 @@ def test_live_payload_reads_attribute_inventory_from_designated_domain():
     output_publication.prepare_live_payload(SimpleNamespace(fluidsim=fs), host)
 
     assert len(host.attribute_settings) == 3
-    assert all(item is domain_settings for item in host.attribute_settings)
+    for item in host.attribute_settings:
+        assert item.particles_attribute_age is True
+        assert item.whitewater_attribute_velocity is True
+        assert item.surface_attribute_velocity is True
+
+
+@pytest.mark.usefixtures("bpy_stub")
+def test_live_payload_never_requests_a_channel_the_solver_did_not_admit():
+    """Review item B06: ticking Color mid-run killed the live session.
+
+    Attribute toggles are RESET-tier, so the running solver has not allocated
+    a newly ticked channel; the live payload asked for it anyway and the
+    readback raised. Unticking still applies immediately.
+    """
+    from fluidSim_warp_blender51.blender import output_publication
+    from fluidSim_warp_blender51.sim.attributes import enabled_attribute_keys
+
+    fs = split_settings(_live_settings(
+        particles_attribute_age=True, particles_attribute_color=True,
+        export_attributes=True))
+    host = _LiveAttributeHost()
+    host.solver = SimpleNamespace(settings=SimpleNamespace(
+        voxel_size=0.1, export_attributes=True,
+        particles_attribute_age=True, particles_attribute_color=False))
+    requested = []
+    original = host.output_attributes
+
+    def strict_output_attributes(settings, output_kind, **kwargs):
+        keys = enabled_attribute_keys(settings, output_kind)
+        requested.append((output_kind, keys))
+        if output_kind == "particles" and "color" in keys:
+            raise RuntimeError("enabled particle attribute 'color' is not allocated")
+        return original(settings, output_kind, **kwargs)
+
+    host.output_attributes = strict_output_attributes
+    output_publication.prepare_live_payload(SimpleNamespace(fluidsim=fs), host)
+
+    assert ("particles", ("age",)) in requested
+
+    domain = fs.domain_object.fluidsim_domain
+    domain.particles_attribute_age = False
+    requested.clear()
+    output_publication.prepare_live_payload(SimpleNamespace(fluidsim=fs), host)
+    assert ("particles", ()) in requested
 
 
 @pytest.mark.usefixtures("bpy_stub")
@@ -908,7 +1019,8 @@ def test_viewport_cache_and_export_share_one_frame(tmp_path, monkeypatch):
         "whitewater_life", "whitewater_required", "whitewater_available",
         "whitewater_admitted", "whitewater_dropped", "whitewater_policy",
         "whitewater_status", "whitewater_type", "attribute_schema_version",
-        "attribute_inventory_json", "surface_attribute_transfer_method"}
+        "attribute_inventory_json", "surface_attribute_transfer_method",
+        "liquid_sdf_sparse", "liquid_sdf_leaf_coords", "liquid_sdf_voxel_size"}
     assert calls["positions"] == calls["velocities"] == calls["surface"] == 1
     for name in ("age", "life", "temperature", "viscosity", "density",
                  "time_offset", "whitewater", "whitewater_velocity",

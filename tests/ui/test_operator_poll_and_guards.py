@@ -228,6 +228,7 @@ def test_scene_domain_panel_draw_does_not_inspect_broken_domain_geometry(monkeyp
         fluidsim=split_settings(SimpleNamespace(
             domain_object=SimpleNamespace(),
             voxel_size=0.05,
+            resolution_divisions=64,
             particles_per_voxel=8,
             max_particles=1000,
             auto_grow_particles=True,
@@ -243,7 +244,7 @@ def test_scene_domain_panel_draw_does_not_inspect_broken_domain_geometry(monkeyp
 
     assert layout.properties == [
         "domain_object",
-        "voxel_size",
+        "resolution_divisions",
         "particles_per_voxel",
         "max_particles",
         "auto_grow_particles",

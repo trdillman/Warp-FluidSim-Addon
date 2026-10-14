@@ -65,7 +65,9 @@ def test_launch_supports_warp_115_and_116_cuda_abis(monkeypatch, arity):
     dot._max_blocks = 4
     dot._partials = SimpleNamespace(ptr=48)
     dot._ticket = SimpleNamespace(ptr=64)
-    array = SimpleNamespace(ptr=16)
+    # ``launch`` checks lengths on the host before it launches (REVIEW-038), so
+    # the double must say how many elements it holds.
+    array = SimpleNamespace(ptr=16, size=32)
 
     dot.launch(array, array, array, 32)
 
@@ -225,6 +227,7 @@ def test_pressure_release_drops_graphs_before_native_module_lease():
         release=lambda: events.append("native lease"))
     solver._pcg_graphs = Graphs(captured=object())
     solver._pcg_conditional_graphs = Graphs(captured=object())
+    solver._mg_graphs = Graphs(captured=object())
     solver._pcg_voxel_type = object()
     solver._pcg_apply_cmd = object()
     solver._pcg_update_cmd = object()
@@ -235,7 +238,7 @@ def test_pressure_release_drops_graphs_before_native_module_lease():
 
     solver.release()
 
-    assert events == ["graphs", "graphs", "native lease"]
+    assert events == ["graphs", "graphs", "graphs", "native lease"]
     assert solver._pcg_dot is None
     assert solver._pcg_apply_cmd is None
 

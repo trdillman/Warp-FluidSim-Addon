@@ -50,9 +50,8 @@ def test_viewport_status_uses_derived_activity_and_artist_actions():
     assert 'pending["visible"]' not in pending_apply
     block = strip + transport + pending_apply
     for operator_id in (
-        "fluidsim.preview_start",
+        "screen.animation_play",
         "fluidsim.preview_pause",
-        "fluidsim.cache_preview_start",
         "fluidsim.apply_changes",
         "fluidsim.restart_simulation",
         "fluidsim.bake_cancel",
@@ -87,7 +86,7 @@ def test_scene_properties_shortcut_uses_an_existing_properties_area():
     block = _block(source, "FLUIDSIM_OT_open_scene_properties")
     assert 'bl_idname = "fluidsim.open_scene_properties"' in block
     assert 'area.type == "PROPERTIES"' in block
-    assert 'area.spaces.active.context = "SCENE"' in block
+    assert 'area.spaces.active.context = target' in block
     assert "No Properties editor is open" in block
 
 

@@ -10,6 +10,10 @@ Covers:
 3. Foreign Warp in shared extensions/.local:
    - Does not count as owned or already installed for FluidSim.
    - Refuses to overwrite or change foreign Warp.
+
+Optional FLUIDSIM_TEST_WARP_WHEEL reuses a locally retained locked wheel for
+installation/repair qualification. That mode does not qualify network transfer;
+the default still downloads from PyPI. Every reuse verifies the pin and bytes.
 """
 
 from __future__ import annotations
@@ -29,6 +33,12 @@ TOOLS_RELEASE = ROOT / "tools" / "release"
 ADDON_ROOT = ROOT / "fluidSim_warp_blender51"
 
 
+def _run_blender(*args, **kwargs):
+    """Keep background qualification processes hidden on Windows."""
+    kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    return subprocess.run(*args, check=kwargs.pop("check", False), **kwargs)
+
+
 @lru_cache(maxsize=1)
 def _find_blender() -> Path | None:
     configured = os.environ.get("BLENDER")
@@ -42,7 +52,7 @@ def _find_blender() -> Path | None:
     for candidate in candidates:
         if not candidate or not Path(candidate).is_file():
             continue
-        result = subprocess.run(
+        result = _run_blender(
             [str(candidate), "--version"], capture_output=True, text=True,
             check=False, timeout=30,
         )
@@ -120,7 +130,7 @@ def _setup_isolated_blender(base_dir: Path, package: Path, repo_id: str = "test_
         "FLUIDSIM_TEST_REPOSITORY": str(repo_dir),
     })
 
-    subprocess.run(
+    _run_blender(
         [
             str(blender),
             "--command",
@@ -138,7 +148,7 @@ def _setup_isolated_blender(base_dir: Path, package: Path, repo_id: str = "test_
         capture_output=True,
     )
 
-    subprocess.run(
+    _run_blender(
         [
             str(blender),
             "--command",
@@ -170,6 +180,27 @@ bpy.context.preferences.extensions.repos.new(
 )
 addon_utils.enable('bl_ext.test_repo.fluidsim_warp', default_set=True)
 assert 'bl_ext.test_repo.fluidsim_warp' in bpy.context.preferences.addons
+
+cached_wheel = os.environ.get('FLUIDSIM_TEST_WARP_WHEEL')
+if cached_wheel:
+    import importlib
+    import shutil
+    from pathlib import Path
+    installer = importlib.import_module('bl_ext.test_repo.fluidsim_warp.warp_installer')
+    locked = installer.get_wheel_info_for_platform()
+    payload = Path(cached_wheel)
+    assert locked is not None and installer._wheel_matches_lock(payload, locked)
+    def copy_locked_wheel(url, destination, *, expected_sha256, expected_size,
+                          progress_callback=None):
+        assert url == locked.url
+        assert expected_sha256 == locked.sha256 and expected_size == locked.size
+        assert installer._wheel_matches_lock(payload, locked)
+        shutil.copyfile(payload, destination)
+        assert installer._wheel_matches_lock(destination, locked)
+        if progress_callback:
+            progress_callback(locked.size, locked.size)
+    installer._download_wheel = copy_locked_wheel
+    print('LOCKED-WHEEL-REUSE: installation checks; network transfer excluded')
 """
     return setup + script
 
@@ -196,7 +227,7 @@ except RuntimeError as exc:
 assert not (owned_dir / 'warp').exists(), 'Warp directory was created during offline refusal!'
 print('OFFLINE-REFUSE-VERIFIED')
 """
-    result = subprocess.run(
+    result = _run_blender(
         [
             str(blender),
             "--background",
@@ -271,9 +302,27 @@ assert not (user_site / 'warp').exists()
 # A forced repair while Warp's native DLL is loaded must not mutate its tree.
 assert bpy.ops.fluidsim.install_warp(force_reinstall=True) == {'FINISHED'}
 assert warp_init.stat().st_mtime == stat_before.st_mtime
+
+# Missing version metadata must still stage a loaded runtime for restart.
+import shutil
+installer = importlib.import_module(f'{module}.warp_installer')
+runtime_files = {
+    str(path.relative_to(owned_dir)): (path.stat().st_size, path.stat().st_mtime_ns)
+    for path in (owned_dir / 'warp').rglob('*') if path.is_file()
+}
+metadata = list(owned_dir.glob('warp_lang-*.dist-info'))
+assert len(metadata) == 1
+assert metadata[0].resolve().parent == owned_dir.resolve()
+shutil.rmtree(installer._filesystem_path(metadata[0]))
+assert installer._owned_distribution_version(owned_dir) is None
+assert bpy.ops.fluidsim.install_warp(force_reinstall=True) == {'FINISHED'}
+assert installer._pending_repair_path(owned_dir).is_file()
+for relative, state in runtime_files.items():
+    path = owned_dir / relative
+    assert (path.stat().st_size, path.stat().st_mtime_ns) == state, relative
 print('ONLINE-INSTALL-AND-IDEMPOTENCY-VERIFIED')
 """
-    result = subprocess.run(
+    result = _run_blender(
         [
             str(blender),
             "--background",
@@ -302,7 +351,7 @@ assert probe.warp_version == '1.17.0', probe
 assert Path(probe.module_file).resolve() == (owned / 'warp' / '__init__.py').resolve()
 print('LOADED-NATIVE-REPAIR-AFTER-RESTART-VERIFIED')
 """
-    result = subprocess.run(
+    result = _run_blender(
         [str(blender), '--background', '--factory-startup',
          '--python-exit-code', '1', '--python-expr', _factory_script(verify_restart)],
         env=env, capture_output=True, text=True, check=False,
@@ -360,7 +409,7 @@ except RuntimeError as exc:
 
 print('SHARED-EXTENSIONS-LOCAL-REFUSAL-VERIFIED')
 """
-    result = subprocess.run(
+    result = _run_blender(
         [
             str(blender),
             "--background",
@@ -428,7 +477,7 @@ print('CORRUPTED-OWNED-INSTALL-REPAIR-VERIFIED')
         (repair, 'CORRUPTED-OWNED-INSTALL-REPAIR-STAGED'),
         (verify_restart, 'CORRUPTED-OWNED-INSTALL-REPAIR-VERIFIED'),
     ):
-        result = subprocess.run(
+        result = _run_blender(
             [str(blender), '--background', '--factory-startup',
              '--python-exit-code', '1', '--python-expr', _factory_script(script)],
             env=env, capture_output=True, text=True, check=False,
@@ -460,7 +509,7 @@ assert Path(probe.module_file).resolve() == (owned / 'warp' / '__init__.py').res
 assert not (Path(bpy.utils.user_resource('EXTENSIONS')) / '.local' / 'warp').exists()
 print('EXPLICIT-LOCAL-HELPER-INSTALL-VERIFIED')
 """
-    result = subprocess.run(
+    result = _run_blender(
         [str(blender), '--background', '--factory-startup',
          '--python-exit-code', '1', '--python-expr', _factory_script(script)],
         env=env, capture_output=True, text=True, check=False,
@@ -479,7 +528,7 @@ bpy.context.preferences.system.use_online_access = True
 assert bpy.ops.fluidsim.install_warp() == {'FINISHED'}
 print('OVERRIDE-SEED-INSTALLED')
 """
-    result = subprocess.run(
+    result = _run_blender(
         [str(blender), '--background', '--factory-startup', '--python-exit-code', '1',
          '--python-expr', _factory_script(seed)],
         env=env, capture_output=True, text=True, check=False, timeout=600,
@@ -539,7 +588,7 @@ assert ('label', 'Remove the other Warp copy first') in calls, calls
 assert ('prop', 'device') not in calls, calls
 print('AUTHORIZED-EXTERNAL-OVERRIDE-CONTROLS-VERIFIED')
 """
-    result = subprocess.run(
+    result = _run_blender(
         [str(blender), '--background', '--factory-startup', '--python-exit-code', '1',
          '--python-expr', _factory_script(script)],
         env=env, capture_output=True, text=True, check=False, timeout=600,
