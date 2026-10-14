@@ -62,6 +62,23 @@ do not qualify CUDA execution or the foreground GUI.
 
 Keep the packages, checksums and JSON reports as local qualification evidence.
 
+The optional `tools/release/run_local_gate.py` helper runs the source checks,
+CPU validators and host-platform package smoke together. Use a clean checkout,
+the pinned development environment, an owned output directory outside the
+checkout, and a reviewed SHA-256 for the certified Blender executable:
+
+```bash
+python tools/release/run_local_gate.py --output <owned-output> \
+  --blender <certified-blender> --blender-sha256 <approved-executable-sha256>
+```
+
+The helper writes `local-gate-report.json` only after successful checks and a
+final unchanged-commit/clean-checkout check. `--checks-only` excludes package
+smoke and records that exclusion. Its receipt does not replace the GPU/GUI gate
+or qualify an untested operating system. Retain Blender distribution provenance
+alongside the executable digest; supplying a digest alone does not establish it.
+
+
 ## What only the GPU gate proves
 
 These are proven only by the gate:
