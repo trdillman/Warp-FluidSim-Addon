@@ -51,7 +51,7 @@ def test_production_bake_resumes_an_existing_incomplete_manifest(tmp_path):
     assert state.destructive is False
 
 
-@pytest.mark.parametrize("solver_version", ["3.0.0", "3.1.0", "3.2.0"])
+@pytest.mark.parametrize("solver_version", ["3.0.0", "3.1.0", "3.2.0", "3.2.1"])
 @pytest.mark.parametrize("complete", [False, True])
 def test_cache_controls_match_backend_resume_policy(
     tmp_path, solver_version, complete
