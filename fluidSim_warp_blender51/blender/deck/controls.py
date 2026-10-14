@@ -7,9 +7,9 @@ that operator or writes that property, so Pending Settings classification, undo
 and file compatibility are exactly the panel's. ``tests/ui/test_deck_parity.py``
 checks each target exists and has a panel twin.
 
-Two targets belong to other 4.0 lanes and may be absent: ``fluidsim.toggle_liquid_preview``
-(Liquid Preview) and ``collider_dynamic`` (rigid coupling). They are marked
-``optional``; the Deck draws them disabled, or not at all, until the target exists.
+One target belongs to another 4.0 lane and may be absent: ``collider_dynamic``
+(rigid coupling). It is marked ``optional``; the Deck draws it disabled until the
+target exists.
 
 Pure Python: importable without ``bpy``.
 """
@@ -66,8 +66,8 @@ APPLY = operator("fluidsim.apply_changes", "Apply", "CHECKMARK",
                  "Apply the pending changes with a reset or re-initialize")
 REVERT = operator("fluidsim.revert_pending", "Revert", "LOOP_BACK",
                   "Revert the pending changes to the applied values")
-LIQUID_PREVIEW = operator("fluidsim.toggle_liquid_preview", "Liquid Preview", "SHADING_RENDERED",
-                          "Toggle the Liquid Preview look in this viewport", optional=True)
+LIQUID_PREVIEW = setting("liquid_preview_enabled", "Liquid Preview", "SHADING_RENDERED",
+                         "Toggle the Liquid Preview look in the 3D View")
 
 BAR_CONTROLS = (PLAY, PAUSE, CANCEL_BAKE, STEP, RESTART, APPLY, REVERT, LIQUID_PREVIEW)
 PENDING_ACTIONS = (APPLY, REVERT)

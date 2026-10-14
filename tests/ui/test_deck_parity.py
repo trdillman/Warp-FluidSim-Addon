@@ -114,7 +114,7 @@ def test_every_deck_control_targets_an_existing_operator_or_property_a_panel_als
 
 def test_optional_controls_are_exactly_the_targets_other_lanes_deliver(deck):
     optional = {c.target for c in deck.controls.all_controls() if c.optional}
-    assert optional == {"fluidsim.toggle_liquid_preview", "collider_dynamic"}
+    assert optional == {"collider_dynamic"}
 
 
 def test_every_deck_button_tooltip_names_its_target(deck):

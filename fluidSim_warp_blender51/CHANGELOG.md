@@ -22,6 +22,11 @@
   GPU-to-CPU readback, and nothing is drawn or registered while it is off.
 - Added the Liquid Preview pixel references
   (`tests/references/liquid_preview/`, synthetic seeded sphere + sheet).
+- **Liquid Deck**: a stage bar, a command palette (`Ctrl+K`), a radial wheel
+  (`Alt+Right Mouse`) and on-object handles in the 3D View, drawn over the
+  scene instead of in the sidebar. The **Liquid Deck** preference (Auto, On,
+  Off) controls it; under Auto it shows in new files and files saved by 4.0 or
+  later, and files saved by 3.x open without it. The sidebar panels still work.
 - Multigrid is the default pressure preconditioner. Under Jacobi a 2 m column
   settles about 6% below its true height; Multigrid holds it within 2%
   (`tests/solver/test_hydrostatic_column.py`). At a tight tolerance both

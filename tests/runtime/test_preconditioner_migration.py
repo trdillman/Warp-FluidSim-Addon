@@ -12,8 +12,45 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_pending_settings_registry import _modules  # noqa: E402
+
+_PACKAGE = "fluidSim_warp_blender51"
+_MISSING = object()
+
+
+@pytest.fixture(autouse=True)
+def _restore_addon_modules():
+    """Forget add-on modules imported here against the stub ``bpy``.
+
+    Left cached, they would serve later tests (in any directory) a module
+    bound to this file's stub instead of a fresh import against their own.
+    """
+    before = {name: mod for name, mod in sys.modules.items()
+              if name == _PACKAGE or name.startswith(_PACKAGE + ".")}
+    attrs = {}
+    for name in before:
+        parent, _, child = name.rpartition(".")
+        if parent in before:
+            attrs[name] = getattr(before[parent], child, _MISSING)
+    yield
+    for name in [n for n in sys.modules if n.startswith(_PACKAGE + ".") or n == _PACKAGE]:
+        if name not in before:
+            parent, _, child = name.rpartition(".")
+            del sys.modules[name]
+            parent_mod = before.get(parent)
+            if parent_mod is not None and child in vars(parent_mod):
+                delattr(parent_mod, child)
+    sys.modules.update(before)
+    for name, value in attrs.items():
+        parent, _, child = name.rpartition(".")
+        if value is _MISSING:
+            if child in vars(before[parent]):
+                delattr(before[parent], child)
+        else:
+            setattr(before[parent], child, value)
 
 
 def _file_compat(monkeypatch):

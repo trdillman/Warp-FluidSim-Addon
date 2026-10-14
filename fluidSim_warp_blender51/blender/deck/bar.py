@@ -199,8 +199,7 @@ def current_layout(context):
     transport = controls.transport_controls(str(state.get("id", "IDLE")), playing,
                                             bool(state.get("owns_scene")))
     return bar_layout(region.width, _ui_scale(context), transport, chip_state(scene),
-                      bake_fraction(scene),
-                      controls.operator_available(controls.LIQUID_PREVIEW.target))
+                      bake_fraction(scene), True)
 
 
 def hit_test(layout: BarLayout | None, x: float, y: float):
