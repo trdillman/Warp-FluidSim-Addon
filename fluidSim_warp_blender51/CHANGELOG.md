@@ -16,6 +16,12 @@
 
 ### Changes
 
+- **Liquid Preview** (Look stage toggle, `L` in the 3D View): a screen-space
+  fluid look drawn from the published particles, with refraction-tinted
+  thickness, a Fresnel rim and optional whitewater. Viewport only; it adds no
+  GPU-to-CPU readback, and nothing is drawn or registered while it is off.
+- Added the Liquid Preview pixel references
+  (`tests/references/liquid_preview/`, synthetic seeded sphere + sheet).
 - Multigrid is the default pressure preconditioner. Under Jacobi a 2 m column
   settles about 6% below its true height; Multigrid holds it within 2%
   (`tests/solver/test_hydrostatic_column.py`). At a tight tolerance both

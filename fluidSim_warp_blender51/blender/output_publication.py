@@ -11,6 +11,7 @@ from collections import Counter
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
+import itertools
 import sys
 
 import numpy as np
@@ -1017,6 +1018,87 @@ class PublicationPayload:
     whitewater_attributes: dict[str, np.ndarray]
 
 
+@dataclass(frozen=True)
+class PublishedPoints:
+    """Read-only hand-off of the last published points to draw layers.
+
+    Publication records the arrays it already owns, by reference, so a draw
+    layer (Liquid Preview) never asks the solver for a second readback and
+    never touches ``bpy.data``. ``frame_id`` changes on every publication;
+    consumers upload to the GPU only when it changes.
+    """
+
+    frame_id: int
+    scene_frame: int | None
+    scene_key: int | None
+    positions: np.ndarray
+    particle_radius: float
+    whitewater: np.ndarray
+    whitewater_types: np.ndarray | None
+    whitewater_radius: float
+
+    @property
+    def particle_count(self) -> int:
+        return int(len(self.positions))
+
+    @property
+    def whitewater_count(self) -> int:
+        return int(len(self.whitewater))
+
+
+_PUBLISHED_FRAME_IDS = itertools.count(1)
+_LATEST_PUBLISHED_POINTS: PublishedPoints | None = None
+_EMPTY_POINTS = np.zeros((0, 3), dtype=np.float32)
+_EMPTY_POINTS.flags.writeable = False
+
+
+def _read_only_view(values, dtype):
+    array = np.asarray(values, dtype=dtype)
+    view = array.view()
+    view.flags.writeable = False
+    return view
+
+
+def _record_published_points(scene, payload):
+    """Remember the published point arrays for draw layers (no copy)."""
+    global _LATEST_PUBLISHED_POINTS
+    positions, particle_radius = _EMPTY_POINTS, 0.0
+    if payload.particles_visible:
+        positions = _read_only_view(payload.particles, np.float32)
+        particle_radius = float(payload.particle_radius)
+    whitewater, whitewater_radius, types = _EMPTY_POINTS, 0.0, None
+    if payload.whitewater_visible:
+        whitewater = _read_only_view(payload.whitewater, np.float32)
+        whitewater_radius = float(payload.whitewater_radius)
+        raw_types = payload.whitewater_attributes.get("type")
+        if raw_types is not None and len(raw_types) == len(whitewater):
+            types = _read_only_view(raw_types, np.int32)
+    pointer = getattr(scene, "as_pointer", None)
+    frame = getattr(scene, "frame_current", None)
+    _LATEST_PUBLISHED_POINTS = PublishedPoints(
+        frame_id=next(_PUBLISHED_FRAME_IDS),
+        scene_frame=int(frame) if isinstance(frame, (int, np.integer)) else None,
+        scene_key=int(pointer()) if callable(pointer) else None,
+        positions=positions,
+        particle_radius=particle_radius,
+        whitewater=whitewater,
+        whitewater_types=types,
+        whitewater_radius=whitewater_radius,
+    )
+    return _LATEST_PUBLISHED_POINTS
+
+
+def latest_published_points() -> PublishedPoints | None:
+    """Return the most recent published point record, or ``None``."""
+    return _LATEST_PUBLISHED_POINTS
+
+
+def clear_published_points():
+    """Forget the published record (outputs removed or add-on unloading)."""
+    global _LATEST_PUBLISHED_POINTS
+    _LATEST_PUBLISHED_POINTS = None
+
+
 def _display_stride(fs):
     fraction = float(getattr(fs, "particle_display_fraction", 1.0))
     if not 0.0 < fraction < 1.0:
@@ -1505,6 +1587,7 @@ def publish_payload(scene, payload):
     else:
         for name in WHITEWATER_OUTPUT_NAMES:
             _hide_and_clear_output(scene, name)
+    _record_published_points(scene, payload)
     return _sync_render_inputs(scene)
 
 def _effective_voxel_size(scene, ds):
@@ -1683,6 +1766,7 @@ def remove_output(scene, kind, *, expected_object=None):
 
 def remove_outputs(scene=None):
     _require_bpy()
+    clear_published_points()
     if scene is not None:
         objects = [
             output_object(scene, name)

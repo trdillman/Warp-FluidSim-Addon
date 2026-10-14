@@ -266,3 +266,31 @@ class FLUIDSIM_OT_copy_bake_command(bpy.types.Operator):
         context.window_manager.clipboard = command
         self.report({"INFO"}, "Headless production-bake command copied")
         return {"FINISHED"}
+
+
+class FLUIDSIM_OT_toggle_liquid_preview(bpy.types.Operator):
+    """Switch the screen-space Liquid Preview of the published particles on or off in the 3D viewport; display only, the simulation is unaffected"""
+
+    bl_idname = "fluidsim.toggle_liquid_preview"
+    bl_label = "Toggle Liquid Preview"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        scene = getattr(context, "scene", None)
+        return getattr(scene, "fluidsim", None) is not None
+
+    def execute(self, context):
+        fs = context.scene.fluidsim
+        enabled = not bool(fs.liquid_preview_enabled)
+        fs.liquid_preview_enabled = enabled
+        if enabled:
+            from ..blender import output_publication
+
+            record = output_publication.latest_published_points()
+            if record is None or record.particle_count == 0:
+                self.report(
+                    {"WARNING"},
+                    "Liquid Preview is on but no particles are published yet; "
+                    "play the simulation in a particle view")
+        return {"FINISHED"}

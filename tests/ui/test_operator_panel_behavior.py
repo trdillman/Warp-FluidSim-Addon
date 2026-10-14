@@ -2421,6 +2421,11 @@ def _stage_context(
         particle_display_scale=1.0,
         show_whitewater=True,
         show_overlay=True,
+        liquid_preview_enabled=False,
+        liquid_preview_scale=0.5,
+        liquid_preview_radius_multiplier=2.0,
+        liquid_preview_absorption=(0.25, 0.6, 0.75),
+        liquid_preview_whitewater=True,
         surface_material=None,
         particle_material=None,
         whitewater_material=None,
@@ -2566,6 +2571,11 @@ _LOOK_SCENE_OWNED = {
     "particle_display_scale",
     "show_whitewater",
     "show_overlay",
+    "liquid_preview_enabled",
+    "liquid_preview_scale",
+    "liquid_preview_radius_multiplier",
+    "liquid_preview_absorption",
+    "liquid_preview_whitewater",
 }
 
 
@@ -2574,7 +2584,9 @@ def test_workflow_stage_look_binds_each_control_to_its_owner(monkeypatch):
     _install_bpy_stub(monkeypatch)
     ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
     context, scene_settings, domain_settings = _stage_context(
-        surface_enabled=True, whitewater_enabled=True
+        surface_enabled=True,
+        whitewater_enabled=True,
+        scene_overrides={"liquid_preview_enabled": True},
     )
 
     look = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context)
@@ -2605,7 +2617,8 @@ def test_workflow_stage_look_hides_inactive_controls(monkeypatch):
         "surface_enabled",
         "whitewater_enabled",
         "show_overlay",
-    }, "particle, smoothing and whitewater-amount controls need their gate on"
+        "liquid_preview_enabled",
+    }, "particle, smoothing, whitewater-amount and preview controls need their gate on"
 
     context, _scene, _domain = _stage_context(
         scene_overrides={"liquid_view_mode": "PARTICLES"},
