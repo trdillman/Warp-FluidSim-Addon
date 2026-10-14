@@ -108,6 +108,9 @@ _OUTPUT_REGISTRY_FIELDS = frozenset({
     "surface_material", "particle_material", "whitewater_material",
     "foam_material", "bubble_material", "spray_material",
     "output_collection_name", "show_overlay",
+    "liquid_preview_enabled", "liquid_preview_scale",
+    "liquid_preview_radius_multiplier", "liquid_preview_absorption",
+    "liquid_preview_whitewater",
 })
 _SURFACE_REGISTRY_FIELDS = frozenset({
     "surface_enabled", "particle_radius_scale",

@@ -340,6 +340,27 @@ def _on_live_changed(self, context):
         self.status = f"Live toggle failed: {exc}"
 
 
+def _on_liquid_preview_changed(self, context):
+    """Add or remove the Liquid Preview draw handler; never republish."""
+    try:
+        from .blender.liquid_preview import handler
+
+        handler.sync_registration()
+        handler.tag_redraw()
+    except Exception as exc:  # noqa: BLE001
+        self.status = f"Liquid Preview toggle failed: {exc}"
+
+
+def _redraw_liquid_preview(self, context):
+    """Display-only change: redraw the viewport, never touch the solver."""
+    try:
+        from .blender.liquid_preview import handler
+
+        handler.tag_redraw()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _on_cache_playback_changed(self, context):
     scene = _scene_for_mode_callback(self, context)
     if scene is None:
@@ -972,6 +993,27 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Viewport Overlay", default=True,
         update=_request_output_refresh,
         description="Enable to show FluidSim status and statistics in the viewport; disable to hide the overlay without stopping simulation")
+    liquid_preview_enabled: BoolProperty(
+        name="Liquid Preview", default=False,
+        update=_on_liquid_preview_changed,
+        description="Enable to draw the published particles as a smooth liquid surface in the 3D viewport; disable to remove the preview draw entirely. Display only: the simulation is unaffected")
+    liquid_preview_scale: FloatProperty(
+        name="Preview Resolution", default=0.5, min=0.1, max=1.0,
+        subtype="FACTOR", update=_redraw_liquid_preview,
+        description="Set the Liquid Preview render resolution as a fraction of the viewport; higher values look sharper but cost more GPU time per redraw")
+    liquid_preview_radius_multiplier: FloatProperty(
+        name="Preview Radius", default=2.0, min=0.25, max=8.0,
+        update=_redraw_liquid_preview,
+        description="Scale the particle radius used by Liquid Preview; higher values merge particles into a smoother, fuller surface, lower values show more droplet detail")
+    liquid_preview_absorption: FloatVectorProperty(
+        name="Absorption Color", subtype="COLOR", size=3,
+        default=(0.25, 0.6, 0.75), min=0.0, max=1.0,
+        update=_redraw_liquid_preview,
+        description="Set the colour seen through one unit of liquid in Liquid Preview; darker colours make thick regions absorb more light and look deeper")
+    liquid_preview_whitewater: BoolProperty(
+        name="Preview Whitewater", default=True,
+        update=_redraw_liquid_preview,
+        description="Enable to draw published foam, spray and bubbles on top of Liquid Preview; disable to show only the liquid body")
     report_path: StringProperty(
         name="Report Path", subtype="FILE_PATH", default="//fluidsim_report.json",
         description="Set where validation and profiling JSON is written; changing it sends the next report to a different file")

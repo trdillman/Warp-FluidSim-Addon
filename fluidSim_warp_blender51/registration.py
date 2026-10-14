@@ -62,6 +62,9 @@ STEPS: tuple[Step, ...] = (
          "register_handlers", "unregister_handlers"),
     Step("render handlers", "blender.render",
          "register_handlers", "unregister_handlers"),
+    # Liquid Preview: a draw handler exists only while the mode is on.
+    Step("liquid preview", "blender.liquid_preview.handler",
+         "register", "unregister"),
     Step("viewport overlay", "blender.viewport_overlay",
          "register_overlay", "unregister_overlay"),
     # Deferred kernel prewarm: scheduled only once everything else registered,
