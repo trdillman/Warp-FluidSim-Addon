@@ -1,7 +1,8 @@
 """Interchange export from a baked cache: Alembic mesh sequence of the liquid surface.
 
-The operator is cache-driven and never touches the solver. Blender's own
-Alembic exporter walks the frame range and evaluates the scene per frame; each
+The operator is cache-driven and refuses export while a live solver exists.
+Pausing Live does not release that session; exporting must never release it.
+Blender's own Alembic exporter walks the frame range and evaluates the scene per frame; each
 evaluation fires ``frame_change_post``, which is exactly how cache playback
 publishes a frame (``playback.handle_frame_change`` -> ``play_cache_frame`` ->
 ``output_publication.update_outputs_from_cache_frame``). So the export is:
@@ -108,10 +109,26 @@ def available_frames(scene) -> tuple[int, ...]:
     return frames
 
 
-def _export_frames(scene, frame_start: int, frame_end: int) -> tuple[int, ...]:
-    """Cached frames inside the requested range; ``0`` bounds mean the whole cache."""
+def _require_export_idle(scene):
+    """Refuse before changing modes: cache playback tears down the singleton."""
+    from . import scene_bridge
+
     if production_bake.bake_is_active(scene):
         raise ExportRefused("A production bake is running. Wait for it or cancel it.")
+    sess = scene_bridge.session()
+    if sess.active:
+        owner = "This scene" if sess.owns_scene(scene) else "Another scene"
+        raise ExportRefused(
+            f"{owner} has an active live solver session (even if Live is paused). "
+            "Alembic/USD export would discard its particle and rigid-body state. "
+            "Export from a separate Blender instance, or explicitly switch the "
+            "owning scene to Cache Playback first if you intend to discard "
+            "that live state.")
+
+
+def _export_frames(scene, frame_start: int, frame_end: int) -> tuple[int, ...]:
+    """Cached frames inside the requested range; ``0`` bounds mean the whole cache."""
+    _require_export_idle(scene)
     frames = available_frames(scene)
     start = int(frame_start) or frames[0]
     end = int(frame_end) or frames[-1]
@@ -214,6 +231,10 @@ class _SceneState:
     """Everything the export touches, captured up front and restored on exit."""
 
     def __init__(self, scene, objects):
+        # Recheck after the file picker / for direct callers with a stale plan.
+        # Outside the export try/finally: a refusal must not run restore(),
+        # whose playback transition could otherwise initialize a new solver.
+        _require_export_idle(scene)
         self.scene = scene
         self.objects = tuple(objects)
         fs = scene.fluidsim
