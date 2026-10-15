@@ -13,7 +13,7 @@ Solver-free (``CUDA_VISIBLE_DEVICES=-1``). docs/specs/4.0/SPEC-rigid-coupling.md
   keyframes in a FluidSim-owned action, and a Blender rigid body on the object
   is set to kinematic (Animated) with a reason;
 * Reset clears the published keyframes and restores the authored pose;
-* the Alembic export carries the collider's solved motion.
+* the Alembic and USD exports carry the collider's solved motion.
 
 Prints ``RIGID_PUBLICATION_OK`` on success.
 
@@ -227,6 +227,35 @@ def main(work):
             check(f"alembic frame {frame} carries the pose", error < 1e-4,
                   f"max error {error:.2e}")
     bpy.context.window.scene = scene
+
+    # USD carries it too, as time-sampled transforms with no sampler modifier.
+    usda = work / "rigid.usda"
+    usd_plan = interchange.plan_usd_export(scene)
+    check("USD export plan includes the Dynamic collider",
+          any(obj is cork for obj in usd_plan.carried))
+    check("USD export gives the collider no sampler",
+          not any(obj is cork for obj in usd_plan.objects))
+    result = bpy.ops.fluidsim.export_usd(filepath=str(usda))
+    check("USD export finished", "FINISHED" in result, str(result))
+    from pxr import Usd, UsdGeom
+
+    stage = Usd.Stage.Open(str(usda))
+    prims = [p for p in stage.Traverse() if p.GetName() == "Cork"]
+    check("cork prim in the USD file", len(prims) == 1,
+          str([str(p.GetPath()) for p in stage.Traverse()]))
+    if prims:
+        xform = UsdGeom.Xformable(prims[0])
+        samples = set(xform.GetTimeSamples())
+        check("cork transform is sampled every frame",
+              all(frame in samples for frame in range(1, FRAMES + 1)), str(sorted(samples)))
+        for frame in range(1, FRAMES + 1):
+            # Gf matrices are row-vector; transpose to Blender's matrix_world.
+            gf = xform.ComputeLocalToWorldTransform(frame)
+            world = np.array([[gf[i][j] for j in range(4)] for i in range(4)]).T
+            expected = rigid_scene.pose_matrix(records[frame], rest)
+            error = float(np.abs(world - expected).max())
+            check(f"usd frame {frame} carries the pose", error < 1e-4,
+                  f"max error {error:.2e}")
 
     # Reset clears the solver output and restores the authored pose.
     cleared = rigid_publication.clear_poses(scene)

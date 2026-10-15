@@ -42,7 +42,9 @@
   primvar per exported attribute (speed, age, velocity and the rest). Points
   are the cached particles, not the viewport/render spheres. Alembic still
   exports only the surface; on Blender 5.2 it writes point clouds as empty
-  transforms. The zero-radius capacity padding is not written.
+  transforms. The zero-radius capacity padding is not written. Render-enabled
+  Dynamic colliders are written too, as in Alembic, with their solved poses
+  as per-frame transforms.
 - Experimental learned pressure initial guess, **hidden and off**. It did not
   meet its ship gate: even a perfect one-value-per-tile guess saves at most
   1.2x PCG iterations on the four demos, against the required 2x. No weights
@@ -55,7 +57,7 @@
   **Density**, **Drag**, **Initial Velocity** and **Lock** axes. Its pose is
   published as `matrix_world` keyframes on an add-on-owned action, cleared on
   Reset, saved per frame in the cache (format 3.1, resumable) and carried by
-  Alembic export. Forces are gathered in a fixed order without atomics, so
+  Alembic and USD export. Forces are gathered in a fixed order without atomics, so
   bakes stay bitwise repeatable. A Dynamic object cannot also be a source or
   sink, and its Blender rigid body is forced to Animated (kinematic). Body to
   body and body to static-collider contact are not modelled in 4.0; bodies
