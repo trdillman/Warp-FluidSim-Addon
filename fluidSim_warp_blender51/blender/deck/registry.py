@@ -55,6 +55,12 @@ class DeckRegistry:
     def has_draw_handler(self, key) -> bool:
         return key in self._draw_handlers
 
+    def draw_handle(self, key):
+        """The handle registered under ``key`` now, or ``None``; tells a modal whether it
+        still owns its handler."""
+        entry = self._draw_handlers.get(key)
+        return entry[1] if entry is not None else None
+
     # Keymaps, app handlers, timers -----------------------------------------
 
     def add_keymap_item(self, keymap_name, space_type, idname, key_type, value, **modifiers):

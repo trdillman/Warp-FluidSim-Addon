@@ -101,8 +101,9 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
         self.hover = None
         self.region = context.region
         self.opened_with = event.type
-        REGISTRY.add_draw_handler("wheel", bpy.types.SpaceView3D, _draw_wheel, (self,),
-                                  "WINDOW", "POST_PIXEL")
+        # Replacing the handler retires a wheel still open in another window.
+        self.handle = REGISTRY.add_draw_handler("wheel", bpy.types.SpaceView3D, _draw_wheel,
+                                                (self,), "WINDOW", "POST_PIXEL")
         context.window_manager.modal_handler_add(self)
         context.area.tag_redraw()
         return {"RUNNING_MODAL"}
@@ -110,10 +111,11 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
     def _close(self, context):
         from .registry import REGISTRY
 
-        try:
-            REGISTRY.remove_draw_handler("wheel")
-        except Exception as exc:  # noqa: BLE001
-            print(f"FluidSim Liquid Deck: could not remove the wheel draw handler: {exc!r}")
+        if REGISTRY.draw_handle("wheel") is getattr(self, "handle", None):
+            try:
+                REGISTRY.remove_draw_handler("wheel")
+            except Exception as exc:  # noqa: BLE001
+                print(f"FluidSim Liquid Deck: could not remove the wheel draw handler: {exc!r}")
         if getattr(context, "area", None) is not None:
             context.area.tag_redraw()
 
@@ -128,7 +130,14 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
         return {"FINISHED"}
 
     def modal(self, context, event):
-        context.area.tag_redraw()
+        from .registry import REGISTRY
+
+        area = getattr(context, "area", None)
+        if area is None or REGISTRY.draw_handle("wheel") is not self.handle:
+            # The area closed, or a newer wheel took the handler: finish, keep the event.
+            self._close(context)
+            return {"CANCELLED", "PASS_THROUGH"}
+        area.tag_redraw()
         scale = bar._ui_scale(context)
         target = slot_at(event.mouse_region_x - self.centre[0],
                          event.mouse_region_y - self.centre[1], scale)

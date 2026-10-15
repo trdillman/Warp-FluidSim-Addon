@@ -314,8 +314,9 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
         self.editing = None
         self.edit_text = ""
         self.region = context.region
-        REGISTRY.add_draw_handler("palette", bpy.types.SpaceView3D, _draw_palette,
-                                  (self,), "WINDOW", "POST_PIXEL")
+        # Replacing the handler retires a palette still open in another window.
+        self.handle = REGISTRY.add_draw_handler("palette", bpy.types.SpaceView3D,
+                                                _draw_palette, (self,), "WINDOW", "POST_PIXEL")
         context.window_manager.modal_handler_add(self)
         context.area.tag_redraw()
         return {"RUNNING_MODAL"}
@@ -323,10 +324,11 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
     def _close(self, context):
         from .registry import REGISTRY
 
-        try:
-            REGISTRY.remove_draw_handler("palette")
-        except Exception as exc:  # noqa: BLE001
-            print(f"FluidSim Liquid Deck: could not remove the palette draw handler: {exc!r}")
+        if REGISTRY.draw_handle("palette") is getattr(self, "handle", None):
+            try:
+                REGISTRY.remove_draw_handler("palette")
+            except Exception as exc:  # noqa: BLE001
+                print(f"FluidSim Liquid Deck: could not remove the palette draw handler: {exc!r}")
         if getattr(context, "area", None) is not None:
             context.area.tag_redraw()
 
@@ -356,7 +358,14 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
         return not (x0 <= event.mouse_region_x <= x1 and y0 <= event.mouse_region_y <= y1)
 
     def modal(self, context, event):
-        context.area.tag_redraw()
+        from .registry import REGISTRY
+
+        area = getattr(context, "area", None)
+        if area is None or REGISTRY.draw_handle("palette") is not self.handle:
+            # The area closed, or a newer palette took the handler: finish, keep the event.
+            self._close(context)
+            return {"CANCELLED", "PASS_THROUGH"}
+        area.tag_redraw()
         if event.type in {"LEFTMOUSE", "RIGHTMOUSE"} and event.value == "PRESS":
             if self._outside(context, event):
                 self._close(context)
