@@ -9,9 +9,10 @@ from any Blender tool; a bake is cancelled with the bar's Cancel Bake button.
 
 The modal keeps no settings state: only which bar item is under the pointer, for
 the hover highlight. A generation number retires modals left from an earlier
-``register()`` (add-on reload). A timer started by ``register()`` starts the
-modal in each window, and again after a file load drops it; ``--background``
-has no windows and starts none.
+``register()`` (add-on reload) or from before a file load (the load-post handler
+starts a new generation, whether or not Blender called ``cancel()``). A timer
+started by ``register()`` starts the modal in each window, and again after a file
+load drops it; ``--background`` has no windows and starts none.
 """
 
 from __future__ import annotations

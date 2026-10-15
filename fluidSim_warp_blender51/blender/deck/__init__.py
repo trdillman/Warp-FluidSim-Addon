@@ -13,8 +13,9 @@ Visibility is decided by two things the user owns:
 - the scene flag ``scene.fluidsim.deck_shown`` (the header toggle).
 
 The load-post handler only reads the file into the Deck (it clears the flag of
-pre-4.0 scenes under ``AUTO``); nothing in the Deck writes the file's state
-back on load.
+pre-4.0 scenes under ``AUTO``) and starts a new event-layer generation, so the
+Deck bar's modal restarts in every window; nothing in the Deck writes the file's
+state back on load.
 
 Everything the Deck adds to Blender goes through ``registry.REGISTRY``.
 Submodules load on first use, so this package imports without ``gpu``.
@@ -83,6 +84,11 @@ def _on_deck_load_post(_filepath):
 
     from ..file_compat import scene_saved_by_deck_release
 
+    from . import modal
+
+    # Retire the old file's event modals even if Blender dropped them without
+    # cancel(); the ensure timer then starts one per window again.
+    modal.new_generation()
     context = bpy.context
     data = getattr(bpy, "data", None)
     if deck_mode(context) == "AUTO" and getattr(data, "filepath", ""):
