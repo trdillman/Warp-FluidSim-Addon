@@ -32,6 +32,9 @@ class Obj:
     def hide_set(self, value):
         self.hidden = value
 
+    def visible_get(self, view_layer=None):
+        return not self.hidden
+
 
 class Objects(list):
     active = None
@@ -205,6 +208,67 @@ def test_partial_entry_failure_restores_scene(export_env, monkeypatch, fmt):
         getattr(e.module, "export_" + fmt)(e.scene, "out", plan)
     assert snapshot(e) == before
     assert not e.bridge.session().active
+
+
+def _cork(e, name="cork", hide_render=False):
+    cork = Obj()
+    cork.name, cork.hidden, cork.hide_render = name, False, hide_render
+    e.scene.objects.append(cork)
+    return cork
+
+
+def test_usd_plan_carries_render_enabled_dynamic_colliders(export_env, monkeypatch):
+    e = export_env
+    cork, unrendered = _cork(e), _cork(e, "unrendered", hide_render=True)
+    asked = []
+
+    def carried_objects(scene, base_dir, frames):
+        asked.append((scene, base_dir, frames))
+        return (cork, unrendered)
+
+    monkeypatch.setattr(e.module.rigid_publication, "carried_objects", carried_objects)
+    plan = e.module.plan_usd_export(e.scene)
+    assert plan.carried == (cork,)
+    assert asked == [(e.scene, "cache", (1, 2))]
+    # Carried bodies are rigid transforms: no sampler goes on them.
+    assert cork not in plan.objects
+
+
+def test_usd_plan_with_only_carried_colliders_is_refused_like_alembic(
+        export_env, monkeypatch):
+    e = export_env
+    cork = _cork(e)
+    monkeypatch.setattr(e.module.rigid_publication, "carried_objects", lambda *a: (cork,))
+    monkeypatch.setattr(e.module.output_publication, "output_object", lambda *a: None)
+    with pytest.raises(e.module.ExportRefused, match="no FluidSim outputs"):
+        e.module.plan_usd_export(e.scene)
+    with pytest.raises(e.module.ExportRefused, match="no FluidSim surface"):
+        e.module.plan_export(e.scene)
+
+
+def test_usd_export_keys_and_selects_carried_colliders_without_a_sampler(
+        export_env, monkeypatch):
+    e = export_env
+    cork = _cork(e)
+    before = snapshot(e)
+    keyed, sampled, exported = [], [], []
+    monkeypatch.setattr(e.module.rigid_publication, "publish_cache_frames",
+                        lambda scene, base_dir, frames: keyed.append((base_dir, frames)))
+    monkeypatch.setattr(e.module._UsdSamplers, "attach",
+                        lambda self, objects: sampled.extend(objects))
+
+    def usd_export(**kwargs):
+        exported.extend(o for o in e.scene.objects if o.select_get())
+        return {"FINISHED"}
+
+    e.bpy.ops.wm.usd_export = usd_export
+    plan = e.module.UsdExportPlan("cache", (1, 2), e.obj, (), (cork,))
+    assert e.module.export_usd(e.scene, "out", plan) == []
+    assert keyed == [("cache", (1, 2))]
+    assert exported == [e.obj, cork]
+    assert sampled == [e.obj]
+    assert snapshot(e) == before
+
 
 @pytest.mark.parametrize("fmt", ["alembic", "usd"])
 @pytest.mark.parametrize("entry", ["invoke", "execute"])

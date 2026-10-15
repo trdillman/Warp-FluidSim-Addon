@@ -25,13 +25,18 @@ a replaced datablock becomes a separate prim. So the export
 
 * reserves each point cloud's capacity for the range's largest frame (from the
   cache manifest) and holds shrinking off, so no cloud is replaced mid-range;
-* adds a temporary Geometry Nodes modifier to every exported object: Scene
+* adds a temporary Geometry Nodes modifier to every exported output: Scene
   Time x 0 as a Set Position offset (makes the object time-dependent) and, on
   point clouds, a Delete Geometry of zero-radius points. Publication pads
   clouds to capacity with zero-radius points; trimming them keeps the file to
   the live points (every published live point has a positive radius);
 * walks the scene frame range, which it sets to the export range (the 5.2
   exporter has no range arguments), and restores it afterwards.
+
+Render-enabled Dynamic colliders ride along as for Alembic
+(``UsdExportPlan.carried``): keyed and selected by ``_SceneState``, so USD
+writes their solved poses as time-sampled transforms. They get no sampler:
+their mesh never changes, only the keyed transform does.
 """
 
 from __future__ import annotations
@@ -166,6 +171,9 @@ class UsdExportPlan:
     frames: tuple[int, ...]
     surface: object | None
     points: tuple[tuple[object, int], ...]
+    # Render-enabled Dynamic colliders whose solved poses the cache holds, as
+    # for Alembic: keyed and selected by _SceneState, never given a sampler.
+    carried: tuple = ()
 
     @property
     def start(self) -> int:
@@ -177,6 +185,7 @@ class UsdExportPlan:
 
     @property
     def objects(self) -> tuple[object, ...]:
+        """The liquid outputs: each gets a sampler (``carried`` is not included)."""
         head = () if self.surface is None else (self.surface,)
         return head + tuple(obj for obj, _peak in self.points)
 
@@ -190,11 +199,13 @@ def _range_point_counts(base_dir: str, frames) -> tuple[int, int]:
 
 
 def plan_usd_export(scene, frame_start: int = 0, frame_end: int = 0) -> UsdExportPlan:
-    """Resolve the range and the outputs to write: the surface (when it renders)
-    and every rendering point output with points somewhere in the range.
+    """Resolve the range and the outputs to write: the surface (when it renders),
+    every rendering point output with points somewhere in the range, and the
+    rendering Dynamic colliders the cache carries.
 
     Each typed whitewater output (foam, bubbles, spray) is sized for the
-    combined whitewater count, an upper bound on its own.
+    combined whitewater count, an upper bound on its own. As for Alembic,
+    carried colliders alone are not enough to export.
     """
     frames = _export_frames(scene, frame_start, frame_end)
     base_dir = bpy.path.abspath(scene.fluidsim.cache_path)
@@ -215,8 +226,12 @@ def plan_usd_export(scene, frame_start: int = 0, frame_end: int = 0) -> UsdExpor
         raise ExportRefused(
             "There are no FluidSim outputs to export. Enable the surface, particle "
             "or whitewater output and play a cached frame first.")
+    carried = tuple(
+        obj for obj in rigid_publication.carried_objects(scene, base_dir, frames)
+        if not obj.hide_render)
     return UsdExportPlan(
-        base_dir=base_dir, frames=frames, surface=surface, points=tuple(points))
+        base_dir=base_dir, frames=frames, surface=surface, points=tuple(points),
+        carried=carried)
 
 
 def _set_frame_range(scene, start: int, end: int):
