@@ -1777,13 +1777,21 @@ def update_outputs(scene, sess, *, force_surface=False):
     )
     payload = prepare_live_payload(
         scene, host, publish_surface=publish_surface)
-    return publish_payload(scene, payload)
+    publication = publish_payload(scene, payload)
+    from . import rigid_publication
+
+    rigid_publication.publish_live(scene, sess)
+    return publication
 
 
 def update_outputs_from_cache_frame(scene, frame_data):
     """Write a cached frame snapshot into the regular Blender output objects."""
     _require_bpy()
-    return publish_payload(scene, prepare_cache_payload(scene, frame_data))
+    publication = publish_payload(scene, prepare_cache_payload(scene, frame_data))
+    from . import rigid_publication
+
+    rigid_publication.publish_cache_frame(scene, frame_data)
+    return publication
 
 
 def _clear_points(scene, name):

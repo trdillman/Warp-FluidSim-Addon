@@ -50,6 +50,16 @@
   missing)" in the Live Readout. Off, results and cache identity are
   unchanged. Training tools are in `tools/learned_guess/`; numbers are in
   `docs/RELEASE_4_0_STATUS.md`.
+- **Dynamic colliders** (two-way rigid coupling). A collider marked
+  **Dynamic** floats, sinks or is pushed by the liquid according to its
+  **Density**, **Drag**, **Initial Velocity** and **Lock** axes. Its pose is
+  published as `matrix_world` keyframes on an add-on-owned action, cleared on
+  Reset, saved per frame in the cache (format 3.1, resumable) and carried by
+  Alembic export. Forces are gathered in a fixed order without atomics, so
+  bakes stay bitwise repeatable. A Dynamic object cannot also be a source or
+  sink, and its Blender rigid body is forced to Animated (kinematic). Body to
+  body and body to static-collider contact are not modelled in 4.0; bodies
+  rest against the domain walls. The crown_splash demo gains a floating cork.
 
 ### Corrections
 

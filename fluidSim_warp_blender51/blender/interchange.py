@@ -7,6 +7,8 @@ publishes a frame (``playback.handle_frame_change`` -> ``play_cache_frame`` ->
 ``output_publication.update_outputs_from_cache_frame``). So the export is:
 cache playback on, live on (the frame handler returns early otherwise), only
 the surface object selected, then ``bpy.ops.wm.alembic_export`` over the range.
+Dynamic colliders (4.0 two-way rigid coupling) ride along: their cached poses
+are keyed first, then they are selected with the surface (``ExportPlan.carried``).
 Every piece of scene state the export changes is restored in a ``finally``.
 
 The export must not run inside ``playback.suppress_frame_handlers``: that would
@@ -40,7 +42,7 @@ import bpy
 from bpy.props import IntProperty, StringProperty
 
 from ..io import cache, cache_schema
-from . import output_publication, playback, production_bake
+from . import output_publication, playback, production_bake, rigid_publication
 
 SURFACE_KIND = output_publication.SURFACE_NAME
 
@@ -56,6 +58,8 @@ class ExportPlan:
     base_dir: str
     frames: tuple[int, ...]
     surface: object
+    # Dynamic colliders whose solved poses the cache holds (cache v3.1).
+    carried: tuple = ()
 
     @property
     def start(self) -> int:
@@ -128,10 +132,12 @@ def plan_export(scene, frame_start: int = 0, frame_end: int = 0) -> ExportPlan:
         raise ExportRefused(
             "There is no FluidSim surface object. Enable the surface output and "
             "play a cached frame first.")
+    base_dir = bpy.path.abspath(scene.fluidsim.cache_path)
     return ExportPlan(
-        base_dir=bpy.path.abspath(scene.fluidsim.cache_path),
+        base_dir=base_dir,
         frames=frames,
         surface=surface,
+        carried=rigid_publication.carried_objects(scene, base_dir, frames),
     )
 
 
@@ -242,6 +248,14 @@ class _SceneState:
             obj.hide_set(False)
             obj.select_set(True)
         self.view_layer.objects.active = self.objects[0]
+        carried = getattr(plan, "carried", ())
+        if carried:
+            # Key every cached pose before the exporter samples transforms.
+            rigid_publication.publish_cache_frames(
+                scene, plan.base_dir, plan.frames)
+            for obj in carried:
+                if obj.visible_get(view_layer=self.view_layer):
+                    obj.select_set(True)
 
     def restore(self):
         scene = self.scene

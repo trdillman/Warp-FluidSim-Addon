@@ -8,6 +8,10 @@ Format 3 (FluidSim 3.0) adds, as required fields, the per-frame source stamp
 and particle counts plus the grid, transfer-mode, narrow-band, platform and
 source-schema facts of the bake. A format-2 manifest is refused with
 ``LEGACY_2X_CACHE_MESSAGE``; nothing is defaulted or migrated.
+
+Format 3.1 (FluidSim 4.0) is additive: the manifest states ``format_minor`` and
+a frame entry may carry ``rigid_bodies`` (the Dynamic collider poses of that
+frame). A 3.0 manifest has neither and loads as minor 0 with empty records.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from typing import Any, Callable, Mapping
 from .checkpoint import CHECKPOINT_FORMAT_VERSION
 
 FORMAT_VERSION = 3
+FORMAT_MINOR_VERSION = 1
 LEGACY_2X_FORMAT_VERSION = 2
 LEGACY_2X_CACHE_MESSAGE = (
     "This cache was baked by FluidSim 2.x and cannot be played by 3.0. "
@@ -196,6 +201,73 @@ def _require_transfer_mode(value: Any) -> str:
     return value
 
 
+_RIGID_VECTORS = (("pos", 3), ("quat", 4), ("lin_vel", 3), ("ang_vel", 3),
+                  ("rest_com", 3))
+
+
+def _float_tuple(value: Any, name: str, size: int) -> tuple[float, ...]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise ValueError(f"{name} must be an array of {size} numbers")
+    if len(value) != size:
+        raise ValueError(f"{name} must have {size} components")
+    result = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise ValueError(f"{name} must hold numbers")
+        if not math.isfinite(float(item)):
+            raise ValueError(f"{name} must be finite")
+        result.append(float(item))
+    return tuple(result)
+
+
+@dataclass(frozen=True)
+class RigidBodyRecord:
+    """One Dynamic collider's state at the end of a committed frame (v3.1).
+
+    ``pos`` is the centre of mass, ``quat`` (w, x, y, z) the rotation from the
+    authored rest pose, and ``rest_com`` the centre of mass in that rest pose:
+    the object's world matrix is ``T(pos) R(quat) T(-rest_com) M_rest``.
+    """
+
+    object_uid: str
+    pos: tuple[float, ...]
+    quat: tuple[float, ...]
+    lin_vel: tuple[float, ...]
+    ang_vel: tuple[float, ...]
+    rest_com: tuple[float, ...]
+
+    def validate(self) -> "RigidBodyRecord":
+        _require_nonempty_string(self.object_uid, "rigid body object_uid")
+        for name, size in _RIGID_VECTORS:
+            _float_tuple(getattr(self, name), f"rigid body {name}", size)
+        return self
+
+    def as_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {"object_uid": self.object_uid}
+        for name, _ in _RIGID_VECTORS:
+            result[name] = list(getattr(self, name))
+        return result
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "RigidBodyRecord":
+        if not isinstance(value, Mapping):
+            raise ValueError("rigid body record must be a JSON object")
+        expected = {"object_uid", *(name for name, _ in _RIGID_VECTORS)}
+        missing = expected - set(value)
+        unknown = set(value) - expected
+        if missing or unknown:
+            raise ValueError(
+                f"invalid rigid body record keys; missing={sorted(missing)}, "
+                f"unknown={sorted(unknown)}")
+        vectors = {}
+        for name, _ in _RIGID_VECTORS:
+            item = value[name]
+            # Keep malformed values as given so validate() reports them.
+            vectors[name] = (tuple(item) if isinstance(item, (list, tuple))
+                             else item)
+        return cls(object_uid=value["object_uid"], **vectors)
+
+
 @dataclass(frozen=True)
 class FrameEntry:
     """One fully committed frame/checkpoint pair."""
@@ -218,6 +290,9 @@ class FrameEntry:
     source_frame_stamp: str
     whitewater_count: int
     particle_count: int
+    # Cache v3.1: Dynamic collider poses at the end of this frame. Optional in
+    # the manifest (absent = none, and every 3.0 cache).
+    rigid_bodies: tuple[RigidBodyRecord, ...] = ()
 
     def validate(self, *, key: int | None = None) -> "FrameEntry":
         # An entry is frozen and every field is an immutable scalar, so once
@@ -252,16 +327,33 @@ class FrameEntry:
         _require_sha256(self.source_frame_stamp, "source_frame_stamp")
         _require_int(self.whitewater_count, "whitewater_count", minimum=0)
         _require_int(self.particle_count, "particle_count", minimum=0)
+        if not isinstance(self.rigid_bodies, tuple):
+            raise ValueError("rigid_bodies must be a tuple of records")
+        uids = set()
+        for record in self.rigid_bodies:
+            if not isinstance(record, RigidBodyRecord):
+                raise ValueError("rigid_bodies must hold RigidBodyRecord values")
+            record.validate()
+            if record.object_uid in uids:
+                raise ValueError(
+                    f"rigid body {record.object_uid!r} is recorded twice")
+            uids.add(record.object_uid)
         object.__setattr__(self, "_validated", True)
         return self
 
     def as_record(self) -> dict[str, Any]:
         """The entry as a fresh plain dict, equal to ``dataclasses.asdict``.
 
-        Every field is an immutable scalar, so a shallow dict is already the
-        deep copy ``asdict`` would build, at a fraction of its cost.
+        Every other field is an immutable scalar, so a shallow dict is the
+        deep copy ``asdict`` would build, at a fraction of its cost. Rigid
+        records are written only when the frame has any, so a frame without
+        Dynamic colliders is byte-for-byte a 3.0 entry.
         """
-        return {name: getattr(self, name) for name in _FRAME_ENTRY_FIELDS}
+        result = {name: getattr(self, name) for name in _FRAME_ENTRY_SCALARS}
+        if self.rigid_bodies:
+            result["rigid_bodies"] = [
+                record.as_dict() for record in self.rigid_bodies]
+        return result
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "FrameEntry":
@@ -269,17 +361,24 @@ class FrameEntry:
             raise ValueError("frame entry must be a JSON object")
         expected = set(cls.__dataclass_fields__)
         actual = set(value)
-        missing = expected - actual
+        missing = expected - actual - {"rigid_bodies"}
         unknown = actual - expected
         if missing or unknown:
             raise ValueError(
                 f"invalid frame entry keys; missing={sorted(missing)}, "
                 f"unknown={sorted(unknown)}"
             )
-        return cls(**{name: value[name] for name in expected}).validate()
+        bodies = value.get("rigid_bodies", ())
+        if not isinstance(bodies, (list, tuple)):
+            raise ValueError("rigid_bodies must be an array")
+        kwargs = {name: value[name] for name in expected if name != "rigid_bodies"}
+        kwargs["rigid_bodies"] = tuple(
+            RigidBodyRecord.from_dict(item) for item in bodies)
+        return cls(**kwargs).validate()
 
 
-_FRAME_ENTRY_FIELDS = tuple(item.name for item in fields(FrameEntry))
+_FRAME_ENTRY_SCALARS = tuple(
+    item.name for item in fields(FrameEntry) if item.name != "rigid_bodies")
 
 
 @dataclass
@@ -306,6 +405,8 @@ class CacheManifestV3:
     effect_signature: str = ""
     effect_inventory: tuple[dict[str, Any], ...] = ()
     frames: dict[int, FrameEntry] = field(default_factory=dict)
+    # 0 = a 3.0 manifest (the key is absent); 1 = 3.1, rigid records allowed.
+    format_minor: int = FORMAT_MINOR_VERSION
 
     @classmethod
     def new(
@@ -349,6 +450,7 @@ class CacheManifestV3:
             effect_signature=str(effect_signature),
             effect_inventory=_normalize_effect_inventory(effect_inventory),
             frames={},
+            format_minor=FORMAT_MINOR_VERSION,
         )
         return manifest.validate()
 
@@ -366,6 +468,11 @@ class CacheManifestV3:
             raise ValueError(
                 f"checkpoint_format_version {self.checkpoint_format_version} cannot "
                 f"be read; expected {CHECKPOINT_FORMAT_VERSION}")
+        _require_int(self.format_minor, "format_minor", minimum=0)
+        if self.format_minor > FORMAT_MINOR_VERSION:
+            raise ValueError(
+                f"cache format 3.{self.format_minor} is newer than this "
+                f"add-on reads (3.{FORMAT_MINOR_VERSION}); update FluidSim")
         _require_int(self.source_schema_version, "source_schema_version", minimum=1)
         _require_transfer_mode(self.transfer_mode)
         _normalize_grid_spec(self.grid_spec)
@@ -405,6 +512,9 @@ class CacheManifestV3:
                 raise ValueError(f"frame {frame} settings signature drift")
             if entry.source_signature != self.source_signature:
                 raise ValueError(f"frame {frame} source signature drift")
+            if entry.rigid_bodies and self.format_minor < 1:
+                raise ValueError(
+                    f"frame {frame} has rigid body records in a 3.0 manifest")
 
         # Production cache commits are contiguous. A later manifest entry with
         # a gap would expose an invalid resume point even if its files exist.
@@ -507,7 +617,7 @@ class CacheManifestV3:
                 raise ValueError(
                     f"unsupported cache format {version}; expected {FORMAT_VERSION}")
         expected = set(cls.__dataclass_fields__)
-        optional = {"effect_signature", "effect_inventory"}
+        optional = {"effect_signature", "effect_inventory", "format_minor"}
         actual = set(value)
         missing = (expected - optional) - actual
         unknown = actual - expected
@@ -530,8 +640,10 @@ class CacheManifestV3:
         kwargs = {
             name: value[name]
             for name in expected
-            if name not in {"frames", "effect_signature", "effect_inventory"}
+            if name not in {"frames", "effect_signature", "effect_inventory",
+                            "format_minor"}
         }
+        kwargs["format_minor"] = value.get("format_minor", 0)
         kwargs["effect_signature"] = str(value.get("effect_signature", ""))
         kwargs["effect_inventory"] = _normalize_effect_inventory(
             value.get("effect_inventory", ())

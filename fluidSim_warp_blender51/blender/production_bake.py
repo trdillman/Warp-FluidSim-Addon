@@ -22,6 +22,7 @@ from ..io.cache_schema import (
     FrameEntry,
     LegacyCacheFormatError,
     ResumeDecision,
+    RigidBodyRecord,
     first_changed_source_frame,
     load_manifest,
     manifest_path,
@@ -441,6 +442,14 @@ def _verified_checkpoint_header(base: Path, entry: FrameEntry, manifest) -> tupl
         _parsed_checkpoints.pop(next(iter(_parsed_checkpoints)))
     _parsed_checkpoints[key] = known
     return known
+
+
+def _rigid_records(solver) -> tuple[RigidBodyRecord, ...]:
+    """Cache v3.1: the Dynamic collider poses at the end of this frame."""
+    states = getattr(solver, "rigid_body_states", None)
+    if states is None:
+        return ()
+    return tuple(RigidBodyRecord.from_dict(state) for state in states())
 
 
 def _liquid_sdf_arrays(solver, enabled: bool):
@@ -1073,6 +1082,7 @@ class ProductionBakeBackend:
             source_frame_stamp=source_frame_stamp,
             whitewater_count=len(frame_payload.whitewater),
             particle_count=len(frame_payload.positions),
+            rigid_bodies=_rigid_records(self.sess.solver),
         )
         # The copied manifest is committed last. If this replacement fails,
         # both final artifacts remain uncommitted orphans and are ignored.

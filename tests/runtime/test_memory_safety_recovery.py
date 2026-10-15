@@ -151,6 +151,7 @@ def _bpy_stub(registered):
     )
     bpy.props = SimpleNamespace(
         BoolProperty=_prop,
+        BoolVectorProperty=_prop,
         CollectionProperty=_prop,
         EnumProperty=_prop,
         FloatProperty=_prop,

@@ -8,6 +8,7 @@ receives surface mesh / particle data for Blender display.
 from __future__ import annotations
 
 import gc
+import json
 import math
 import time as _time
 from dataclasses import dataclass, field as dc_field
@@ -514,6 +515,17 @@ class ColliderDesc:
     # Solver-internal: rotation centre of that sub-frame pose (the frame-start
     # centre translated with the points); None at the frame-start pose.
     pose_center: object = None
+    # Two-way rigid coupling (4.0, SPEC-rigid-coupling): a Dynamic collider's
+    # motion is integrated by the solver from fluid pressure and drag. The
+    # mesh is its authored world pose; ``object_uid`` keys its persistent
+    # body state. ``density`` is kg/m^3 (the liquid is 1000); ``drag`` is the
+    # quadratic drag coefficient; ``lock_axes`` is (loc x, y, z, rot x, y, z).
+    dynamic: bool = False
+    object_uid: str = ""
+    density: float = 1000.0
+    drag: float = 0.0
+    initial_velocity: tuple = (0.0, 0.0, 0.0)
+    lock_axes: tuple = (False, False, False, False, False, False)
 
 
 @dataclass
@@ -723,6 +735,8 @@ class FluidSolver:
         self.effects = self.features.effects
 
         self.colliders: list[ColliderDesc] = []
+        from .rigid_coupling import RigidCoupling
+        self.rigid = RigidCoupling(self.device)
         self.force_fields: list[ForceFieldDesc] = []
         self._force_fields_dev = None
 
@@ -769,10 +783,18 @@ class FluidSolver:
         self._static_collision_cache_ready = False
         self.colliders = list(colliders)
         for col in self.colliders:
+            # A Dynamic collider is posed by the rigid coupling every substep;
+            # base_points keeps its authored pose for _restore_collider_poses.
             moving = col.mesh is not None and (
-                any(abs(v) > 1.0e-9 for v in col.linear_velocity)
+                getattr(col, "dynamic", False)
+                or any(abs(v) > 1.0e-9 for v in col.linear_velocity)
                 or any(abs(v) > 1.0e-9 for v in col.angular_velocity))
             col.base_points = wp.clone(col.mesh.points) if moving else None
+        self.rigid.attach(self.colliders, float(self.settings.voxel_size))
+
+    def rigid_body_states(self):
+        """Per-body pose records of every Dynamic collider (cache v3.1)."""
+        return self.rigid.states()
 
     def set_force_fields(self, force_fields):
         self.force_fields = list(force_fields)
@@ -930,6 +952,13 @@ class FluidSolver:
         ww_density = getattr(self, "ww_density", None)
         if ww_density is not None:
             ww_density.zero()
+        rigid = getattr(self, "rigid", None)
+        if rigid is not None:
+            # Dynamic colliders start again from their authored pose.
+            rigid.reset()
+            if self.colliders:
+                self._restore_collider_poses()
+                rigid.attach(self.colliders, float(self.settings.voxel_size))
         self.frame = 0
         self.sim_time = 0.0
         settings = getattr(self, "settings", None)
@@ -1005,9 +1034,16 @@ class FluidSolver:
             arrays["narrow_band_seed_state"] = np.asarray(
                 [self.narrow_band.reseed_epoch, int(self.narrow_band.owed.numpy()[0])],
                 dtype=np.uint32)
+        rigid_scalars = {}
+        rigid = getattr(self, "rigid", None)
+        if rigid is not None and rigid.bodies:
+            uids, rows = rigid.export_state()
+            arrays["rigid_state"] = np.ascontiguousarray(rows, dtype=np.float64)
+            rigid_scalars["rigid_body_uids"] = json.dumps(uids)
         return {
             "arrays": arrays,
             "scalars": {
+                **rigid_scalars,
                 "frame": int(self.frame),
                 "sim_time": float(self.sim_time),
                 "leaf_count": leaf_count,
@@ -1091,6 +1127,10 @@ class FluidSolver:
             seed_state = np.asarray(
                 arrays.get("narrow_band_seed_state", ()), dtype=np.uint32)
             self.narrow_band.restore_seed_state(seed_state)
+        if "rigid_state" in arrays:
+            self.rigid.import_state(
+                json.loads(str(scalars.get("rigid_body_uids", "[]"))),
+                arrays["rigid_state"])
         self._rebuild_transient_state_after_restore()
         self.assert_checkpoint_invariants()
 
@@ -1368,7 +1408,7 @@ class FluidSolver:
         frame behind its true position between rebuilds.
         """
         for col in self.colliders:
-            if col.base_points is None:
+            if col.base_points is None or getattr(col, "dynamic", False):
                 continue
             av = col.angular_velocity
             mag = math.sqrt(sum(v * v for v in av))
@@ -1470,7 +1510,10 @@ class FluidSolver:
                   if col.base_points is not None]
         static = [(rank, col) for rank, col in live
                   if col.base_points is None]
-        if not moving or not static:
+        # The rigid force gather needs the per-voxel collider owner, which
+        # only the ranked path maintains.
+        dynamic = any(getattr(col, "dynamic", False) for _, col in live)
+        if not dynamic and (not moving or not static):
             self._static_collision_cache_ready = False
             for _, col in live:
                 self._rasterize_collider(col)
@@ -2309,6 +2352,8 @@ class FluidSolver:
                 if collision_rebuild:
                     if moving_colliders and substep_index > 0:
                         self._update_moving_colliders(substep_index * dt)
+                    if self.rigid.active:
+                        self.rigid.pose()
                     self._apply_collisions(reuse_static=reuse_static)
             self.features.run(
                 FrameFeaturePhase.BEFORE_SOURCING, self, time_ctx)
@@ -2358,9 +2403,13 @@ class FluidSolver:
             self.features.run(
                 FrameFeaturePhase.BEFORE_PRESSURE, self, time_ctx)
             with self._phase("pressure"):
-                self._pressure(dt)
+                projected = self._pressure(dt)
                 self._collider_material_response(dt)
             self._sanitize(dt)
+            if self.rigid.active:
+                # Two-way coupling: after projection, before G2P (spec).
+                with self._phase("collision"):
+                    self.rigid.step(self, dt, pressure_valid=projected)
             with self._phase("g2p"):
                 self._g2p_advect(dt)
             self._sanitize_particles(dt)

@@ -41,7 +41,7 @@ def declarations():
         fake_bpy.props = SimpleNamespace(**{
             name: (lambda **kwargs: kwargs.get("default"))
             for name in (
-                "BoolProperty", "CollectionProperty", "EnumProperty", "FloatProperty",
+                "BoolProperty", "BoolVectorProperty", "CollectionProperty", "EnumProperty", "FloatProperty",
                 "FloatVectorProperty", "IntProperty", "PointerProperty", "StringProperty")})
         fake_bpy.utils = SimpleNamespace()
         mp.setitem(sys.modules, "bpy", fake_bpy)

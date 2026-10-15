@@ -165,6 +165,114 @@ def check_whitewater_reachable(name):
     ), report
 
 
+CORK_NAME = "Crown Cork"
+CORK_LIVE_FRAMES = 12   # live frames stepped before the pose track is read
+CORK_BAKE_FRAMES = 6    # baked frames exported to Alembic
+
+
+def _cork_translation(obj):
+    return np.asarray(obj.matrix_world, dtype=np.float64)[:3, 3].copy()
+
+
+def check_cork_motion(name):
+    """Reopen ``name``; prove the Dynamic cork's pose track moves and that an
+    Alembic export of a baked cache carries it (4.0 two-way rigid coupling).
+    """
+    import shutil
+    import tempfile
+
+    open_demo_blend(os.path.join(DEMOS, name + ".blend"))
+    from fluidSim_warp_blender51.blender import playback, scene_bridge
+    from fluidSim_warp_blender51.sim import rigid_scene
+
+    scene = bpy.context.scene
+    fs = scene.fluidsim
+    report = {"live_track_range": 0.0, "alembic_range": 0.0,
+              "alembic_max_error": None}
+    cork = bpy.data.objects.get(CORK_NAME)
+    contract = bool(
+        cork and cork.fluidsim.role == "COLLIDER" and cork.fluidsim.enabled
+        and cork.fluidsim.collider_dynamic
+        and abs(float(cork.fluidsim.collider_density) - 300.0) < 1.0e-6)
+    checks = {"cork_contract": contract, "cork_pose_track_moves": False,
+              "alembic_carries_cork": False}
+    if not contract:
+        return checks, report
+    work = tempfile.mkdtemp(prefix="fluidsim_cork_check_")
+    try:
+        start = scene.frame_start
+        last = start + CORK_LIVE_FRAMES
+        for frame in range(start + 1, last + 1):
+            scene.frame_set(frame)
+        fs.live = False
+        bpy.ops.fluidsim.release()
+        action = getattr(cork.animation_data, "action", None)
+        owned = bool(action is not None and action.get(rigid_scene.OWNED_ACTION_TAG))
+        # Replay the published keyframes with no solver attached.
+        track = []
+        for frame in range(start + 1, last + 1):
+            scene.frame_set(frame)
+            track.append(_cork_translation(cork))
+        track = np.asarray(track)
+        report["live_track_range"] = float(np.ptp(track, axis=0).max())
+        report["owned_action"] = owned
+        checks["cork_pose_track_moves"] = bool(
+            owned and report["live_track_range"] > 1.0e-4)
+
+        fs.cache_path = os.path.join(work, "cache")
+        fs.cache_enabled = False
+        fs.cache_use_custom_range = True
+        fs.cache_frame_start = start
+        fs.cache_frame_end = start + CORK_BAKE_FRAMES - 1
+        scene.frame_set(start)
+        from fluidSim_warp_blender51.blender import cache_bake
+
+        cache_bake.bake(scene, scene_bridge.session(), start,
+                        start + CORK_BAKE_FRAMES - 1)
+        playback.set_cache_playback_enabled(scene, True)
+        fs.cache_playback_enabled = True
+        abc = os.path.join(work, "cork.abc")
+        result = bpy.ops.fluidsim.export_alembic(filepath=abc)
+        report["export_result"] = sorted(result)
+        expected = {}
+        for frame in range(start, start + CORK_BAKE_FRAMES):
+            scene.frame_set(frame)
+            expected[frame] = _cork_translation(cork)
+        fresh = bpy.data.scenes.new("CorkAlembicCheck")
+        bpy.context.window.scene = fresh
+        before = set(fresh.objects)
+        bpy.ops.wm.alembic_import(filepath=abc, as_background_job=False)
+        added = [o for o in fresh.objects if o not in before]
+        report["imported_all"] = sorted(o.name for o in added)
+        # Alembic object names replace spaces with underscores.
+        imported = [o for o in added
+                    if o.name.replace("_", " ").startswith(CORK_NAME)]
+        report["imported"] = [o.name for o in imported]
+        if len(imported) == 1:
+            carried, errors = [], []
+            for frame in sorted(expected):
+                fresh.frame_set(frame)
+                depsgraph = bpy.context.evaluated_depsgraph_get()
+                world = np.asarray(
+                    imported[0].evaluated_get(depsgraph).matrix_world)[:3, 3]
+                carried.append(world)
+                errors.append(float(np.abs(world - expected[frame]).max()))
+            report["alembic_range"] = float(np.ptp(np.asarray(carried), axis=0).max())
+            report["alembic_max_error"] = max(errors)
+            checks["alembic_carries_cork"] = bool(
+                "FINISHED" in result and report["alembic_range"] > 1.0e-5
+                and report["alembic_max_error"] < 1.0e-4)
+        bpy.context.window.scene = scene
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = repr(exc)
+    finally:
+        fs.live = False
+        if bpy.ops.fluidsim.release.poll():
+            bpy.ops.fluidsim.release()
+        shutil.rmtree(work, ignore_errors=True)
+    return checks, report
+
+
 def point_count(obj):
     # Output clouds carry spare capacity, so len(data.points) is not the count.
     from fluidSim_warp_blender51.blender import output_publication
@@ -431,6 +539,10 @@ def check_scene(name):
         reachable, report = check_whitewater_reachable(name)
         checks["whitewater_emits_in_declared_window"] = reachable
         result["whitewater_reachability"] = report
+    if name == "crown_splash":
+        # Last: it reopens the .blend, which stales every RNA reference above.
+        cork_checks, result["cork_motion"] = check_cork_motion(name)
+        checks.update(cork_checks)
     return result
 
 

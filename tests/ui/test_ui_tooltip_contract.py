@@ -22,6 +22,7 @@ ENUMS = ROOT / "fluidSim_warp_blender51" / "sim" / "enums.py"
 
 PROPERTY_FACTORIES = {
     "BoolProperty",
+    "BoolVectorProperty",
     "CollectionProperty",
     "EnumProperty",
     "FloatProperty",

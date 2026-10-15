@@ -32,6 +32,7 @@ def _load_properties(monkeypatch):
     )
     fake_bpy.props = SimpleNamespace(
         BoolProperty=lambda **kwargs: prop(**kwargs),
+        BoolVectorProperty=lambda **kwargs: prop(**kwargs),
         CollectionProperty=lambda **kwargs: prop(**kwargs),
         EnumProperty=lambda **kwargs: prop(**kwargs),
         FloatProperty=lambda **kwargs: prop(**kwargs),

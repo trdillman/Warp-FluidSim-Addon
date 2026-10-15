@@ -63,6 +63,9 @@ def _property_default(call):
     if kind == "FloatVectorProperty":
         size = keywords.get("size")
         return (0.0,) * (ast.literal_eval(size) if size is not None else 3)
+    if kind == "BoolVectorProperty":
+        size = keywords.get("size")
+        return (False,) * (ast.literal_eval(size) if size is not None else 3)
     return {
         "BoolProperty": False, "IntProperty": 0, "FloatProperty": 0.0,
         "StringProperty": "", "EnumProperty": "", "PointerProperty": None,

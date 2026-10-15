@@ -12,6 +12,7 @@ from __future__ import annotations
 import bpy
 from bpy.props import (
     BoolProperty,
+    BoolVectorProperty,
     EnumProperty,
     FloatProperty,
     FloatVectorProperty,
@@ -746,6 +747,24 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         name="Transfer Velocity", default=True,
         update=_request_sync,
         description="Enable to push liquid with animated collider motion; disable to keep collisions stationary even when the object moves")
+    # Two-way rigid coupling (4.0): the liquid moves a Dynamic collider.
+    collider_dynamic: BoolProperty(
+        name="Dynamic", default=False, update=_request_reset,
+        description="Enable to let the liquid push, float and sink this collider; FluidSim solves its motion and writes it as keyframes, cleared on Reset. Disable for a collider that only moves as animated")
+    collider_density: FloatProperty(
+        name="Density", default=500.0, min=1.0, soft_max=5000.0,
+        unit="NONE", update=_request_sync,
+        description="Set the Dynamic collider's density in kg/m^3; water is 1000, so lower values float higher (cork about 300) and higher values sink")
+    collider_drag: FloatProperty(
+        name="Drag", default=1.0, min=0.0, soft_max=4.0, update=_request_sync,
+        description="Set the quadratic drag coefficient of a Dynamic collider moving through liquid; higher values settle it faster, zero leaves only pressure forces")
+    collider_initial_velocity: FloatVectorProperty(
+        name="Initial Velocity", size=3, default=(0.0, 0.0, 0.0),
+        subtype="VELOCITY", unit="VELOCITY", update=_request_reset,
+        description="Set the Dynamic collider's velocity in m/s at the first simulated frame, for example to throw it into the liquid")
+    collider_lock_axes: BoolVectorProperty(
+        name="Lock", size=6, default=(False,) * 6, update=_request_sync,
+        description="Lock the Dynamic collider's motion per axis: the first three lock movement along X, Y, Z and the last three lock rotation about X, Y, Z")
     enabled: BoolProperty(
         name="Enabled", default=True, update=_request_sync,
         description="Enable this object to participate in simulation with its assigned role; disable to ignore it without deleting its settings")
