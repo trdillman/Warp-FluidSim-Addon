@@ -3,9 +3,9 @@
 Covers:
 1. Offline refusal (--offline-mode and use_online_access=False).
 2. Online install from PyPI via bpy.ops.fluidsim.install_warp():
-   - Pinned Warp 1.17.0 lands strictly under the add-on's own extension path.
+   - The locked Warp version lands strictly under the add-on's own extension path.
    - Blender's shared extensions/.local and user site-packages are never touched.
-   - Runtime probe sees Warp 1.17.0.
+   - Runtime probe sees the locked Warp version.
    - Second press is idempotent and safe (no re-download, no rewrite).
 3. Foreign Warp in shared extensions/.local:
    - Does not count as owned or already installed for FluidSim.
@@ -26,11 +26,16 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
+import json
+
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS_RELEASE = ROOT / "tools" / "release"
 ADDON_ROOT = ROOT / "fluidSim_warp_blender51"
+# The Warp version the add-on installs; the Blender scripts read it from the env.
+LOCKED_WARP = json.loads(
+    (ADDON_ROOT / "warp_wheels.lock.json").read_text(encoding="utf-8"))["warp_version"]
 
 
 def _run_blender(*args, **kwargs):
@@ -128,6 +133,7 @@ def _setup_isolated_blender(base_dir: Path, package: Path, repo_id: str = "test_
         "TEMP": str(temp_dir),
         "TMP": str(temp_dir),
         "FLUIDSIM_TEST_REPOSITORY": str(repo_dir),
+        "FLUIDSIM_TEST_LOCKED_WARP": LOCKED_WARP,
     })
 
     _run_blender(
@@ -254,6 +260,7 @@ def test_online_install_and_idempotency_in_real_blender(tmp_path: Path, built_pa
 
     script = """
 import bpy
+import os
 import site
 import importlib
 from pathlib import Path
@@ -286,7 +293,7 @@ assert res_probe == {'FINISHED'}
 
 runtime = importlib.import_module(f'{module}.runtime.warp_runtime')
 probe = runtime.probe_runtime()
-assert probe.warp_version == '1.17.0', f'Expected 1.17.0, got {probe.warp_version}'
+assert probe.warp_version == os.environ['FLUIDSIM_TEST_LOCKED_WARP'], f'Expected the locked Warp, got {probe.warp_version}'
 assert Path(probe.module_file).resolve() == warp_init.resolve()
 
 # 3. Second press: idempotent, no rewrite or foreign changes
@@ -341,13 +348,14 @@ print('ONLINE-INSTALL-AND-IDEMPOTENCY-VERIFIED')
     assert "ONLINE-INSTALL-AND-IDEMPOTENCY-VERIFIED" in result.stdout
     verify_restart = """
 import bpy
+import os
 import importlib
 from pathlib import Path
 module = 'bl_ext.test_repo.fluidsim_warp'
 runtime = importlib.import_module(module + '.runtime.warp_runtime')
 probe = runtime.probe_runtime(force=True)
 owned = Path(bpy.utils.extension_path_user(module, path='.local', create=False))
-assert probe.warp_version == '1.17.0', probe
+assert probe.warp_version == os.environ['FLUIDSIM_TEST_LOCKED_WARP'], probe
 assert Path(probe.module_file).resolve() == (owned / 'warp' / '__init__.py').resolve()
 print('LOADED-NATIVE-REPAIR-AFTER-RESTART-VERIFIED')
 """
@@ -369,10 +377,10 @@ def test_shared_extensions_local_foreign_warp_refusal_in_real_blender(tmp_path: 
     shared_local = Path(env["BLENDER_USER_EXTENSIONS"]) / ".local"
     warp_dir = shared_local / "warp"
     warp_dir.mkdir(parents=True, exist_ok=True)
-    (warp_dir / "__init__.py").write_text("__version__ = '1.17.0'\n", encoding="utf-8")
-    dist_info = shared_local / "warp_lang-1.17.0.dist-info"
+    (warp_dir / "__init__.py").write_text(f"__version__ = '{LOCKED_WARP}'\n", encoding="utf-8")
+    dist_info = shared_local / f"warp_lang-{LOCKED_WARP}.dist-info"
     dist_info.mkdir(parents=True, exist_ok=True)
-    (dist_info / "METADATA").write_text("Name: warp-lang\nVersion: 1.17.0\n", encoding="utf-8")
+    (dist_info / "METADATA").write_text(f"Name: warp-lang\nVersion: {LOCKED_WARP}\n", encoding="utf-8")
 
     script = """
 import bpy
@@ -461,13 +469,14 @@ print('CORRUPTED-OWNED-INSTALL-REPAIR-STAGED')
 """
     verify_restart = """
 import bpy
+import os
 import importlib
 from pathlib import Path
 module = 'bl_ext.test_repo.fluidsim_warp'
 runtime = importlib.import_module(module + '.runtime.warp_runtime')
 probe = runtime.probe_runtime(force=True)
 owned = Path(bpy.utils.extension_path_user(module, path='.local', create=False))
-assert probe.warp_version == '1.17.0', probe
+assert probe.warp_version == os.environ['FLUIDSIM_TEST_LOCKED_WARP'], probe
 assert Path(probe.module_file).resolve() == (owned / 'warp' / '__init__.py').resolve()
 assert not (Path(bpy.utils.user_resource('EXTENSIONS')) / '.local' / 'warp').exists()
 print('CORRUPTED-OWNED-INSTALL-REPAIR-VERIFIED')
@@ -492,6 +501,7 @@ def test_explicit_local_helper_provisions_owned_warp_in_real_blender(tmp_path: P
     env = _setup_isolated_blender(tmp_path, built_package)
     script = f"""
 import bpy
+import os
 import importlib
 import sys
 from pathlib import Path
@@ -504,7 +514,7 @@ module = 'bl_ext.test_repo.fluidsim_warp'
 runtime = importlib.import_module(module + '.runtime.warp_runtime')
 probe = runtime.probe_runtime(force=True)
 owned = Path(bpy.utils.extension_path_user(module, path='.local', create=False))
-assert probe.warp_version == '1.17.0', probe
+assert probe.warp_version == os.environ['FLUIDSIM_TEST_LOCKED_WARP'], probe
 assert Path(probe.module_file).resolve() == (owned / 'warp' / '__init__.py').resolve()
 assert not (Path(bpy.utils.user_resource('EXTENSIONS')) / '.local' / 'warp').exists()
 print('EXPLICIT-LOCAL-HELPER-INSTALL-VERIFIED')
@@ -553,7 +563,7 @@ prefs = bpy.context.preferences.addons[module].preferences
 prefs.developer_warp_path = os.environ['FLUIDSIM_TEST_EXTERNAL_RUNTIME']
 assert bpy.ops.fluidsim.refresh_runtime_probe() == {'FINISHED'}
 probe = runtime.probe_runtime()
-assert probe.warp_version == '1.17.0', probe
+assert probe.warp_version == os.environ['FLUIDSIM_TEST_LOCKED_WARP'], probe
 assert installer.owned_install_status() is None
 assert 'does not own' in installer.foreign_warp_block_reason()
 calls = []
