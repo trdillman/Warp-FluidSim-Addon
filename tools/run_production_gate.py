@@ -348,16 +348,20 @@ def _emit(text):
 
 
 def _run_parallel(steps, max_workers=4):
-    """Run independent ``(label, command, kwargs)`` steps concurrently.
+    """Run independent ``(label, command, kwargs)`` steps, or lanes, concurrently.
 
+    A step may instead be a callable lane that runs several steps in sequence.
     Each step's output is printed whole, in the listed order, once all have
     finished; the first failing step (in that order) is then re-raised.
     """
     def work(step):
-        label, command, kwargs = step
         _LOCAL.parts = []
         try:
-            _run(label, command, **kwargs)
+            if callable(step):
+                step()
+            else:
+                label, command, kwargs = step
+                _run(label, command, **kwargs)
             return _LOCAL.parts, None
         except BaseException as exc:  # noqa: BLE001 - re-raised below, in order
             return _LOCAL.parts, exc
@@ -378,14 +382,14 @@ def _run_parallel(steps, max_workers=4):
         raise first_error
 
 
-def _run_acceptance_batch(blender_exe, env, entries):
+def _run_acceptance_batch(blender_exe, env, entries, name="gate_batch"):
     """Run ``(label, script, args, marker)`` entries in one Blender session.
 
     A script that does not pass inside the batch, or that the batch never
     reached, is rerun alone exactly as before batching; that standalone run
-    decides its verdict.
+    decides its verdict.  ``name`` keeps concurrent batches' files apart.
     """
-    out = ROOT / "artifacts" / "gate_batch"
+    out = ROOT / "artifacts" / name
     out.mkdir(parents=True, exist_ok=True)
     spec_path, results_path = out / "spec.json", out / "results.json"
     results_path.unlink(missing_ok=True)
@@ -400,7 +404,7 @@ def _run_acceptance_batch(blender_exe, env, entries):
             "tools/gate/run_blender_batch.py", "--", str(spec_path), str(results_path),
         ), env=env, expect_marker="BATCH-COMPLETE")
     except subprocess.CalledProcessError as exc:
-        print(f"acceptance batch ended early ({exc}); unfinished scripts run alone")
+        _emit(f"acceptance batch ended early ({exc}); unfinished scripts run alone\n")
     try:
         results = json.loads(results_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
@@ -411,10 +415,23 @@ def _run_acceptance_batch(blender_exe, env, entries):
     for label, script, args, marker in entries:
         if script in passed:
             continue
-        print(f"\nbatch did not pass {script}; rerunning it alone")
+        _emit(f"\nbatch did not pass {script}; rerunning it alone\n")
         _run(label, _blender(blender_exe, "--background", "--factory-startup", "--python",
                              script, *(("--", *args) if args else ())),
              env=env, reject_output=True, expect_marker=marker)
+
+
+# Acceptance scripts kept off the concurrent lanes: they read device free
+# memory or bound wall time, or read the demo files the demo lane rebuilds.
+QUIET_ACCEPTANCE = frozenset({
+    "tests/acceptance/blender_memory_safety_gate.py",
+    "tests/acceptance/blender_capacity_planner_acceptance.py",
+    "tests/acceptance/blender_phase4_live_interaction_acceptance.py",
+    "tests/acceptance/blender_closed_domain_stability_acceptance.py",
+    "tests/acceptance/blender_demo_gallery_acceptance.py",
+})
+# The longest acceptance script; its own batch runs beside the others.
+SOLO_ACCEPTANCE = frozenset({"tests/acceptance/blender_cache_v3_stamp_acceptance.py"})
 
 
 def _acceptance_entries():
@@ -865,38 +882,62 @@ def _production_main(argv=None):
         ], {"env": env}))
     # Independent processes; each one's output is printed whole, in this order.
     _run_parallel(python_checks)
-    for check, inputs, success_marker in RELEASE_BLENDER_VALIDATORS:
-        _run(
-            f"{check} release validation in Blender",
-            _release_blender_validator_command(blender_exe, check, inputs, warp_root),
-            env=_release_env(env),
-            reject_output=True,
-            expect_marker=success_marker,
-        )
-    _run_acceptance_batch(blender_exe, env, _acceptance_entries())
+    def release_validators():
+        for check, inputs, success_marker in RELEASE_BLENDER_VALIDATORS:
+            _run(
+                f"{check} release validation in Blender",
+                _release_blender_validator_command(blender_exe, check, inputs, warp_root),
+                env=_release_env(env),
+                reject_output=True,
+                expect_marker=success_marker,
+            )
+
+    entries = _acceptance_entries()
     if args.quick:
+        release_validators()
+        _run_acceptance_batch(blender_exe, env, entries)
         _print_quick_pass()
         return 0
-    for scene_name in CANONICAL_DEMO_SCENES:
-        _run(f"demo cache build {scene_name}", _blender(
+
+    def demo_lane():
+        for scene_name in CANONICAL_DEMO_SCENES:
+            _run(f"demo cache build {scene_name}", _blender(
+                blender_exe,
+                "--background",
+                "--factory-startup",
+                "--python",
+                "tools/demos/build_demo_scenes.py",
+                "--",
+                scene_name,
+            ), env=env, reject_output=True, expect_marker="DEMO-BUILD-PASS")
+        _run(
+            "demo analysis", [blender_py, "tools/demos/analyze_demos.py"], env=env,
+            expect_marker="DEMO-ANALYSIS-PASS (21/21)")
+        _run("demo blend checks", _blender(
             blender_exe,
             "--background",
             "--factory-startup",
             "--python",
-            "tools/demos/build_demo_scenes.py",
-            "--",
-            scene_name,
-        ), env=env, reject_output=True, expect_marker="DEMO-BUILD-PASS")
-    _run(
-        "demo analysis", [blender_py, "tools/demos/analyze_demos.py"], env=env,
-        expect_marker="DEMO-ANALYSIS-PASS (21/21)")
-    _run("demo blend checks", _blender(
-        blender_exe,
-        "--background",
-        "--factory-startup",
-        "--python",
-        "tools/demos/check_demo_blends.py",
-    ), env=env, reject_output=True, expect_marker="DEMO-BLEND-CHECK-PASS")
+            "tools/demos/check_demo_blends.py",
+        ), env=env, reject_output=True, expect_marker="DEMO-BLEND-CHECK-PASS")
+
+    def acceptance_lane():
+        release_validators()
+        _run_acceptance_batch(blender_exe, env, [
+            entry for entry in entries
+            if entry[1] not in QUIET_ACCEPTANCE | SOLO_ACCEPTANCE])
+
+    def solo_lane():
+        _run_acceptance_batch(blender_exe, env, [
+            entry for entry in entries if entry[1] in SOLO_ACCEPTANCE],
+            name="gate_batch_solo")
+
+    # Independent lanes: none reads a file another writes.  The quiet scripts
+    # then run alone, after the demo rebuild some of them read.
+    _run_parallel([acceptance_lane, solo_lane, demo_lane])
+    _run_acceptance_batch(blender_exe, env, [
+        entry for entry in entries if entry[1] in QUIET_ACCEPTANCE],
+        name="gate_batch_quiet")
     if include_gui:
         _run("interactive GUI acceptance", _blender(
             blender_exe,

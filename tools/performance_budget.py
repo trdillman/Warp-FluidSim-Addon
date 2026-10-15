@@ -17,6 +17,12 @@ DEMOS = ("crown_splash", "dam_break", "paddle_stir", "chromatic_vortex")
 REFERENCE_VERSIONS = {demo: "3.2.1" for demo in DEMOS}
 BUDGET_RATIO = 1.05
 MIN_TRIALS_PER_VARIANT = 8
+# Sequential stopping: the first ABBA and BAAB blocks (four trials per
+# variant) settle a demo when the order-balanced host ratio clears the budget
+# by this margin; anything closer runs the full schedule.  The margin exceeds
+# the largest 2-block vs 4-block host-ratio gap on the 4.0 campaign (0.051).
+EARLY_STOP_TRIALS_PER_VARIANT = 4
+EARLY_STOP_MARGIN = 0.06
 EXPECTED_FRAMES = tuple(range(1, 49))
 SOLVER_TIMER_CONTRACT = "sum_of_outermost_synchronized_phase_spans"
 _LABELS = ("baseline", "candidate")
@@ -353,7 +359,7 @@ def _intended_change(field, labelled_values):
 	return {"baseline": baseline_value, "candidate": candidate_value, "budgetRatio": ratio}
 
 
-def evaluate_budget(runs):
+def evaluate_budget(runs, demos=DEMOS):
 	"""Validate raw reports and judge each demo on user wall time per frame.
 
 	The deciding number is the order-balanced host ratio: the mean of the
@@ -362,6 +368,12 @@ def evaluate_budget(runs):
 	is a regression.  The candidate must also not be less accurate: its median
 	pressure residual may not exceed the baseline's by more than 10%.  Solver,
 	stage and iteration numbers are diagnostics.  Invalid evidence always fails.
+
+	Exactly the first ABBA and BAAB blocks are an early stage: it passes only
+	when the host ratio clears the budget by ``EARLY_STOP_MARGIN`` (and the
+	accuracy guard holds) and regresses only beyond it; anything else is
+	``undecided`` and needs the full schedule.  ``demos`` limits the judgement
+	to those demos (the runner's per-demo early check).
 	"""
 	if not isinstance(runs, list):
 		return _invalid(["runs must be a list of raw reports"])
@@ -374,14 +386,14 @@ def evaluate_budget(runs):
 	by_demo = defaultdict(list)
 	for run in runs:
 		by_demo[run["workload"]].append(run)
-	missing = [demo for demo in DEMOS if demo not in by_demo]
+	missing = [demo for demo in demos if demo not in by_demo]
 	if missing:
 		return _invalid([f"missing demo evidence: {', '.join(missing)}"])
 
 	demo_results = {}
 	effective_settings_diagnostics = {}
 	invalid_reasons = []
-	for demo in DEMOS:
+	for demo in demos:
 		demo_runs = by_demo[demo]
 		for field in ("blendSha256", "settingsSha256", "warp", "device"):
 			values = {run[field] for run in demo_runs}
@@ -507,9 +519,12 @@ def evaluate_budget(runs):
 
 		counts = {label: sum(run["label"] == label for run in demo_runs)
 				  for label in _LABELS}
-		if any(count < MIN_TRIALS_PER_VARIANT for count in counts.values()):
+		early = (all(count == EARLY_STOP_TRIALS_PER_VARIANT for count in counts.values())
+				 and {run["round"] for run in demo_runs} == {0, 1})
+		if not early and any(count < MIN_TRIALS_PER_VARIANT for count in counts.values()):
 			invalid_reasons.append(
-				f"{demo}: requires at least 8 trials per baseline and candidate")
+				f"{demo}: requires at least 8 trials per baseline and candidate "
+				"(or exactly the first ABBA and BAAB blocks)")
 
 		blocks = defaultdict(list)
 		for run in demo_runs:
@@ -592,7 +607,7 @@ def evaluate_budget(runs):
 
 		orders = {order: [row for row in block_rows if row["order"] == order]
 				  for order in _ORDERS}
-		if any(len(rows) < 2 for rows in orders.values()):
+		if any(len(rows) < (1 if early else 2) for rows in orders.values()):
 			invalid_reasons.append(
 				f"{demo}: requires at least two complete blocks in each order")
 			continue
@@ -638,11 +653,20 @@ def evaluate_budget(runs):
 		pressure["iterations"]["reduction"] = (
 			pressure["iterations"]["baseline"] / candidate_iterations
 			if candidate_iterations > 0 else None)
-		if host_ratio > budget_ratio:
+		accurate = residual_ratio is not None and residual_ratio <= RESIDUAL_RATIO_LIMIT
+		if early and host_ratio - EARLY_STOP_MARGIN > budget_ratio:
+			status = "regression"
+			reasons = [f"order-balanced host time {host_ratio:.3f}x exceeds the "
+					   f"{budget_ratio:.3f}x budget beyond the early-stop margin"]
+		elif early and not (accurate and host_ratio + EARLY_STOP_MARGIN <= budget_ratio):
+			status = "undecided"
+			reasons = ["early-stage result is within the early-stop margin or fails the "
+					   "accuracy guard; the full schedule is required"]
+		elif host_ratio > budget_ratio:
 			status = "regression"
 			reasons = [f"order-balanced host time {host_ratio:.3f}x exceeds the "
 					   f"{budget_ratio:.3f}x budget"]
-		elif residual_ratio is None or residual_ratio > RESIDUAL_RATIO_LIMIT:
+		elif not accurate:
 			status = "less_accurate"
 			reasons = ["candidate pressure residual exceeds the baseline's by "
 					   f"more than {round((RESIDUAL_RATIO_LIMIT - 1.0) * 100)}%"]
@@ -666,6 +690,8 @@ def evaluate_budget(runs):
 			"referenceVersion": REFERENCE_VERSIONS[demo],
 			"budgetRatio": budget_ratio,
 			"trials": counts,
+			"stage": "early" if early else "full",
+			"earlyStopMargin": EARLY_STOP_MARGIN if early else None,
 			"hostRatio": host_ratio,
 			"hostOrderSpread": host_spread,
 			"solverRatio": solver_ratio,
@@ -685,6 +711,8 @@ def evaluate_budget(runs):
 		status = "regression"
 	elif "less_accurate" in statuses:
 		status = "less_accurate"
+	elif "undecided" in statuses:
+		status = "undecided"
 	else:
 		status = "pass"
 	return {

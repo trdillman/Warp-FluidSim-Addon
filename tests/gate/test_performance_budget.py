@@ -658,3 +658,82 @@ def test_learned_guess_on_is_still_an_omission():
 	result = evaluate_budget(_learned_guess_campaign(True))
 	assert result["status"] == "invalid"
 	assert any("pressure_learned_guess" in reason for reason in result["reasons"])
+
+
+def _early(runs):
+	"""Keep only the first ABBA and BAAB blocks (four trials per variant)."""
+	return [run for run in runs if run["round"] in (0, 1)]
+
+
+def test_early_stage_clear_pass_settles_every_demo():
+	result = evaluate_budget(_early(_campaign(candidate=90.0)))
+	assert result["status"] == "pass", result["reasons"]
+	for demo in DEMOS:
+		assert result["demos"][demo]["stage"] == "early"
+		assert result["demos"][demo]["earlyStopMargin"] == pytest.approx(0.06)
+
+
+def test_early_stage_within_margin_is_undecided_and_blocks_gate():
+	# 1.00 passes the full-schedule budget but is within 0.06 of 1.05.
+	result = evaluate_budget(_early(_campaign()))
+	assert result["passed"] is False
+	assert result["status"] == "undecided"
+	assert result["demos"]["dam_break"]["status"] == "undecided"
+	assert evaluate_budget(_campaign())["status"] == "pass"
+
+
+def test_early_stage_clear_regression_fails():
+	result = evaluate_budget(_early(_campaign(candidate=112.0)))
+	assert result["status"] == "regression"
+	assert any("early-stop margin" in reason
+			   for reason in result["demos"]["dam_break"]["reasons"])
+	# A 1.06 regression is too close to call early; it needs the full run.
+	assert evaluate_budget(_early(_campaign(candidate=106.0)))[
+		"demos"]["dam_break"]["status"] == "undecided"
+
+
+def test_early_stage_pass_also_requires_the_accuracy_guard():
+	result = evaluate_budget(_early(_campaign(candidate=90.0, candidate_residual=1.2e-5)))
+	assert result["status"] == "undecided"
+	assert result["demos"]["dam_break"]["status"] == "undecided"
+	# The full schedule then reports the accuracy loss itself.
+	assert evaluate_budget(_campaign(
+		candidate=90.0, candidate_residual=1.2e-5))["status"] == "less_accurate"
+
+
+def test_early_stage_judges_the_order_balanced_host_ratio():
+	# One order fast and one slow average to 0.90x: clear of the margin.
+	runs = _early(_campaign())
+	for run in runs:
+		if run["label"] == "candidate":
+			factor = 0.70 if run["round"] == 0 else 1.10
+			for record in run["records"]:
+				record["hostMs"] *= factor
+	result = evaluate_budget(runs)
+	assert result["demos"]["dam_break"]["hostRatio"] == pytest.approx(0.90)
+	assert result["status"] == "pass", result["reasons"]
+
+
+def test_early_stage_must_be_the_first_two_blocks():
+	runs = [run for run in _campaign(candidate=90.0) if run["round"] in (2, 3)]
+	result = evaluate_budget(runs)
+	assert result["status"] == "invalid"
+	partial = _early(_campaign(candidate=90.0))
+	partial.pop()
+	assert evaluate_budget(partial)["status"] == "invalid"
+
+
+def test_full_schedule_never_uses_the_early_stage():
+	result = evaluate_budget(_campaign(candidate=90.0))
+	assert result["status"] == "pass"
+	assert result["demos"]["dam_break"]["stage"] == "full"
+	assert result["demos"]["dam_break"]["earlyStopMargin"] is None
+
+
+def test_demos_restriction_judges_one_demo_alone():
+	runs = [run for run in _early(_campaign(candidate=90.0))
+			if run["workload"] == "crown_splash"]
+	assert evaluate_budget(runs)["status"] == "invalid"
+	result = evaluate_budget(runs, demos=("crown_splash",))
+	assert result["status"] == "pass", result["reasons"]
+	assert set(result["demos"]) == {"crown_splash"}

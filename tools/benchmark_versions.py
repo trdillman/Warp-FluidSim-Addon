@@ -141,6 +141,8 @@ def demo_budget_main(argv):
                         help="measure only these demos; --carry-summary covers the rest")
     parser.add_argument("--carry-summary",
                         help="earlier summary whose runs cover the demos not measured")
+    parser.add_argument("--full-schedule", action="store_true",
+                        help="disable sequential stopping; run every block for every demo")
     args = parser.parse_args(argv)
     if bool(args.demos) != bool(args.carry_summary):
         parser.error("--demos and --carry-summary go together: carried runs cover the other demos")
@@ -234,6 +236,14 @@ def demo_budget_main(argv):
                     runs.append(run)
                     checkpoint({'passed': False, 'status': 'incomplete'})
                     print(f"{demo} block={block} slot={slot} {label}: trial recorded", flush=True)
+                    if block == 1 and slot == 3 and not args.full_schedule:
+                        early = evaluate_budget([r for r in runs if r["workload"] == demo],
+                                                demos=(demo,))
+                        status = early.get("demos", {}).get(demo, {}).get("status")
+                        if status in ("pass", "regression"):
+                            print(f"{demo}: early-stop {status} after the first ABBA and BAAB blocks",
+                                  flush=True)
+                            break
         verdict = evaluate_budget(runs)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         verdict = {"passed": False, "status": "invalid", "error": str(exc)}

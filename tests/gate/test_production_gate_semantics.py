@@ -613,3 +613,52 @@ def test_per_demo_sources_exclude_the_evaluator():
     assert "demos/paddle_stir.blend" in paddle and "fluidSim_warp_blender51" in paddle
     assert "tools/demos" not in paddle and "demos/chromatic_vortex.blend" not in paddle
     assert "tools/demos" in run_production_gate._budget_sources("dam_break")
+
+
+def test_acceptance_lanes_split_every_script_exactly_once(monkeypatch):
+    batches = []
+
+    def batch(_blender, _env, entries, name="gate_batch"):
+        batches.append((name, [entry[1] for entry in entries]))
+
+    labels = _stub_gate(monkeypatch)
+    monkeypatch.setattr(run_production_gate, "_run_acceptance_batch", batch)
+    monkeypatch.setenv("BLENDER_EXE", "blender-exe")
+    assert run_production_gate.main(["--include-gui"]) == 0
+
+    names = [name for name, _ in batches]
+    assert sorted(names) == ["gate_batch", "gate_batch_quiet", "gate_batch_solo"]
+    # The quiet batch runs alone, after the demo lane rebuilt the demos.
+    assert names[-1] == "gate_batch_quiet"
+    assert labels.index("demo blend checks") < labels.index("interactive GUI acceptance")
+    scripts = [script for _, group in batches for script in group]
+    expected = [entry[1] for entry in run_production_gate._acceptance_entries()]
+    assert sorted(scripts) == sorted(expected)
+    by_name = dict(batches)
+    assert set(by_name["gate_batch_quiet"]) == run_production_gate.QUIET_ACCEPTANCE
+    assert set(by_name["gate_batch_solo"]) == run_production_gate.SOLO_ACCEPTANCE
+
+
+def test_quick_tier_runs_one_batch_with_every_script(monkeypatch):
+    batches = []
+    _stub_gate(monkeypatch)
+    monkeypatch.setattr(run_production_gate, "_run_acceptance_batch",
+                        lambda _b, _e, entries, name="gate_batch": batches.append(
+                            (name, len(entries))))
+    assert run_production_gate.main(["--quick"]) == 0
+    assert batches == [("gate_batch", len(run_production_gate._acceptance_entries()))]
+
+
+def test_parallel_lanes_run_their_steps_in_sequence(capsys):
+    import sys as _sys
+
+    def lane():
+        run_production_gate._run("lane one", [_sys.executable, "-c", "print('first')"],
+                                 expect_marker="first")
+        run_production_gate._run("lane two", [_sys.executable, "-c", "print('second')"],
+                                 expect_marker="second")
+
+    run_production_gate._run_parallel([lane, ("other", [_sys.executable, "-c", "print('x')"], {})])
+    out = capsys.readouterr().out
+    assert out.index("== lane one ==") < out.index("first") < out.index("== lane two ==") \
+        < out.index("second") < out.index("== other ==")

@@ -113,8 +113,7 @@ results changed and needs an explanation, not a rerun). Demo bakes are bitwise
 deterministic since d2a6b6d, so repeating the run proves nothing new; the old
 three-consecutive-passes rule is retired.
 
-The paired performance budget (about twenty minutes of Blender trials) is only
-measured when it has to be. By default the gate reuses
+The paired performance budget is only measured when it has to be. By default the gate reuses
 `artifacts/performance_budget/summary.json` when it passed and no budget
 source changed since the commit it measured: the add-on (minus its docs and
 Markdown), `tools/repo_addon_loader.py`, the benchmark tools, the budget evaluator,
@@ -123,6 +122,15 @@ Documentation, rebuilt dam/crown blends and test-only commits therefore keep the
 measured budget. The manifest records `performance_budget_reused` and
 `performance_budget_measured_at`. `--measure-budget` forces a fresh
 measurement; `--reuse-budget` fails instead of measuring.
+
+A measurement stops each demo early when its first ABBA and BAAB blocks (four
+trials per variant) settle it: the order-balanced host ratio clears the budget
+by `EARLY_STOP_MARGIN` (0.06, above the largest 2-block vs 4-block gap seen on
+the 4.0 campaign, 0.051) and the accuracy guard holds, or exceeds it by that
+margin. Anything closer runs all four blocks and is judged exactly as before.
+A clear four-demo pass takes about eight minutes instead of twenty;
+`tools/benchmark_versions.py --demo-budget --full-schedule` always runs every
+block. Trial children skip Blender's teardown after writing their report.
 
 For changes that do not touch solver or simulation output, run the focused
 tests for the area (for example `tests/gate` for gate tooling) or `--quick`;
@@ -135,7 +143,11 @@ in `QUICK-GATE-PASS` (about six minutes). It skips the demo rebuild, GUI lanes
 and budget, writes no manifest and is never release evidence. In every tier
 the independent Python checks run in parallel, and the background acceptance
 scripts share one Blender session (`tools/gate/run_blender_batch.py`); any
-script that does not pass there is rerun alone, and that run decides. Every
+script that does not pass there is rerun alone, and that run decides. In a
+full run the release validators and acceptance batch, the longest acceptance
+script (its own batch), and the demo rebuild, analysis and blend checks run as
+three concurrent lanes; `QUIET_ACCEPTANCE` (scripts that read free VRAM, bound
+wall time, or open the rebuilt demos) then runs alone before the GUI lanes. Every
 step prints its wall time, summarised at the end and in
 `artifacts/gate_timing.json`.
 

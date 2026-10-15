@@ -184,3 +184,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # The report is written and the session released; skip Blender's ~1.3 s
+    # teardown, which is outside every measurement. Failures still raise above
+    # and exit through --python-exit-code.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

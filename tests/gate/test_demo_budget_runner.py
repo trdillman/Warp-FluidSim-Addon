@@ -102,12 +102,10 @@ def test_comparable_profiler_never_double_counts_nested_stages(legacy):
     assert profiler.frame.timers["compute_11"] == 4
 
 
-def test_release_runner_uses_snapshot_references_and_all_64_trials(monkeypatch, tmp_path):
+def _run_release(monkeypatch, tmp_path, fixtures, extra=()):
     import io
     import re
     import tarfile
-
-    from test_performance_budget import _campaign
 
     source = tmp_path / "source"
     for directory in ("fluidSim_warp_blender51", "demos", "tools"):
@@ -130,7 +128,6 @@ def test_release_runner_uses_snapshot_references_and_all_64_trials(monkeypatch, 
         with tarfile.open(command[-2].split("=", 1)[1], "w") as bundle:
             bundle.addfile(member, io.BytesIO(content))
     monkeypatch.setattr(bench.subprocess, "run", archive)
-    fixtures = _campaign()
     calls = []
     def child(command, out, **kwargs):
         args = command[command.index("--") + 1:]
@@ -156,10 +153,50 @@ def test_release_runner_uses_snapshot_references_and_all_64_trials(monkeypatch, 
         return row
     monkeypatch.setattr(bench, "_run_trial", child)
     out_dir = tmp_path / "evidence"
-    assert bench.demo_budget_main(["--demo-budget", "--blender", "fake",
-                                   "--candidate-root", str(source), "--out-dir", str(out_dir)]) == 0
+    code = bench.demo_budget_main(["--demo-budget", "--blender", "fake",
+                                   "--candidate-root", str(source), "--out-dir", str(out_dir),
+                                   *extra])
     report = json.loads((out_dir / "summary.json").read_text())
+    return code, report, calls, archives, source
+
+
+def test_release_runner_uses_snapshot_references_and_all_64_trials(monkeypatch, tmp_path):
+    from test_performance_budget import _campaign
+
+    # Ratios of 1.00 sit inside the early-stop margin, so every block runs.
+    code, report, calls, archives, source = _run_release(monkeypatch, tmp_path, _campaign())
+    assert code == 0
     assert len(report["runs"]) == 64
     assert len(calls) == 68  # Four schema extracts plus 64 timed children.
     assert set(archives) == set(bench.REFERENCE_COMMITS.values())
     assert report["candidateInventorySha256"] == bench._inventory(source)
+
+
+def test_release_runner_stops_a_clear_demo_after_two_blocks(monkeypatch, tmp_path):
+    from test_performance_budget import _campaign
+
+    code, report, calls, _, _ = _run_release(
+        monkeypatch, tmp_path, _campaign(candidate=90.0))
+    assert code == 0 and report["status"] == "pass"
+    assert len(report["runs"]) == 32  # First ABBA and BAAB blocks per demo.
+    assert len(calls) == 36
+    assert {run["round"] for run in report["runs"]} == {0, 1}
+    assert all(demo["stage"] == "early" for demo in report["demos"].values())
+
+
+def test_full_schedule_flag_disables_sequential_stopping(monkeypatch, tmp_path):
+    from test_performance_budget import _campaign
+
+    code, report, _, _, _ = _run_release(
+        monkeypatch, tmp_path, _campaign(candidate=90.0), ["--full-schedule"])
+    assert code == 0 and len(report["runs"]) == 64
+    assert all(demo["stage"] == "full" for demo in report["demos"].values())
+
+
+def test_unclear_early_stage_continues_to_the_full_schedule(monkeypatch, tmp_path):
+    from test_performance_budget import _campaign
+
+    code, report, _, _, _ = _run_release(
+        monkeypatch, tmp_path, _campaign(candidate=106.0))
+    assert code == 1 and report["status"] == "regression"
+    assert len(report["runs"]) == 64
