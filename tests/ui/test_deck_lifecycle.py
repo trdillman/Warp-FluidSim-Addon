@@ -250,3 +250,30 @@ def test_a_modal_from_an_earlier_register_retires_itself(monkeypatch):
     modal.new_generation()
     assert operator.modal(context, _event("LEFTMOUSE", 120, 20)) == {"FINISHED", "PASS_THROUGH"}
     assert ran == []
+
+
+def test_file_load_restarts_the_event_layer_even_if_blender_never_cancelled_it(monkeypatch):
+    import contextlib
+
+    bpy = install_deck_bpy(monkeypatch, deck_mode="ON")
+    deck = reload_deck()
+    modal = deck.modal
+    window = SimpleNamespace(screen=None)
+    started = []
+    bpy.app.background = False
+    bpy.context.window_manager.windows = (window,)
+    bpy.context.window_manager.modal_handler_add = lambda _op: None
+    bpy.context.temp_override = lambda **_kwargs: contextlib.nullcontext()
+    bpy.ops.fluidsim.deck_modal = lambda *_args: started.append(window)
+
+    operator = modal.FLUIDSIM_OT_deck_modal()
+    context = SimpleNamespace(window=window, window_manager=bpy.context.window_manager)
+    assert operator.invoke(context, _event("MOUSEMOVE", 0, 0)) == {"RUNNING_MODAL", "PASS_THROUGH"}
+    modal._ensure_running()
+    assert started == []  # this window already has its modal
+
+    # The file load drops the modal without calling cancel(); the next tick restarts it.
+    _load(bpy, deck, _scene(None))
+    modal._ensure_running()
+    assert started == [window]
+    assert operator.modal(context, _event("MOUSEMOVE", 0, 0)) == {"FINISHED", "PASS_THROUGH"}
