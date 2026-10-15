@@ -87,3 +87,34 @@ def test_second_invoke_retires_the_first_modal_and_keeps_one_handler(deck, kind)
     # The second one still works and closes its own handler.
     assert second.modal(second_context, _event("ESC")) == {"CANCELLED"}
     assert handlers == []
+
+
+# Risk 3: the palette passes undo, redo and unhandled events through ----------------
+
+@pytest.mark.parametrize("modifiers", [
+    {"ctrl": True},                    # Ctrl+Z
+    {"ctrl": True, "shift": True},     # Ctrl+Shift+Z
+    {"oskey": True},                   # Cmd+Z
+])
+@pytest.mark.parametrize("unicode", ["", "z", "Z"])
+def test_palette_passes_undo_and_redo_through(deck, modifiers, unicode):
+    operator, context = _open(deck, "palette")
+    assert operator.modal(context, _event("Z", unicode=unicode, **modifiers)) == {"PASS_THROUGH"}
+    assert operator.modal(context, _event("Y", unicode="y", ctrl=True)) == {"PASS_THROUGH"}
+    assert operator.query == ""
+    assert deck.registry.REGISTRY.has_draw_handler("palette")
+
+
+def test_palette_passes_unhandled_events_through_and_still_takes_its_own(deck):
+    operator, context = _open(deck, "palette")
+    assert operator.modal(context, _event("K", value="RELEASE")) == {"PASS_THROUGH"}
+    assert operator.modal(context, _event("F5")) == {"PASS_THROUGH"}
+    # Text, AltGr text (reported as Ctrl+Alt), navigation and Esc stay with the palette.
+    assert operator.modal(context, _event("B", unicode="b")) == {"RUNNING_MODAL"}
+    assert operator.modal(context, _event("Q", unicode="@", ctrl=True, alt=True)) == {
+        "RUNNING_MODAL"}
+    assert operator.query == "b@"
+    assert operator.modal(context, _event("BACK_SPACE")) == {"RUNNING_MODAL"}
+    assert operator.modal(context, _event("DOWN_ARROW")) == {"RUNNING_MODAL"}
+    assert operator.modal(context, _event("ESC")) == {"CANCELLED"}
+    assert deck.bpy.types.SpaceView3D.handlers == []

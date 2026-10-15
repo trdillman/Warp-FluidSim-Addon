@@ -13,7 +13,8 @@ Enter runs an operator, toggles a boolean, or opens an inline numeric field for
 an int/float that commits through the property itself (so its ``update=`` and
 the Pending Settings classification run exactly as for a panel edit). Enum,
 string and vector settings are read-only here and jump to the panel
-(``fluidsim.open_scene_properties``). The palette keeps no settings state.
+(``fluidsim.open_scene_properties``). The palette keeps no settings state. Keys it
+does not use, Ctrl+Z and Ctrl+Shift+Z included, pass through to Blender.
 """
 
 from __future__ import annotations
@@ -246,6 +247,12 @@ def _call(idname, **properties):
     return {"CANCELLED"}
 
 
+def _is_shortcut(event) -> bool:
+    """A Ctrl or Cmd chord is a shortcut, not text; Ctrl+Alt is AltGr text on Windows."""
+    return (bool(getattr(event, "ctrl", False) or getattr(event, "oskey", False))
+            and not getattr(event, "alt", False))
+
+
 def _card_rect(region, scale):
     width = min(region.width - 40.0, 560.0 * scale)
     row = 22.0 * scale
@@ -372,8 +379,7 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
                 return {"CANCELLED"}
             return {"RUNNING_MODAL"}
         if event.value != "PRESS":
-            return {"RUNNING_MODAL"} if event.type not in {"MOUSEMOVE", "TIMER"} else {
-                "PASS_THROUGH"}
+            return {"PASS_THROUGH"}
         if event.type == "ESC":
             if self.editing is not None:
                 self.editing = None
@@ -409,14 +415,14 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
                 self.query = self.query[:-1]
                 self._refresh()
             return {"RUNNING_MODAL"}
-        if event.unicode and event.unicode.isprintable():
+        if event.unicode and event.unicode.isprintable() and not _is_shortcut(event):
             if self.editing is not None:
                 self.edit_text += event.unicode
             else:
                 self.query += event.unicode
                 self._refresh()
             return {"RUNNING_MODAL"}
-        return {"RUNNING_MODAL"}
+        return {"PASS_THROUGH"}  # Ctrl+Z, Ctrl+Shift+Z and any key the palette does not use
 
     def cancel(self, context):
         self._close(context)
