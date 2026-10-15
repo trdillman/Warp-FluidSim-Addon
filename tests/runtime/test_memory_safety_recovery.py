@@ -457,14 +457,15 @@ _MEMORY_MARKER = "MEMORY-SAFETY-GATE-PASS"
 
 
 class _ReachedNextLane(Exception):
-    """Raised by the recorder once the gate has moved past the background scripts."""
+    """Raised once the gate has moved past every background script lane."""
 
 
 def _gate_lanes(monkeypatch, *, drop=None):
     """Record the commands the production gate would run, without running any.
 
     This executes the gate's own control flow (``_production_main``) up to the
-    lane after its background Blender scripts. Every helper that would touch git,
+    performance budget, which runs after every background Blender script lane
+    (including the quiet batch that follows the concurrent lanes). Every helper that would touch git,
     the disk or Blender is replaced, ``subprocess`` is unreachable, and ``_run``
     only records, so nothing starts. ``drop`` removes one background script from
     the gate's table first.
@@ -475,8 +476,6 @@ def _gate_lanes(monkeypatch, *, drop=None):
     lanes = []
 
     def run(label, command, env=None, reject_output=False, expect_marker=None):
-        if label == "Phase 3 source UI acceptance":  # first lane after the table
-            raise _ReachedNextLane
         lanes.append(SimpleNamespace(
             label=label, command=list(command), reject_output=reject_output,
             marker=expect_marker))
@@ -484,8 +483,12 @@ def _gate_lanes(monkeypatch, *, drop=None):
     def no_process(*_args, **_kwargs):
         raise AssertionError("inspecting the gate must not start a process")
 
+    def reached_budget():
+        raise _ReachedNextLane
+
     for name, replacement in {
         "_run": run,
+        "_reusable_budget_demos": reached_budget,
         "_env": lambda: {},
         "_clear_gate_manifest": lambda: None,
         "_print_gate_metadata": lambda *_args: None,
