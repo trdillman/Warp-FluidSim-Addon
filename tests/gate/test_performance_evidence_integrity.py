@@ -210,3 +210,50 @@ def test_gate_rejects_unbound_trial_provenance(monkeypatch, tmp_path, field, val
     monkeypatch.setattr(gate, '_git_text', lambda *args: 'a' * 40)
     with pytest.raises(RuntimeError):
         gate._validate_performance_evidence()
+
+
+def test_runner_measures_only_selected_demos_and_carries_the_rest(monkeypatch, tmp_path):
+    import re
+    source, _ = _stub_campaign(monkeypatch, tmp_path)
+    fixtures = _campaign()
+    measured = []
+    def child(command, out, **kwargs):
+        args = command[command.index('--') + 1:]
+        if args[0] == '--extract':
+            Path(out).write_text('{}')
+            return {}
+        root, blend, _, frames, reference, payload = args
+        demo = Path(blend).stem
+        measured.append(demo)
+        block, slot = map(int, re.search(r'_b(\d+)_s(\d+)_', Path(out).stem).groups())
+        row = next(dict(run) for run in fixtures
+                   if run['workload'] == demo and run['round'] == block and run['slot'] == slot)
+        row.update(root=root, addon=str(Path(root) / 'fluidSim_warp_blender51/__init__.py'),
+                   rootInventorySha256=bench._inventory(Path(root)), processId=123,
+                   version=reference if row['label'] == 'baseline' else '2.0.0')
+        return row
+    monkeypatch.setattr(bench, '_run_trial', child)
+    prior = _bound_report(tmp_path / 'earlier')
+    prior['gitHead'] = 'c' * 40
+    for run in prior['runs']:
+        if run['label'] == 'candidate':
+            run['gitHead'] = 'c' * 40
+    carried = tmp_path / 'carried.json'
+    carried.write_text(json.dumps(prior))
+    out = tmp_path / 'evidence'
+    assert bench.demo_budget_main(['--blender', 'fake', '--candidate-root', str(source),
+                                   '--out-dir', str(out), '--demos', 'paddle_stir',
+                                   '--carry-summary', str(carried)]) == 0
+    report = json.loads((out / 'summary.json').read_text())
+    assert set(measured) == {'paddle_stir'}
+    assert len(report['runs']) == 64 and report['passed'] is True
+    assert report['demoMeasuredAt'] == {'crown_splash': 'c' * 40, 'dam_break': 'c' * 40,
+                                        'paddle_stir': 'a' * 40, 'chromatic_vortex': 'c' * 40}
+    assert report['demoInventory']['paddle_stir'] == bench._inventory(source)
+    assert report['demoInventory']['dam_break'] == prior['candidateInventorySha256']
+
+
+def test_runner_refuses_a_demo_subset_without_carried_evidence(tmp_path):
+    with pytest.raises(SystemExit):
+        bench.demo_budget_main(['--blender', 'fake', '--out-dir', str(tmp_path),
+                                '--demos', 'paddle_stir'])

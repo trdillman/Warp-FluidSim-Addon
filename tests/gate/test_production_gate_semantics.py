@@ -5,6 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from tools.performance_budget import DEMOS
+
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
     "run_production_gate", ROOT / "tools" / "run_production_gate.py"
@@ -33,7 +35,7 @@ def _stub_gate(monkeypatch, commands=None):
     monkeypatch.setattr(run_production_gate, "_clear_gate_manifest", lambda: None)
     monkeypatch.setattr(run_production_gate, "_write_gate_manifest", lambda *_args: None)
     monkeypatch.setattr(run_production_gate, "_validate_performance_evidence", lambda: {})
-    monkeypatch.setattr(run_production_gate, "_reusable_budget_head", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_reusable_budget_demos", lambda: frozenset())
     monkeypatch.setattr(run_production_gate, "_print_gate_metadata", lambda *_args: None)
     return labels
 
@@ -77,6 +79,14 @@ def test_gate_validates_release_kernels_on_cuda(monkeypatch):
         assert command[command.index("--expected-warp-root") + 1] == "warp-root"
 
 
+def _selected(path, specs):
+    """git's pathspec match for the plain prefixes and excludes the gate uses."""
+    if path.endswith(".md") or path.startswith("fluidSim_warp_blender51/docs/"):
+        return False
+    return any(path == spec or path.startswith(spec + "/")
+               for spec in specs if not spec.startswith(":("))
+
+
 def _write_passing_budget(monkeypatch, tmp_path, status="", diff="", head="abc123"):
     """A passing summary measured on abc123; ``status``/``diff`` are git's output."""
     artifact = tmp_path / "artifacts" / "demo_analysis" / "analysis_report.json"
@@ -103,8 +113,14 @@ def _write_passing_budget(monkeypatch, tmp_path, status="", diff="", head="abc12
     manifest = tmp_path / "artifacts" / "production_gate_manifest.json"
     monkeypatch.setattr(run_production_gate, "ROOT", tmp_path)
     monkeypatch.setattr(run_production_gate, "GATE_MANIFEST", manifest)
-    monkeypatch.setattr(run_production_gate, "_git_text",
-                        lambda *args: {"status": status, "diff": diff}.get(args[0], head))
+    def git_text(*args):
+        if args[0] not in ("status", "diff"):
+            return head
+        specs = args[args.index("--") + 1:]
+        paths = [line[3:] if args[0] == "status" else line
+                 for line in (status if args[0] == "status" else diff).splitlines()]
+        return "\n".join(path for path in paths if _selected(path, specs))
+    monkeypatch.setattr(run_production_gate, "_git_text", git_text)
     monkeypatch.setattr(run_production_gate, "_fluidsim_version", lambda: "9.9.9")
     return manifest
 
@@ -122,14 +138,15 @@ def test_gate_manifest_records_the_certified_version(monkeypatch, tmp_path):
     assert data["gate_verdict"] == "FULL-PRODUCTION-GATE-PASS"
     assert data["performance_artifact_sha256"]
     assert data["performance_budget_reused"] is False
-    assert data["performance_budget_measured_at"] == "abc123"
+    assert data["performance_budget_measured_at"] == {demo: "abc123" for demo in DEMOS}
 
 
 def test_gate_reuses_a_budget_that_still_covers_the_sources(monkeypatch, capsys):
     """By default a budget measured with the same budget sources is not re-measured."""
     commands, validations, manifests = {}, [], []
     _stub_gate(monkeypatch, commands)
-    monkeypatch.setattr(run_production_gate, "_reusable_budget_head", lambda: "abc123def4567")
+    monkeypatch.setattr(run_production_gate, "_reusable_budget_demos", lambda: frozenset(DEMOS))
+    monkeypatch.setattr(run_production_gate, "_rejudge_budget", lambda: None)
     monkeypatch.setattr(run_production_gate, "_validate_performance_evidence",
                         lambda **kwargs: validations.append(kwargs) or {})
     monkeypatch.setattr(run_production_gate, "_write_gate_manifest",
@@ -141,14 +158,14 @@ def test_gate_reuses_a_budget_that_still_covers_the_sources(monkeypatch, capsys)
     assert validations == [{"reuse": True}]
     assert manifests[0][2] is True
     out = capsys.readouterr().out
-    assert "reused: measured on abc123def456" in out
+    assert "reused crown_splash, dam_break, paddle_stir, chromatic_vortex" in out
     assert "FULL-PRODUCTION-GATE-PASS" in out
 
 
 def test_measure_budget_forces_a_fresh_measurement(monkeypatch):
     commands = {}
     _stub_gate(monkeypatch, commands)
-    monkeypatch.setattr(run_production_gate, "_reusable_budget_head", lambda: "abc123")
+    monkeypatch.setattr(run_production_gate, "_reusable_budget_demos", lambda: frozenset(DEMOS))
 
     assert run_production_gate.main(["--measure-budget"]) == 0
     assert "paired demo performance budget" in commands
@@ -186,6 +203,9 @@ def test_reused_budget_survives_rebuilt_demo_bytes(monkeypatch, tmp_path):
 def test_reused_budget_rejects_modified_sources(monkeypatch, tmp_path):
     import pytest
     _write_passing_budget(monkeypatch, tmp_path, status=" M fluidSim_warp_blender51/solver.py")
+    solver = tmp_path / "fluidSim_warp_blender51" / "solver.py"
+    solver.parent.mkdir()
+    solver.write_text("edited after measuring", encoding="utf-8")
     with pytest.raises(RuntimeError, match="sources changed"):
         run_production_gate._validate_performance_evidence(reuse=True)
 
@@ -201,14 +221,14 @@ def test_budget_from_an_earlier_commit_is_reused_when_sources_are_unchanged(monk
     """A docs- or blends-only commit keeps the measured budget."""
     _write_passing_budget(monkeypatch, tmp_path, head="def456")
     assert run_production_gate._validate_performance_evidence(reuse=True)["gitHead"] == "abc123"
-    assert run_production_gate._reusable_budget_head() == "abc123"
+    assert run_production_gate._reusable_budget_demos() == frozenset(DEMOS)
 
 
 def test_budget_from_an_earlier_commit_is_rejected_when_sources_changed(monkeypatch, tmp_path):
     import pytest
     _write_passing_budget(monkeypatch, tmp_path, head="def456",
                           diff="fluidSim_warp_blender51/solver.py")
-    assert run_production_gate._reusable_budget_head() is None
+    assert run_production_gate._reusable_budget_demos() == frozenset()
     with pytest.raises(RuntimeError, match="solver.py"):
         run_production_gate._validate_performance_evidence(reuse=True)
 
@@ -488,3 +508,108 @@ def test_every_step_reports_its_wall_time(monkeypatch, capsys):
                              expect_marker="hi")
     assert [label for label, _ in run_production_gate.STEP_TIMES] == ["tiny"]
     assert "[time] tiny:" in capsys.readouterr().out
+
+
+def _budget_with_demo_heads(monkeypatch, tmp_path, *, head="def456", diff="", fresh=(),
+                            passed=True):
+    """A summary whose ``fresh`` demos were measured on ``head``, the rest on abc123."""
+    manifest = _write_passing_budget(monkeypatch, tmp_path, head=head, diff=diff)
+    path = tmp_path / "artifacts" / "performance_budget" / "summary.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    for run in report["runs"]:
+        if run["workload"] in fresh and run["label"] == "candidate":
+            run["gitHead"] = head
+    report["demoMeasuredAt"] = {demo: head if demo in fresh else "abc123" for demo in DEMOS}
+    report["demoInventory"] = {demo: report["candidateInventorySha256"] for demo in DEMOS}
+    if not passed:
+        report.update(passed=False, status="invalid", demos={}, reasons=["older evaluator"])
+    path.write_text(json.dumps(report), encoding="utf-8")
+    return path, manifest
+
+
+def test_evaluator_only_change_rejudges_the_saved_runs(monkeypatch, tmp_path):
+    """A checker change re-judges the raw runs; it never needs a Blender run."""
+    path, _ = _budget_with_demo_heads(monkeypatch, tmp_path, diff="tools/performance_budget.py",
+                                      passed=False)
+    assert run_production_gate._reusable_budget_demos() == frozenset(DEMOS)
+
+    run_production_gate._rejudge_budget()
+
+    assert json.loads(path.read_text(encoding="utf-8"))["passed"] is True
+    assert run_production_gate._validate_performance_evidence(reuse=True)["passed"] is True
+
+
+def test_only_the_demo_whose_input_changed_is_remeasured(monkeypatch, tmp_path):
+    _budget_with_demo_heads(monkeypatch, tmp_path, diff="demos/paddle_stir.blend")
+    assert run_production_gate._reusable_budget_demos() == frozenset(DEMOS) - {"paddle_stir"}
+
+
+def test_builder_change_remeasures_only_the_built_demos(monkeypatch, tmp_path):
+    _budget_with_demo_heads(monkeypatch, tmp_path, diff="tools/demos/build_demo_scenes.py")
+    assert run_production_gate._reusable_budget_demos() == {"paddle_stir", "chromatic_vortex"}
+
+
+def test_addon_change_remeasures_every_demo(monkeypatch, tmp_path):
+    _budget_with_demo_heads(monkeypatch, tmp_path, diff="fluidSim_warp_blender51/solver.py")
+    assert run_production_gate._reusable_budget_demos() == frozenset()
+
+
+def test_demo_with_invalid_saved_evidence_is_remeasured(monkeypatch, tmp_path):
+    path, _ = _budget_with_demo_heads(monkeypatch, tmp_path)
+    report = json.loads(path.read_text(encoding="utf-8"))
+    broken = next(run for run in report["runs"] if run["workload"] == "chromatic_vortex")
+    broken["protectedSettings"] = {"tampered": True}
+    path.write_text(json.dumps(report), encoding="utf-8")
+    assert run_production_gate._reusable_budget_demos() == frozenset(DEMOS) - {"chromatic_vortex"}
+
+
+def test_mixed_budget_binds_each_demo_to_its_own_measurement(monkeypatch, tmp_path):
+    import pytest
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    _budget_with_demo_heads(monkeypatch, fresh, diff="demos/paddle_stir.blend",
+                            fresh=("paddle_stir",))
+    assert run_production_gate._validate_performance_evidence(reuse=True)["passed"] is True
+
+    stale = tmp_path / "stale"
+    stale.mkdir()
+    _budget_with_demo_heads(monkeypatch, stale, diff="demos/paddle_stir.blend")
+    with pytest.raises(RuntimeError, match="paddle_stir.blend"):
+        run_production_gate._validate_performance_evidence(reuse=True)
+
+
+def test_gate_measures_only_the_demos_it_cannot_reuse(monkeypatch):
+    commands, validations = {}, []
+    _stub_gate(monkeypatch, commands)
+    monkeypatch.setattr(run_production_gate, "_reusable_budget_demos",
+                        lambda: frozenset(DEMOS) - {"paddle_stir"})
+    monkeypatch.setattr(run_production_gate, "_carry_prior_budget", lambda: "carried.json")
+    monkeypatch.setattr(run_production_gate, "_validate_performance_evidence",
+                        lambda **kwargs: validations.append(kwargs) or {})
+
+    assert run_production_gate.main([]) == 0
+
+    command = commands["paired demo performance budget"]
+    start = command.index("--demos") + 1
+    assert command[start:start + 1] == ["paddle_stir"]
+    assert command[command.index("--carry-summary") + 1] == "carried.json"
+    assert validations == [{"reuse": True}]
+
+
+def test_measure_budget_measures_every_demo_without_carrying(monkeypatch):
+    commands = {}
+    _stub_gate(monkeypatch, commands)
+    monkeypatch.setattr(run_production_gate, "_reusable_budget_demos",
+                        lambda: frozenset(DEMOS) - {"paddle_stir"})
+
+    assert run_production_gate.main(["--measure-budget"]) == 0
+    command = commands["paired demo performance budget"]
+    assert "--demos" not in command and "--carry-summary" not in command
+
+
+def test_per_demo_sources_exclude_the_evaluator():
+    assert "tools/performance_budget.py" not in run_production_gate._BUDGET_SOURCES
+    paddle = run_production_gate._budget_sources("paddle_stir")
+    assert "demos/paddle_stir.blend" in paddle and "fluidSim_warp_blender51" in paddle
+    assert "tools/demos" not in paddle and "demos/chromatic_vortex.blend" not in paddle
+    assert "tools/demos" in run_production_gate._budget_sources("dam_break")

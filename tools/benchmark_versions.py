@@ -138,7 +138,25 @@ def demo_budget_main(argv):
     parser.add_argument("--trials", type=int, default=8)
     parser.add_argument("--frames", type=int, default=48)
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--demos", nargs="+", choices=tuple(REFERENCE_VERSIONS),
+                        help="measure only these demos; --carry-summary covers the rest")
+    parser.add_argument("--carry-summary",
+                        help="earlier summary whose runs cover the demos not measured")
     args = parser.parse_args(argv)
+    if bool(args.demos) != bool(args.carry_summary):
+        parser.error("--demos and --carry-summary go together: carried runs cover the other demos")
+    measure = tuple(demo for demo in REFERENCE_VERSIONS if not args.demos or demo in args.demos)
+    carried_runs, measured_at, inventories = [], {}, {}
+    if args.carry_summary:
+        prior = json.loads(Path(args.carry_summary).read_text(encoding="utf-8"))
+        for demo in REFERENCE_VERSIONS:
+            if demo in measure:
+                continue
+            # Summaries written before per-demo reuse measured every demo together.
+            measured_at[demo] = (prior.get("demoMeasuredAt") or {}).get(demo, prior.get("gitHead"))
+            inventories[demo] = ((prior.get("demoInventory") or {}).get(demo)
+                                 or prior.get("candidateInventorySha256"))
+            carried_runs.extend(run for run in prior["runs"] if run.get("workload") == demo)
     schedule = list(abba_schedule(args.trials))
     if args.frames != 48:
         parser.error("release budget requires the unchanged frames 1–48 window")
@@ -151,7 +169,7 @@ def demo_budget_main(argv):
     env = os.environ.copy()
     env["PYTHONNOUSERSITE"] = "1"
     env["BLENDER_USER_EXTENSIONS"] = str(out_dir / "blender_user_extensions")
-    runs = []
+    runs = list(carried_runs)
     inventory = None
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=candidate, text=True).strip()
     status = subprocess.check_output(["git", "status", "--porcelain"], cwd=candidate, text=True)
@@ -159,6 +177,9 @@ def demo_budget_main(argv):
         report = dict(verdict, gitHead=head, gitStatus=status.splitlines(), referenceCommits=REFERENCE_COMMITS,
                       trials=args.trials, frames=args.frames, runs=runs,
                       candidateInventorySha256=inventory,
+                      demoMeasuredAt={demo: measured_at.get(demo, head) for demo in REFERENCE_VERSIONS},
+                      demoInventory={demo: inventories.get(demo, inventory)
+                                     for demo in REFERENCE_VERSIONS},
                       measurementKind="saved_demo_scene_bridge_with_stage_sync")
         _checkpoint_summary(summary_path, report)
     checkpoint({'passed': False, 'status': 'incomplete'})
@@ -178,6 +199,8 @@ def demo_budget_main(argv):
                     bundle.extractall(root, filter="data")
                 roots[version] = root
             for demo, reference in REFERENCE_VERSIONS.items():
+                if demo not in measure:
+                    continue
                 blend = candidate / "demos" / f"{demo}.blend"
                 payload = out_dir / f"{demo}_settings.json"
                 extract_command = [args.blender, "--python-use-system-env", "--background",

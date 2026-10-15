@@ -11,10 +11,13 @@ Control surface
 - Default: headless/background validation only, ending in HEADLESS-GATE-PASS.
 - --include-gui or FLUIDSIM_FULL_GUI_ACCEPTANCE=1: also runs the interactive
   GUI acceptance lane, ending in FULL-PRODUCTION-GATE-PASS.
-- --reuse-budget: skip the paired performance budget and reuse the passing
-  summary a previous run wrote. It fails unless the measured commit still
-  covers the add-on, benchmark, and saved workload sources; the manifest
-  records the measured commit and whether its evidence was reused.
+- Performance budget reuse (default): each demo's saved runs are reused while
+  the add-on, benchmark harness and that demo's saved workload are unchanged
+  since they were measured; only the other demos are timed again. When no demo
+  needs timing (only the evaluator, docs or rebuilt bytes changed) the saved
+  raw runs are re-judged with the current evaluator and nothing is measured.
+  The manifest records each demo's measured commit.
+- --reuse-budget: fail rather than time any demo. --measure-budget: time all.
 - --quick: fast tier for localized changes (QUICK-GATE-PASS). Skips the demo
   rebuild/analysis, GUI lanes and performance budget; never release evidence.
 - Background acceptance scripts share one Blender session
@@ -46,6 +49,7 @@ import datetime as _dt
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -518,62 +522,153 @@ def _fluidsim_version():
     return _version_constant("VERSION_STRING")
 
 
-# Sources and saved workloads the budget trials execute. The gate rebuilds
-# dam_break and crown_splash, so their input is the builder; paddle_stir and
-# chromatic_vortex are read from disk unchanged. Documentation cannot change a
-# timing. This orchestrator is not run by a trial, and reuse re-evaluates the
-# raw runs with the current evaluator, so gate-only edits keep the budget.
-_BUDGET_SOURCES = (
+# Sources and saved workloads the budget trials execute, per demo. The add-on
+# and the benchmark harness time every demo. The gate rebuilds dam_break and
+# crown_splash, so their input is the builder; paddle_stir and chromatic_vortex
+# are read from disk unchanged. Documentation cannot change a timing. The
+# evaluator (tools/performance_budget.py) only judges the saved raw runs, so a
+# change to it re-judges them instead of re-measuring, and this orchestrator is
+# not run by a trial.
+_SHARED_BUDGET_SOURCES = (
     "fluidSim_warp_blender51", "tools/repo_addon_loader.py", "tools/benchmark_demo_trial.py",
-    "tools/benchmark_versions.py", "tools/performance_budget.py", "tools/demos",
-    "demos/paddle_stir.blend", "demos/chromatic_vortex.blend",
-    ":(exclude)*.md", ":(exclude)fluidSim_warp_blender51/docs",
+    "tools/benchmark_versions.py",
 )
+_DEMO_BUDGET_SOURCES = {
+    "crown_splash": ("tools/demos",),
+    "dam_break": ("tools/demos",),
+    "paddle_stir": ("demos/paddle_stir.blend",),
+    "chromatic_vortex": ("demos/chromatic_vortex.blend",),
+}
+_BUDGET_EXCLUDES = (":(exclude)*.md", ":(exclude)fluidSim_warp_blender51/docs")
+
+
+def _budget_sources(demo=None):
+    """Pathspecs that can change ``demo``'s timing (every demo's when None)."""
+    if demo is None:
+        own = tuple(dict.fromkeys(
+            source for sources in _DEMO_BUDGET_SOURCES.values() for source in sources))
+    else:
+        own = _DEMO_BUDGET_SOURCES[demo]
+    return _SHARED_BUDGET_SOURCES + own + _BUDGET_EXCLUDES
+
+
+_BUDGET_SOURCES = _budget_sources()
 PERFORMANCE_SUMMARY = Path("artifacts") / "performance_budget" / "summary.json"
+CARRIED_SUMMARY = Path("artifacts") / "performance_budget" / "carried_summary.json"
 
 
-def _budget_sources_changed_since(measured_head):
+def _budget_sources_changed_since(measured_head, demo=None):
     """Budget sources that differ from the measured commit, committed or not."""
     if not measured_head:
         return "no measured commit recorded"
-    committed = _git_text("diff", "--name-only", measured_head, "HEAD", "--", *_BUDGET_SOURCES)
-    uncommitted = _git_text("status", "--porcelain", "--", *_BUDGET_SOURCES)
+    sources = _budget_sources(demo)
+    committed = _git_text("diff", "--name-only", measured_head, "HEAD", "--", *sources)
+    uncommitted = _git_text("status", "--porcelain", "--", *sources)
     return "\n".join(part for part in (committed, uncommitted) if part)
 
 
-def _reusable_budget_head():
-    """The commit whose passing budget still covers HEAD, or None to measure.
+def _demo_provenance(report, demo):
+    """(measured commit, candidate inventory) of one demo's saved runs.
 
-    Timing depends on the add-on, the benchmark tools and the demo inputs, not
-    on documentation or rebuilt demo bytes, so a summary measured on an earlier
-    commit stays valid until one of ``_BUDGET_SOURCES`` changes.
+    Summaries written before per-demo reuse measured every demo together.
     """
+    heads = report.get("demoMeasuredAt") or {}
+    inventories = report.get("demoInventory") or {}
+    return (heads.get(demo, report.get("gitHead")),
+            inventories.get(demo, report.get("candidateInventorySha256")))
+
+
+def _reusable_budget_demos():
+    """Demos whose saved runs still cover HEAD; every other demo is measured.
+
+    A demo's timing depends on the add-on, the benchmark harness and its own
+    saved workload, not on documentation, rebuilt demo bytes or the evaluator.
+    Its runs are reused while none of its sources changed since they were
+    measured and the current evaluator still passes them.
+    """
+    from tools.performance_budget import DEMOS, evaluate_budget
     try:
         report = json.loads((ROOT / PERFORMANCE_SUMMARY).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None
-    if report.get("passed") is not True or _budget_sources_changed_since(report.get("gitHead")):
-        return None
-    return report["gitHead"]
+        return frozenset()
+    if not isinstance(report, dict) or not isinstance(report.get("runs"), list):
+        return frozenset()
+    verdict = evaluate_budget(report["runs"])
+    if verdict["status"] == "invalid":
+        # Invalid evidence names its demo or its run; anything else rules out every demo.
+        blamed = [_blamed_demo(reason, report["runs"], DEMOS) for reason in verdict["reasons"]]
+        if None in blamed:
+            return frozenset()
+        failing = set(blamed)
+    else:
+        failing = {demo for demo, result in verdict["demos"].items() if not result["passed"]}
+    reusable = set()
+    for demo in DEMOS:
+        measured_head = _demo_provenance(report, demo)[0]
+        if demo not in failing and not _budget_sources_changed_since(measured_head, demo):
+            reusable.add(demo)
+    return frozenset(reusable)
+
+
+def _blamed_demo(reason, runs, demos):
+    """The demo an invalid-evidence reason is about, or None if it is unclear."""
+    named = [demo for demo in demos if demo in reason]
+    if len(named) == 1:
+        return named[0]
+    match = re.match(r"run\[(\d+)\]", reason)
+    if match and int(match.group(1)) < len(runs) and isinstance(runs[int(match.group(1))], dict):
+        workload = runs[int(match.group(1))].get("workload")
+        return workload if workload in demos else None
+    return None
+
+
+def _rejudge_budget():
+    """Re-judge the saved raw runs with the current evaluator; no Blender run."""
+    from tools.performance_budget import DEMOS, evaluate_budget
+    path = ROOT / PERFORMANCE_SUMMARY
+    report = json.loads(path.read_text(encoding="utf-8"))
+    provenance = {demo: _demo_provenance(report, demo) for demo in DEMOS}
+    report.pop("error", None)
+    report.update(evaluate_budget(report["runs"]),
+                  demoMeasuredAt={demo: head for demo, (head, _) in provenance.items()},
+                  demoInventory={demo: inventory for demo, (_, inventory) in provenance.items()})
+    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+
+def _carry_prior_budget():
+    """Copy the summary aside: the runner replaces it before it measures."""
+    carried = ROOT / CARRIED_SUMMARY
+    carried.write_bytes((ROOT / PERFORMANCE_SUMMARY).read_bytes())
+    return str(carried)
 
 
 def _validate_performance_evidence(reuse=False):
+    """Check the stored budget; ``reuse`` admits demos measured on earlier commits."""
     from tools.benchmark_versions import REFERENCE_COMMITS, _inventory
-    from tools.performance_budget import evaluate_budget
+    from tools.performance_budget import DEMOS, evaluate_budget
     performance = ROOT / PERFORMANCE_SUMMARY
     report = json.loads(performance.read_text(encoding="utf-8"))
-    if report.get("passed") is not True or (
-            not reuse and report.get("gitHead") != _git_text("rev-parse", "HEAD")):
+    if report.get("passed") is not True:
         raise RuntimeError("missing passing performance budget evidence for this HEAD")
-    if reuse:
+    head = _git_text("rev-parse", "HEAD")
+    provenance = {demo: _demo_provenance(report, demo) for demo in DEMOS}
+    inventory = None
+    for demo, (measured_head, measured_inventory) in provenance.items():
+        if measured_head == head:
+            if inventory is None:
+                inventory = _inventory(ROOT)
+            if measured_inventory == inventory:
+                continue
+            if not reuse:
+                raise RuntimeError("source or demo bytes changed after the performance comparison")
+        elif not reuse:
+            raise RuntimeError("missing passing performance budget evidence for this HEAD")
         # A rebuilt demo blend differs in compressed bytes only, so a reused
-        # comparison binds the measured commit and unchanged budget sources.
-        changed = _budget_sources_changed_since(report.get("gitHead"))
+        # comparison binds the measured commit and the demo's unchanged sources.
+        changed = _budget_sources_changed_since(measured_head, demo)
         if changed:
             raise RuntimeError(
-                f"sources changed since the reused performance comparison:\n{changed}")
-    elif report.get("candidateInventorySha256") != _inventory(ROOT):
-        raise RuntimeError("source or demo bytes changed after the performance comparison")
+                f"{demo}: sources changed since the reused performance comparison:\n{changed}")
     recomputed = evaluate_budget(report.get("runs"))
     if not recomputed["passed"]:
         raise RuntimeError("raw performance evidence does not satisfy the budget")
@@ -584,18 +679,20 @@ def _validate_performance_evidence(reuse=False):
     observed_sources = {}
     for run in report['runs']:
         baseline = run['label'] == 'baseline'
-        expected_head = REFERENCE_COMMITS[run['referenceVersion']] if baseline else report['gitHead']
+        measured_head, measured_inventory = provenance[run['workload']]
+        expected_head = REFERENCE_COMMITS[run['referenceVersion']] if baseline else measured_head
         root_inventory = run.get('rootInventorySha256')
         root = Path(run['root'])
         if (run.get('gitHead') != expected_head
-                or run.get('candidateInventorySha256') != report['candidateInventorySha256']
+                or run.get('candidateInventorySha256') != measured_inventory
                 or type(run.get('processId')) is not int or run['processId'] <= 0
                 or not isinstance(root_inventory, str) or len(root_inventory) != 64
                 or any(value not in '0123456789abcdef' for value in root_inventory)
                 or Path(run.get('addon', '')).resolve() != (root / 'fluidSim_warp_blender51/__init__.py').resolve()
-                or (not baseline and root_inventory != report['candidateInventorySha256'])):
+                or (not baseline and root_inventory != measured_inventory)):
             raise RuntimeError('raw performance trial provenance is not bound to selected sources')
-        cohort = run['referenceVersion'] if baseline else 'candidate'
+        # Each demo's runs come from one measurement; demos may come from different ones.
+        cohort = (run['referenceVersion'] if baseline else 'candidate', run['workload'])
         observed = (str(root.resolve()), root_inventory)
         if cohort in observed_sources and observed_sources[cohort] != observed:
             raise RuntimeError('raw performance source inventory changes between trials')
@@ -604,6 +701,7 @@ def _validate_performance_evidence(reuse=False):
 
 
 def _write_gate_manifest(blender_exe, warp_version=None, reuse_budget=False):
+    from tools.performance_budget import DEMOS as report_demos
     report = _validate_performance_evidence(reuse=True) if reuse_budget else _validate_performance_evidence()
     artifact = ROOT / "artifacts" / "demo_analysis" / "analysis_report.json"
     if not artifact.is_file():
@@ -624,7 +722,8 @@ def _write_gate_manifest(blender_exe, warp_version=None, reuse_budget=False):
         "performance_artifact_sha256": hashlib.sha256(performance.read_bytes()).hexdigest(),
         "performance_reference_commits": report["referenceCommits"],
         "performance_budget_reused": bool(reuse_budget),
-        "performance_budget_measured_at": report["gitHead"],
+        "performance_budget_measured_at": {
+            demo: _demo_provenance(report, demo)[0] for demo in report_demos},
     }
     GATE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     GATE_MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n",
@@ -856,23 +955,37 @@ def _production_main(argv=None):
         ), env=env)
     # Run after demo rebuilds and GUI probes, so the budget covers the final
     # delivered saved files, not the pre-build inputs.
-    measured_head = None if args.measure_budget else _reusable_budget_head()
-    if args.reuse_budget and measured_head is None:
+    from tools.performance_budget import DEMOS
+    reusable = frozenset() if args.measure_budget else _reusable_budget_demos()
+    if args.reuse_budget and reusable != frozenset(DEMOS):
         raise RuntimeError("--reuse-budget: no passing performance budget covers the current "
                            "budget sources; run without it to measure")
-    reuse_budget = measured_head is not None
-    if reuse_budget:
+    measure = [demo for demo in DEMOS if demo not in reusable]
+    reuse_budget = bool(reusable)
+    if not measure:
+        # Only the evaluator, documentation or rebuilt bytes changed: judge the
+        # saved raw runs again rather than timing them again.
+        _rejudge_budget()
         _validate_performance_evidence(reuse=True)
         print("\n== paired demo performance budget ==")
-        print(f"reused: measured on {measured_head[:12]}; no budget source changed since")
+        print(f"reused {', '.join(DEMOS)}: no budget input changed since they were measured")
     else:
-        _run("paired demo performance budget", [
+        command = [
             blender_py, "tools/benchmark_versions.py", "--demo-budget",
             "--blender", blender_exe, "--candidate-root", str(ROOT),
             "--trials", "8", "--frames", "48",
             "--out-dir", "artifacts/performance_budget",
-        ], env=env, expect_marker="PERFORMANCE-BUDGET-PASS")
-        _validate_performance_evidence()
+        ]
+        if reusable:
+            print(f"\nperformance budget: reusing {', '.join(d for d in DEMOS if d in reusable)}; "
+                  f"measuring {', '.join(measure)}")
+            command += ["--demos", *measure, "--carry-summary", _carry_prior_budget()]
+        _run("paired demo performance budget", command, env=env,
+             expect_marker="PERFORMANCE-BUDGET-PASS")
+        if reuse_budget:
+            _validate_performance_evidence(reuse=True)
+        else:
+            _validate_performance_evidence()
     if include_gui:
         _write_gate_manifest(
             blender_exe, _version_constant("CERTIFIED_WARP_VERSION"), reuse_budget)
