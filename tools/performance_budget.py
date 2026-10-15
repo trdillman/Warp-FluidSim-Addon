@@ -13,12 +13,8 @@ import statistics
 from collections import defaultdict
 
 DEMOS = ("crown_splash", "dam_break", "paddle_stir", "chromatic_vortex")
-REFERENCE_VERSIONS = {
-	"crown_splash": "1.0.255",
-	"dam_break": "1.0.255",
-	"paddle_stir": "1.0.255",
-	"chromatic_vortex": "1.1.0",
-}
+# Every demo is compared with the previous release.
+REFERENCE_VERSIONS = {demo: "3.2.1" for demo in DEMOS}
 BUDGET_RATIO = 1.05
 MIN_TRIALS_PER_VARIANT = 8
 EXPECTED_FRAMES = tuple(range(1, 49))
@@ -51,12 +47,17 @@ NEUTRAL_ABSENT_EFFECTIVE_SETTINGS = {
 	"pressure_preconditioner": "JACOBI",
 	"spacetime_enabled": False,
 }
-# Candidate-only settings that are owned release changes, not omissions:
-# field -> (candidate value, per-frame budget ratio for that demo). 4.0 makes
-# Multigrid the default preconditioner; RELEASE_4_0_PLAN.md allows it +10%.
-INTENDED_CANDIDATE_CHANGES = {
-	"pressure_preconditioner": ("MULTIGRID", 1.10),
+# Owned release changes, not omissions: field -> (baseline value, candidate
+# value, per-frame budget ratio). The field may be common or candidate-only.
+# RELEASE_4_0_PLAN.md allows Multigrid +10% and one coupled rigid body +5%;
+# a demo's allowances multiply.
+INTENDED_CHANGES = {
+	"pressure_preconditioner": ("JACOBI", "MULTIGRID", 1.10),
 }
+RIGID_COUPLING_RATIO = 1.05
+# Accuracy guard: the candidate's median pressure residual may exceed the
+# baseline's by at most this factor.
+RESIDUAL_RATIO_LIMIT = 1.10
 # Settings that only one variant reports and that do nothing while their
 # switch holds the given value: field -> (switch, inert value). The switch
 # must itself be a neutral absence for the same variant.
@@ -198,6 +199,9 @@ def _validate_run(run, index):
 	device = run.get("device")
 	if not isinstance(device, str) or not device.lower().startswith("cuda"):
 		errors.append(f"{name}: device must identify CUDA")
+	rigid_bodies = run.get("rigidBodies")
+	if type(rigid_bodies) is not int or rigid_bodies < 0:
+		errors.append(f"{name}: rigidBodies must be a non-negative integer")
 	for field in ("blendSha256", "settingsSha256"):
 		if not _sha256(run.get(field)):
 			errors.append(f"{name}: {field} provenance is missing or invalid")
@@ -282,6 +286,10 @@ def _validate_run(run, index):
 				errors.append(f"{frame_name}: substeps must be a positive integer")
 			if not _positive_number(record.get("activeParticles")):
 				errors.append(f"{frame_name}: activeParticles must be positive")
+			if type(record.get("pressureIterations")) is not int or record["pressureIterations"] < 0:
+				errors.append(f"{frame_name}: pressureIterations must be a non-negative integer")
+			if not _nonnegative_number(record.get("pressureResidual")):
+				errors.append(f"{frame_name}: pressureResidual must be finite and non-negative")
 		timers = record.get("timers")
 		if not isinstance(timers, dict):
 			errors.append(f"{frame_name}: timers must be an object")
@@ -317,6 +325,8 @@ def _trial_medians(run):
 	return {
 		"host": statistics.median(record["hostMs"] for record in warm),
 		"solver": statistics.median(record["timers"]["solver"] for record in warm),
+		"residual": statistics.median(record["pressureResidual"] for record in warm),
+		"iterations": statistics.median(record["pressureIterations"] for record in warm),
 		"stages": {
 			stage: statistics.median(record["timers"][stage] for record in warm)
 			for stage in sorted(stage_names)
@@ -332,13 +342,26 @@ def _invalid(reasons):
 	return {"passed": False, "status": "invalid", "demos": {}, "reasons": reasons}
 
 
-def evaluate_budget(runs):
-	"""Validate raw reports and enforce the per-demo budget (5%, or an owned change's).
+def _intended_change(field, labelled_values):
+	"""Return the owned-change entry when ``field`` moved exactly as intended."""
+	if field not in INTENDED_CHANGES:
+		return None
+	baseline_value, candidate_value, ratio = INTENDED_CHANGES[field]
+	expected = {"baseline": baseline_value, "candidate": candidate_value}
+	if not all(value == expected[label] for label, value in labelled_values):
+		return None
+	return {"baseline": baseline_value, "candidate": candidate_value, "budgetRatio": ratio}
 
-	A confirmed regression requires both host time and synchronized solver time
-	to exceed the limit with the two ABBA orders agreeing.  A host/solver
-	disagreement or order split is retained as inconclusive evidence and blocks
-	the production gate.  Invalid or incomplete evidence always fails.
+
+def evaluate_budget(runs):
+	"""Validate raw reports and judge each demo on user wall time per frame.
+
+	The deciding number is the order-balanced host ratio: the mean of the
+	baseline-first and candidate-first block medians, which cancels order and
+	warm-up bias.  Over the demo's budget (5%, or its owned changes' product)
+	is a regression.  The candidate must also not be less accurate: its median
+	pressure residual may not exceed the baseline's by more than 10%.  Solver,
+	stage and iteration numbers are diagnostics.  Invalid evidence always fails.
 	"""
 	if not isinstance(runs, list):
 		return _invalid(["runs must be a list of raw reports"])
@@ -399,7 +422,6 @@ def evaluate_budget(runs):
 		all_effective = set.union(*effective_keys.values())
 		neutral_absences = {}
 		intended_changes = {}
-		budget_ratio = BUDGET_RATIO
 		lattice_snap = None
 		if not common_effective:
 			invalid_reasons.append(
@@ -414,6 +436,11 @@ def evaluate_budget(runs):
 					elif snap:
 						lattice_snap = snap
 				elif any(value != values[0] for value in values[1:]):
+					change = _intended_change(field, [
+						(run["label"], run["effectiveSettings"][field]) for run in demo_runs])
+					if change:
+						intended_changes[field] = change
+						continue
 					invalid_reasons.append(
 						f"{demo}: effectiveSettings.{field} differs across variants or trials")
 		for field in sorted(all_effective - common_effective):
@@ -442,16 +469,28 @@ def evaluate_budget(runs):
 					"inertWhile": {switch: inert},
 				}
 			elif (present_labels == ["candidate"]
-					and field in INTENDED_CANDIDATE_CHANGES
-					and all(value == INTENDED_CANDIDATE_CHANGES[field][0]
-							for value in present_values)):
-				value, ratio = INTENDED_CANDIDATE_CHANGES[field]
-				intended_changes[field] = {
-					"presentIn": "candidate", "value": value, "budgetRatio": ratio}
-				budget_ratio = max(budget_ratio, ratio)
+					and NEUTRAL_ABSENT_EFFECTIVE_SETTINGS.get(field, object())
+					== INTENDED_CHANGES.get(field, (object(),))[0]
+					and _intended_change(field, [
+						("candidate", value) for value in present_values])):
+				intended_changes[field] = _intended_change(field, [
+					("candidate", value) for value in present_values])
 			else:
 				invalid_reasons.append(
 					f"{demo}: effectiveSettings.{field} is an unsupported cross-version omission")
+		rigid = {label: {run["rigidBodies"] for run in demo_runs if run["label"] == label}
+				 for label in _LABELS}
+		if any(len(values) != 1 for values in rigid.values()):
+			invalid_reasons.append(f"{demo}: rigidBodies must be constant within each variant")
+		elif rigid["baseline"] != rigid["candidate"]:
+			if rigid["baseline"] == {0}:
+				intended_changes["rigidBodies"] = {
+					"baseline": 0, "candidate": next(iter(rigid["candidate"])),
+					"budgetRatio": RIGID_COUPLING_RATIO}
+			else:
+				invalid_reasons.append(f"{demo}: rigidBodies differ across variants")
+		budget_ratio = max(BUDGET_RATIO, math.prod(
+			change["budgetRatio"] for change in intended_changes.values()))
 		effective_settings_diagnostics[demo] = {
 			"commonFields": sorted(common_effective),
 			"neutralAbsentFields": neutral_absences,
@@ -560,8 +599,6 @@ def evaluate_budget(runs):
 		if invalid_reasons:
 			continue
 
-		host_ratio = statistics.median(row["hostRatio"] for row in block_rows)
-		solver_ratio = statistics.median(row["solverRatio"] for row in block_rows)
 		order_diagnostics = {}
 		for order, rows in orders.items():
 			order_diagnostics[order] = {
@@ -577,24 +614,41 @@ def evaluate_budget(runs):
 					]]
 				},
 			}
-		order_split = any(
-			(order_diagnostics[_ORDERS[0]][f"{metric}Ratio"] <= budget_ratio)
-			!= (order_diagnostics[_ORDERS[1]][f"{metric}Ratio"] <= budget_ratio)
-			for metric in ("host", "solver")
-		)
-		if order_split:
-			status = "inconclusive"
-			reasons = ["ABBA orders disagree on the budget direction"]
-		elif host_ratio <= budget_ratio and solver_ratio <= budget_ratio:
+		host_ratio = statistics.fmean(
+			order_diagnostics[order]["hostRatio"] for order in _ORDERS)
+		solver_ratio = statistics.fmean(
+			order_diagnostics[order]["solverRatio"] for order in _ORDERS)
+		host_spread = abs(order_diagnostics[_ORDERS[0]]["hostRatio"]
+						  - order_diagnostics[_ORDERS[1]]["hostRatio"])
+		pressure = {}
+		for metric in ("residual", "iterations"):
+			pressure[metric] = {
+				label: statistics.median(
+					values[metric] for run, values in zip(demo_runs, trial_medians)
+					if run["label"] == label)
+				for label in _LABELS}
+		baseline_residual = pressure["residual"]["baseline"]
+		candidate_residual = pressure["residual"]["candidate"]
+		if baseline_residual > 0.0:
+			residual_ratio = candidate_residual / baseline_residual
+		else:
+			residual_ratio = 1.0 if candidate_residual == 0.0 else None
+		pressure["residual"]["ratio"] = residual_ratio
+		candidate_iterations = pressure["iterations"]["candidate"]
+		pressure["iterations"]["reduction"] = (
+			pressure["iterations"]["baseline"] / candidate_iterations
+			if candidate_iterations > 0 else None)
+		if host_ratio > budget_ratio:
+			status = "regression"
+			reasons = [f"order-balanced host time {host_ratio:.3f}x exceeds the "
+					   f"{budget_ratio:.3f}x budget"]
+		elif residual_ratio is None or residual_ratio > RESIDUAL_RATIO_LIMIT:
+			status = "less_accurate"
+			reasons = ["candidate pressure residual exceeds the baseline's by "
+					   f"more than {round((RESIDUAL_RATIO_LIMIT - 1.0) * 100)}%"]
+		else:
 			status = "pass"
 			reasons = []
-		elif host_ratio > budget_ratio and solver_ratio > budget_ratio:
-			status = "regression"
-			reasons = ["host and synchronized solver medians exceed the "
-					   f"{round((budget_ratio - 1.0) * 100)}% budget"]
-		else:
-			status = "inconclusive"
-			reasons = ["host and synchronized solver evidence disagree"]
 		stage_diagnostics = {}
 		for stage in sorted(common_stages):
 			ratios = [row["stages"][stage]["ratio"] for row in block_rows
@@ -613,7 +667,9 @@ def evaluate_budget(runs):
 			"budgetRatio": budget_ratio,
 			"trials": counts,
 			"hostRatio": host_ratio,
+			"hostOrderSpread": host_spread,
 			"solverRatio": solver_ratio,
+			"pressure": pressure,
 			"orders": order_diagnostics,
 			"stages": stage_diagnostics,
 			"effectiveSettings": effective_settings_diagnostics[demo],
@@ -627,8 +683,8 @@ def evaluate_budget(runs):
 	statuses = {result["status"] for result in demo_results.values()}
 	if "regression" in statuses:
 		status = "regression"
-	elif "inconclusive" in statuses:
-		status = "inconclusive"
+	elif "less_accurate" in statuses:
+		status = "less_accurate"
 	else:
 		status = "pass"
 	return {

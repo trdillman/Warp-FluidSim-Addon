@@ -47,8 +47,7 @@ def test_budget_rejects_shortened_demo_window_before_launch(tmp_path):
 
 def test_reference_commit_identity_matches_release_mapping():
     assert bench.REFERENCE_COMMITS == {
-        "1.0.255": "9c0d99e62adda14bb7b075a447c01fefe7187da3",
-        "1.1.0": "c5919d668f469942200c58274eca13337d3aa624",
+        "3.2.1": "296fa95a9c8b1b904123846e9f7470cd99a3d64a",
     }
 
 

@@ -156,7 +156,9 @@ def main():
                          "simTimeBefore": sim_time_before,
                          "simTimeAfter": float(sess.solver.sim_time),
                          "substeps": int(stats.substeps),
-                         "activeParticles": int(stats.active_particles)})
+                         "activeParticles": int(stats.active_particles),
+                         "pressureIterations": int(stats.pressure_iterations),
+                         "pressureResidual": float(stats.pressure_residual)})
         if not rows[-1]["activeParticles"]:
             raise RuntimeError("demo produced no liquid particles")
         if inventory_module._inventory(root) != root_inventory:
@@ -166,6 +168,7 @@ def main():
                   "version": version.VERSION_STRING, "referenceVersion": reference,
                   "blend": str(blend), "blendSha256": hashlib.sha256(blend.read_bytes()).hexdigest(),
                   "device": device, "warp": wp.config.version, "profilerSync": True,
+                  "rigidBodies": len(getattr(getattr(sess.solver, "rigid", None), "bodies", None) or ()),
                   "protectedSettings": protected,
                   "effectiveSettings": effective,
                   "attributeInventory": attributes,

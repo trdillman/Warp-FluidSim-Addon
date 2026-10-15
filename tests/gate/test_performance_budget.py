@@ -15,7 +15,7 @@ from tools.performance_budget import (
 )
 
 
-def _records(host, solver, *, frame1_multiplier=1.0):
+def _records(host, solver, *, frame1_multiplier=1.0, residual=1.0e-5, iterations=40):
 	frame_dt = 1.0 / 24.0
 	return [
 		{
@@ -23,6 +23,8 @@ def _records(host, solver, *, frame1_multiplier=1.0):
 			"hostMs": host * (frame1_multiplier if frame == 1 else 1.0),
 			"substeps": 2,
 			"activeParticles": 10_000 + frame,
+			"pressureIterations": iterations,
+			"pressureResidual": residual,
 			"frameDt": frame_dt,
 			"simTimeBefore": (frame - 1) * frame_dt,
 			"simTimeAfter": frame * frame_dt,
@@ -37,7 +39,8 @@ def _records(host, solver, *, frame1_multiplier=1.0):
 
 
 def _campaign(*, baseline=100.0, candidate=100.0, solver_candidate=None,
-			  slot_drift=0.0, frame1_multiplier=1.0):
+			  slot_drift=0.0, frame1_multiplier=1.0, candidate_residual=1.0e-5,
+			  candidate_iterations=40):
 	if solver_candidate is None:
 		solver_candidate = candidate
 	runs = []
@@ -83,7 +86,10 @@ def _campaign(*, baseline=100.0, candidate=100.0, solver_candidate=None,
 				"slot": slot,
 				"workload": demo,
 				"records": _records(
-					value, solver, frame1_multiplier=frame1_multiplier),
+					value, solver, frame1_multiplier=frame1_multiplier,
+					residual=1.0e-5 if label == "baseline" else candidate_residual,
+					iterations=40 if label == "baseline" else candidate_iterations),
+				"rigidBodies": 0,
 				"profilerSync": True,
 				"solverTimerContract": SOLVER_TIMER_CONTRACT,
 				"device": "cuda:0",
@@ -115,7 +121,7 @@ def test_abba_schedule_has_eight_trials_per_variant_and_reverses_order():
 		abba_schedule(7)
 
 
-def test_real_regression_fails_when_host_and_solver_confirm_it():
+def test_host_time_over_budget_is_a_regression():
 	result = evaluate_budget(_campaign(candidate=106.0))
 	assert result["passed"] is False
 	assert result["status"] == "regression"
@@ -132,28 +138,34 @@ def test_linear_slot_drift_is_cancelled_by_each_abba_block():
 		assert result["demos"][demo]["solverRatio"] == pytest.approx(1.0)
 
 
-def test_host_noise_alone_is_inconclusive_and_blocks_gate():
+def test_host_time_decides_even_when_solver_time_is_flat():
+	# The user waits on wall time; solver time is a diagnostic only.
 	result = evaluate_budget(_campaign(candidate=108.0, solver_candidate=100.0))
-	assert result["passed"] is False
-	assert result["status"] == "inconclusive"
-	assert result["demos"]["paddle_stir"]["status"] == "inconclusive"
+	assert result["status"] == "regression"
+	assert result["demos"]["paddle_stir"]["solverRatio"] == pytest.approx(1.0)
+	result = evaluate_budget(_campaign(candidate=100.0, solver_candidate=120.0))
+	assert result["status"] == "pass"
 
 
-def test_opposite_order_directions_are_inconclusive():
+def _order_split(baseline_first, candidate_first):
 	runs = _campaign()
 	for run in runs:
 		if run["label"] == "candidate":
-			factor = 1.20 if run["round"] % 2 == 0 else 0.90
+			factor = baseline_first if run["round"] % 2 == 0 else candidate_first
 			for record in run["records"]:
 				record["hostMs"] *= factor
 				record["timers"]["solver"] *= factor
-	result = evaluate_budget(runs)
-	assert result["passed"] is False
-	assert result["status"] == "inconclusive"
-	assert result["demos"]["dam_break"]["orders"][
-		"baseline-first"]["hostRatio"] > 1.05
-	assert result["demos"]["dam_break"]["orders"][
-		"candidate-first"]["hostRatio"] < 1.05
+	return evaluate_budget(runs)
+
+
+def test_order_balanced_host_ratio_decides_and_reports_the_spread():
+	result = _order_split(1.16, 0.90)
+	assert result["status"] == "pass", result["demos"]["dam_break"]["reasons"]
+	demo = result["demos"]["dam_break"]
+	assert demo["orders"]["baseline-first"]["hostRatio"] == pytest.approx(1.16)
+	assert demo["hostRatio"] == pytest.approx(1.03)
+	assert demo["hostOrderSpread"] == pytest.approx(0.26)
+	assert _order_split(1.20, 0.96)["status"] == "regression"
 
 
 def test_missing_trial_is_invalid():
@@ -201,6 +213,10 @@ def test_solver_timer_contract_is_required_exactly(value):
 	assert result["passed"] is False
 	assert result["status"] == "invalid"
 	assert any("solverTimerContract" in reason for reason in result["reasons"])
+
+
+def test_every_demo_is_compared_with_the_previous_release():
+	assert set(REFERENCE_VERSIONS.values()) == {"3.2.1"}
 
 
 def test_wrong_reference_is_invalid():
@@ -394,6 +410,10 @@ def test_missing_frame_is_invalid():
 @pytest.mark.parametrize("field, value", [
 	("substeps", 0),
 	("activeParticles", 0),
+	("pressureIterations", -1),
+	("pressureIterations", 4.0),
+	("pressureResidual", float("nan")),
+	("pressureResidual", None),
 ])
 def test_warm_frames_require_real_workload_evidence(field, value):
 	runs = _campaign()
@@ -509,16 +529,104 @@ def test_4_0_multigrid_default_is_an_owned_change_with_the_plan_budget():
 	demo = result["demos"]["dam_break"]
 	assert demo["budgetRatio"] == 1.10
 	assert demo["effectiveSettings"]["intendedChanges"]["pressure_preconditioner"] == {
-		"presentIn": "candidate", "value": "MULTIGRID", "budgetRatio": 1.10}
+		"baseline": "JACOBI", "candidate": "MULTIGRID", "budgetRatio": 1.10}
 	assert "pressure_preconditioner" not in demo["effectiveSettings"]["neutralAbsentFields"]
+
+
+def test_multigrid_is_owned_when_both_versions_report_the_preconditioner():
+	# 3.2.1 reports the field too: JACOBI -> MULTIGRID is the owned change.
+	runs = _multigrid_campaign(candidate=108.0)
+	for run in runs:
+		if run["label"] == "baseline":
+			run["effectiveSettings"]["pressure_preconditioner"] = "JACOBI"
+	result = evaluate_budget(runs)
+	assert result["status"] == "pass", result["reasons"]
+	assert result["demos"]["dam_break"]["budgetRatio"] == 1.10
+	for run in runs:
+		run["effectiveSettings"]["pressure_preconditioner"] = (
+			"MULTIGRID" if run["label"] == "baseline" else "JACOBI")
+	result = evaluate_budget(runs)
+	assert result["status"] == "invalid"
+	assert any("pressure_preconditioner" in reason for reason in result["reasons"])
 
 
 def test_multigrid_allowance_does_not_widen_other_runs_or_exceed_ten_percent():
 	assert evaluate_budget(_campaign(candidate=108.0))["status"] == "regression"
 	result = evaluate_budget(_multigrid_campaign(candidate=112.0))
 	assert result["status"] == "regression"
-	assert any("10% budget" in reason
+	assert any("1.100x budget" in reason
 			   for reason in result["demos"]["dam_break"]["reasons"])
+
+
+def _coupled(runs, candidate_bodies=1, baseline_bodies=0):
+	for run in runs:
+		if run["workload"] == "crown_splash":
+			run["rigidBodies"] = candidate_bodies if run["label"] == "candidate" else baseline_bodies
+	return runs
+
+
+def test_rigid_coupling_is_an_owned_change_that_multiplies_with_multigrid():
+	result = evaluate_budget(_coupled(_campaign(candidate=104.0)))
+	crown = result["demos"]["crown_splash"]
+	assert crown["budgetRatio"] == pytest.approx(1.05)
+	assert crown["effectiveSettings"]["intendedChanges"]["rigidBodies"] == {
+		"baseline": 0, "candidate": 1, "budgetRatio": 1.05}
+	result = evaluate_budget(_coupled(_multigrid_campaign(candidate=114.0)))
+	assert result["demos"]["crown_splash"]["status"] == "pass"
+	assert result["demos"]["dam_break"]["status"] == "regression"
+	assert result["demos"]["crown_splash"]["budgetRatio"] == pytest.approx(1.155)
+	assert result["demos"]["dam_break"]["budgetRatio"] == pytest.approx(1.10)
+	result = evaluate_budget(_coupled(_multigrid_campaign(candidate=116.0)))
+	assert result["demos"]["crown_splash"]["status"] == "regression"
+
+
+@pytest.mark.parametrize("mutate, expected", [
+	(lambda runs: _coupled(runs, candidate_bodies=0, baseline_bodies=1), "rigidBodies differ"),
+	(lambda runs: runs[0].update(rigidBodies=2), "rigidBodies must be constant"),
+	(lambda runs: runs[0].pop("rigidBodies"), "rigidBodies must be a non-negative integer"),
+])
+def test_rigid_body_evidence_must_be_consistent(mutate, expected):
+	runs = _campaign()
+	mutate(runs)
+	result = evaluate_budget(runs)
+	assert result["status"] == "invalid"
+	assert any(expected in reason for reason in result["reasons"])
+
+
+def test_a_faster_but_less_accurate_candidate_fails():
+	result = evaluate_budget(_campaign(candidate=90.0, candidate_residual=1.2e-5))
+	assert result["passed"] is False
+	assert result["status"] == "less_accurate"
+	pressure = result["demos"]["dam_break"]["pressure"]
+	assert pressure["residual"]["ratio"] == pytest.approx(1.2)
+	assert evaluate_budget(_campaign(candidate_residual=1.05e-5))["status"] == "pass"
+
+
+def test_regression_outranks_less_accurate():
+	result = evaluate_budget(_campaign(candidate=120.0, candidate_residual=1.0e-3))
+	assert result["status"] == "regression"
+
+
+def test_zero_baseline_residual_requires_a_zero_candidate_residual():
+	runs = _campaign(candidate_residual=0.0)
+	for run in runs:
+		for record in run["records"]:
+			record["pressureResidual"] = 0.0
+	assert evaluate_budget(runs)["status"] == "pass"
+	for run in runs:
+		if run["label"] == "candidate":
+			for record in run["records"]:
+				record["pressureResidual"] = 1.0e-9
+	result = evaluate_budget(runs)
+	assert result["status"] == "less_accurate"
+	assert result["demos"]["dam_break"]["pressure"]["residual"]["ratio"] is None
+
+
+def test_pressure_iteration_reduction_is_reported():
+	result = evaluate_budget(_campaign(candidate_iterations=10))
+	assert result["status"] == "pass"
+	iterations = result["demos"]["dam_break"]["pressure"]["iterations"]
+	assert iterations == {"baseline": 40, "candidate": 10, "reduction": 4.0}
 
 
 def test_multigrid_only_in_the_baseline_is_still_an_omission():

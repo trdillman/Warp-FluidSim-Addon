@@ -87,7 +87,7 @@ def _stub_campaign(monkeypatch, tmp_path):
     import io
     import tarfile
     def archive(command, **kwargs):
-        data = b'VERSION_STRING = "1.0.255"'
+        data = b'VERSION_STRING = "3.2.1"'
         member = tarfile.TarInfo('fluidSim_warp_blender51/version.py')
         member.size = len(data)
         with tarfile.open(command[-2].split('=', 1)[1], 'w') as bundle:
