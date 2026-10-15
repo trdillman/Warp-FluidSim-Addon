@@ -14,7 +14,8 @@ an int/float that commits through the property itself (so its ``update=`` and
 the Pending Settings classification run exactly as for a panel edit). Enum,
 string and vector settings are read-only here and jump to the panel
 (``fluidsim.open_scene_properties``). The palette keeps no settings state. Keys it
-does not use, Ctrl+Z and Ctrl+Shift+Z included, pass through to Blender.
+does not use pass through to Blender only as Ctrl/Cmd shortcuts (Ctrl+Z, Ctrl+Shift+Z);
+other keys, Delete included, stay with the palette.
 """
 
 from __future__ import annotations
@@ -422,7 +423,11 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
                 self.query += event.unicode
                 self._refresh()
             return {"RUNNING_MODAL"}
-        return {"PASS_THROUGH"}  # Ctrl+Z, Ctrl+Shift+Z and any key the palette does not use
+        if _is_shortcut(event):
+            return {"PASS_THROUGH"}  # Ctrl+Z, Ctrl+Shift+Z and other shortcuts
+        # Any other key stays with the palette: Delete or X reaching the viewport
+        # would delete the selection while the user is typing.
+        return {"RUNNING_MODAL"}
 
     def cancel(self, context):
         self._close(context)
