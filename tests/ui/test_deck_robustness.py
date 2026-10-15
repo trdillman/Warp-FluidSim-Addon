@@ -108,7 +108,11 @@ def test_palette_passes_undo_and_redo_through(deck, modifiers, unicode):
 def test_palette_passes_unhandled_events_through_and_still_takes_its_own(deck):
     operator, context = _open(deck, "palette")
     assert operator.modal(context, _event("K", value="RELEASE")) == {"PASS_THROUGH"}
-    assert operator.modal(context, _event("F5")) == {"PASS_THROUGH"}
+    assert operator.modal(context, _event("F5", ctrl=True)) == {"PASS_THROUGH"}
+    # A plain key the palette does not use never reaches the viewport (Delete
+    # would delete the selection while the user types).
+    assert operator.modal(context, _event("DEL")) == {"RUNNING_MODAL"}
+    assert operator.modal(context, _event("F5")) == {"RUNNING_MODAL"}
     # Text, AltGr text (reported as Ctrl+Alt), navigation and Esc stay with the palette.
     assert operator.modal(context, _event("B", unicode="b")) == {"RUNNING_MODAL"}
     assert operator.modal(context, _event("Q", unicode="@", ctrl=True, alt=True)) == {
