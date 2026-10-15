@@ -238,6 +238,7 @@ def _domain(divisions=80):
     domain.location = [0.0, 0.0, 0.0]
     domain.scale = [1.0, 1.0, 1.0]
     domain.matrix_world = None
+    scene.objects.append(domain)
     return scene, domain
 
 
@@ -286,6 +287,72 @@ def test_domain_face_drag_cancel_writes_nothing(env):
     assert domain.scale == [1.0, 1.0, 1.0]
     assert domain.location == [0.0, 0.0, 0.0]
     assert env.deck.gizmos.active_domain_preview() is None
+
+
+def _drag_domain(env):
+    scene, domain = _domain()
+    context = _context(scene, domain)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_face()
+    gizmo.axis, gizmo.side = 0, 1
+    gizmo.invoke(context, _event(0.0))
+    gizmo.modal(context, _event(140.0), set())
+    return scene, domain, context, gizmo
+
+
+@pytest.mark.parametrize("active", ["none", "other"])
+def test_domain_face_release_writes_the_domain_it_started_on(env, active):
+    scene, domain, context, gizmo = _drag_domain(env)
+    other = SimpleNamespace(name="Cube", location=[5.0, 0.0, 0.0], scale=[1.0, 1.0, 1.0])
+    scene.objects.append(other)
+    context.active_object = None if active == "none" else other
+    gizmo.exit(context, False)
+    assert domain.scale == pytest.approx([1.28, 1.0, 1.0])
+    assert domain.location == pytest.approx([0.7, 0.0, 0.0])
+    assert other.scale == [1.0, 1.0, 1.0] and other.location == [5.0, 0.0, 0.0]
+
+
+def test_domain_face_release_is_a_no_op_when_the_domain_is_gone(env):
+    scene, domain, context, gizmo = _drag_domain(env)
+    scene.objects.remove(domain)
+    context.active_object = None
+    gizmo.exit(context, False)
+    assert domain.scale == [1.0, 1.0, 1.0]
+    assert env.deck.gizmos.active_domain_preview() is None
+
+
+@pytest.mark.parametrize("kind", ["velocity", "dial"])
+def test_cancel_restores_the_emitter_it_started_on_after_the_active_object_is_gone(env, kind):
+    scene, emitter = _emitter_scene(env.pending, initial_velocity=(1.0, 0.0, 0.0))
+    context = _context(scene, emitter)
+    if kind == "velocity":
+        gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_velocity()
+        prop, start = "initial_velocity", (1.0, 0.0, 0.0)
+    else:
+        gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+        gizmo.binding = "rate"
+        prop, start = "source_sampling_multiplier", 1.0
+    gizmo.invoke(context, _event(0.0))
+    gizmo.modal(context, _event(80.0), set())
+    assert getattr(emitter.fluidsim, prop) != pytest.approx(start)
+    context.active_object = None
+    gizmo.exit(context, True)
+    assert getattr(emitter.fluidsim, prop) == pytest.approx(start)
+    # Once the emitter is gone too, exit does nothing.
+    scene.objects.remove(emitter)
+    gizmo.exit(context, True)
+
+
+def test_toggle_flips_the_collider_it_started_on_and_no_ops_when_gone(env):
+    scene, collider = _emitter_scene(env.pending, role="COLLIDER")
+    context = _context(scene, collider)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_toggle()
+    gizmo.invoke(context, _event(0.0))
+    context.active_object = None
+    gizmo.exit(context, False)
+    assert collider.fluidsim.collider_dynamic is True
+    scene.objects.remove(collider)
+    gizmo.exit(context, False)
+    assert collider.fluidsim.collider_dynamic is True
 
 
 def test_face_resize_math_keeps_the_opposite_face_fixed(env):
