@@ -472,6 +472,45 @@ def _values_to_colors(values):
     return stops[i] * (1.0 - f) + stops[i + 1] * f
 
 
+# Must equal surface_attribute_transfer.MAX_SURFACE_ATTRIBUTE_SAMPLES: the
+# device lookup decimates the live particles with the same stride.
+_DISPLAY_MAX_SAMPLES = 120_000
+
+
+def _display_sample_step(sample_count):
+    if sample_count > _DISPLAY_MAX_SAMPLES:
+        return int(np.ceil(sample_count / _DISPLAY_MAX_SAMPLES))
+    return 1
+
+
+def _values_at_nearest(nearest, sample_values):
+    """Apply a device nearest map exactly as ``_nearest_values`` fills it."""
+    sample_values = np.asarray(sample_values, dtype=np.float32)
+    nearest = np.asarray(nearest)
+    out = np.empty((len(nearest), *sample_values.shape[1:]), dtype=np.float32)
+    step = _display_sample_step(len(sample_values))
+    out[...] = np.nanmean(sample_values[::step], axis=0)
+    hit = nearest >= 0
+    out[hit] = sample_values[nearest[hit]]
+    return out
+
+
+def _device_nearest(host, verts, positions, values):
+    """GPU nearest map for ``_surface_values``, or None to use the CPU path."""
+    lookup = getattr(host, "surface_display_nearest", None)
+    if (lookup is None or not len(verts) or not len(positions)
+            or len(values) != len(positions)
+            or not np.isfinite(verts).all()
+            or not np.isfinite(positions).all()):
+        return None
+    nearest = lookup(verts)
+    if nearest is None or len(nearest) != len(verts):
+        return None
+    if nearest.max(initial=-1) >= len(positions):
+        raise RuntimeError("device nearest map is outside the live particles")
+    return nearest
+
+
 def _nearest_values(points, sample_points, sample_values, cell_size):
     points = np.asarray(points, dtype=np.float32)
     sample_points = np.asarray(sample_points, dtype=np.float32)
@@ -482,11 +521,9 @@ def _nearest_values(points, sample_points, sample_values, cell_size):
     if len(sample_points) == 0:
         return np.zeros((len(points), *value_shape), dtype=np.float32)
     # Cap CPU-side lookup work for interactive attribute debugging.
-    max_samples = 120_000
-    if len(sample_points) > max_samples:
-        step = int(np.ceil(len(sample_points) / max_samples))
-        sample_points = sample_points[::step]
-        sample_values = sample_values[::step]
+    step = _display_sample_step(len(sample_points))
+    sample_points = sample_points[::step]
+    sample_values = sample_values[::step]
 
     # Sort sample cells once. Collision-free linear int64 keys make the
     # batched searchsorted lookup substantially faster than structured rows.
@@ -998,6 +1035,9 @@ def _surface_values(solver, mode, verts, host=None):
     values = _particle_values(solver, mode, pos, vel, host=host)
     if values is None:
         return None
+    nearest = _device_nearest(host, verts, pos, values)
+    if nearest is not None:
+        return _values_at_nearest(nearest, values)
     return _nearest_values(verts, pos, values, solver.settings.voxel_size * 2.0)
 
 

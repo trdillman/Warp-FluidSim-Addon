@@ -43,6 +43,7 @@ Desktop.ini
 /demos/fluidsim_cache/
 /demos/fluidsim_report.json
 *.npz
+!/tests/**/fixtures/*.npz
 /fluidsim_report.json
 /fluidsim_test_*.obj
 /fluidsim_test_*.ply

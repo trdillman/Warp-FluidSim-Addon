@@ -98,6 +98,78 @@ def k_nearest_local_27_cells(
         nearest[tid] = best_index
 
 
+@wp.func
+def _f32_distance_squared(delta: wp.vec3):
+    # Each product and sum is rounded to float32 in NumPy's order. Routing them
+    # through float64 (exact for float32 products, and innocuous double
+    # rounding for float32 sums) keeps the compiler from fusing them into FMAs.
+    x = wp.float32(wp.float64(delta[0]) * wp.float64(delta[0]))
+    y = wp.float32(wp.float64(delta[1]) * wp.float64(delta[1]))
+    z = wp.float32(wp.float64(delta[2]) * wp.float64(delta[2]))
+    xy = wp.float32(wp.float64(x) + wp.float64(y))
+    return wp.float32(wp.float64(xy) + wp.float64(z))
+
+
+@wp.kernel
+def k_nearest_local_27_cells_display(
+    grid_id: wp.uint64,
+    sampled: wp.array(dtype=wp.vec3),
+    sample_count: int,
+    stride: int,
+    targets: wp.array(dtype=wp.vec3),
+    target_count: int,
+    cell_size: float,
+    nearest: wp.array(dtype=wp.int32),
+):
+    """Bitwise twin of output_publication's NumPy display lookup.
+
+    Same 27-cell candidate set and float32 distance as the CPU path. Exact
+    ties go to the highest (neighbour offset, sample index), which is the
+    last write of the CPU path's fancy assignment. No local sample gives -1:
+    the display path fills those with the sample mean, not a global search.
+    """
+    tid = wp.tid()
+    if tid >= target_count:
+        return
+    target = targets[tid]
+    target_x = int(wp.floor(target[0] / cell_size))
+    target_y = int(wp.floor(target[1] / cell_size))
+    target_z = int(wp.floor(target[2] / cell_size))
+    best_distance = wp.float32(3.402823466e38)
+    best_offset = int(-1)
+    best_sample = int(-1)
+    query = wp.hash_grid_query(grid_id, target, cell_size * 2.0)
+    for sample_index in query:
+        if sample_index >= sample_count:
+            continue
+        point = sampled[sample_index]
+        offset_x = int(wp.floor(point[0] / cell_size)) - target_x
+        offset_y = int(wp.floor(point[1] / cell_size)) - target_y
+        offset_z = int(wp.floor(point[2] / cell_size)) - target_z
+        if (
+            wp.abs(offset_x) > 1
+            or wp.abs(offset_y) > 1
+            or wp.abs(offset_z) > 1
+        ):
+            continue
+        offset = (offset_x + 1) * 9 + (offset_y + 1) * 3 + (offset_z + 1)
+        distance = _f32_distance_squared(target - point)
+        if distance < best_distance or (
+            distance == best_distance
+            and (
+                offset > best_offset
+                or (offset == best_offset and sample_index > best_sample)
+            )
+        ):
+            best_distance = distance
+            best_offset = offset
+            best_sample = sample_index
+    if best_sample < 0:
+        nearest[tid] = -1
+    else:
+        nearest[tid] = best_sample * stride
+
+
 @wp.kernel
 def k_nearest_global_fallback(
     sampled: wp.array(dtype=wp.vec3),
@@ -183,6 +255,7 @@ class SurfaceAttributeTransfer:
         self._target_capacity = 0
         self._sampled = None
         self._nearest = None
+        self._display_nearest = None
         # Warp 1.16 CUDA zero-length slices cannot be materialized with
         # ``.numpy()``. Keep an owned empty allocation for the direct API.
         self._empty_nearest = wp.empty(
@@ -333,6 +406,50 @@ class SurfaceAttributeTransfer:
         self._record("fallback_launches")
         self._nearest_signature = signature
         return self._nearest[:target_count]
+
+    def display_nearest_indices(self, targets_device, target_count: int):
+        """Host map of original particle indices for the display lookup.
+
+        Matches output_publication's NumPy ``_nearest_values`` contract: -1
+        where no sample lies in the 27 neighbour cells. It reuses the
+        prepared samples and grid but not the export map or its fallback.
+        """
+        if self._prepared_signature is None:
+            raise RuntimeError(
+                "prepare() must be called before display_nearest_indices()")
+        target_count = int(target_count)
+        if target_count < 0 or target_count > int(targets_device.size):
+            raise ValueError("target count is outside the target buffer")
+        if not target_count:
+            return np.zeros(0, dtype=np.int32)
+        if not self._sample_count:
+            return np.full(target_count, -1, dtype=np.int32)
+        if (self._display_nearest is None
+                or self._display_nearest.size < target_count):
+            capacity = max(
+                target_count,
+                2 * (0 if self._display_nearest is None
+                     else self._display_nearest.size))
+            self._display_nearest = wp.empty(
+                capacity, dtype=wp.int32, device=self.device)
+        wp.launch(
+            k_nearest_local_27_cells_display,
+            dim=target_count,
+            inputs=[
+                self._grid.id,
+                self._sampled,
+                self._sample_count,
+                self._stride,
+                targets_device,
+                target_count,
+                self._cell_size,
+                self._display_nearest,
+            ],
+            device=self.device,
+        )
+        self._record("display_lookups")
+        return np.ascontiguousarray(
+            self._display_nearest[:target_count].numpy())
 
     def gather(self, key: str, particle_array, target_count: int):
         """Gather one particle channel through the prepared nearest map."""

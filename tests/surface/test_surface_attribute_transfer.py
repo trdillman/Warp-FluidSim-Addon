@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -377,4 +378,94 @@ def test_nearest_lookup_retries_after_launch_failure(monkeypatch):
     actual = transfer.nearest_indices(targets, 1).numpy()
 
     assert np.array_equal(actual, np.array([0], np.int32))
+    assert transfer.operation_counts()["local_lookups"] == 1
+
+
+# Display-path lookup: the device nearest map that replaced the NumPy
+# grid-hash in output_publication._surface_values must reproduce
+# _nearest_values bitwise (same cells, same tie order, same fallback).
+
+_FIXTURE = Path(__file__).parent / "fixtures" / "chromatic_vortex_f24_surface_colour.npz"
+
+
+def _display_values(device, verts, positions, values, cell_size):
+    from fluidSim_warp_blender51.blender import output_publication
+
+    transfer = _transfer_type()(device=device)
+    transfer.prepare(
+        _particles(device, positions), len(positions), max(float(cell_size), 1.0e-5))
+    targets = wp.array(np.asarray(verts, np.float32), dtype=wp.vec3, device=device)
+    nearest = transfer.display_nearest_indices(targets, len(verts))
+    return output_publication._values_at_nearest(nearest, values)
+
+
+def _cpu_values(verts, positions, values, cell_size):
+    from fluidSim_warp_blender51.blender import output_publication
+
+    return output_publication._nearest_values(verts, positions, values, cell_size)
+
+
+@pytest.mark.parametrize("device", _devices())
+def test_display_lookup_matches_cpu_on_chromatic_vortex_fixture(device):
+    """Real frame-24 surface colours: the device map equals the CPU lookup bitwise."""
+    data = np.load(_FIXTURE)
+    args = (data["verts"], data["positions"], data["values"], float(data["cell_size"]))
+    cpu = _cpu_values(*args)
+
+    assert np.array_equal(cpu[:-3], data["full_frame_values"])
+    assert np.array_equal(_display_values(device, *args), cpu)
+    # The three far vertices exercise the no-neighbour mean fallback.
+    assert np.array_equal(cpu[-3:], np.broadcast_to(np.nanmean(data["values"], 0), cpu[-3:].shape))
+
+
+@pytest.mark.parametrize("device", _devices())
+def test_display_lookup_matches_cpu_tie_order(device):
+    """Duplicates and equidistant samples in different cells pick the CPU winner."""
+    positions = np.array([
+        [0.5, 0.5, 0.5], [0.5, 0.5, 0.5],          # duplicate, same cell
+        [-0.5, 0.0, 0.0], [1.5, 0.0, 0.0],         # equidistant, different cells
+        [0.5, -0.5, 0.5], [0.5, 1.5, 0.5],
+    ], np.float32)
+    values = np.arange(len(positions) * 3, dtype=np.float32).reshape(-1, 3)
+    verts = np.array([[0.5, 0.5, 0.5], [0.5, 0.0, 0.0], [0.5, 0.5, 0.5],
+                      [0.5, 0.5, 0.25]], np.float32)
+    args = (verts, positions, values, 1.0)
+
+    assert np.array_equal(_display_values(device, *args), _cpu_values(*args))
+
+
+@pytest.mark.parametrize("device", _devices())
+def test_display_lookup_matches_cpu_above_sample_cap(device):
+    """Above the 120k cap both paths decimate with the same stride."""
+    from fluidSim_warp_blender51.blender import output_publication
+    from fluidSim_warp_blender51.sim import surface_attribute_transfer
+
+    assert (output_publication._DISPLAY_MAX_SAMPLES
+            == surface_attribute_transfer.MAX_SURFACE_ATTRIBUTE_SAMPLES)
+    rng = np.random.default_rng(7)
+    positions = rng.random((250_001, 3), dtype=np.float32)
+    values = rng.random((250_001,), dtype=np.float32)
+    verts = rng.random((2_000, 3), dtype=np.float32) * 1.2 - 0.1
+    args = (verts, positions, values, 0.02)
+
+    assert np.array_equal(_display_values(device, *args), _cpu_values(*args))
+
+
+@pytest.mark.parametrize("device", _devices())
+def test_display_lookup_empty_inputs_and_export_map_isolation(device):
+    """Empty inputs follow the CPU contract; the export map cache is untouched."""
+    transfer = _transfer_type()(device=device)
+    targets = wp.array(np.array([[0, 0, 0], [20, 0, 0]], np.float32),
+                       dtype=wp.vec3, device=device)
+    with pytest.raises(RuntimeError, match="prepare"):
+        transfer.display_nearest_indices(targets, 2)
+
+    transfer.prepare(_particles(device, np.zeros((0, 3))), 0, 1.0)
+    assert np.array_equal(transfer.display_nearest_indices(targets, 2), [-1, -1])
+
+    transfer.prepare(_particles(device, [[0.2, 0, 0], [8.8, 0, 0]]), 2, 1.0)
+    export = transfer.nearest_indices(targets, 2).numpy().copy()
+    assert transfer.display_nearest_indices(targets, 0).shape == (0,)
+    assert np.array_equal(transfer.display_nearest_indices(targets, 2), [0, -1])
+    assert np.array_equal(transfer.nearest_indices(targets, 2).numpy(), export)
     assert transfer.operation_counts()["local_lookups"] == 1

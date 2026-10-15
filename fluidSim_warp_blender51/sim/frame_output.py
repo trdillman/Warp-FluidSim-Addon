@@ -526,6 +526,28 @@ class HostFrame:
             self.solver.surface_attribute_transfer = self._surface_transfer
         return self._surface_transfer
 
+    def surface_display_nearest(self, targets):
+        """Device nearest-particle map for the surface display colour.
+
+        Returns original live-particle indices (-1 = no sample within the 27
+        neighbour cells), or None when no device transfer is available.
+        """
+        source = targets
+        targets = np.asarray(targets, dtype=np.float32).reshape((-1, 3))
+        transfer = self._gpu_surface_transfer()
+        if transfer is None or not len(targets):
+            return None
+        live_count = self._live_count("particles")
+        if not live_count:
+            return None
+        transfer.prepare(
+            self.solver.particles,
+            live_count,
+            max(float(self.solver.settings.voxel_size) * 2.0, 1.0e-5),
+        )
+        return transfer.display_nearest_indices(
+            self._surface_targets_device(source, targets), len(targets))
+
     def whitewater_attribute(self, key: str, *, stride: int = 1):
         stride = max(1, int(stride))
         key = str(key)
