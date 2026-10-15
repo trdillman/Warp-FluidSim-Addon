@@ -483,6 +483,38 @@ def test_batch_reruns_alone_every_script_it_did_not_pass(monkeypatch, tmp_path):
     ]
 
 
+def test_cuda_hidden_scripts_never_share_the_batch_process(monkeypatch, tmp_path):
+    # CUDA_VISIBLE_DEVICES=-1 is ignored once an earlier script initialized
+    # CUDA in the shared process, so these scripts must start a fresh Blender.
+    hidden = sorted(run_production_gate.CUDA_HIDDEN_ACCEPTANCE)
+    entries = [(script, script, (), "OK") for script in hidden]
+    entries.append(("a", "tests/acceptance/blender_a.py", (), "A-PASS"))
+    calls = []
+
+    def fake_run(label, command, env=None, reject_output=False, expect_marker=None):
+        calls.append(label)
+        if label.startswith("Blender acceptance batch"):
+            (tmp_path / "artifacts" / "gate_batch" / "results.json").write_text(json.dumps([
+                {"script": "tests/acceptance/blender_a.py", "passed": True, "seconds": 1.0}]))
+
+    monkeypatch.setattr(run_production_gate, "ROOT", tmp_path)
+    monkeypatch.setattr(run_production_gate, "_run", fake_run)
+    run_production_gate._run_acceptance_batch("blender", {}, entries)
+
+    assert calls == [*hidden, "Blender acceptance batch (1 scripts)"]
+    spec = json.loads((tmp_path / "artifacts" / "gate_batch" / "spec.json").read_text())
+    assert [entry["script"] for entry in spec["entries"]] == ["tests/acceptance/blender_a.py"]
+
+
+def test_every_cuda_hiding_acceptance_script_runs_alone():
+    root = Path(run_production_gate.ROOT)
+    hiding = {
+        path.relative_to(root).as_posix()
+        for path in (root / "tests" / "acceptance").glob("blender_*.py")
+        if 'os.environ["CUDA_VISIBLE_DEVICES"] = "-1"' in path.read_text(encoding="utf-8")}
+    assert hiding == run_production_gate.CUDA_HIDDEN_ACCEPTANCE
+
+
 def test_parallel_steps_print_in_order_and_raise_the_first_failure(monkeypatch, capsys):
     import subprocess
     import sys as _sys

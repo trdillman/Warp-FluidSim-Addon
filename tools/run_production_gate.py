@@ -382,13 +382,37 @@ def _run_parallel(steps, max_workers=4):
         raise first_error
 
 
+# Scripts that hide CUDA from Warp (CUDA_VISIBLE_DEVICES=-1) to prove the
+# add-on works without a GPU.  The variable only takes effect before CUDA is
+# initialized in the process, and earlier batch scripts initialize it, so
+# these always run alone in a fresh Blender.
+CUDA_HIDDEN_ACCEPTANCE = frozenset({
+    "tests/acceptance/blender_alembic_export_acceptance.py",
+    "tests/acceptance/blender_rigid_publication_acceptance.py",
+    "tests/acceptance/blender_usd_export_acceptance.py",
+})
+
+
+def _run_alone(blender_exe, env, label, script, args, marker):
+    _run(label, _blender(blender_exe, "--background", "--factory-startup", "--python",
+                         script, *(("--", *args) if args else ())),
+         env=env, reject_output=True, expect_marker=marker)
+
+
 def _run_acceptance_batch(blender_exe, env, entries, name="gate_batch"):
     """Run ``(label, script, args, marker)`` entries in one Blender session.
 
     A script that does not pass inside the batch, or that the batch never
     reached, is rerun alone exactly as before batching; that standalone run
-    decides its verdict.  ``name`` keeps concurrent batches' files apart.
+    decides its verdict.  ``CUDA_HIDDEN_ACCEPTANCE`` scripts skip the batch and
+    run alone.  ``name`` keeps concurrent batches' files apart.
     """
+    alone = [entry for entry in entries if entry[1] in CUDA_HIDDEN_ACCEPTANCE]
+    entries = [entry for entry in entries if entry[1] not in CUDA_HIDDEN_ACCEPTANCE]
+    for entry in alone:
+        _run_alone(blender_exe, env, *entry)
+    if not entries:
+        return
     out = ROOT / "artifacts" / name
     out.mkdir(parents=True, exist_ok=True)
     spec_path, results_path = out / "spec.json", out / "results.json"
@@ -416,9 +440,7 @@ def _run_acceptance_batch(blender_exe, env, entries, name="gate_batch"):
         if script in passed:
             continue
         _emit(f"\nbatch did not pass {script}; rerunning it alone\n")
-        _run(label, _blender(blender_exe, "--background", "--factory-startup", "--python",
-                             script, *(("--", *args) if args else ())),
-             env=env, reject_output=True, expect_marker=marker)
+        _run_alone(blender_exe, env, label, script, args, marker)
 
 
 # Acceptance scripts kept off the concurrent lanes: they read device free
