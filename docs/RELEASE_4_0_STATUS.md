@@ -3,6 +3,39 @@
 Measured results for 4.0 items whose ship decision depends on a gate. Numbers
 here are measurements, not targets; each one names its method.
 
+## Paired performance vs 3.2.1 (lane P)
+
+Measured 2026-10-14 on an RTX 4080 SUPER, both variants on Warp 1.18.0, with the
+release budget runner pointed at 3.2.1 (`296fa95`) for every demo: 8 ABBA trials
+per variant, the 4.0 candidate at `dd04571`'s source tree (`479b227` add-on),
+frames 2-48, median of per-trial medians. Both variants load the same 4.0 demo
+files; 3.2.1 runs them with its own solver (Jacobi, no rigid coupling).
+
+| Demo | 3.2.1 host ms | 4.0 host ms | Host ratio | Solver ratio | Order split (host) |
+|---|---|---|---|---|---|
+| crown_splash | 65.99 | 81.09 | 1.229 | 1.322 | 1.186 / 1.350 |
+| dam_break | 91.11 | 100.78 | 1.106 | 1.132 | 1.053 / 1.183 |
+| paddle_stir | 53.22 | 54.12 | 1.017 | 1.059 | 0.972 / 1.063 |
+| chromatic_vortex | 589.09 | 574.41 | 0.975 | 0.955 | 0.954 / 1.011 |
+
+Against the plan's budget:
+
+- **crown_splash: over.** The allowance is Multigrid (+10%) and one coupled body
+  (+5%), about 1.155; measured 1.229. The 3.2.1 run ignores the cork, so the
+  ratio includes rigid coupling (lane R measured ~11%/frame on its own).
+- **dam_break: at the limit.** 1.106 against the +10% Multigrid allowance; the
+  two orders disagree (1.053 vs 1.183), so the true cost is somewhere in that band.
+- **paddle_stir and chromatic_vortex: within budget.**
+- **Pressure iterations (the ">= 3x fewer" half of the Multigrid budget): not
+  proven.** The trial records carry no iteration counts; that needs a probe.
+
+The release checker reports this run as invalid because the preconditioner
+differs between variants (JACOBI vs MULTIGRID). That difference is the change
+being measured; the checker is built for same-settings comparisons against 1.x.
+
+Raw runs: `C:\Users\Tyler\wt\orch\scratch\abba_4_0_vs_3_2_1\` (summary.json,
+abba_report.json); driver `orch\scratch\w\abba_321.py`.
+
 ## Learned pressure initial guess (lane N)
 
 Spec: `docs/specs/4.0/SPEC-learned-pressure-guess.md`.
