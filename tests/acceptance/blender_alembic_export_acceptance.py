@@ -124,7 +124,11 @@ def main(work):
     before = (bool(fs.live), bool(fs.cache_playback_enabled), scene.frame_current)
 
     abc = work / "surface.abc"
-    result = bpy.ops.fluidsim.export_alembic(filepath=str(abc))
+    # Repeat in the same session; each export must restore its starting modes.
+    for repeat in range(2):
+        result = bpy.ops.fluidsim.export_alembic(filepath=str(abc))
+        check(f"repeat {repeat + 1} export finished", "FINISHED" in result)
+        check(f"repeat {repeat + 1} state restored", before == (bool(fs.live), bool(fs.cache_playback_enabled), scene.frame_current))
     check("export operator finished", "FINISHED" in result, str(result))
     check("alembic file written", abc.is_file() and abc.stat().st_size > 0)
 

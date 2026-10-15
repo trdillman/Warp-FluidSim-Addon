@@ -105,7 +105,11 @@ def main(work):
 
     before = snapshot()
     usda = work / "liquid.usda"
-    result = bpy.ops.fluidsim.export_usd(filepath=str(usda))
+    # Repeat in the same session; each export must restore its starting modes.
+    for repeat in range(2):
+        result = bpy.ops.fluidsim.export_usd(filepath=str(usda))
+        check(f"repeat {repeat + 1} export finished", "FINISHED" in result)
+        check(f"repeat {repeat + 1} state restored", before == snapshot())
     check("export operator finished", "FINISHED" in result, str(result))
     check("usd file written", usda.is_file() and usda.stat().st_size > 0)
     after = snapshot()
