@@ -61,8 +61,8 @@ The focused development command is:
 All Blender processes used private config/scripts/extensions/data/temp paths.
 Evidence logs remain in the task worktree's ignored artifacts directory.
 This is not a full release/production gate. Direct solver stepping is not
-timeline-driven playback qualification. File-picker ESC cancellation and
-exception injection are covered at host seams, not by manual GUI operation.
+timeline-driven playback qualification. Actual file-picker ESC cancellation was not exercised. Exporter cancellation
+and injected exceptions are covered at host seams, not by manual GUI operation.
 
 ## Retained evidence hashes
 
