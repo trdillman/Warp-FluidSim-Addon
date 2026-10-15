@@ -145,7 +145,7 @@ kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);bor
       <li><b>Collider.</b> Click the crate to toggle <b>Dynamic</b> (4.0 rigid coupling). A dynamic crate floats and gets pushed.</li>
       <li><b>Liquid Preview.</b> Toggle in the Deck or with <kbd>L</kbd>: particles become a screen-space surface with absorption, Fresnel rim and foam. Mesh build is skipped; the PointCloud stays published underneath.</li>
       <li><b>Command palette.</b> <kbd>Ctrl</kbd>+<kbd>K</kbd>. Fuzzy list of operators, presets, demos and settings with inline values; numbers edit in place.</li>
-      <li><b>Radial wheel.</b> Right-click in the viewport. Six slots per stage; the hub cycles Setup → Simulate → Look → Bake.</li>
+      <li><b>Radial wheel.</b> <kbd>Alt</kbd>+right-click in the viewport (plain right-click stays Blender's context menu). Six slots per stage; the hub cycles Setup → Simulate → Look → Bake.</li>
     </ol>
     <h2>Token sheet (SPEC-liquid-deck § tokens)</h2>
     <div class="tok">
@@ -390,7 +390,7 @@ function onDrag(ev){
   if(drag.kind==='rate'){ const a=Math.atan2(y-handles.rate.cy,x-handles.rate.cx)+Math.PI/2; let fr=((a%(Math.PI*2))+Math.PI*2)%(Math.PI*2)/(Math.PI*2); S.emitter.rate=Math.round(400+fr*39600); }
   if(drag.kind==='domX'){ S.domain.w=Math.max(2,Math.min(9, drag.w + (x-drag.start[0])/55)); $('#cornerCells').textContent=cellsTxt(); }
 }
-vp.addEventListener('contextmenu', ev=>{ ev.preventDefault(); const [x,y]=pos(ev); openWheel(x,y); });
+vp.addEventListener('contextmenu', ev=>{ if(!ev.altKey) return; ev.preventDefault(); const [x,y]=pos(ev); openWheel(x,y); });
 
 /* ---------- deck buttons (each a twin of an operator) ---------- */
 $('#bPlay').onclick=()=>{ S.playing=!S.playing; $('#bPlay').textContent=S.playing?'❚❚ Pause':'▶ Play'; $('#bPlay').classList.toggle('on',S.playing); toast(S.playing?'screen.animation_play':'screen.animation_cancel'); };
@@ -473,7 +473,7 @@ const tour = [
   {t:'Liquid Preview', b:'Press L or the Deck toggle. Particles become a screen-space surface: depth sprites → narrow-range filter → normals → thickness absorption → Fresnel. No mesh build during preview.', act:()=>setPreview(true)},
   {t:'Make the crate Dynamic', b:'4.0 two-way coupling: the collider floats and is pushed by the liquid. Its pose is keyframed on the object so it renders and exports without a solver.', act:()=>{ S.collider.dynamic=true; setPending('RESET','collider_dynamic'); setTimeout(()=>{ const b=$('#chip button.go'); b&&b.click(); },900); }},
   {t:'Command palette', b:'Ctrl+K. Operators, presets, demos and settings in one search; numeric settings edit inline and classify like the panel would.', act:()=>{ openPal(); $('#palIn').value='res'; renderPal(); }},
-  {t:'Radial wheel', b:'Right-click. Six slots per stage; the hub cycles Setup → Simulate → Look → Bake.', act:()=>{ closePal(); openWheel(W*0.5,H*0.45); }},
+  {t:'Radial wheel', b:'Alt+right-click. Six slots per stage; the hub cycles Setup → Simulate → Look → Bake.', act:()=>{ closePal(); openWheel(W*0.5,H*0.45); }},
   {t:'Bake', b:'The ring is the bake progress; Esc cancels (decision D3). Edits during a bake are held and applied after.', act:()=>{ closeWheel(); $('#bBake').click(); }},
   {t:'End of tour', b:'Everything here is a reference, not the implementation. The real Deck is gpu-module drawing + gizmos + one modal operator, with panels kept as the parity surface.', act:()=>{}},
 ];

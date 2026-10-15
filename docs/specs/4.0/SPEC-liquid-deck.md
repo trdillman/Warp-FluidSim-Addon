@@ -49,12 +49,15 @@ twin of an existing operator or property.
   (particles, substeps, ms/frame sparkline from the session stats already in
   `scene_bridge`), pending chip (reads `pending_settings` presentation: label, class,
   Apply/Revert), bake ring (reads `production_bake.active_bakes`).
-- **Command palette** (`palette.py`): hotkey opens a centred search card; fuzzy match
-  over registered FluidSim operators (bl_label, description), presets, demos, and
-  domain/scene properties with their current value; Enter executes or edits inline via
-  a numeric field drawn by the Deck and committed through the property.
-- **Radial wheel** (`wheel.py`): custom-drawn radial with 6 slots per stage; the hub
-  shows the stage (Setup/Simulate/Look/Bake) and clicking it cycles the stage header.
+- **Command palette** (`palette.py`): Ctrl+K in the 3D View opens a centred search
+  card; fuzzy match over registered FluidSim operators (bl_label, description),
+  presets, demos, and domain/scene properties with their current value; Enter executes
+  or edits inline via a numeric field drawn by the Deck and committed through the
+  property.
+- **Radial wheel** (`wheel.py`): Alt+Right Mouse in the 3D View opens a custom-drawn
+  radial at the pointer, with 6 slots per stage; the hub shows the stage
+  (Setup/Simulate/Look/Bake) and clicking it cycles the stage header. Plain
+  right-click is left to Blender's viewport context menu.
 - **Gizmos** (`gizmos.py`, `bpy.types.GizmoGroup` per role):
   - Emitter: velocity arrow (drag = `emitter_velocity`), rate dial (`emission_rate`),
     shape outline.
