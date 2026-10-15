@@ -29,9 +29,13 @@ Against the plan's budget:
 - **Pressure iterations (the ">= 3x fewer" half of the Multigrid budget): not
   proven.** The trial records carry no iteration counts; that needs a probe.
 
-The release checker reports this run as invalid because the preconditioner
-differs between variants (JACOBI vs MULTIGRID). That difference is the change
-being measured; the checker is built for same-settings comparisons against 1.x.
+This run predates the reworked gate (`60b3685`). The gate now compares
+every demo with 3.2.1, decides on the order-balanced host ratio (mean of the two
+order medians), treats JACOBI->MULTIGRID (+10%) and rigid coupling (+5%) as owned
+changes whose allowances multiply, and fails a candidate whose median pressure
+residual is over 1.10x the baseline's (`less_accurate`). There is no
+"inconclusive" status. These saved runs lack the new `rigidBodies` and pressure
+fields, so all four demos need one fresh timing run.
 
 Raw runs: `C:\Users\Tyler\wt\orch\scratch\abba_4_0_vs_3_2_1\` (summary.json,
 abba_report.json); driver `orch\scratch\w\abba_321.py`.
