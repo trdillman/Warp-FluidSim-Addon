@@ -783,8 +783,9 @@ class FluidSolver:
         self._static_collision_cache_ready = False
         self.colliders = list(colliders)
         for col in self.colliders:
-            # A Dynamic collider is posed by the rigid coupling every substep;
-            # base_points keeps its authored pose for _restore_collider_poses.
+            # A Dynamic collider moves every substep (the rigid coupling
+            # rasterizes it at its device-resident pose); base_points marks it
+            # moving and keeps its authored pose.
             moving = col.mesh is not None and (
                 getattr(col, "dynamic", False)
                 or any(abs(v) > 1.0e-9 for v in col.linear_velocity)
@@ -1453,14 +1454,17 @@ class FluidSolver:
         """
         return bool(getattr(self, "_static_collision_cache_ready", False))
 
-    def _rasterize_collider(self, col, rank=None):
-        g = self.grid
-        s = self.settings
+    def _collider_band(self, col):
         extent = tuple(col.aabb_max[i] - col.aabb_min[i] for i in range(3))
         # Cover the entire resolved collider interior. A narrow query band
         # turns sufficiently deep penetration into the +infinity default.
-        band = max(8.0 * s.voxel_size,
+        return max(8.0 * self.settings.voxel_size,
                    math.sqrt(sum(value * value for value in extent)))
+
+    def _rasterize_collider(self, col, rank=None):
+        g = self.grid
+        s = self.settings
+        band = self._collider_band(col)
         lv = col.linear_velocity
         av = col.angular_velocity
         center = getattr(col, "pose_center", None) or col.center
@@ -1543,8 +1547,15 @@ class FluidSolver:
                         self._collision_owner],
                 outputs=[*cache], device=self.device)
             self._static_collision_cache_ready = True
+        bodies = {rank: index
+                  for index, (rank, _, _) in enumerate(self.rigid.attached)}
         for rank, col in moving:
-            self._rasterize_collider(col, rank)
+            body = bodies.get(rank)
+            if body is None:
+                self._rasterize_collider(col, rank)
+            else:
+                self.rigid.rasterize(self, body, col, rank,
+                                     self._collider_band(col))
 
     def _index_particles(self):
         g = self.grid
@@ -2342,6 +2353,9 @@ class FluidSolver:
             reuse_static = (collision_rebuild and not rebuild
                             and self._static_collision_cache_usable())
             with self._phase("misc"):
+                if rebuild and substep_index > 0:
+                    # Topology marks Dynamic colliders by their host bounds.
+                    self.rigid.sync_host()
                 if rebuild:
                     self._rebuild_topology(
                         substep_topology_expand if rebuild_each_substep
@@ -2353,7 +2367,7 @@ class FluidSolver:
                     if moving_colliders and substep_index > 0:
                         self._update_moving_colliders(substep_index * dt)
                     if self.rigid.active:
-                        self.rigid.pose()
+                        self.rigid.prepare(self)
                     self._apply_collisions(reuse_static=reuse_static)
             self.features.run(
                 FrameFeaturePhase.BEFORE_SOURCING, self, time_ctx)
@@ -2450,6 +2464,8 @@ class FluidSolver:
         self.surface.after_frame()
 
         wp.synchronize_device(self.device)
+        # The frame's one copy of the device-resident rigid state.
+        self.rigid.sync_host()
         self.grid.refresh_topology_counts()
         whitewater_diagnostics = self.whitewater.refresh_diagnostics()
         whitewater_types = self.whitewater.refresh_type_counts()

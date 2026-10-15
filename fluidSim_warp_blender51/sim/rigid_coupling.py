@@ -8,13 +8,15 @@ Dynamic collider (Blender's rigid-body world cannot take per-frame forces):
   orientation as identity; mass and inertia come from density x mesh volume
   (exact polyhedral integrals for a closed mesh, a winding-number lattice
   otherwise). The state survives ``set_colliders`` and is cleared by Reset.
-* Every substep, before collisions are rasterized, ``pose`` writes the body's
-  current pose into the collider mesh and its velocity into the descriptor,
-  so the projection sees it as a moving solid (Neumann faces).
+* Every substep the body is rasterized from a body-frame copy of its mesh
+  at its current pose, with its rigid velocity, so the projection sees it as
+  a moving solid (Neumann faces).
 * After the projection and before G2P, ``step`` gathers the pressure impulse
   on the body's solid faces plus quadratic drag at its boundary samples
   (``kernels_rigid``: segmented gathers, no atomics) and advances the body
-  with semi-implicit Euler in float64 on the host.
+  with semi-implicit Euler in float64.
+* The state stays on the device for the whole frame (no per-substep host
+  round trip) and is copied back once, at the end of the frame.
 
 No bpy imports allowed here.
 """
@@ -35,13 +37,23 @@ from .kernels_rigid import (
     BODY_COEFF,
     BODY_COM,
     BODY_OMEGA,
+    BODY_QUAT,
     BODY_RANK,
     BODY_ROT,
     BODY_VEL,
     BODY_WIDTH,
+    CONST_DENSITY,
+    CONST_INERTIA,
+    CONST_LOCK,
+    CONST_POINT_COUNT,
+    CONST_POINT_FIRST,
+    CONST_RADIUS,
+    CONST_VOLUME,
+    CONST_WIDTH,
+    k_rasterize_rigid_ranked,
     k_rigid_drag_chunks,
     k_rigid_face_chunks,
-    k_rigid_pose_points,
+    k_rigid_integrate,
     k_rigid_reduce,
 )
 
@@ -243,7 +255,7 @@ class RigidBody:
     quat: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0, 0.0, 0.0]))
     lin_vel: np.ndarray = field(default_factory=lambda: np.zeros(3))
     ang_vel: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    body_points_dev: object = None
+    local_mesh: object = None        # wp.Mesh of body_points (body frame)
 
     @property
     def mass(self):
@@ -300,7 +312,10 @@ def _new_body(uid, desc, voxel_size, device):
     body.pos = com.copy()
     body.lin_vel = np.asarray(getattr(desc, "initial_velocity", (0.0,) * 3),
                               dtype=np.float64).copy()
-    body.body_points_dev = wp.array(local, dtype=wp.vec3d, device=device)
+    body.local_mesh = wp.Mesh(
+        points=wp.array(local.astype(np.float32), dtype=wp.vec3, device=device),
+        indices=wp.array(indices.astype(np.int32).ravel(), dtype=wp.int32,
+                         device=device))
     return body
 
 
@@ -310,7 +325,15 @@ def collider_uid(desc, rank):
 
 
 class RigidCoupling:
-    """Owns every Dynamic collider's state for one solver."""
+    """Owns every Dynamic collider's state for one solver.
+
+    The 6-DoF state is device resident while a frame runs: ``prepare``
+    uploads it once after the bodies are attached (or restored), every
+    substep's ``step`` gathers and integrates on the device without a host
+    round trip, and ``sync_host`` copies it back into the ``RigidBody``
+    objects and collider descriptors at the end of the frame (the solver
+    already synchronizes there). Host reads go through ``sync_host``.
+    """
 
     def __init__(self, device):
         self.device = device
@@ -321,11 +344,22 @@ class RigidCoupling:
         self._sample_buffers = None
         self._gather_key = None
         self._gather_buffers = None
-        self.last_impulses = None
+        self._points_key = None
+        self._points = None
+        self._partials = 1
+        self._dirty = True          # host state newer than the device copy
+        self._host_stale = False    # device state newer than the host copy
 
     @property
     def active(self):
         return bool(self.attached)
+
+    @property
+    def last_impulses(self):
+        """The most recent substep's gathered impulses (see ``gather``)."""
+        if self._gather_buffers is None or not self.attached:
+            return None
+        return self._gather_buffers["out"].numpy()
 
     def reset(self):
         self.bodies.clear()
@@ -335,12 +369,16 @@ class RigidCoupling:
         self._sample_buffers = None
         self._gather_key = None
         self._gather_buffers = None
-        self.last_impulses = None
+        self._points_key = None
+        self._points = None
+        self._dirty = True
+        self._host_stale = False
 
     # Attachment
 
     def attach(self, colliders, voxel_size):
         """Bind this frame's Dynamic colliders to their persistent bodies."""
+        self.sync_host()
         dynamic = [(rank, desc) for rank, desc in enumerate(colliders)
                    if getattr(desc, "dynamic", False) and desc.mesh is not None]
         if len(dynamic) > MAX_BODIES:
@@ -367,6 +405,7 @@ class RigidCoupling:
             self._describe(desc, body)
             attached.append((rank, desc, body))
         self.attached = attached
+        self._dirty = True
 
     def _describe(self, desc, body):
         """Copy the body's state into its collider descriptor."""
@@ -377,19 +416,99 @@ class RigidCoupling:
         desc.aabb_min = tuple(float(v - r) for v in body.pos)
         desc.aabb_max = tuple(float(v + r) for v in body.pos)
 
-    def pose(self):
-        """Write each attached body's current pose into its collider mesh."""
-        for _, desc, body in self.attached:
-            rot = body.rotation()
-            fast_launch(
-                k_rigid_pose_points, dim=body.point_count,
-                inputs=[body.body_points_dev, wp.vec3d(*body.pos),
-                        wp.mat33d(*rot.ravel())],
-                outputs=[desc.mesh.points], device=self.device)
-            desc.mesh.refit()
-            desc.reposed = True
+    def prepare(self, solver):
+        """Upload the attached bodies' state if the host copy is newer."""
+        if self.attached and self._dirty:
+            self._upload(solver)
+
+    def _upload(self, solver):
+        g = solver.grid
+        n = len(self.attached)
+        h = float(g.voxel_size)
+        dims = np.asarray([int(g.voxels_dim[i]) for i in range(3)], dtype=np.int64)
+        origin = np.asarray([float(g.origin[i]) for i in range(3)], dtype=np.float64)
+        # Each body's face gather walks a voxel box around its bounding
+        # sphere. The box extent depends on the radius alone, so the partial
+        # count (and every buffer size) holds while the bodies do.
+        extents = []
+        for _, _, body in self.attached:
+            span = int(math.ceil(2.0 * body.radius / h)) + 2 + 2 * BOX_MARGIN_VOXELS
+            extents.append(np.minimum(np.full(3, span, dtype=np.int64), dims))
+        cells = max(int(np.prod(e)) for e in extents)
+        self._partials = max(1, min(MAX_FACE_PARTIALS,
+                                    -(-cells // FACE_VOXELS_PER_PARTIAL)))
+        _, drag_chunks, _, _ = self._samples()
+        buf = self._buffers(n, self._partials, drag_chunks)
+        state = np.zeros((n, BODY_WIDTH), dtype=np.float64)
+        const = np.zeros((n, CONST_WIDTH), dtype=np.float64)
+        first = 0
+        for index, (rank, _, body) in enumerate(self.attached):
+            state[index, BODY_RANK] = float(rank)
+            state[index, BODY_COM:BODY_COM + 3] = body.pos
+            state[index, BODY_ROT:BODY_ROT + 9] = body.rotation().ravel()
+            state[index, BODY_VEL:BODY_VEL + 3] = body.lin_vel
+            state[index, BODY_OMEGA:BODY_OMEGA + 3] = body.ang_vel
+            state[index, BODY_COEFF] = 0.5 * body.drag * LIQUID_DENSITY
+            extent = extents[index]
+            low = np.floor((body.pos - body.radius - origin) / h).astype(np.int64)
+            low = np.clip(low - BOX_MARGIN_VOXELS, 0, dims - extent)
+            state[index, BODY_BOX_LO:BODY_BOX_LO + 3] = low
+            state[index, BODY_BOX_DIM:BODY_BOX_DIM + 3] = extent
+            state[index, BODY_QUAT:BODY_QUAT + 4] = body.quat
+            const[index, CONST_DENSITY] = body.density
+            const[index, CONST_VOLUME] = body.volume
+            const[index, CONST_RADIUS] = body.radius
+            const[index, CONST_INERTIA:CONST_INERTIA + 9] = body.unit_inertia.ravel()
+            const[index, CONST_LOCK:CONST_LOCK + 6] = [float(v) for v in body.lock]
+            const[index, CONST_POINT_FIRST] = first
+            const[index, CONST_POINT_COUNT] = len(body.body_points)
+            first += len(body.body_points)
+        buf["state"].assign(state)
+        buf["const"].assign(const)
+        self._body_points()
+        self._dirty = False
+        self._host_stale = False
+
+    def _body_points(self):
+        key = tuple((body.uid, id(body)) for _, _, body in self.attached)
+        if key != self._points_key:
+            points = [body.body_points for _, _, body in self.attached
+                      if len(body.body_points)]
+            stacked = np.concatenate(points) if points else np.zeros((1, 3))
+            self._points = wp.array(stacked, dtype=wp.vec3d, device=self.device)
+            self._points_key = key
+        return self._points
+
+    def sync_host(self):
+        """Copy the device-resident body state back to the host objects."""
+        if not self._host_stale:
+            return
+        self._host_stale = False
+        if not self.attached or self._gather_buffers is None:
+            return
+        state = self._gather_buffers["state"].numpy()
+        for index, (_, desc, body) in enumerate(self.attached):
+            body.pos = state[index, BODY_COM:BODY_COM + 3].copy()
+            body.quat = state[index, BODY_QUAT:BODY_QUAT + 4].copy()
+            body.lin_vel = state[index, BODY_VEL:BODY_VEL + 3].copy()
+            body.ang_vel = state[index, BODY_OMEGA:BODY_OMEGA + 3].copy()
             self._describe(desc, body)
-            desc.pose_center = tuple(float(v) for v in body.pos)
+
+    def rasterize(self, solver, index, desc, rank, band):
+        """Rasterize attached body ``index`` at its device-resident pose."""
+        self.prepare(solver)
+        g = solver.grid
+        body = self.attached[index][2]
+        fast_launch(
+            k_rasterize_rigid_ranked, dim=solver._nvox,
+            inputs=[body.local_mesh.id, g.leaf_coords, g.num_leaves, g.origin,
+                    float(solver.settings.voxel_size), float(band),
+                    self._gather_buffers["state"], int(index),
+                    desc.friction, desc.restitution, int(rank)],
+            outputs=[solver.collision_sdf.data, solver.collision_vel,
+                     solver.collision_friction, solver.collision_restitution,
+                     solver._collision_owner],
+            device=self.device)
 
     # Force gather
 
@@ -434,24 +553,20 @@ class RigidCoupling:
         return self._sample_buffers
 
     def _buffers(self, n, partials, drag_chunks):
-        """Device scratch for one gather, reused while its sizes hold.
+        """Device scratch and the resident body state, kept while sizes hold.
 
-        Per-substep ``wp.array`` construction and allocation dominated the
-        coupling's host cost; every buffer here is fully overwritten by the
-        kernel that writes it, so reuse cannot leak state between substeps.
+        Every scratch buffer is fully overwritten by the kernel that writes
+        it, so reuse cannot leak state between substeps; ``state`` and
+        ``const`` are rewritten whole by ``_upload``.
         """
         key = (n, partials, drag_chunks)
         if key == self._gather_key:
             return self._gather_buffers
         dev = self.device
-        pinned = wp.get_device(dev).is_cuda
-        host = wp.zeros((n, BODY_WIDTH), dtype=wp.float64, device="cpu",
-                        pinned=pinned)
         drags = max(drag_chunks, 1)
         self._gather_buffers = {
-            "host": host,
-            "host_np": host.numpy(),
             "state": wp.zeros((n, BODY_WIDTH), dtype=wp.float64, device=dev),
+            "const": wp.zeros((n, CONST_WIDTH), dtype=wp.float64, device=dev),
             "face_impulse": wp.zeros(n * partials, dtype=wp.vec3d, device=dev),
             "face_angular": wp.zeros(n * partials, dtype=wp.vec3d, device=dev),
             "face_volume": wp.zeros(n * partials, dtype=wp.float64, device=dev),
@@ -464,49 +579,15 @@ class RigidCoupling:
         self._gather_key = key
         return self._gather_buffers
 
-    def gather(self, solver, dt, pressure_valid=True):
-        """Per-body fluid impulses over one substep, as a (bodies, 14) array.
-
-        Columns: pressure impulse (3), pressure angular impulse (3), drag
-        impulse (3), drag angular impulse (3), rasterized solid volume, drag
-        stiffness (see ``k_rigid_reduce``).
-        """
+    def _launch_gather(self, solver, dt, pressure_valid):
         dev = self.device
         g = solver.grid
         n = len(self.attached)
-        h = float(g.voxel_size)
-        dims = np.asarray([int(g.voxels_dim[i]) for i in range(3)], dtype=np.int64)
-        origin = np.asarray([float(g.origin[i]) for i in range(3)], dtype=np.float64)
-        # Each body's face gather walks a voxel box around its bounding
-        # sphere. The box extent depends on the radius alone, so the partial
-        # count (and every buffer size) holds while the bodies do.
-        extents = []
-        for _, _, body in self.attached:
-            span = int(math.ceil(2.0 * body.radius / h)) + 2 + 2 * BOX_MARGIN_VOXELS
-            extents.append(np.minimum(np.full(3, span, dtype=np.int64), dims))
-        cells = max(int(np.prod(e)) for e in extents)
-        partials = max(1, min(MAX_FACE_PARTIALS,
-                              -(-cells // FACE_VOXELS_PER_PARTIAL)))
+        partials = self._partials
         samples, drag_chunks, drag_first, drag_count = self._samples()
         if samples is None:
             drag_chunks = 0
-        buf = self._buffers(n, partials, drag_chunks)
-        # One packed host -> device upload of every per-body input.
-        state = buf["host_np"]
-        for index, (rank, _, body) in enumerate(self.attached):
-            # -2 matches no voxel: an unprojected substep has no pressure.
-            state[index, BODY_RANK] = float(rank) if pressure_valid else -2.0
-            state[index, BODY_COM:BODY_COM + 3] = body.pos
-            state[index, BODY_ROT:BODY_ROT + 9] = body.rotation().ravel()
-            state[index, BODY_VEL:BODY_VEL + 3] = body.lin_vel
-            state[index, BODY_OMEGA:BODY_OMEGA + 3] = body.ang_vel
-            state[index, BODY_COEFF] = 0.5 * body.drag * LIQUID_DENSITY
-            extent = extents[index]
-            low = np.floor((body.pos - body.radius - origin) / h).astype(np.int64)
-            low = np.clip(low - BOX_MARGIN_VOXELS, 0, dims - extent)
-            state[index, BODY_BOX_LO:BODY_BOX_LO + 3] = low
-            state[index, BODY_BOX_DIM:BODY_BOX_DIM + 3] = extent
-        wp.copy(buf["state"], buf["host"])
+        buf = self._gather_buffers
         gravity = float(np.linalg.norm(np.asarray(solver.settings.gravity,
                                                   dtype=np.float64)))
         # The projection's p = 0 sits about one voxel above the particle
@@ -521,7 +602,7 @@ class RigidCoupling:
                     solver._collision_owner, g.leaf_table,
                     g.voxels_dim, g.leaves_dim, g.origin,
                     float(g.voxel_size), LIQUID_DENSITY, q_offset,
-                    buf["state"], int(partials)],
+                    buf["state"], int(partials), int(bool(pressure_valid))],
             outputs=[face_impulse, face_angular, face_volume], device=dev)
 
         drag_impulse = buf["drag_impulse"]
@@ -539,40 +620,62 @@ class RigidCoupling:
                 outputs=[drag_impulse, drag_angular, drag_stiffness], device=dev)
         else:
             drag_first = drag_count = buf["no_drag"]
-        out = buf["out"]
         fast_launch(
             k_rigid_reduce, dim=n,
             inputs=[face_impulse, face_angular, face_volume, int(partials),
                     drag_impulse, drag_angular, drag_stiffness, drag_first,
                     drag_count],
-            outputs=[out], device=dev)
-        return out.numpy()
+            outputs=[buf["out"]], device=dev)
+        return buf["out"]
+
+    def gather(self, solver, dt, pressure_valid=True):
+        """Per-body fluid impulses over one substep, as a (bodies, 14) array.
+
+        Columns: pressure impulse (3), pressure angular impulse (3), drag
+        impulse (3), drag angular impulse (3), rasterized solid volume, drag
+        stiffness (see ``k_rigid_reduce``). Reads back to the host; the
+        substep loop uses ``step``, which keeps everything on the device.
+        """
+        self.prepare(solver)
+        return self._launch_gather(solver, dt, pressure_valid).numpy()
 
     # Integration
 
     def step(self, solver, dt, pressure_valid=True):
-        """Gather fluid impulses and advance every attached body by ``dt``."""
+        """Gather fluid impulses and advance every attached body by ``dt``.
+
+        Launch-only: the body state stays on the device (``sync_host``).
+        """
         if not self.attached:
             return
-        impulses = self.gather(solver, dt, pressure_valid)
-        self.last_impulses = impulses
+        self.prepare(solver)
+        self._launch_integrate(
+            solver, dt, self._launch_gather(solver, dt, pressure_valid))
+
+    def _launch_integrate(self, solver, dt, impulses):
+        """Advance the device state by ``dt`` from (bodies, 14) ``impulses``."""
         settings = solver.settings
-        gravity = np.asarray(settings.gravity, dtype=np.float64)
-        dv_max = float(solver._cfl_speed_limit(dt))
-        bounds = (np.asarray(settings.domain_min, dtype=np.float64),
-                  np.asarray(settings.domain_max, dtype=np.float64))
-        for row, (_, desc, body) in zip(impulses, self.attached):
-            self._integrate(body, row, gravity, dt, dv_max)
-            self._contain(body, *bounds)
-            self._describe(desc, body)
+        g = solver.grid
+        buf = self._gather_buffers
+        fast_launch(
+            k_rigid_integrate, dim=len(self.attached),
+            inputs=[impulses, buf["const"], self._points,
+                    wp.vec3d(*(float(v) for v in settings.gravity)),
+                    float(dt), float(solver._cfl_speed_limit(dt)),
+                    wp.vec3d(*(float(v) for v in settings.domain_min)),
+                    wp.vec3d(*(float(v) for v in settings.domain_max)),
+                    g.origin, float(g.voxel_size), g.voxels_dim,
+                    int(BOX_MARGIN_VOXELS)],
+            outputs=[buf["state"]], device=self.device)
+        self._host_stale = True
 
     @staticmethod
     def _contain(body, lo, hi):
-        """Inelastic contact with the domain walls.
+        """Inelastic contact with the domain walls (host reference).
 
         Body-body and body-collider contact are not modelled in 4.0; the
         domain box is, so a sinking body rests on the floor instead of
-        leaving the grid.
+        leaving the grid. ``k_rigid_integrate`` is the device port.
         """
         if not len(body.body_points):
             return
@@ -589,6 +692,11 @@ class RigidCoupling:
 
     @staticmethod
     def _integrate(body, row, gravity, dt, dv_max):
+        """One semi-implicit Euler substep (host reference).
+
+        ``k_rigid_integrate`` is the device port the solver runs; this stays
+        as the specification its parity test checks it against.
+        """
         row = np.asarray(row, dtype=np.float64)
         if not np.all(np.isfinite(row)):
             row = np.zeros_like(row)
@@ -644,9 +752,11 @@ class RigidCoupling:
     # Records and checkpoints
 
     def states(self):
+        self.sync_host()
         return [body.record() for body in self.bodies.values()]
 
     def export_state(self):
+        self.sync_host()
         uids = list(self.bodies)
         rows = np.asarray([self.bodies[uid].state_row() for uid in uids],
                           dtype=np.float64).reshape(len(uids), STATE_WIDTH)
@@ -657,6 +767,8 @@ class RigidCoupling:
         rows = np.asarray(rows, dtype=np.float64).reshape(-1, STATE_WIDTH)
         if len(uids) != len(rows):
             raise ValueError("rigid body checkpoint ids and states disagree")
+        self.sync_host()
+        self._dirty = True
         self._pending_states = {}
         for uid, row in zip(uids, rows):
             body = self.bodies.get(str(uid))
