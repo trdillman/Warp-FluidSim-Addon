@@ -651,11 +651,12 @@ fields.
 
 ## Current promoted demo evidence
 
-The GUI-inclusive 1.0.255 production gate at proof HEAD
-`21d4d37ff210ef0e25f0854423502dd5fbd51fce` passed all 18 bounded demo checks.
-Its promoted values are `front_speed_over_c0=1.0082030232`,
-`column_height_end=0.3388671875`, `crown_sqrt_t_corr=0.9713672681`, and
-`max_crown_height=0.0883056670`. The authoritative source is
+The GUI-inclusive 4.0.0 production gate (Warp 1.18.0) at proof HEAD
+`479b2274a31d68e089cb25b7cfa62bc306a29b11` passed all 21 bounded demo checks
+(analysis report sha256 `74dada72f08ca1d396d550aa283e00ee2706a81b45f46d22da3c9fc1835ac5a6`).
+Its promoted values are `front_speed_over_c0=1.0763425420`,
+`column_height_end=0.6308593750`, `crown_sqrt_t_corr=0.9723859063`, and
+`max_crown_height=0.0881835967`. The authoritative source is
 `artifacts/demo_analysis/analysis_report.json`.
 
 These values are reproducible. Before `d2a6b6d`, `max_crown_height` varied

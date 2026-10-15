@@ -23,14 +23,25 @@
   ],
   "voxel_size": 0.01,
   "fps": 24,
-  "pool_particles": 256000,
-  "total_particles": 259112,
+  "pool_particles": 255424,
+  "total_particles": 258536,
+  "dynamic_collider": {
+    "name": "Crown Cork",
+    "size": 0.06,
+    "density": 300.0,
+    "density_ratio": 0.3,
+    "center": [
+      0.62,
+      0.4,
+      0.062
+    ]
+  },
   "whitewater": {
     "churn_gain": 2.0,
     "churn_threshold": 0.05,
     "emission_rate": 200.0,
-    "build_peak_count": 5529,
-    "build_first_frame": 5
+    "build_peak_count": 9117,
+    "build_first_frame": 2
   },
   "playable_live_setup": true,
   "seed_objects": [
