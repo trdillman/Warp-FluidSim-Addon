@@ -46,6 +46,8 @@ NEUTRAL_ABSENT_EFFECTIVE_SETTINGS = {
 	# 3.0: narrow band (off) and the explicit preconditioner (1.x pressure PCG
 	# was inverse-diagonal, i.e. Jacobi) are new; ST-FLIP's switch is removed.
 	"narrow_band_enabled": False,
+	# 4.0 learned initial guess: ships hidden and off (no weights).
+	"pressure_learned_guess": False,
 	"pressure_preconditioner": "JACOBI",
 	"spacetime_enabled": False,
 }

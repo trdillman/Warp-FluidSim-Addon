@@ -529,3 +529,24 @@ def test_multigrid_only_in_the_baseline_is_still_an_omission():
 	result = evaluate_budget(runs)
 	assert result["status"] == "invalid"
 	assert any("pressure_preconditioner" in reason for reason in result["reasons"])
+
+
+def _learned_guess_campaign(value):
+	runs = _multigrid_campaign(candidate=100.0)
+	for run in runs:
+		if run["label"] == "candidate":
+			run["effectiveSettings"]["pressure_learned_guess"] = value
+	return runs
+
+
+def test_4_0_learned_guess_off_is_a_neutral_absence():
+	result = evaluate_budget(_learned_guess_campaign(False))
+	assert result["status"] == "pass", result["reasons"]
+	assert result["demos"]["dam_break"]["effectiveSettings"]["neutralAbsentFields"][
+		"pressure_learned_guess"] == {"presentIn": "candidate", "neutralValue": False}
+
+
+def test_learned_guess_on_is_still_an_omission():
+	result = evaluate_budget(_learned_guess_campaign(True))
+	assert result["status"] == "invalid"
+	assert any("pressure_learned_guess" in reason for reason in result["reasons"])
