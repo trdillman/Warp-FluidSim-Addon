@@ -23,7 +23,9 @@ Pending Settings classifies the edit exactly as for a panel edit (spec trap 5).
   domain, where location and scale map one-to-one onto the world box.
 
 The gizmos keep only drag bookkeeping (start value, start pointer) between
-``invoke`` and ``exit``; a cancelled drag restores the start value.
+``invoke`` and ``exit``; a cancelled drag restores the start value. ``exit`` writes
+only to the object the drag started on, and does nothing once that object has left
+the scene (the active object may have changed or gone in the meantime).
 """
 
 from __future__ import annotations
@@ -85,6 +87,20 @@ def _object_origin(obj):
     return tuple(float(c) for c in obj.location)
 
 
+def _started_object(context, target):
+    """``target`` while it is still in the scene, else ``None``.
+
+    Matched with ``==`` (same datablock), so a deleted object is never read.
+    """
+    try:
+        for obj in getattr(getattr(context, "scene", None), "objects", ()):
+            if obj == target:
+                return obj
+    except ReferenceError:  # ``target`` was removed through ``bpy.data``
+        pass
+    return None
+
+
 def _write(context, settings, name, value):
     """Assign through the property, so its ``update=`` callback runs."""
     setattr(settings, name, value)
@@ -122,7 +138,7 @@ class FLUIDSIM_GT_deck_velocity(bpy.types.Gizmo):
     """Drag the arrow head to set the emitter's initial velocity."""
 
     bl_idname = "FLUIDSIM_GT_deck_velocity"
-    __slots__ = ("shape", "start_world", "start_value")
+    __slots__ = ("shape", "start_world", "start_value", "target")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _ARROW_LINES)
@@ -134,7 +150,7 @@ class FLUIDSIM_GT_deck_velocity(bpy.types.Gizmo):
         self.draw_custom_shape(self.shape, select_id=select_id)
 
     def invoke(self, context, event):
-        obj = context.active_object
+        obj = self.target = context.active_object
         self.start_value = tuple(float(c) for c in obj.fluidsim.initial_velocity)
         self.start_world = mouse_to_world(context, _mouse(event), _object_origin(obj))
         return {"RUNNING_MODAL"}
@@ -149,16 +165,16 @@ class FLUIDSIM_GT_deck_velocity(bpy.types.Gizmo):
         return {"RUNNING_MODAL"}
 
     def exit(self, context, cancel):
-        if cancel:
-            _write(context, context.active_object.fluidsim, "initial_velocity",
-                   self.start_value)
+        obj = _started_object(context, getattr(self, "target", None)) if cancel else None
+        if obj is not None:
+            _write(context, obj.fluidsim, "initial_velocity", self.start_value)
 
 
 class FLUIDSIM_GT_deck_dial(bpy.types.Gizmo):
     """Drag sideways to turn a dial bound to an object setting (``binding``)."""
 
     bl_idname = "FLUIDSIM_GT_deck_dial"
-    __slots__ = ("shape", "binding", "start_x", "start_value", "prop")
+    __slots__ = ("shape", "binding", "start_x", "start_value", "prop", "target")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _circle_lines())
@@ -170,7 +186,8 @@ class FLUIDSIM_GT_deck_dial(bpy.types.Gizmo):
         self.draw_custom_shape(self.shape, select_id=select_id)
 
     def invoke(self, context, event):
-        settings = context.active_object.fluidsim
+        self.target = context.active_object
+        settings = self.target.fluidsim
         self.prop = dial_property(settings, getattr(self, "binding", ""))
         if self.prop is None:
             return {"CANCELLED"}
@@ -188,14 +205,16 @@ class FLUIDSIM_GT_deck_dial(bpy.types.Gizmo):
 
     def exit(self, context, cancel):
         if cancel and getattr(self, "prop", None) is not None:
-            _write(context, context.active_object.fluidsim, self.prop, self.start_value)
+            obj = _started_object(context, getattr(self, "target", None))
+            if obj is not None:
+                _write(context, obj.fluidsim, self.prop, self.start_value)
 
 
 class FLUIDSIM_GT_deck_toggle(bpy.types.Gizmo):
     """Click to flip the collider's Dynamic (rigid coupling) setting."""
 
     bl_idname = "FLUIDSIM_GT_deck_toggle"
-    __slots__ = ("shape",)
+    __slots__ = ("shape", "target")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _SQUARE_LINES)
@@ -207,15 +226,19 @@ class FLUIDSIM_GT_deck_toggle(bpy.types.Gizmo):
         self.draw_custom_shape(self.shape, select_id=select_id)
 
     def invoke(self, context, event):
+        self.target = context.active_object
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event, tweak):
         return {"RUNNING_MODAL"}
 
     def exit(self, context, cancel):
-        settings = context.active_object.fluidsim
+        obj = None if cancel else _started_object(context, getattr(self, "target", None))
+        if obj is None:
+            return
+        settings = obj.fluidsim
         prop = dynamic_property(settings)
-        if not cancel and prop is not None:
+        if prop is not None:
             _write(context, settings, prop, not bool(getattr(settings, prop)))
 
 
@@ -299,7 +322,7 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
 
     bl_idname = "FLUIDSIM_GT_deck_face"
     __slots__ = ("shape", "axis", "side", "start_world", "start_location", "start_scale",
-                 "local", "result")
+                 "local", "result", "target")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _SQUARE_LINES)
@@ -318,7 +341,7 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
 
     def invoke(self, context, event):
         global _ACTIVE_PREVIEW
-        obj = context.active_object
+        obj = self.target = context.active_object
         self.local = local_bounds(obj)
         self.start_location = tuple(float(c) for c in obj.location)
         self.start_scale = tuple(float(c) for c in obj.scale)
@@ -352,7 +375,9 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
         result = getattr(self, "result", None)
         if cancel or result is None:
             return
-        obj = context.active_object
+        obj = _started_object(context, getattr(self, "target", None))
+        if obj is None:
+            return  # the domain was deleted mid-drag
         new_scale, shift = result
         obj.scale[self.axis] = new_scale
         obj.location[self.axis] = self.start_location[self.axis] + shift
