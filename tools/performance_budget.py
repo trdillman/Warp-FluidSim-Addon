@@ -51,7 +51,8 @@ NEUTRAL_ABSENT_EFFECTIVE_SETTINGS = {
 	"pressure_preconditioner": "JACOBI",
 	"spacetime_enabled": False,
 }
-# Candidate-only settings that are owned release changes, not omissions:
+# Owned release transitions from the neutral legacy value to the candidate
+# value, whether the baseline reports that value explicitly or omits it:
 # field -> (candidate value, per-frame budget ratio for that demo). 4.0 makes
 # Multigrid the default preconditioner; RELEASE_4_0_PLAN.md allows it +10%.
 INTENDED_CANDIDATE_CHANGES = {
@@ -414,8 +415,23 @@ def evaluate_budget(runs):
 					elif snap:
 						lattice_snap = snap
 				elif any(value != values[0] for value in values[1:]):
-					invalid_reasons.append(
-						f"{demo}: effectiveSettings.{field} differs across variants or trials")
+					change = INTENDED_CANDIDATE_CHANGES.get(field)
+					# Only the exact, stable owned transition is authorized. A
+					# candidate value alone must not mask baseline or trial drift.
+					if (change is not None
+							and field in NEUTRAL_ABSENT_EFFECTIVE_SETTINGS
+							and all(run["effectiveSettings"][field] == (
+								NEUTRAL_ABSENT_EFFECTIVE_SETTINGS[field]
+								if run["label"] == "baseline" else change[0])
+								for run in demo_runs)):
+						value, ratio = change
+						intended_changes[field] = {
+							"baselineValue": NEUTRAL_ABSENT_EFFECTIVE_SETTINGS[field],
+							"value": value, "budgetRatio": ratio}
+						budget_ratio = max(budget_ratio, ratio)
+					else:
+						invalid_reasons.append(
+							f"{demo}: effectiveSettings.{field} differs across variants or trials")
 		for field in sorted(all_effective - common_effective):
 			present_labels = [label for label in _LABELS
 							  if field in effective_keys[label]]

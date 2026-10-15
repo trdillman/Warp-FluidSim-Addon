@@ -164,3 +164,37 @@ def test_release_runner_uses_snapshot_references_and_all_64_trials(monkeypatch, 
     assert len(calls) == 68  # Four schema extracts plus 64 timed children.
     assert set(archives) == set(bench.REFERENCE_COMMITS.values())
     assert report["candidateInventorySha256"] == bench._inventory(source)
+
+
+def test_pressure_solve_recorder_captures_each_substep_and_restores_method():
+    from tools.benchmark_demo_trial import record_pressure_solves
+
+    class Pressure:
+        last_pcg_check_every = 5
+        last_pcg_execution_mode = "cuda_conditional"
+        def project_frame(self, iterations):
+            return {"iterations": iterations, "residual": 1e-6,
+                    "converged": True, "reason": "converged",
+                    "project_velocity": True}
+
+    pressure = Pressure()
+    with record_pressure_solves(pressure) as solves:
+        first = pressure.project_frame(5)
+        second = pressure.project_frame(10)
+        assert first["iterations"] == 5
+        assert second["iterations"] == 10
+        assert [s["iterations"] for s in solves] == [5, 10]
+        assert all(s["checkEvery"] == 5 for s in solves)
+        assert all(s["executionMode"] == "cuda_conditional" for s in solves)
+        assert all(s["converged"] for s in solves)
+    assert "project_frame" not in pressure.__dict__
+
+
+def test_pressure_solve_recorder_restores_existing_override_after_error():
+    from tools.benchmark_demo_trial import record_pressure_solves
+    def failing():
+        raise RuntimeError("pressure failure")
+    pressure = SimpleNamespace(project_frame=failing)
+    with pytest.raises(RuntimeError, match="pressure failure"), record_pressure_solves(pressure):
+        pressure.project_frame()
+    assert pressure.project_frame is failing

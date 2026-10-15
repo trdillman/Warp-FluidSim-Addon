@@ -49,6 +49,37 @@ def comparable_profiler(profiler, phase_slots):
     return state
 
 
+
+@contextmanager
+def record_pressure_solves(pressure):
+    """Record the returned status of every production substep solve.
+
+    Do not change convergence cadence or read GPU arrays. Frame stats retain
+    only the final substep, so those stats cannot prove iteration reduction.
+    """
+    original = pressure.project_frame
+    had_override = "project_frame" in pressure.__dict__
+    solves = []
+
+    def project_frame(*args, **kwargs):
+        status = original(*args, **kwargs)
+        solves.append({
+            **status,
+            "checkEvery": getattr(pressure, "last_pcg_check_every", None),
+            "executionMode": getattr(pressure, "last_pcg_execution_mode", None),
+        })
+        return status
+
+    pressure.project_frame = project_frame
+    try:
+        yield solves
+    finally:
+        if had_override:
+            pressure.project_frame = original
+        else:
+            del pressure.project_frame
+
+
 def main():
     import bpy
     import warp as wp
@@ -133,30 +164,33 @@ def main():
             if name in effective:
                 effective[name] = key in attributes[kind]
     try:
-        for frame in range(1, int(frames) + 1):
-            scene.frame_set(scene.frame_start + frame - 1)
-            wp.synchronize_device(device)
-            start = time.perf_counter()
-            stage_state["outerMs"] = 0.0
-            sim_time_before = float(sess.solver.sim_time)
-            scene_bridge.step_frame(scene, sess, write_cache=False,
-                                    refresh_pending=False,
-                                    timeline_frame=scene.frame_current,
-                                    publish_outputs=True)
-            wp.synchronize_device(device)
-            if sess.error:
-                raise RuntimeError(sess.error)
-            stats = sess.solver.stats
-            timers = dict(stats.timers)
-            reported_solver_ms = timers["solver"]
-            timers["solver"] = stage_state["outerMs"]
-            rows.append({"frame": frame, "hostMs": (time.perf_counter() - start) * 1000,
-                         "timers": timers, "reportedSolverMs": reported_solver_ms,
-                         "frameDt": float(settings.time_scale / settings.frame_rate),
-                         "simTimeBefore": sim_time_before,
-                         "simTimeAfter": float(sess.solver.sim_time),
-                         "substeps": int(stats.substeps),
-                         "activeParticles": int(stats.active_particles)})
+        with record_pressure_solves(sess.solver.pressure_solver) as solves:
+            for frame in range(1, int(frames) + 1):
+                solves.clear()
+                scene.frame_set(scene.frame_start + frame - 1)
+                wp.synchronize_device(device)
+                start = time.perf_counter()
+                stage_state["outerMs"] = 0.0
+                sim_time_before = float(sess.solver.sim_time)
+                scene_bridge.step_frame(scene, sess, write_cache=False,
+                                        refresh_pending=False,
+                                        timeline_frame=scene.frame_current,
+                                        publish_outputs=True)
+                wp.synchronize_device(device)
+                if sess.error:
+                    raise RuntimeError(sess.error)
+                stats = sess.solver.stats
+                timers = dict(stats.timers)
+                reported_solver_ms = timers["solver"]
+                timers["solver"] = stage_state["outerMs"]
+                rows.append({"frame": frame, "hostMs": (time.perf_counter() - start) * 1000,
+                             "timers": timers, "reportedSolverMs": reported_solver_ms,
+                             "frameDt": float(settings.time_scale / settings.frame_rate),
+                             "simTimeBefore": sim_time_before,
+                             "simTimeAfter": float(sess.solver.sim_time),
+                             "substeps": int(stats.substeps),
+                             "activeParticles": int(stats.active_particles),
+                             "pressureSolves": list(solves)})
         if not rows[-1]["activeParticles"]:
             raise RuntimeError("demo produced no liquid particles")
         if inventory_module._inventory(root) != root_inventory:

@@ -1,0 +1,2837 @@
+{
+  "passed": false,
+  "status": "regression",
+  "demos": {
+    "crown_splash": {
+      "passed": false,
+      "status": "regression",
+      "referenceVersion": "3.2.1",
+      "budgetRatio": 1.1,
+      "trials": {
+        "baseline": 8,
+        "candidate": 8
+      },
+      "hostRatio": 1.2639982840163866,
+      "solverRatio": 1.338964508177309,
+      "orders": {
+        "baseline-first": {
+          "blocks": 2,
+          "hostRatio": 1.1902571244190634,
+          "solverRatio": 1.2455635044549547,
+          "stages": {
+            "compute_0": 0.941612852162975,
+            "compute_1": 0.9209030858452821,
+            "compute_10": 0.9371955344316046,
+            "compute_11": 0.9178553605573833,
+            "compute_12": 0.9202612859401178,
+            "compute_13": null,
+            "compute_14": 0.9539439530426583,
+            "compute_15": 0.9955619688660193,
+            "compute_2": 0.9556549996269859,
+            "compute_3": 0.9420017044536859,
+            "compute_4": 0.8736758620024317,
+            "compute_5": 1.133025922464773,
+            "compute_6": 1.005834185407712,
+            "compute_7": null,
+            "compute_8": 9.920722413208177,
+            "compute_9": null
+          }
+        },
+        "candidate-first": {
+          "blocks": 2,
+          "hostRatio": 1.3392264989819758,
+          "solverRatio": 1.4371925932586704,
+          "stages": {
+            "compute_0": 1.2219986941399585,
+            "compute_1": 1.0710620613580022,
+            "compute_10": 1.0490817535549661,
+            "compute_11": 0.9921781111907635,
+            "compute_12": 1.1314253486851036,
+            "compute_13": null,
+            "compute_14": 1.1506101352135194,
+            "compute_15": 1.0542197042447754,
+            "compute_2": 0.9839189879690634,
+            "compute_3": 1.0763316395520317,
+            "compute_4": 0.9623915248138551,
+            "compute_5": 1.3064145938442042,
+            "compute_6": 1.0324484877782116,
+            "compute_7": null,
+            "compute_8": 12.176567812458337,
+            "compute_9": null
+          }
+        }
+      },
+      "stages": {
+        "compute_0": {
+          "ratio": 1.046219777577103,
+          "orders": {
+            "baseline-first": 0.941612852162975,
+            "candidate-first": 1.2219986941399585
+          }
+        },
+        "compute_1": {
+          "ratio": 0.9545626338193189,
+          "orders": {
+            "baseline-first": 0.9209030858452821,
+            "candidate-first": 1.0710620613580022
+          }
+        },
+        "compute_10": {
+          "ratio": 0.9919099637927231,
+          "orders": {
+            "baseline-first": 0.9371955344316046,
+            "candidate-first": 1.0490817535549661
+          }
+        },
+        "compute_11": {
+          "ratio": 0.9468406962951945,
+          "orders": {
+            "baseline-first": 0.9178553605573833,
+            "candidate-first": 0.9921781111907635
+          }
+        },
+        "compute_12": {
+          "ratio": 1.0110186974520181,
+          "orders": {
+            "baseline-first": 0.9202612859401178,
+            "candidate-first": 1.1314253486851036
+          }
+        },
+        "compute_13": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        },
+        "compute_14": {
+          "ratio": 1.0145600531964738,
+          "orders": {
+            "baseline-first": 0.9539439530426583,
+            "candidate-first": 1.1506101352135194
+          }
+        },
+        "compute_15": {
+          "ratio": 0.9985187760106281,
+          "orders": {
+            "baseline-first": 0.9955619688660193,
+            "candidate-first": 1.0542197042447754
+          }
+        },
+        "compute_2": {
+          "ratio": 0.9702313262007832,
+          "orders": {
+            "baseline-first": 0.9556549996269859,
+            "candidate-first": 0.9839189879690634
+          }
+        },
+        "compute_3": {
+          "ratio": 1.0172451356404382,
+          "orders": {
+            "baseline-first": 0.9420017044536859,
+            "candidate-first": 1.0763316395520317
+          }
+        },
+        "compute_4": {
+          "ratio": 0.9093838730143831,
+          "orders": {
+            "baseline-first": 0.8736758620024317,
+            "candidate-first": 0.9623915248138551
+          }
+        },
+        "compute_5": {
+          "ratio": 1.214896196250871,
+          "orders": {
+            "baseline-first": 1.133025922464773,
+            "candidate-first": 1.3064145938442042
+          }
+        },
+        "compute_6": {
+          "ratio": 1.005834185407712,
+          "orders": {
+            "baseline-first": 1.005834185407712,
+            "candidate-first": 1.0324484877782116
+          }
+        },
+        "compute_7": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        },
+        "compute_8": {
+          "ratio": 10.964101265124926,
+          "orders": {
+            "baseline-first": 9.920722413208177,
+            "candidate-first": 12.176567812458337
+          }
+        },
+        "compute_9": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        }
+      },
+      "effectiveSettings": {
+        "commonFields": [
+          "attraction_enabled",
+          "attraction_max_distance",
+          "attraction_strength",
+          "auto_grow_particles",
+          "cfl",
+          "churn_decay",
+          "churn_gain",
+          "count_stiffness",
+          "device",
+          "directional_force",
+          "dissipation_attribute",
+          "dissipation_enabled",
+          "dissipation_rate",
+          "dissipation_target",
+          "domain_max",
+          "domain_min",
+          "domain_sdf_walls",
+          "flip_ratio",
+          "force_diffusion",
+          "frame_rate",
+          "gravity",
+          "leaf_capacity",
+          "live_surface_publish_cadence",
+          "max_particles",
+          "max_speed",
+          "max_substeps",
+          "max_whitewater",
+          "min_substeps",
+          "narrow_band_enabled",
+          "narrow_band_voxels",
+          "omnidirectional_force_center",
+          "omnidirectional_force_radius",
+          "omnidirectional_force_strength",
+          "open_boundaries",
+          "particle_growth_failure_policy",
+          "particle_radius_scale",
+          "particles_attribute_age",
+          "particles_attribute_color",
+          "particles_attribute_density",
+          "particles_attribute_lifetime",
+          "particles_attribute_source_id",
+          "particles_attribute_speed",
+          "particles_attribute_uid",
+          "particles_attribute_velocity",
+          "particles_attribute_viscosity",
+          "particles_attribute_vorticity",
+          "particles_per_voxel",
+          "pressure_iterations",
+          "pressure_preconditioner",
+          "pressure_solver",
+          "pressure_threshold",
+          "pressure_tolerance",
+          "relax_enabled",
+          "relax_mode",
+          "relax_strength",
+          "resolved_quality",
+          "sample_type",
+          "species_enabled",
+          "species_mixing_rate",
+          "speed_limit_behavior",
+          "speed_limit_percent",
+          "surface_attribute_age",
+          "surface_attribute_color",
+          "surface_attribute_density",
+          "surface_attribute_lifetime",
+          "surface_attribute_motion",
+          "surface_attribute_source_id",
+          "surface_attribute_speed",
+          "surface_attribute_velocity",
+          "surface_attribute_viscosity",
+          "surface_attribute_vorticity",
+          "surface_build_lowres_sdf",
+          "surface_dilate_iterations",
+          "surface_dilate_strength",
+          "surface_enabled",
+          "surface_erode_iterations",
+          "surface_erode_strength",
+          "surface_filter_iterations",
+          "surface_filter_strength",
+          "surface_filter_type",
+          "surface_leaf_capacity_scale",
+          "surface_max_dense_dim",
+          "surface_resolution_mode",
+          "surface_resolution_multiplier",
+          "surface_smooth_iterations",
+          "surface_smooth_strength",
+          "surface_smooth_type",
+          "surface_splat_radius",
+          "surface_tension_band_voxels",
+          "surface_tension_coefficient",
+          "surface_tension_density",
+          "surface_tension_enabled",
+          "surface_tension_safety",
+          "surface_tension_smoothing_iterations",
+          "surface_update_cadence",
+          "surface_voxel_size",
+          "time_scale",
+          "topology_expand",
+          "trace_mode",
+          "viscosity_constant",
+          "viscosity_enabled",
+          "viscosity_from_particles",
+          "viscosity_iterations",
+          "viscosity_solver",
+          "viscosity_tolerance",
+          "voxel_size",
+          "whitewater_attribute_age",
+          "whitewater_attribute_lifetime",
+          "whitewater_attribute_speed",
+          "whitewater_attribute_type",
+          "whitewater_attribute_velocity",
+          "whitewater_enabled",
+          "ww_bubble_buoyancy",
+          "ww_bubble_drag",
+          "ww_bubble_life_multiplier",
+          "ww_churn_threshold",
+          "ww_emission_rate",
+          "ww_foam_advection",
+          "ww_foam_band",
+          "ww_foam_density_influence",
+          "ww_foam_life_multiplier",
+          "ww_foam_preservation",
+          "ww_life_max",
+          "ww_life_min",
+          "ww_min_speed",
+          "ww_spray_drag",
+          "ww_spray_gravity_scale",
+          "ww_spray_life_multiplier",
+          "ww_spray_min_speed",
+          "ww_surface_band",
+          "ww_type_hysteresis"
+        ],
+        "neutralAbsentFields": {
+          "pressure_learned_guess": {
+            "presentIn": "candidate",
+            "neutralValue": false
+          }
+        },
+        "intendedChanges": {
+          "pressure_preconditioner": {
+            "baselineValue": "JACOBI",
+            "value": "MULTIGRID",
+            "budgetRatio": 1.1
+          }
+        }
+      },
+      "attributeInventory": {
+        "surface": [],
+        "particles": [],
+        "whitewater": [
+          "type"
+        ]
+      },
+      "blocks": [
+        {
+          "block": 0,
+          "order": "baseline-first",
+          "substeps": {
+            "baseline": 704,
+            "candidate": 716,
+            "candidateToBaselineRatio": 1.0170454545454546
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.2311165188287794,
+          "solverRatio": 1.2656543402213343,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.39624997589271516,
+              "candidateMedian": 0.37615004112012684,
+              "ratio": 0.9492746094752309
+            },
+            "compute_1": {
+              "baselineMedian": 2.5985500251408666,
+              "candidateMedian": 2.3796499881427735,
+              "ratio": 0.915760699282198
+            },
+            "compute_10": {
+              "baselineMedian": 3.723500034539029,
+              "candidateMedian": 3.4936000156449154,
+              "ratio": 0.9382570117465904
+            },
+            "compute_11": {
+              "baselineMedian": 3.9194499840959907,
+              "candidateMedian": 3.683150003780611,
+              "ratio": 0.9397109336069557
+            },
+            "compute_12": {
+              "baselineMedian": 6.5348500065738335,
+              "candidateMedian": 6.240400020033121,
+              "ratio": 0.9549415845437147
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.522849961882457,
+              "candidateMedian": 3.3248000108869746,
+              "ratio": 0.943781326727394
+            },
+            "compute_15": {
+              "baselineMedian": 2.0959999674232677,
+              "candidateMedian": 2.1114000264788046,
+              "ratio": 1.0073473565338216
+            },
+            "compute_2": {
+              "baselineMedian": 3.3029999904101714,
+              "candidateMedian": 3.145300011965446,
+              "ratio": 0.9522555316673974
+            },
+            "compute_3": {
+              "baselineMedian": 0.7594000198878348,
+              "candidateMedian": 0.7491000142181292,
+              "ratio": 0.98643665341064
+            },
+            "compute_4": {
+              "baselineMedian": 0.04949994035996497,
+              "candidateMedian": 0.04369996895547956,
+              "ratio": 0.8828287193417235
+            },
+            "compute_5": {
+              "baselineMedian": 12.70479999948293,
+              "candidateMedian": 14.626899981522001,
+              "ratio": 1.1512892750863688
+            },
+            "compute_6": {
+              "baselineMedian": 3.7635499611496925,
+              "candidateMedian": 3.744399975403212,
+              "ratio": 0.9949117227234495
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 1.2489499640651047,
+              "candidateMedian": 12.33590001356788,
+              "ratio": 9.877016989068778
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 1,
+          "order": "candidate-first",
+          "substeps": {
+            "baseline": 704,
+            "candidate": 716,
+            "candidateToBaselineRatio": 1.0170454545454546
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.2968800492039938,
+          "solverRatio": 1.4122746761332836,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.34819997381418943,
+              "candidateMedian": 0.39805000415071845,
+              "ratio": 1.1431649456789752
+            },
+            "compute_1": {
+              "baselineMedian": 2.4024499871302396,
+              "candidateMedian": 2.361800041398965,
+              "ratio": 0.9830797952302717
+            },
+            "compute_10": {
+              "baselineMedian": 3.4828499919967726,
+              "candidateMedian": 3.6660499608842656,
+              "ratio": 1.052600591271076
+            },
+            "compute_11": {
+              "baselineMedian": 3.830150017165579,
+              "candidateMedian": 3.653849969850853,
+              "ratio": 0.9539704589834335
+            },
+            "compute_12": {
+              "baselineMedian": 5.965349992038682,
+              "candidateMedian": 6.3655999838374555,
+              "ratio": 1.0670958103603216
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.177800012053922,
+              "candidateMedian": 3.384399999049492,
+              "ratio": 1.065013527035025
+            },
+            "compute_15": {
+              "baselineMedian": 2.04175004910212,
+              "candidateMedian": 2.0207000052323565,
+              "ratio": 0.9896901954874346
+            },
+            "compute_2": {
+              "baselineMedian": 3.170749987475574,
+              "candidateMedian": 3.111799989710562,
+              "ratio": 0.981408184814992
+            },
+            "compute_3": {
+              "baselineMedian": 0.679449993185699,
+              "candidateMedian": 0.7121000235201791,
+              "ratio": 1.0480536178702362
+            },
+            "compute_4": {
+              "baselineMedian": 0.04605000140145421,
+              "candidateMedian": 0.043099993490614,
+              "ratio": 0.9359390266870425
+            },
+            "compute_5": {
+              "baselineMedian": 11.70705002732575,
+              "candidateMedian": 14.967499955673702,
+              "ratio": 1.2785031174153734
+            },
+            "compute_6": {
+              "baselineMedian": 3.7404499744297937,
+              "candidateMedian": 3.630150022218004,
+              "ratio": 0.9705115820380397
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 1.0724499879870564,
+              "candidateMedian": 12.830550025682896,
+              "ratio": 11.963774692902277
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 2,
+          "order": "baseline-first",
+          "substeps": {
+            "baseline": 704,
+            "candidate": 716,
+            "candidateToBaselineRatio": 1.0170454545454546
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.1493977300093474,
+          "solverRatio": 1.225472668688575,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.3830499917967245,
+              "candidateMedian": 0.35774995922110975,
+              "ratio": 0.9339510948507189
+            },
+            "compute_1": {
+              "baselineMedian": 2.4474500241922215,
+              "candidateMedian": 2.266450013848953,
+              "ratio": 0.9260454724083662
+            },
+            "compute_10": {
+              "baselineMedian": 3.7383000453701243,
+              "candidateMedian": 3.499549988191575,
+              "ratio": 0.9361340571166189
+            },
+            "compute_11": {
+              "baselineMedian": 3.8985500286798924,
+              "candidateMedian": 3.4930999972857535,
+              "ratio": 0.8959997875078108
+            },
+            "compute_12": {
+              "baselineMedian": 6.494549990748055,
+              "candidateMedian": 5.751449993113056,
+              "ratio": 0.8855809873365209
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.3891999773913994,
+              "candidateMedian": 3.267549996962771,
+              "ratio": 0.9641065793579227
+            },
+            "compute_15": {
+              "baselineMedian": 2.0587499893736094,
+              "candidateMedian": 2.0253500260878354,
+              "ratio": 0.9837765811982172
+            },
+            "compute_2": {
+              "baselineMedian": 3.206700013834052,
+              "candidateMedian": 3.0753999744774774,
+              "ratio": 0.9590544675865744
+            },
+            "compute_3": {
+              "baselineMedian": 0.7541500381194055,
+              "candidateMedian": 0.6769000028725713,
+              "ratio": 0.8975667554967317
+            },
+            "compute_4": {
+              "baselineMedian": 0.05129996861796826,
+              "candidateMedian": 0.04435000300873071,
+              "ratio": 0.86452300466314
+            },
+            "compute_5": {
+              "baselineMedian": 12.675300007686019,
+              "candidateMedian": 14.129950010101311,
+              "ratio": 1.1147625698431773
+            },
+            "compute_6": {
+              "baselineMedian": 3.7597000336972997,
+              "candidateMedian": 3.822700004093349,
+              "ratio": 1.0167566480919743
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 1.2087999639334157,
+              "candidateMedian": 12.045000010402873,
+              "ratio": 9.964427837347575
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 3,
+          "order": "candidate-first",
+          "substeps": {
+            "baseline": 704,
+            "candidate": 716,
+            "candidateToBaselineRatio": 1.0170454545454546
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.381572948759958,
+          "solverRatio": 1.4621105103840573,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.35435002064332366,
+              "candidateMedian": 0.4609500028891489,
+              "ratio": 1.3008324426009419
+            },
+            "compute_1": {
+              "baselineMedian": 2.268550015287474,
+              "candidateMedian": 2.629350026836619,
+              "ratio": 1.1590443274857327
+            },
+            "compute_10": {
+              "baselineMedian": 3.58625000808388,
+              "candidateMedian": 3.749650015379302,
+              "ratio": 1.045562915838856
+            },
+            "compute_11": {
+              "baselineMedian": 3.845550018013455,
+              "candidateMedian": 3.962399990996346,
+              "ratio": 1.0303857633980935
+            },
+            "compute_12": {
+              "baselineMedian": 5.936250046943314,
+              "candidateMedian": 7.0983000041451305,
+              "ratio": 1.1957548870098855
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.2678999850759283,
+              "candidateMedian": 4.039799998281524,
+              "ratio": 1.2362067433920136
+            },
+            "compute_15": {
+              "baselineMedian": 1.9827500073006377,
+              "candidateMedian": 2.2182000102475286,
+              "ratio": 1.1187492130021162
+            },
+            "compute_2": {
+              "baselineMedian": 3.1466000218642876,
+              "candidateMedian": 3.1039000023156404,
+              "ratio": 0.9864297911231348
+            },
+            "compute_3": {
+              "baselineMedian": 0.7007000094745308,
+              "candidateMedian": 0.7740000000922009,
+              "ratio": 1.1046096612338272
+            },
+            "compute_4": {
+              "baselineMedian": 0.049299997044727206,
+              "candidateMedian": 0.04875000740867108,
+              "ratio": 0.9888440229406678
+            },
+            "compute_5": {
+              "baselineMedian": 12.138150006649084,
+              "candidateMedian": 16.196249998756684,
+              "ratio": 1.3343260702730348
+            },
+            "compute_6": {
+              "baselineMedian": 3.710849952767603,
+              "candidateMedian": 4.06109998584725,
+              "ratio": 1.0943853935183838
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 1.1458500666776672,
+              "candidateMedian": 14.196350050042383,
+              "ratio": 12.389360932014398
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        }
+      ],
+      "reasons": [
+        "host and synchronized solver medians exceed the 10% budget"
+      ]
+    },
+    "dam_break": {
+      "passed": false,
+      "status": "regression",
+      "referenceVersion": "3.2.1",
+      "budgetRatio": 1.1,
+      "trials": {
+        "baseline": 8,
+        "candidate": 8
+      },
+      "hostRatio": 1.1816052110670199,
+      "solverRatio": 1.2378600851295294,
+      "orders": {
+        "baseline-first": {
+          "blocks": 2,
+          "hostRatio": 1.1245559285185291,
+          "solverRatio": 1.154107005912902,
+          "stages": {
+            "compute_0": 1.0490473976213557,
+            "compute_1": 1.0484620042728148,
+            "compute_10": 1.0462826039651318,
+            "compute_11": 1.011195065131523,
+            "compute_12": 1.0290371744103115,
+            "compute_13": null,
+            "compute_14": 1.0643534497034937,
+            "compute_15": 1.045549805537134,
+            "compute_2": 1.0256348717172958,
+            "compute_3": 1.0184582832869136,
+            "compute_4": 1.017747425310003,
+            "compute_5": 1.4024632129092582,
+            "compute_6": 0.9756757344605469,
+            "compute_7": null,
+            "compute_8": 0.9719943845204332,
+            "compute_9": null
+          }
+        },
+        "candidate-first": {
+          "blocks": 2,
+          "hostRatio": 1.2918710180004576,
+          "solverRatio": 1.3294105672882623,
+          "stages": {
+            "compute_0": 1.72710946413435,
+            "compute_1": 1.2129782962710038,
+            "compute_10": 1.1233962311930619,
+            "compute_11": 1.1429271638952785,
+            "compute_12": 1.1230107489281056,
+            "compute_13": null,
+            "compute_14": 1.215307146754021,
+            "compute_15": 1.312388356882581,
+            "compute_2": 1.1953546490815599,
+            "compute_3": 2.000785446951,
+            "compute_4": 1.1002798413845565,
+            "compute_5": 1.653813858477422,
+            "compute_6": 1.0623005534748693,
+            "compute_7": null,
+            "compute_8": 1.3241894575941282,
+            "compute_9": null
+          }
+        }
+      },
+      "stages": {
+        "compute_0": {
+          "ratio": 1.1540814024847839,
+          "orders": {
+            "baseline-first": 1.0490473976213557,
+            "candidate-first": 1.72710946413435
+          }
+        },
+        "compute_1": {
+          "ratio": 1.1274533927171557,
+          "orders": {
+            "baseline-first": 1.0484620042728148,
+            "candidate-first": 1.2129782962710038
+          }
+        },
+        "compute_10": {
+          "ratio": 1.105207261112966,
+          "orders": {
+            "baseline-first": 1.0462826039651318,
+            "candidate-first": 1.1233962311930619
+          }
+        },
+        "compute_11": {
+          "ratio": 1.0799167032116883,
+          "orders": {
+            "baseline-first": 1.011195065131523,
+            "candidate-first": 1.1429271638952785
+          }
+        },
+        "compute_12": {
+          "ratio": 1.1218784145969494,
+          "orders": {
+            "baseline-first": 1.0290371744103115,
+            "candidate-first": 1.1230107489281056
+          }
+        },
+        "compute_13": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        },
+        "compute_14": {
+          "ratio": 1.1516845883652809,
+          "orders": {
+            "baseline-first": 1.0643534497034937,
+            "candidate-first": 1.215307146754021
+          }
+        },
+        "compute_15": {
+          "ratio": 1.1236441838551894,
+          "orders": {
+            "baseline-first": 1.045549805537134,
+            "candidate-first": 1.312388356882581
+          }
+        },
+        "compute_2": {
+          "ratio": 1.0590619858105086,
+          "orders": {
+            "baseline-first": 1.0256348717172958,
+            "candidate-first": 1.1953546490815599
+          }
+        },
+        "compute_3": {
+          "ratio": 1.1124220156475477,
+          "orders": {
+            "baseline-first": 1.0184582832869136,
+            "candidate-first": 2.000785446951
+          }
+        },
+        "compute_4": {
+          "ratio": 1.0504699794914445,
+          "orders": {
+            "baseline-first": 1.017747425310003,
+            "candidate-first": 1.1002798413845565
+          }
+        },
+        "compute_5": {
+          "ratio": 1.4690230865846017,
+          "orders": {
+            "baseline-first": 1.4024632129092582,
+            "candidate-first": 1.653813858477422
+          }
+        },
+        "compute_6": {
+          "ratio": 1.017742099580862,
+          "orders": {
+            "baseline-first": 0.9756757344605469,
+            "candidate-first": 1.0623005534748693
+          }
+        },
+        "compute_7": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        },
+        "compute_8": {
+          "ratio": 1.0130214222022262,
+          "orders": {
+            "baseline-first": 0.9719943845204332,
+            "candidate-first": 1.3241894575941282
+          }
+        },
+        "compute_9": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        }
+      },
+      "effectiveSettings": {
+        "commonFields": [
+          "attraction_enabled",
+          "attraction_max_distance",
+          "attraction_strength",
+          "auto_grow_particles",
+          "cfl",
+          "churn_decay",
+          "churn_gain",
+          "count_stiffness",
+          "device",
+          "directional_force",
+          "dissipation_attribute",
+          "dissipation_enabled",
+          "dissipation_rate",
+          "dissipation_target",
+          "domain_max",
+          "domain_min",
+          "domain_sdf_walls",
+          "flip_ratio",
+          "force_diffusion",
+          "frame_rate",
+          "gravity",
+          "leaf_capacity",
+          "live_surface_publish_cadence",
+          "max_particles",
+          "max_speed",
+          "max_substeps",
+          "max_whitewater",
+          "min_substeps",
+          "narrow_band_enabled",
+          "narrow_band_voxels",
+          "omnidirectional_force_center",
+          "omnidirectional_force_radius",
+          "omnidirectional_force_strength",
+          "open_boundaries",
+          "particle_growth_failure_policy",
+          "particle_radius_scale",
+          "particles_attribute_age",
+          "particles_attribute_color",
+          "particles_attribute_density",
+          "particles_attribute_lifetime",
+          "particles_attribute_source_id",
+          "particles_attribute_speed",
+          "particles_attribute_uid",
+          "particles_attribute_velocity",
+          "particles_attribute_viscosity",
+          "particles_attribute_vorticity",
+          "particles_per_voxel",
+          "pressure_iterations",
+          "pressure_preconditioner",
+          "pressure_solver",
+          "pressure_threshold",
+          "pressure_tolerance",
+          "relax_enabled",
+          "relax_mode",
+          "relax_strength",
+          "resolved_quality",
+          "sample_type",
+          "species_enabled",
+          "species_mixing_rate",
+          "speed_limit_behavior",
+          "speed_limit_percent",
+          "surface_attribute_age",
+          "surface_attribute_color",
+          "surface_attribute_density",
+          "surface_attribute_lifetime",
+          "surface_attribute_motion",
+          "surface_attribute_source_id",
+          "surface_attribute_speed",
+          "surface_attribute_velocity",
+          "surface_attribute_viscosity",
+          "surface_attribute_vorticity",
+          "surface_build_lowres_sdf",
+          "surface_dilate_iterations",
+          "surface_dilate_strength",
+          "surface_enabled",
+          "surface_erode_iterations",
+          "surface_erode_strength",
+          "surface_filter_iterations",
+          "surface_filter_strength",
+          "surface_filter_type",
+          "surface_leaf_capacity_scale",
+          "surface_max_dense_dim",
+          "surface_resolution_mode",
+          "surface_resolution_multiplier",
+          "surface_smooth_iterations",
+          "surface_smooth_strength",
+          "surface_smooth_type",
+          "surface_splat_radius",
+          "surface_tension_band_voxels",
+          "surface_tension_coefficient",
+          "surface_tension_density",
+          "surface_tension_enabled",
+          "surface_tension_safety",
+          "surface_tension_smoothing_iterations",
+          "surface_update_cadence",
+          "surface_voxel_size",
+          "time_scale",
+          "topology_expand",
+          "trace_mode",
+          "viscosity_constant",
+          "viscosity_enabled",
+          "viscosity_from_particles",
+          "viscosity_iterations",
+          "viscosity_solver",
+          "viscosity_tolerance",
+          "voxel_size",
+          "whitewater_attribute_age",
+          "whitewater_attribute_lifetime",
+          "whitewater_attribute_speed",
+          "whitewater_attribute_type",
+          "whitewater_attribute_velocity",
+          "whitewater_enabled",
+          "ww_bubble_buoyancy",
+          "ww_bubble_drag",
+          "ww_bubble_life_multiplier",
+          "ww_churn_threshold",
+          "ww_emission_rate",
+          "ww_foam_advection",
+          "ww_foam_band",
+          "ww_foam_density_influence",
+          "ww_foam_life_multiplier",
+          "ww_foam_preservation",
+          "ww_life_max",
+          "ww_life_min",
+          "ww_min_speed",
+          "ww_spray_drag",
+          "ww_spray_gravity_scale",
+          "ww_spray_life_multiplier",
+          "ww_spray_min_speed",
+          "ww_surface_band",
+          "ww_type_hysteresis"
+        ],
+        "neutralAbsentFields": {
+          "pressure_learned_guess": {
+            "presentIn": "candidate",
+            "neutralValue": false
+          }
+        },
+        "intendedChanges": {
+          "pressure_preconditioner": {
+            "baselineValue": "JACOBI",
+            "value": "MULTIGRID",
+            "budgetRatio": 1.1
+          }
+        }
+      },
+      "attributeInventory": {
+        "surface": [],
+        "particles": [],
+        "whitewater": [
+          "type"
+        ]
+      },
+      "blocks": [
+        {
+          "block": 0,
+          "order": "baseline-first",
+          "substeps": {
+            "baseline": 804,
+            "candidate": 808,
+            "candidateToBaselineRatio": 1.0049751243781095
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.1798268191300796,
+          "solverRatio": 1.243990354812039,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 1.253099981113337,
+              "candidateMedian": 1.4139000413706526,
+              "ratio": 1.1283218120508232
+            },
+            "compute_1": {
+              "baselineMedian": 3.0096000409685075,
+              "candidateMedian": 3.327550017274916,
+              "ratio": 1.105645259163437
+            },
+            "compute_10": {
+              "baselineMedian": 4.3087500089313835,
+              "candidateMedian": 4.7659499978180975,
+              "ratio": 1.1061096577752267
+            },
+            "compute_11": {
+              "baselineMedian": 3.9876499795354903,
+              "candidateMedian": 4.248199984431267,
+              "ratio": 1.0653392364507697
+            },
+            "compute_12": {
+              "baselineMedian": 7.0392500347224995,
+              "candidateMedian": 7.992149970959872,
+              "ratio": 1.1353695253808296
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.9181500033009797,
+              "candidateMedian": 4.512100014835596,
+              "ratio": 1.1515894008739387
+            },
+            "compute_15": {
+              "baselineMedian": 2.9096499929437414,
+              "candidateMedian": 3.2291499519487843,
+              "ratio": 1.1098070076400492
+            },
+            "compute_2": {
+              "baselineMedian": 6.100200058426708,
+              "candidateMedian": 6.374100034008734,
+              "ratio": 1.044900162774771
+            },
+            "compute_3": {
+              "baselineMedian": 0.8597499836469069,
+              "candidateMedian": 0.9401499992236495,
+              "ratio": 1.0935155767444158
+            },
+            "compute_4": {
+              "baselineMedian": 0.055549986427649856,
+              "candidateMedian": 0.057249999372288585,
+              "ratio": 1.030603300810035
+            },
+            "compute_5": {
+              "baselineMedian": 18.9712999999756,
+              "candidateMedian": 27.3859500157414,
+              "ratio": 1.4435463049857744
+            },
+            "compute_6": {
+              "baselineMedian": 5.4646499920636415,
+              "candidateMedian": 5.550500005483627,
+              "ratio": 1.0157100662521235
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 4.43064997671172,
+              "candidateMedian": 4.461249947780743,
+              "ratio": 1.0069064293568353
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 1,
+          "order": "candidate-first",
+          "substeps": {
+            "baseline": 804,
+            "candidate": 808,
+            "candidateToBaselineRatio": 1.0049751243781095
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.4003584329969552,
+          "solverRatio": 1.427091319129505,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 1.1070499749621376,
+              "candidateMedian": 2.5178500363836065,
+              "ratio": 2.2743779353499556
+            },
+            "compute_1": {
+              "baselineMedian": 2.7631499979179353,
+              "candidateMedian": 3.5276999697089195,
+              "ratio": 1.2766950662711332
+            },
+            "compute_10": {
+              "baselineMedian": 4.136499992455356,
+              "candidateMedian": 4.725899940240197,
+              "ratio": 1.1424875979354188
+            },
+            "compute_11": {
+              "baselineMedian": 4.034800032968633,
+              "candidateMedian": 4.806900004041381,
+              "ratio": 1.1913601578179502
+            },
+            "compute_12": {
+              "baselineMedian": 6.5110999858006835,
+              "candidateMedian": 7.407249984680675,
+              "ratio": 1.1376341940431423
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.4697999799391255,
+              "candidateMedian": 4.4372999836923555,
+              "ratio": 1.278834517651419
+            },
+            "compute_15": {
+              "baselineMedian": 2.78835000062827,
+              "candidateMedian": 4.147100000409409,
+              "ratio": 1.4872953536948323
+            },
+            "compute_2": {
+              "baselineMedian": 6.05444997199811,
+              "candidateMedian": 7.976649983902462,
+              "ratio": 1.3174854893168735
+            },
+            "compute_3": {
+              "baselineMedian": 0.783000054070726,
+              "candidateMedian": 2.247399985208176,
+              "ratio": 2.87024243935132
+            },
+            "compute_4": {
+              "baselineMedian": 0.05145002796780318,
+              "candidateMedian": 0.05815000622533262,
+              "ratio": 1.1302230245962588
+            },
+            "compute_5": {
+              "baselineMedian": 17.694449968985282,
+              "candidateMedian": 32.08230000745971,
+              "ratio": 1.8131278487714146
+            },
+            "compute_6": {
+              "baselineMedian": 5.291100009344518,
+              "candidateMedian": 5.84575001266785,
+              "ratio": 1.104826974040138
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 4.3341000127838925,
+              "candidateMedian": 7.061299940687604,
+              "ratio": 1.629242500140639
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 2,
+          "order": "baseline-first",
+          "substeps": {
+            "baseline": 804,
+            "candidate": 808,
+            "candidateToBaselineRatio": 1.0049751243781095
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.0692850379069787,
+          "solverRatio": 1.0642236570137649,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 1.1760999914258718,
+              "candidateMedian": 1.1405499972170219,
+              "ratio": 0.9697729831918882
+            },
+            "compute_1": {
+              "baselineMedian": 2.803499999572523,
+              "candidateMedian": 2.7790499734692276,
+              "ratio": 0.9912787493821924
+            },
+            "compute_10": {
+              "baselineMedian": 4.130850051296875,
+              "candidateMedian": 4.074899959960021,
+              "ratio": 0.9864555501550369
+            },
+            "compute_11": {
+              "baselineMedian": 3.976799998781644,
+              "candidateMedian": 3.8059999933466315,
+              "ratio": 0.9570508938122763
+            },
+            "compute_12": {
+              "baselineMedian": 6.894349964568391,
+              "candidateMedian": 6.361449966789223,
+              "ratio": 0.9227048234397933
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.616299989516847,
+              "candidateMedian": 3.5335499997017905,
+              "ratio": 0.9771174985330484
+            },
+            "compute_15": {
+              "baselineMedian": 2.8972500294912606,
+              "candidateMedian": 2.8430500242393464,
+              "ratio": 0.9812926034342188
+            },
+            "compute_2": {
+              "baselineMedian": 5.887350023840554,
+              "candidateMedian": 5.924849974690005,
+              "ratio": 1.006369580659821
+            },
+            "compute_3": {
+              "baselineMedian": 0.7879999902797863,
+              "candidateMedian": 0.743399970815517,
+              "ratio": 0.9434009898294115
+            },
+            "compute_4": {
+              "baselineMedian": 0.05110001075081527,
+              "candidateMedian": 0.05134996899869293,
+              "ratio": 1.0048915498099709
+            },
+            "compute_5": {
+              "baselineMedian": 17.73465001315344,
+              "candidateMedian": 24.14359997783322,
+              "ratio": 1.3613801208327418
+            },
+            "compute_6": {
+              "baselineMedian": 5.488000009790994,
+              "candidateMedian": 5.134800027008168,
+              "ratio": 0.9356414026689702
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 4.324699999415316,
+              "candidateMedian": 4.052599993883632,
+              "ratio": 0.9370823396840311
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 3,
+          "order": "candidate-first",
+          "substeps": {
+            "baseline": 804,
+            "candidate": 808,
+            "candidateToBaselineRatio": 1.0049751243781095
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.1833836030039602,
+          "solverRatio": 1.2317298154470198,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 1.0253500076942146,
+              "candidateMedian": 1.2097499711671844,
+              "ratio": 1.1798409929187446
+            },
+            "compute_1": {
+              "baselineMedian": 2.579700027126819,
+              "candidateMedian": 2.9647499904967844,
+              "ratio": 1.1492615262708745
+            },
+            "compute_10": {
+              "baselineMedian": 3.9269500266527757,
+              "candidateMedian": 4.336550016887486,
+              "ratio": 1.104304864450705
+            },
+            "compute_11": {
+              "baselineMedian": 3.6806500429520383,
+              "candidateMedian": 4.02845001372043,
+              "ratio": 1.0944941699726067
+            },
+            "compute_12": {
+              "baselineMedian": 6.176000009872951,
+              "candidateMedian": 6.845399999292567,
+              "ratio": 1.108387303813069
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.372649967786856,
+              "candidateMedian": 3.884550023940392,
+              "ratio": 1.151779775856623
+            },
+            "compute_15": {
+              "baselineMedian": 2.6494500343687832,
+              "candidateMedian": 3.0137000285321847,
+              "ratio": 1.1374813600703295
+            },
+            "compute_2": {
+              "baselineMedian": 5.62999994144775,
+              "candidateMedian": 6.042249980964698,
+              "ratio": 1.0732238088462462
+            },
+            "compute_3": {
+              "baselineMedian": 0.7249000045703724,
+              "candidateMedian": 0.8201000018743798,
+              "ratio": 1.1313284545506794
+            },
+            "compute_4": {
+              "baselineMedian": 0.049049980589188635,
+              "candidateMedian": 0.052499992307275534,
+              "ratio": 1.0703366581728542
+            },
+            "compute_5": {
+              "baselineMedian": 17.09049998316914,
+              "candidateMedian": 25.541749972035177,
+              "ratio": 1.4944998681834292
+            },
+            "compute_6": {
+              "baselineMedian": 5.100099981063977,
+              "candidateMedian": 5.200950035941787,
+              "ratio": 1.0197741329096006
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 4.117800039239228,
+              "candidateMedian": 4.196599969873205,
+              "ratio": 1.0191364150476174
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        }
+      ],
+      "reasons": [
+        "host and synchronized solver medians exceed the 10% budget"
+      ]
+    },
+    "paddle_stir": {
+      "passed": true,
+      "status": "pass",
+      "referenceVersion": "3.2.1",
+      "budgetRatio": 1.1,
+      "trials": {
+        "baseline": 8,
+        "candidate": 8
+      },
+      "hostRatio": 0.9936556110914374,
+      "solverRatio": 1.0343656205288445,
+      "orders": {
+        "baseline-first": {
+          "blocks": 2,
+          "hostRatio": 0.9655427105998433,
+          "solverRatio": 1.0343656205288445,
+          "stages": {
+            "compute_0": 0.9486969215741996,
+            "compute_1": 0.934378109947263,
+            "compute_10": 0.9000790698186842,
+            "compute_11": 0.9435172316174083,
+            "compute_12": 0.901934029370207,
+            "compute_13": null,
+            "compute_14": 0.9304051744133897,
+            "compute_15": 0.9761201876575023,
+            "compute_2": 0.9584554011563693,
+            "compute_3": 0.9469066073775909,
+            "compute_4": 0.9288777172488822,
+            "compute_5": 1.1884260267616376,
+            "compute_6": 0.9470346627144183,
+            "compute_7": null,
+            "compute_8": 0.9952215019523541,
+            "compute_9": null
+          }
+        },
+        "candidate-first": {
+          "blocks": 2,
+          "hostRatio": 1.0342374284565716,
+          "solverRatio": 1.0195115149726872,
+          "stages": {
+            "compute_0": 1.096616047898137,
+            "compute_1": 1.050754449132822,
+            "compute_10": 0.9876181761338101,
+            "compute_11": 0.9916451778563062,
+            "compute_12": 1.0766587568109174,
+            "compute_13": null,
+            "compute_14": 1.0162539362460785,
+            "compute_15": 1.0457364801929014,
+            "compute_2": 0.9328387144607282,
+            "compute_3": 0.9962999141720581,
+            "compute_4": 1.0266071110882753,
+            "compute_5": 1.1565999653699217,
+            "compute_6": 0.9413333055879302,
+            "compute_7": null,
+            "compute_8": 0.9986214836335032,
+            "compute_9": null
+          }
+        }
+      },
+      "stages": {
+        "compute_0": {
+          "ratio": 1.0101663658821396,
+          "orders": {
+            "baseline-first": 0.9486969215741996,
+            "candidate-first": 1.096616047898137
+          }
+        },
+        "compute_1": {
+          "ratio": 1.0204641828220755,
+          "orders": {
+            "baseline-first": 0.934378109947263,
+            "candidate-first": 1.050754449132822
+          }
+        },
+        "compute_10": {
+          "ratio": 0.9395618287538747,
+          "orders": {
+            "baseline-first": 0.9000790698186842,
+            "candidate-first": 0.9876181761338101
+          }
+        },
+        "compute_11": {
+          "ratio": 0.9573338491702617,
+          "orders": {
+            "baseline-first": 0.9435172316174083,
+            "candidate-first": 0.9916451778563062
+          }
+        },
+        "compute_12": {
+          "ratio": 0.9668967635715792,
+          "orders": {
+            "baseline-first": 0.901934029370207,
+            "candidate-first": 1.0766587568109174
+          }
+        },
+        "compute_13": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        },
+        "compute_14": {
+          "ratio": 0.9510419561442156,
+          "orders": {
+            "baseline-first": 0.9304051744133897,
+            "candidate-first": 1.0162539362460785
+          }
+        },
+        "compute_15": {
+          "ratio": 1.0094017246631222,
+          "orders": {
+            "baseline-first": 0.9761201876575023,
+            "candidate-first": 1.0457364801929014
+          }
+        },
+        "compute_2": {
+          "ratio": 0.9383268814257993,
+          "orders": {
+            "baseline-first": 0.9584554011563693,
+            "candidate-first": 0.9328387144607282
+          }
+        },
+        "compute_3": {
+          "ratio": 0.9705977026137177,
+          "orders": {
+            "baseline-first": 0.9469066073775909,
+            "candidate-first": 0.9962999141720581
+          }
+        },
+        "compute_4": {
+          "ratio": 0.9635759898533791,
+          "orders": {
+            "baseline-first": 0.9288777172488822,
+            "candidate-first": 1.0266071110882753
+          }
+        },
+        "compute_5": {
+          "ratio": 1.1884260267616376,
+          "orders": {
+            "baseline-first": 1.1884260267616376,
+            "candidate-first": 1.1565999653699217
+          }
+        },
+        "compute_6": {
+          "ratio": 0.9413333055879302,
+          "orders": {
+            "baseline-first": 0.9470346627144183,
+            "candidate-first": 0.9413333055879302
+          }
+        },
+        "compute_7": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        },
+        "compute_8": {
+          "ratio": 0.9952215019523541,
+          "orders": {
+            "baseline-first": 0.9952215019523541,
+            "candidate-first": 0.9986214836335032
+          }
+        },
+        "compute_9": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        }
+      },
+      "effectiveSettings": {
+        "commonFields": [
+          "attraction_enabled",
+          "attraction_max_distance",
+          "attraction_strength",
+          "auto_grow_particles",
+          "cfl",
+          "churn_decay",
+          "churn_gain",
+          "count_stiffness",
+          "device",
+          "directional_force",
+          "dissipation_attribute",
+          "dissipation_enabled",
+          "dissipation_rate",
+          "dissipation_target",
+          "domain_max",
+          "domain_min",
+          "domain_sdf_walls",
+          "flip_ratio",
+          "force_diffusion",
+          "frame_rate",
+          "gravity",
+          "leaf_capacity",
+          "live_surface_publish_cadence",
+          "max_particles",
+          "max_speed",
+          "max_substeps",
+          "max_whitewater",
+          "min_substeps",
+          "narrow_band_enabled",
+          "narrow_band_voxels",
+          "omnidirectional_force_center",
+          "omnidirectional_force_radius",
+          "omnidirectional_force_strength",
+          "open_boundaries",
+          "particle_growth_failure_policy",
+          "particle_radius_scale",
+          "particles_attribute_age",
+          "particles_attribute_color",
+          "particles_attribute_density",
+          "particles_attribute_lifetime",
+          "particles_attribute_source_id",
+          "particles_attribute_speed",
+          "particles_attribute_uid",
+          "particles_attribute_velocity",
+          "particles_attribute_viscosity",
+          "particles_attribute_vorticity",
+          "particles_per_voxel",
+          "pressure_iterations",
+          "pressure_preconditioner",
+          "pressure_solver",
+          "pressure_threshold",
+          "pressure_tolerance",
+          "relax_enabled",
+          "relax_mode",
+          "relax_strength",
+          "resolved_quality",
+          "sample_type",
+          "species_enabled",
+          "species_mixing_rate",
+          "speed_limit_behavior",
+          "speed_limit_percent",
+          "surface_attribute_age",
+          "surface_attribute_color",
+          "surface_attribute_density",
+          "surface_attribute_lifetime",
+          "surface_attribute_motion",
+          "surface_attribute_source_id",
+          "surface_attribute_speed",
+          "surface_attribute_velocity",
+          "surface_attribute_viscosity",
+          "surface_attribute_vorticity",
+          "surface_build_lowres_sdf",
+          "surface_dilate_iterations",
+          "surface_dilate_strength",
+          "surface_enabled",
+          "surface_erode_iterations",
+          "surface_erode_strength",
+          "surface_filter_iterations",
+          "surface_filter_strength",
+          "surface_filter_type",
+          "surface_leaf_capacity_scale",
+          "surface_max_dense_dim",
+          "surface_resolution_mode",
+          "surface_resolution_multiplier",
+          "surface_smooth_iterations",
+          "surface_smooth_strength",
+          "surface_smooth_type",
+          "surface_splat_radius",
+          "surface_tension_band_voxels",
+          "surface_tension_coefficient",
+          "surface_tension_density",
+          "surface_tension_enabled",
+          "surface_tension_safety",
+          "surface_tension_smoothing_iterations",
+          "surface_update_cadence",
+          "surface_voxel_size",
+          "time_scale",
+          "topology_expand",
+          "trace_mode",
+          "viscosity_constant",
+          "viscosity_enabled",
+          "viscosity_from_particles",
+          "viscosity_iterations",
+          "viscosity_solver",
+          "viscosity_tolerance",
+          "voxel_size",
+          "whitewater_attribute_age",
+          "whitewater_attribute_lifetime",
+          "whitewater_attribute_speed",
+          "whitewater_attribute_type",
+          "whitewater_attribute_velocity",
+          "whitewater_enabled",
+          "ww_bubble_buoyancy",
+          "ww_bubble_drag",
+          "ww_bubble_life_multiplier",
+          "ww_churn_threshold",
+          "ww_emission_rate",
+          "ww_foam_advection",
+          "ww_foam_band",
+          "ww_foam_density_influence",
+          "ww_foam_life_multiplier",
+          "ww_foam_preservation",
+          "ww_life_max",
+          "ww_life_min",
+          "ww_min_speed",
+          "ww_spray_drag",
+          "ww_spray_gravity_scale",
+          "ww_spray_life_multiplier",
+          "ww_spray_min_speed",
+          "ww_surface_band",
+          "ww_type_hysteresis"
+        ],
+        "neutralAbsentFields": {
+          "pressure_learned_guess": {
+            "presentIn": "candidate",
+            "neutralValue": false
+          }
+        },
+        "intendedChanges": {
+          "pressure_preconditioner": {
+            "baselineValue": "JACOBI",
+            "value": "MULTIGRID",
+            "budgetRatio": 1.1
+          }
+        }
+      },
+      "attributeInventory": {
+        "surface": [],
+        "particles": [],
+        "whitewater": [
+          "type"
+        ]
+      },
+      "blocks": [
+        {
+          "block": 0,
+          "order": "baseline-first",
+          "substeps": {
+            "baseline": 470,
+            "candidate": 468,
+            "candidateToBaselineRatio": 0.9957446808510638
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.0099575021336338,
+          "solverRatio": 1.0699110002727181,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.21770001330878586,
+              "candidateMedian": 0.21699999342672527,
+              "ratio": 0.9967844747851822
+            },
+            "compute_1": {
+              "baselineMedian": 1.5523500187555328,
+              "candidateMedian": 1.5708499704487622,
+              "ratio": 1.0119173842688263
+            },
+            "compute_10": {
+              "baselineMedian": 2.0614999812096357,
+              "candidateMedian": 1.9514999876264483,
+              "ratio": 0.9466407981635575
+            },
+            "compute_11": {
+              "baselineMedian": 1.91939999058377,
+              "candidateMedian": 1.8580999749246985,
+              "ratio": 0.9680629280192777
+            },
+            "compute_12": {
+              "baselineMedian": 3.8809999969089404,
+              "candidateMedian": 3.6500999849522486,
+              "ratio": 0.9405050213500143
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 1.9546000112313777,
+              "candidateMedian": 1.8612500134622678,
+              "ratio": 0.9522408691124992
+            },
+            "compute_15": {
+              "baselineMedian": 1.8899000133387744,
+              "candidateMedian": 1.8555000133346766,
+              "ratio": 0.9817979788553335
+            },
+            "compute_2": {
+              "baselineMedian": 2.8635499911615625,
+              "candidateMedian": 2.687299987883307,
+              "ratio": 0.9384505233635674
+            },
+            "compute_3": {
+              "baselineMedian": 0.42039999971166253,
+              "candidateMedian": 0.41030001011677086,
+              "ratio": 0.975975286389584
+            },
+            "compute_4": {
+              "baselineMedian": 0.02820001100189984,
+              "candidateMedian": 0.025850007659755647,
+              "ratio": 0.9166665806624731
+            },
+            "compute_5": {
+              "baselineMedian": 8.24895000550896,
+              "candidateMedian": 9.823400003369898,
+              "ratio": 1.190866715983181
+            },
+            "compute_6": {
+              "baselineMedian": 2.2106999676907435,
+              "candidateMedian": 2.165950005291961,
+              "ratio": 0.9797575595726238
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 2.308800016180612,
+              "candidateMedian": 2.2817000281065702,
+              "ratio": 0.9882623060099971
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 1,
+          "order": "candidate-first",
+          "substeps": {
+            "baseline": 470,
+            "candidate": 468,
+            "candidateToBaselineRatio": 0.9957446808510638
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 0.9773537200492411,
+          "solverRatio": 0.9550246216678374,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.25055000151041895,
+              "candidateMedian": 0.2564500173320994,
+              "ratio": 1.0235482569790968
+            },
+            "compute_1": {
+              "baselineMedian": 1.6217999800574034,
+              "candidateMedian": 1.668849989073351,
+              "ratio": 1.0290109813753248
+            },
+            "compute_10": {
+              "baselineMedian": 2.210550010204315,
+              "candidateMedian": 2.0612999942386523,
+              "ratio": 0.9324828593441918
+            },
+            "compute_11": {
+              "baselineMedian": 1.9814499682979658,
+              "candidateMedian": 1.8756499921437353,
+              "ratio": 0.9466047703212456
+            },
+            "compute_12": {
+              "baselineMedian": 3.9037500391714275,
+              "candidateMedian": 3.8775500433985144,
+              "ratio": 0.993288505793144
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 2.182150012231432,
+              "candidateMedian": 2.0727000082843006,
+              "ratio": 0.949843043175932
+            },
+            "compute_15": {
+              "baselineMedian": 1.9942999788327143,
+              "candidateMedian": 2.0680999878095463,
+              "ratio": 1.0370054704709109
+            },
+            "compute_2": {
+              "baselineMedian": 2.919649996329099,
+              "candidateMedian": 2.7079000137746334,
+              "ratio": 0.9274741894334251
+            },
+            "compute_3": {
+              "baselineMedian": 0.4701000143541023,
+              "candidateMedian": 0.4537499917205423,
+              "ratio": 0.9652201188378514
+            },
+            "compute_4": {
+              "baselineMedian": 0.028700014809146523,
+              "candidateMedian": 0.028300026315264404,
+              "ratio": 0.9860631258714666
+            },
+            "compute_5": {
+              "baselineMedian": 9.284650004701689,
+              "candidateMedian": 10.149150009965524,
+              "ratio": 1.0931106724352622
+            },
+            "compute_6": {
+              "baselineMedian": 2.431449989671819,
+              "candidateMedian": 2.2588000138057396,
+              "ratio": 0.9289929973474871
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 2.30990003910847,
+              "candidateMedian": 2.3362000501947477,
+              "ratio": 1.0113857788826344
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 2,
+          "order": "baseline-first",
+          "substeps": {
+            "baseline": 470,
+            "candidate": 468,
+            "candidateToBaselineRatio": 0.9957446808510638
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 0.921127919066053,
+          "solverRatio": 0.9988202407849707,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.2626000059535727,
+              "candidateMedian": 0.23650002549402416,
+              "ratio": 0.9006093683632171
+            },
+            "compute_1": {
+              "baselineMedian": 1.832549984101206,
+              "candidateMedian": 1.570199994603172,
+              "ratio": 0.8568388356256997
+            },
+            "compute_10": {
+              "baselineMedian": 2.383900005952455,
+              "candidateMedian": 2.034699995419942,
+              "ratio": 0.8535173414738111
+            },
+            "compute_11": {
+              "baselineMedian": 2.13135001831688,
+              "candidateMedian": 1.9586499984143302,
+              "ratio": 0.918971535215539
+            },
+            "compute_12": {
+              "baselineMedian": 4.248849960276857,
+              "candidateMedian": 3.668300007120706,
+              "ratio": 0.8633630373903997
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 2.336200006539002,
+              "candidateMedian": 2.122600024449639,
+              "ratio": 0.9085694797142801
+            },
+            "compute_15": {
+              "baselineMedian": 2.0671499805757776,
+              "candidateMedian": 2.00604998099152,
+              "ratio": 0.970442396459671
+            },
+            "compute_2": {
+              "baselineMedian": 2.818050008499995,
+              "candidateMedian": 2.7573499974096194,
+              "ratio": 0.9784602789491712
+            },
+            "compute_3": {
+              "baselineMedian": 0.4838000168092549,
+              "candidateMedian": 0.444050005171448,
+              "ratio": 0.917837928365598
+            },
+            "compute_4": {
+              "baselineMedian": 0.03309996100142598,
+              "candidateMedian": 0.031150004360824823,
+              "ratio": 0.9410888538352915
+            },
+            "compute_5": {
+              "baselineMedian": 9.009850022266619,
+              "candidateMedian": 10.685550019843504,
+              "ratio": 1.1859853375400944
+            },
+            "compute_6": {
+              "baselineMedian": 2.411650013527833,
+              "candidateMedian": 2.204999982495792,
+              "ratio": 0.9143117658562128
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 2.315749996341765,
+              "candidateMedian": 2.320799947483465,
+              "ratio": 1.0021806978947112
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 3,
+          "order": "candidate-first",
+          "substeps": {
+            "baseline": 470,
+            "candidate": 468,
+            "candidateToBaselineRatio": 0.9957446808510638
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.0911211368639022,
+          "solverRatio": 1.083998408277537,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.20714999118354172,
+              "candidateMedian": 0.24229999689850956,
+              "ratio": 1.1696838388171775
+            },
+            "compute_1": {
+              "baselineMedian": 1.5062500024214387,
+              "candidateMedian": 1.6154499899130315,
+              "ratio": 1.0724979168903193
+            },
+            "compute_10": {
+              "baselineMedian": 2.0395999890752137,
+              "candidateMedian": 2.1268000127747655,
+              "ratio": 1.0427534929234283
+            },
+            "compute_11": {
+              "baselineMedian": 1.8862999422708526,
+              "candidateMedian": 1.9554999598767608,
+              "ratio": 1.036685585391367
+            },
+            "compute_12": {
+              "baselineMedian": 3.377200016984716,
+              "candidateMedian": 3.917649984941818,
+              "ratio": 1.1600290078286908
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 1.919800037285313,
+              "candidateMedian": 2.078499979688786,
+              "ratio": 1.082664829316225
+            },
+            "compute_15": {
+              "baselineMedian": 1.8892000225605443,
+              "candidateMedian": 1.9921000057365745,
+              "ratio": 1.054467489914892
+            },
+            "compute_2": {
+              "baselineMedian": 2.8350999928079545,
+              "candidateMedian": 2.659899997524917,
+              "ratio": 0.9382032394880313
+            },
+            "compute_3": {
+              "baselineMedian": 0.4291499935789034,
+              "candidateMedian": 0.4408999957377091,
+              "ratio": 1.0273797095062647
+            },
+            "compute_4": {
+              "baselineMedian": 0.027550020604394376,
+              "candidateMedian": 0.02940003469120711,
+              "ratio": 1.0671510963050839
+            },
+            "compute_5": {
+              "baselineMedian": 8.402500010561198,
+              "candidateMedian": 10.251800005789846,
+              "ratio": 1.220089258304581
+            },
+            "compute_6": {
+              "baselineMedian": 2.2913499851711094,
+              "candidateMedian": 2.1852000209037215,
+              "ratio": 0.9536736138283732
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 2.269699951284565,
+              "candidateMedian": 2.2376000124495476,
+              "ratio": 0.9858571883843721
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        }
+      ],
+      "reasons": []
+    },
+    "chromatic_vortex": {
+      "passed": true,
+      "status": "pass",
+      "referenceVersion": "3.2.1",
+      "budgetRatio": 1.05,
+      "trials": {
+        "baseline": 8,
+        "candidate": 8
+      },
+      "hostRatio": 1.001663005597919,
+      "solverRatio": 0.9686744964182206,
+      "orders": {
+        "baseline-first": {
+          "blocks": 2,
+          "hostRatio": 0.9701893010626886,
+          "solverRatio": 0.952429458674299,
+          "stages": {
+            "compute_0": 0.9130328564015562,
+            "compute_1": 0.9710364321622691,
+            "compute_10": 0.9655759754651227,
+            "compute_11": 0.9926428936557745,
+            "compute_12": 0.9427243636044591,
+            "compute_13": null,
+            "compute_14": 0.9417223022804919,
+            "compute_15": 0.9316455138477574,
+            "compute_2": 0.9531536957368636,
+            "compute_3": 0.9325316871964091,
+            "compute_4": 0.9887412537950142,
+            "compute_5": 0.9747623780855286,
+            "compute_6": 0.9962922985840797,
+            "compute_7": null,
+            "compute_8": 0.9532630654685459,
+            "compute_9": null
+          }
+        },
+        "candidate-first": {
+          "blocks": 2,
+          "hostRatio": 1.0063010647072441,
+          "solverRatio": 0.9970283015408856,
+          "stages": {
+            "compute_0": 0.9958967190457957,
+            "compute_1": 1.0160736591573118,
+            "compute_10": 0.9971031748639264,
+            "compute_11": 1.014287151194628,
+            "compute_12": 1.0729161050258145,
+            "compute_13": null,
+            "compute_14": 0.9879857020727094,
+            "compute_15": 0.984712401393183,
+            "compute_2": 0.9858587299672196,
+            "compute_3": 1.0168771507743393,
+            "compute_4": 1.0346773281693924,
+            "compute_5": 0.9957692034590693,
+            "compute_6": 1.024549322287877,
+            "compute_7": null,
+            "compute_8": 0.9971728653034101,
+            "compute_9": null
+          }
+        }
+      },
+      "stages": {
+        "compute_0": {
+          "ratio": 0.9202741732655224,
+          "orders": {
+            "baseline-first": 0.9130328564015562,
+            "candidate-first": 0.9958967190457957
+          }
+        },
+        "compute_1": {
+          "ratio": 0.9942801030879127,
+          "orders": {
+            "baseline-first": 0.9710364321622691,
+            "candidate-first": 1.0160736591573118
+          }
+        },
+        "compute_10": {
+          "ratio": 0.9875371482406048,
+          "orders": {
+            "baseline-first": 0.9655759754651227,
+            "candidate-first": 0.9971031748639264
+          }
+        },
+        "compute_11": {
+          "ratio": 1.0007602696456261,
+          "orders": {
+            "baseline-first": 0.9926428936557745,
+            "candidate-first": 1.014287151194628
+          }
+        },
+        "compute_12": {
+          "ratio": 1.0159578050850655,
+          "orders": {
+            "baseline-first": 0.9427243636044591,
+            "candidate-first": 1.0729161050258145
+          }
+        },
+        "compute_13": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        },
+        "compute_14": {
+          "ratio": 0.9505260821714273,
+          "orders": {
+            "baseline-first": 0.9417223022804919,
+            "candidate-first": 0.9879857020727094
+          }
+        },
+        "compute_15": {
+          "ratio": 0.9417849003926367,
+          "orders": {
+            "baseline-first": 0.9316455138477574,
+            "candidate-first": 0.984712401393183
+          }
+        },
+        "compute_2": {
+          "ratio": 0.9684335019892538,
+          "orders": {
+            "baseline-first": 0.9531536957368636,
+            "candidate-first": 0.9858587299672196
+          }
+        },
+        "compute_3": {
+          "ratio": 0.9763224909408943,
+          "orders": {
+            "baseline-first": 0.9325316871964091,
+            "candidate-first": 1.0168771507743393
+          }
+        },
+        "compute_4": {
+          "ratio": 1.0105564271001304,
+          "orders": {
+            "baseline-first": 0.9887412537950142,
+            "candidate-first": 1.0346773281693924
+          }
+        },
+        "compute_5": {
+          "ratio": 0.9747623780855286,
+          "orders": {
+            "baseline-first": 0.9747623780855286,
+            "candidate-first": 0.9957692034590693
+          }
+        },
+        "compute_6": {
+          "ratio": 1.024549322287877,
+          "orders": {
+            "baseline-first": 0.9962922985840797,
+            "candidate-first": 1.024549322287877
+          }
+        },
+        "compute_7": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        },
+        "compute_8": {
+          "ratio": 0.9846593934371137,
+          "orders": {
+            "baseline-first": 0.9532630654685459,
+            "candidate-first": 0.9971728653034101
+          }
+        },
+        "compute_9": {
+          "ratio": null,
+          "orders": {
+            "baseline-first": null,
+            "candidate-first": null
+          }
+        }
+      },
+      "effectiveSettings": {
+        "commonFields": [
+          "attraction_enabled",
+          "attraction_max_distance",
+          "attraction_strength",
+          "auto_grow_particles",
+          "cfl",
+          "churn_decay",
+          "churn_gain",
+          "count_stiffness",
+          "device",
+          "directional_force",
+          "dissipation_attribute",
+          "dissipation_enabled",
+          "dissipation_rate",
+          "dissipation_target",
+          "domain_max",
+          "domain_min",
+          "domain_sdf_walls",
+          "flip_ratio",
+          "force_diffusion",
+          "frame_rate",
+          "gravity",
+          "leaf_capacity",
+          "live_surface_publish_cadence",
+          "max_particles",
+          "max_speed",
+          "max_substeps",
+          "max_whitewater",
+          "min_substeps",
+          "narrow_band_enabled",
+          "narrow_band_voxels",
+          "omnidirectional_force_center",
+          "omnidirectional_force_radius",
+          "omnidirectional_force_strength",
+          "open_boundaries",
+          "particle_growth_failure_policy",
+          "particle_radius_scale",
+          "particles_attribute_age",
+          "particles_attribute_color",
+          "particles_attribute_density",
+          "particles_attribute_lifetime",
+          "particles_attribute_source_id",
+          "particles_attribute_speed",
+          "particles_attribute_uid",
+          "particles_attribute_velocity",
+          "particles_attribute_viscosity",
+          "particles_attribute_vorticity",
+          "particles_per_voxel",
+          "pressure_iterations",
+          "pressure_preconditioner",
+          "pressure_solver",
+          "pressure_threshold",
+          "pressure_tolerance",
+          "relax_enabled",
+          "relax_mode",
+          "relax_strength",
+          "resolved_quality",
+          "sample_type",
+          "species_enabled",
+          "species_mixing_rate",
+          "speed_limit_behavior",
+          "speed_limit_percent",
+          "surface_attribute_age",
+          "surface_attribute_color",
+          "surface_attribute_density",
+          "surface_attribute_lifetime",
+          "surface_attribute_motion",
+          "surface_attribute_source_id",
+          "surface_attribute_speed",
+          "surface_attribute_velocity",
+          "surface_attribute_viscosity",
+          "surface_attribute_vorticity",
+          "surface_build_lowres_sdf",
+          "surface_dilate_iterations",
+          "surface_dilate_strength",
+          "surface_enabled",
+          "surface_erode_iterations",
+          "surface_erode_strength",
+          "surface_filter_iterations",
+          "surface_filter_strength",
+          "surface_filter_type",
+          "surface_leaf_capacity_scale",
+          "surface_max_dense_dim",
+          "surface_resolution_mode",
+          "surface_resolution_multiplier",
+          "surface_smooth_iterations",
+          "surface_smooth_strength",
+          "surface_smooth_type",
+          "surface_splat_radius",
+          "surface_tension_band_voxels",
+          "surface_tension_coefficient",
+          "surface_tension_density",
+          "surface_tension_enabled",
+          "surface_tension_safety",
+          "surface_tension_smoothing_iterations",
+          "surface_update_cadence",
+          "surface_voxel_size",
+          "time_scale",
+          "topology_expand",
+          "trace_mode",
+          "viscosity_constant",
+          "viscosity_enabled",
+          "viscosity_from_particles",
+          "viscosity_iterations",
+          "viscosity_solver",
+          "viscosity_tolerance",
+          "voxel_size",
+          "whitewater_attribute_age",
+          "whitewater_attribute_lifetime",
+          "whitewater_attribute_speed",
+          "whitewater_attribute_type",
+          "whitewater_attribute_velocity",
+          "whitewater_enabled",
+          "ww_bubble_buoyancy",
+          "ww_bubble_drag",
+          "ww_bubble_life_multiplier",
+          "ww_churn_threshold",
+          "ww_emission_rate",
+          "ww_foam_advection",
+          "ww_foam_band",
+          "ww_foam_density_influence",
+          "ww_foam_life_multiplier",
+          "ww_foam_preservation",
+          "ww_life_max",
+          "ww_life_min",
+          "ww_min_speed",
+          "ww_spray_drag",
+          "ww_spray_gravity_scale",
+          "ww_spray_life_multiplier",
+          "ww_spray_min_speed",
+          "ww_surface_band",
+          "ww_type_hysteresis"
+        ],
+        "neutralAbsentFields": {
+          "pressure_learned_guess": {
+            "presentIn": "candidate",
+            "neutralValue": false
+          }
+        },
+        "intendedChanges": {}
+      },
+      "attributeInventory": {
+        "surface": [],
+        "particles": [],
+        "whitewater": [
+          "type"
+        ]
+      },
+      "blocks": [
+        {
+          "block": 0,
+          "order": "baseline-first",
+          "substeps": {
+            "baseline": 1044,
+            "candidate": 1044,
+            "candidateToBaselineRatio": 1.0
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 0.9425318676505683,
+          "solverRatio": 0.9533713592127051,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 1.6684999864082783,
+              "candidateMedian": 1.4947000163374469,
+              "ratio": 0.8958345990490748
+            },
+            "compute_1": {
+              "baselineMedian": 3.7117499887244776,
+              "candidateMedian": 3.537150041665882,
+              "ratio": 0.9529602080988768
+            },
+            "compute_10": {
+              "baselineMedian": 5.878649986698292,
+              "candidateMedian": 5.566849984461442,
+              "ratio": 0.9469606112045512
+            },
+            "compute_11": {
+              "baselineMedian": 0.544299982720986,
+              "candidateMedian": 0.5304499936755747,
+              "ratio": 0.9745544929540977
+            },
+            "compute_12": {
+              "baselineMedian": 0.37640002847183496,
+              "candidateMedian": 0.32995000947266817,
+              "ratio": 0.8765940077429019
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 5.618249953840859,
+              "candidateMedian": 5.095100001199171,
+              "ratio": 0.9068838237992523
+            },
+            "compute_15": {
+              "baselineMedian": 2.916349985753186,
+              "candidateMedian": 2.720049975323491,
+              "ratio": 0.9326898309912559
+            },
+            "compute_2": {
+              "baselineMedian": 8.10530003218446,
+              "candidateMedian": 7.568899964098819,
+              "ratio": 0.9338210718966963
+            },
+            "compute_3": {
+              "baselineMedian": 2.6096999790752307,
+              "candidateMedian": 2.3427499691024423,
+              "ratio": 0.8977085442337381
+            },
+            "compute_4": {
+              "baselineMedian": 0.06894998659845442,
+              "candidateMedian": 0.06690000009257346,
+              "ratio": 0.9702685002997969
+            },
+            "compute_5": {
+              "baselineMedian": 33.43884999048896,
+              "candidateMedian": 32.39779992145486,
+              "ratio": 0.9688670492756118
+            },
+            "compute_6": {
+              "baselineMedian": 8.306999981869012,
+              "candidateMedian": 7.739649969153106,
+              "ratio": 0.9317021772054637
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 2.3183500161394477,
+              "candidateMedian": 2.1625499211950228,
+              "ratio": 0.9327969918865548
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 1,
+          "order": "candidate-first",
+          "substeps": {
+            "baseline": 1044,
+            "candidate": 1044,
+            "candidateToBaselineRatio": 1.0
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.005479276721029,
+          "solverRatio": 0.9839776336237361,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 1.6976500191958621,
+              "candidateMedian": 1.5454000676982105,
+              "ratio": 0.9103172327770073
+            },
+            "compute_1": {
+              "baselineMedian": 3.710849996423349,
+              "candidateMedian": 3.7087999371578917,
+              "ratio": 0.9994475499501643
+            },
+            "compute_10": {
+              "baselineMedian": 5.824249950819649,
+              "candidateMedian": 5.771150012151338,
+              "ratio": 0.9908829567555153
+            },
+            "compute_11": {
+              "baselineMedian": 0.553700010641478,
+              "candidateMedian": 0.5486000154633075,
+              "ratio": 0.9907892449338008
+            },
+            "compute_12": {
+              "baselineMedian": 0.35775000287685543,
+              "candidateMedian": 0.3660000365925953,
+              "ratio": 1.0230608907041145
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 5.92779996804893,
+              "candidateMedian": 5.480199994053692,
+              "ratio": 0.9244913835811229
+            },
+            "compute_15": {
+              "baselineMedian": 3.056800036574714,
+              "candidateMedian": 2.9066499264445156,
+              "ratio": 0.9508799697940176
+            },
+            "compute_2": {
+              "baselineMedian": 8.009700031834655,
+              "candidateMedian": 7.724399998551235,
+              "ratio": 0.9643806844014768
+            },
+            "compute_3": {
+              "baselineMedian": 2.6105000433744863,
+              "candidateMedian": 2.5720999838085845,
+              "ratio": 0.9852901517227084
+            },
+            "compute_4": {
+              "baselineMedian": 0.07195000944193453,
+              "candidateMedian": 0.07295003160834312,
+              "ratio": 1.0138988469100292
+            },
+            "compute_5": {
+              "baselineMedian": 34.26270003546961,
+              "candidateMedian": 32.71195001434535,
+              "ratio": 0.9547394099262789
+            },
+            "compute_6": {
+              "baselineMedian": 7.918249990325421,
+              "candidateMedian": 8.131749971653335,
+              "ratio": 1.0269630261217781
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 2.267399991978891,
+              "candidateMedian": 2.257399959489703,
+              "ratio": 0.9955896478236906
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 2,
+          "order": "baseline-first",
+          "substeps": {
+            "baseline": 1044,
+            "candidate": 1044,
+            "candidateToBaselineRatio": 1.0
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 0.997846734474809,
+          "solverRatio": 0.9514875581358928,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 1.6354000399587676,
+              "candidateMedian": 1.521300000604242,
+              "ratio": 0.9302311137540377
+            },
+            "compute_1": {
+              "baselineMedian": 3.545399973518215,
+              "candidateMedian": 3.506799985188991,
+              "ratio": 0.9891126562256612
+            },
+            "compute_10": {
+              "baselineMedian": 5.661449977196753,
+              "candidateMedian": 5.571950037847273,
+              "ratio": 0.9841913397256942
+            },
+            "compute_11": {
+              "baselineMedian": 0.53114999900572,
+              "candidateMedian": 0.5368499259930104,
+              "ratio": 1.0107312943574513
+            },
+            "compute_12": {
+              "baselineMedian": 0.33314999018330127,
+              "candidateMedian": 0.33609993988648057,
+              "ratio": 1.0088547194660165
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 5.433199985418469,
+              "candidateMedian": 5.305850019794889,
+              "ratio": 0.9765607807617317
+            },
+            "compute_15": {
+              "baselineMedian": 2.876850019674748,
+              "candidateMedian": 2.6772000710479915,
+              "ratio": 0.9306011967042589
+            },
+            "compute_2": {
+              "baselineMedian": 7.788849979988299,
+              "candidateMedian": 7.574550050776452,
+              "ratio": 0.9724863195770309
+            },
+            "compute_3": {
+              "baselineMedian": 2.487350007868372,
+              "candidateMedian": 2.4061500444076955,
+              "ratio": 0.9673548301590801
+            },
+            "compute_4": {
+              "baselineMedian": 0.06930004747118801,
+              "candidateMedian": 0.06979997851885855,
+              "ratio": 1.0072140072902316
+            },
+            "compute_5": {
+              "baselineMedian": 32.65899996040389,
+              "candidateMedian": 32.027300010668114,
+              "ratio": 0.9806577068954452
+            },
+            "compute_6": {
+              "baselineMedian": 7.806850044289604,
+              "candidateMedian": 8.282149967271835,
+              "ratio": 1.0608824199626958
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 2.253450031275861,
+              "candidateMedian": 2.1942499588476494,
+              "ratio": 0.9737291390505368
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        },
+        {
+          "block": 3,
+          "order": "candidate-first",
+          "substeps": {
+            "baseline": 1044,
+            "candidate": 1044,
+            "candidateToBaselineRatio": 1.0
+          },
+          "activeParticlesMinimumRatio": 1.0,
+          "hostRatio": 1.0071228526934592,
+          "solverRatio": 1.0100789694580352,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 1.2586499797180295,
+              "candidateMedian": 1.3612000038847327,
+              "ratio": 1.081476205314584
+            },
+            "compute_1": {
+              "baselineMedian": 2.7859500842168927,
+              "candidateMedian": 2.8770500066457316,
+              "ratio": 1.0326997683644594
+            },
+            "compute_10": {
+              "baselineMedian": 4.663900006562471,
+              "candidateMedian": 4.679399979067966,
+              "ratio": 1.0033233929723375
+            },
+            "compute_11": {
+              "baselineMedian": 0.4803499614354223,
+              "candidateMedian": 0.4985000123269856,
+              "ratio": 1.0377850574554555
+            },
+            "compute_12": {
+              "baselineMedian": 0.2944499865407124,
+              "candidateMedian": 0.33059999987017363,
+              "ratio": 1.1227713193475146
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 4.015149956103414,
+              "candidateMedian": 4.221849958412349,
+              "ratio": 1.0514800205642958
+            },
+            "compute_15": {
+              "baselineMedian": 2.318700062460266,
+              "candidateMedian": 2.3616999678779393,
+              "ratio": 1.0185448329923483
+            },
+            "compute_2": {
+              "baselineMedian": 7.530550006777048,
+              "candidateMedian": 7.5857999618165195,
+              "ratio": 1.0073367755329623
+            },
+            "compute_3": {
+              "baselineMedian": 1.8735499907052144,
+              "candidateMedian": 1.9643499981611967,
+              "ratio": 1.0484641498259701
+            },
+            "compute_4": {
+              "baselineMedian": 0.055900003644637764,
+              "candidateMedian": 0.058999983593821526,
+              "ratio": 1.0554558094287554
+            },
+            "compute_5": {
+              "baselineMedian": 28.699150047032163,
+              "candidateMedian": 29.75524998328183,
+              "ratio": 1.0367989969918596
+            },
+            "compute_6": {
+              "baselineMedian": 7.415649975882843,
+              "candidateMedian": 7.57979997433722,
+              "ratio": 1.0221356184539758
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 1.8490000220481306,
+              "candidateMedian": 1.846700019086711,
+              "ratio": 0.9987560827831296
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          }
+        }
+      ],
+      "reasons": []
+    }
+  },
+  "reasons": []
+}

@@ -1,0 +1,18 @@
+{
+  "F:\\FluidSim-performance-evidence-20261015\\diagnostic_crown_splash_JACOBI.json": "7c8b024c0c5f0e4ec20d249707076ce9003729b5a5bb3db54cd025c195e2f7e5",
+  "F:\\FluidSim-performance-evidence-20261015\\diagnostic_crown_splash_MULTIGRID.json": "4c9abeb68e269c6cf204dd5de54ad4a343114088280f8b51dd9f5ed9d9b46778",
+  "F:\\FluidSim-performance-evidence-20261015\\diagnostic_crown_static.json": "eacf856acae3f5b3ac1790d9675bf63d11b413c11c8564249841662305b625d4",
+  "F:\\FluidSim-performance-evidence-20261015\\diagnostic_dam_break_JACOBI.json": "41eb827e135cc4fc537329f3d03d91a5bef931aa0ab8f61cf50b5f98a062fa91",
+  "F:\\FluidSim-performance-evidence-20261015\\diagnostic_dam_break_MULTIGRID.json": "40188d4be48654fafaef8d9e9f240ded6f19a4361295ee31c5c62710000accfc",
+  "F:\\FluidSim-performance-evidence-20261015\\correction_crown_b0_s0_before.json": "48375255ed355b5dc2fe22b377438ed915f6a42ce232f7cb05347f9fb39a3646",
+  "F:\\FluidSim-performance-evidence-20261015\\correction_crown_b0_s1_after.json": "c6eacc583a95abe0908ecb701da52af5ff5133bfa1b52da2d14e3bc9900b3f7f",
+  "F:\\FluidSim-performance-evidence-20261015\\correction_crown_b0_s2_after.json": "0e8a2f856a8d06604817b7ddec1eaf7d6c09aed04e18b9afd26a0d576d4cf171",
+  "F:\\FluidSim-performance-evidence-20261015\\correction_crown_b0_s3_before.json": "7353b9e2388cce970636deaf82d208c2b24eded88f66d2543eb14f9d0b3f6aab",
+  "F:\\FluidSim-performance-evidence-20261015\\harness\\benchmark_demo_trial.py": "92f07d3a5abc5514c46a5cc3c658af55e0d54b372812cbb552b1ff291331d03f",
+  "F:\\FluidSim-performance-evidence-20261015\\run_diagnostics.py": "b8f736f1de69aa361988d9f5d6d894afa66c0429ba0f4970c76463b490014845",
+  "F:\\FluidSim-performance-evidence-20261015\\environment.json": "b22edec7f12947b49755140f6599e742c86bbf99ecbfd66bc83747362a52ffaf",
+  "F:\\FluidSim-performance-evidence-20261015\\pytest-full.log": "651d3ad82286ee16906c6c4acb8c4eb9123c26e92e6b6a738a2732920c62db58",
+  "F:\\FluidSim-performance-evidence-20261015\\pytest-final.log": "2e9f4d0363ed41d757acbf4d8c6f73298b7782367e0d8ddab85ff453c882a9c6",
+  "F:\\FluidSim-performance-evidence-20261015\\cuda-readback.log": "752338e56192665694d21168302321172561194dfd18cafcb2e304000dd20feb",
+  "C:\\Users\\Tyler\\wt\\orch\\scratch\\abba_4_0_vs_3_2_1\\summary.json": "adc913d7ae503758a10fa6d44a764a0a6e143c5bd4f75cf15ef336ef6017b107"
+}

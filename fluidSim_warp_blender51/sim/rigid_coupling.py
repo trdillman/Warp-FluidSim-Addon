@@ -447,8 +447,12 @@ class RigidCoupling:
         pinned = wp.get_device(dev).is_cuda
         host = wp.zeros((n, BODY_WIDTH), dtype=wp.float64, device="cpu",
                         pinned=pinned)
+        readback = wp.empty((n, 14), dtype=wp.float64, device="cpu",
+                            pinned=pinned)
         drags = max(drag_chunks, 1)
         self._gather_buffers = {
+            "readback": readback,
+            "readback_np": readback.numpy(),
             "host": host,
             "host_np": host.numpy(),
             "state": wp.zeros((n, BODY_WIDTH), dtype=wp.float64, device=dev),
@@ -546,7 +550,18 @@ class RigidCoupling:
                     drag_impulse, drag_angular, drag_stiffness, drag_first,
                     drag_count],
             outputs=[out], device=dev)
-        return out.numpy()
+        return self._read_impulses(buf)
+
+    def _read_impulses(self, buf):
+        # Match array.numpy()'s null-stream ordering, but reuse the pinned
+        # transfer buffer instead of allocating a CPU Warp array per substep.
+        dev = wp.get_device(self.device)
+        with wp.ScopedStream(dev.null_stream):
+            wp.copy(buf["readback"], buf["out"])
+        if dev.is_cuda:
+            wp.synchronize_stream(dev.null_stream)
+        # Callers may retain last_impulses; the next gather must not mutate it.
+        return buf["readback_np"].copy()
 
     # Integration
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tools.performance_budget import (
+	BUDGET_RATIO,
 	DEMOS,
 	NEUTRAL_ABSENT_EFFECTIVE_SETTINGS,
 	PROTECTED_SETTINGS,
@@ -550,3 +551,70 @@ def test_learned_guess_on_is_still_an_omission():
 	result = evaluate_budget(_learned_guess_campaign(True))
 	assert result["status"] == "invalid"
 	assert any("pressure_learned_guess" in reason for reason in result["reasons"])
+
+
+def _explicit_multigrid_campaign(**kwargs):
+    runs = _multigrid_campaign(**kwargs)
+    for run in runs:
+        if run["label"] == "baseline":
+            run["effectiveSettings"]["pressure_preconditioner"] = "JACOBI"
+    return runs
+
+
+def test_explicit_jacobi_to_multigrid_uses_owned_allowance():
+    result = evaluate_budget(_explicit_multigrid_campaign(candidate=108.0))
+    assert result["status"] == "pass", result["reasons"]
+    for demo in result["demos"].values():
+        assert demo["budgetRatio"] == 1.10
+        change = demo["effectiveSettings"]["intendedChanges"]["pressure_preconditioner"]
+        assert change["baselineValue"] == "JACOBI"
+        assert change["value"] == "MULTIGRID"
+
+
+def test_explicit_multigrid_change_still_enforces_budget():
+    result = evaluate_budget(_explicit_multigrid_campaign(candidate=112.0))
+    assert result["status"] == "regression", result["reasons"]
+
+
+@pytest.mark.parametrize("mutation", ["unknown_baseline", "reverse", "trial_drift",
+                                     "unexpected_setting", "protected_workload"])
+def test_owned_change_does_not_authorize_other_differences(mutation):
+    runs = _explicit_multigrid_campaign()
+    if mutation == "unknown_baseline":
+        for run in runs:
+            if run["label"] == "baseline":
+                run["effectiveSettings"]["pressure_preconditioner"] = "UNKNOWN"
+    elif mutation == "reverse":
+        for run in runs:
+            run["effectiveSettings"]["pressure_preconditioner"] = (
+                "MULTIGRID" if run["label"] == "baseline" else "JACOBI")
+    elif mutation == "trial_drift":
+        runs[1]["effectiveSettings"]["pressure_preconditioner"] = "JACOBI"
+    elif mutation == "unexpected_setting":
+        for run in runs:
+            if run["label"] == "candidate":
+                run["effectiveSettings"]["pressure_tolerance"] *= 10
+    else:
+        runs[1]["protectedSettings"]["max_particles"] //= 2
+    assert evaluate_budget(runs)["status"] == "invalid"
+
+
+def test_identical_multigrid_gets_no_change_allowance():
+    runs = _explicit_multigrid_campaign(candidate=108.0)
+    for run in runs:
+        run["effectiveSettings"]["pressure_preconditioner"] = "MULTIGRID"
+    result = evaluate_budget(runs)
+    assert result["status"] == "regression"
+    assert all(demo["budgetRatio"] == BUDGET_RATIO for demo in result["demos"].values())
+
+
+def test_owned_change_keeps_order_disagreement_inconclusive():
+    runs = _explicit_multigrid_campaign()
+    for run in runs:
+        if run["label"] == "candidate":
+            factor = 1.12 if run["round"] % 2 else 1.08
+            for record in run["records"]:
+                record["hostMs"] *= factor
+                record["timers"]["solver"] *= factor
+    result = evaluate_budget(runs)
+    assert result["status"] == "inconclusive", result["reasons"]
