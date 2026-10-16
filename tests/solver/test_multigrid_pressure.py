@@ -16,8 +16,8 @@ The interface these tests pin:
   override), then ``build_rhs`` and ``build_preconditioner(voxel_type)``, and
   only then call ``_apply_mg_vcycle`` / ``solve_pcg``.
 * ``solve_pcg(..., check_every=None)``: JACOBI keeps the historical interval
-  of 25; MULTIGRID picks its own (5 for ``max_iterations=200``) so a handful
-  of V-cycles are not rounded up to 25. An explicit value is always honored.
+  of 25; MULTIGRID picks its own (1 since 4.0, so the solve stops at the first
+  V-cycle that meets the tolerance) instead of rounding up to 25. An explicit value is always honored.
 * Naming convention the source test relies on: every kernel the V-cycle
   launches is named ``k_mg_*`` (shared helpers such as ``k_apply_matrix`` may
   also be launched; they are scanned too). Kernels that reach the iteration
@@ -508,7 +508,7 @@ def test_production_entry_uses_the_multigrid_check_interval(problem):
     assert status["converged"], status
     assert solver.last_residual_squared < (
         CONVERGE_TOL * CONVERGE_TOL * problem.full_n)
-    assert solver.last_pcg_check_every == 5
+    assert solver.last_pcg_check_every == 1
     assert 0 < solver.last_iterations < 25, (
         f"{solver.last_iterations} iterations: the MULTIGRID interval did not apply")
     assert solver.last_pcg_execution_mode == "cuda_conditional", (
@@ -568,7 +568,7 @@ def test_graph_keys_isolate_the_preconditioner_on_one_solver(problem):
         f"graph cached; a fresh MULTIGRID solver needs {mg_its} "
         f"(JACOBI needs {jacobi_its})")
     assert np.array_equal(_bits(p), _bits(mg_p))
-    assert solver.last_pcg_check_every == 5
+    assert solver.last_pcg_check_every == 1
 
     solver.preconditioner = "JACOBI"               # 3. back to JACOBI
     solver.build_preconditioner(case.vtw)
@@ -584,7 +584,7 @@ def test_graph_keys_isolate_the_preconditioner_on_one_solver(problem):
     jacobi_keys = [k for k in keys if len(k) == 3]
     mg_keys = [k for k in keys if len(k) > 3]
     assert [k[1:] for k in jacobi_keys] == [(25, 200)], keys
-    assert len(mg_keys) == 1 and mg_keys[0][3] == "MG" and mg_keys[0][1:3] == (5, 200), keys
+    assert len(mg_keys) == 1 and mg_keys[0][3] == "MG" and mg_keys[0][1:3] == (1, 200), keys
 
     # The host-batched cache (fallback path) is keyed the same way.
     full_n = solver._dim()

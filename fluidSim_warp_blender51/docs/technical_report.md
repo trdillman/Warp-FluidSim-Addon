@@ -172,8 +172,10 @@ same PCG loop (default stays Jacobi). `_apply_mg_vcycle` applies one symmetric
 V-cycle per iteration:
 
 - 4 levels per 8³ leaf (8³, 4³, 2³, 1³), so no cross-leaf coupling is coarsened.
-- 2 pre- and 2 post-smoothing sweeps of damped Jacobi (omega 0.67), 16 sweeps on
-  the coarsest level.
+- 2 pre- and 2 post-smoothing sweeps of damped Jacobi (omega 0.67), 4 sweeps on
+  the coarsest level (16 before 4.0).
+- The residual is checked after every iteration (4.0; every 5th before), so
+  the solve stops at the first V-cycle that meets the tolerance.
 - Restriction is 0.25 × the gathered sum of the children; prolongation is
   piecewise-constant. Both are gathers: the cycle is atomic-free.
 - The cycle is captured in the CUDA conditional graph with the rest of the PCG

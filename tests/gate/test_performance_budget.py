@@ -529,7 +529,8 @@ def test_4_0_multigrid_default_is_an_owned_change_with_the_plan_budget():
 	demo = result["demos"]["dam_break"]
 	assert demo["budgetRatio"] == 1.10
 	assert demo["effectiveSettings"]["intendedChanges"]["pressure_preconditioner"] == {
-		"baseline": "JACOBI", "candidate": "MULTIGRID", "budgetRatio": 1.10}
+		"baseline": "JACOBI", "candidate": "MULTIGRID", "budgetRatio": 1.10,
+		"residualRatioLimit": 10.0}
 	assert "pressure_preconditioner" not in demo["effectiveSettings"]["neutralAbsentFields"]
 
 
@@ -600,6 +601,22 @@ def test_a_faster_but_less_accurate_candidate_fails():
 	pressure = result["demos"]["dam_break"]["pressure"]
 	assert pressure["residual"]["ratio"] == pytest.approx(1.2)
 	assert evaluate_budget(_campaign(candidate_residual=1.05e-5))["status"] == "pass"
+
+
+def test_multigrid_residual_allowance_covers_its_stop_rule_but_not_a_looser_tolerance():
+	# 4.0 Multigrid stops at the tolerance where 3.2.1's Jacobi overshot it:
+	# dam_break measured 7.2x the baseline residual.
+	result = evaluate_budget(_multigrid_campaign(candidate=103.0, candidate_residual=7.2e-5))
+	assert result["status"] == "pass", result["reasons"]
+	assert result["demos"]["dam_break"]["residualRatioLimit"] == 10.0
+	# A doubled tolerance measured 16x: still caught.
+	result = evaluate_budget(_multigrid_campaign(candidate=103.0, candidate_residual=1.6e-4))
+	assert result["status"] == "less_accurate"
+	assert any("10.00x" in reason for reason in result["demos"]["dam_break"]["reasons"])
+	# Without the preconditioner change the 10% guard stands.
+	result = evaluate_budget(_campaign(candidate=103.0, candidate_residual=7.2e-5))
+	assert result["status"] == "less_accurate"
+	assert result["demos"]["dam_break"]["residualRatioLimit"] == pytest.approx(1.10)
 
 
 def test_regression_outranks_less_accurate():

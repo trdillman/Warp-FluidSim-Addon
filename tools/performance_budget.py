@@ -53,17 +53,24 @@ NEUTRAL_ABSENT_EFFECTIVE_SETTINGS = {
 	"pressure_preconditioner": "JACOBI",
 	"spacetime_enabled": False,
 }
-# Owned release changes, not omissions: field -> (baseline value, candidate
-# value, per-frame budget ratio). The field may be common or candidate-only.
-# RELEASE_4_0_PLAN.md allows Multigrid +10% and one coupled rigid body +5%;
-# a demo's allowances multiply.
-INTENDED_CHANGES = {
-	"pressure_preconditioner": ("JACOBI", "MULTIGRID", 1.10),
-}
-RIGID_COUPLING_RATIO = 1.05
 # Accuracy guard: the candidate's median pressure residual may exceed the
 # baseline's by at most this factor.
 RESIDUAL_RATIO_LIMIT = 1.10
+# JACOBI -> MULTIGRID replaces the guard's limit. 3.2.1's Jacobi checks every
+# 25th iteration and so stops far below the pressure tolerance; 4.0's Multigrid
+# checks every iteration and stops at the tolerance (owner decision
+# 2026-10-15: target speed, not 3.2.1's error level). Measured on the demos:
+# dam_break 7.2x, paddle_stir 1.3x, crown_splash 1.1x, with full-run volume
+# unchanged. A looser tolerance still fails it (2x tolerance: 16x residual).
+MULTIGRID_RESIDUAL_RATIO_LIMIT = 10.0
+# Owned release changes, not omissions: field -> (baseline value, candidate
+# value, per-frame budget ratio, residual ratio limit or None). The field may
+# be common or candidate-only. RELEASE_4_0_PLAN.md allows Multigrid +10% and
+# one coupled rigid body +5%; a demo's allowances multiply.
+INTENDED_CHANGES = {
+	"pressure_preconditioner": ("JACOBI", "MULTIGRID", 1.10, MULTIGRID_RESIDUAL_RATIO_LIMIT),
+}
+RIGID_COUPLING_RATIO = 1.05
 # Settings that only one variant reports and that do nothing while their
 # switch holds the given value: field -> (switch, inert value). The switch
 # must itself be a neutral absence for the same variant.
@@ -352,11 +359,14 @@ def _intended_change(field, labelled_values):
 	"""Return the owned-change entry when ``field`` moved exactly as intended."""
 	if field not in INTENDED_CHANGES:
 		return None
-	baseline_value, candidate_value, ratio = INTENDED_CHANGES[field]
+	baseline_value, candidate_value, ratio, residual_limit = INTENDED_CHANGES[field]
 	expected = {"baseline": baseline_value, "candidate": candidate_value}
 	if not all(value == expected[label] for label, value in labelled_values):
 		return None
-	return {"baseline": baseline_value, "candidate": candidate_value, "budgetRatio": ratio}
+	change = {"baseline": baseline_value, "candidate": candidate_value, "budgetRatio": ratio}
+	if residual_limit is not None:
+		change["residualRatioLimit"] = residual_limit
+	return change
 
 
 def evaluate_budget(runs, demos=DEMOS):
@@ -503,6 +513,9 @@ def evaluate_budget(runs, demos=DEMOS):
 				invalid_reasons.append(f"{demo}: rigidBodies differ across variants")
 		budget_ratio = max(BUDGET_RATIO, math.prod(
 			change["budgetRatio"] for change in intended_changes.values()))
+		residual_limit = max([RESIDUAL_RATIO_LIMIT] + [
+			change["residualRatioLimit"] for change in intended_changes.values()
+			if "residualRatioLimit" in change])
 		effective_settings_diagnostics[demo] = {
 			"commonFields": sorted(common_effective),
 			"neutralAbsentFields": neutral_absences,
@@ -653,7 +666,7 @@ def evaluate_budget(runs, demos=DEMOS):
 		pressure["iterations"]["reduction"] = (
 			pressure["iterations"]["baseline"] / candidate_iterations
 			if candidate_iterations > 0 else None)
-		accurate = residual_ratio is not None and residual_ratio <= RESIDUAL_RATIO_LIMIT
+		accurate = residual_ratio is not None and residual_ratio <= residual_limit
 		if early and host_ratio - EARLY_STOP_MARGIN > budget_ratio:
 			status = "regression"
 			reasons = [f"order-balanced host time {host_ratio:.3f}x exceeds the "
@@ -668,8 +681,10 @@ def evaluate_budget(runs, demos=DEMOS):
 					   f"{budget_ratio:.3f}x budget"]
 		elif not accurate:
 			status = "less_accurate"
-			reasons = ["candidate pressure residual exceeds the baseline's by "
-					   f"more than {round((RESIDUAL_RATIO_LIMIT - 1.0) * 100)}%"]
+			reasons = ["candidate pressure residual "
+					   + (f"{residual_ratio:.2f}x the baseline's" if residual_ratio is not None
+						  else "is nonzero where the baseline's is zero")
+					   + f"; the limit is {residual_limit:.2f}x"]
 		else:
 			status = "pass"
 			reasons = []
@@ -689,6 +704,7 @@ def evaluate_budget(runs, demos=DEMOS):
 			"status": status,
 			"referenceVersion": REFERENCE_VERSIONS[demo],
 			"budgetRatio": budget_ratio,
+			"residualRatioLimit": residual_limit,
 			"trials": counts,
 			"stage": "early" if early else "full",
 			"earlyStopMargin": EARLY_STOP_MARGIN if early else None,

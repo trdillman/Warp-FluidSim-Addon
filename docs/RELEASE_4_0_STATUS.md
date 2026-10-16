@@ -76,7 +76,9 @@ Method:
 - Iterations were counted exactly, checking convergence every iteration
   (`check_every=1`).
 - "Production" re-quantises the counts to the shipped convergence-check cadence
-  (`check_every=5`).
+  (`check_every=5`). 4.0 itself now checks every iteration (see
+  `RELEASE_4_0_ACCEPTANCE.md`), so the production column overstates what a
+  coarse guess would save on 4.0.
 
 | Demo | Solves | Zero-guess median | Oracle median | Median ratio | Total-iteration ratio | Production median (zero -> oracle) |
 |---|---|---|---|---|---|---|

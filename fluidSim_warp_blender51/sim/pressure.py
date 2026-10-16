@@ -90,14 +90,18 @@ MG_POST_SMOOTH = 2
 MG_OMEGA = 0.67
 # Hierarchy: level l (0 = the pressure grid) has leaf side 8 >> l voxels, so
 # 512, 64, 8 and 1 cells per leaf. The coarsest level is solved by a fixed
-# number of damped-Jacobi sweeps from a zero guess.
+# number of damped-Jacobi sweeps from a zero guess. Four sweeps (4.0; was 16)
+# keep the preconditioner good enough for the same 4-6 iterations: each sweep
+# is a latency-bound graph node, and 16 cost ~0.6 ms/solve on dam_break.
 MG_LEVELS = 4
 MG_FINE_SHIFT = 3
-MG_COARSE_SWEEPS = 16
+MG_COARSE_SWEEPS = 4
 # Check interval a MULTIGRID solve picks for itself when the caller passes
 # none: it must be odd and divide ``max_iterations`` to keep the conditional
 # graph (largest first). Jacobi keeps the caller's value / 25 exactly.
-MG_CHECK_EVERY_CANDIDATES = (5, 3)
+# 4.0 checks every iteration: MULTIGRID converges in 4-6, so a coarser
+# interval ran up to 4 V-cycles past the tolerance (dam_break +1.09x vs 3.2.1).
+MG_CHECK_EVERY_CANDIDATES = (1,)
 PCG_DEFAULT_CHECK_EVERY = 25
 
 
@@ -2482,10 +2486,10 @@ class PressureSolver:
         """Residual-check interval of one ``solve_pcg``.
 
         An explicit caller value is honored as is. With none, JACOBI keeps the
-        historical 25. MULTIGRID converges in a handful of iterations, so 25
-        would overshoot by several V-cycles; it picks the largest candidate
-        that is odd and divides ``max_iterations`` (the CUDA conditional graph
-        needs both), and falls back to 25 when there is none.
+        historical 25. MULTIGRID converges in a handful of iterations, so any
+        coarser interval overshoots the tolerance by whole V-cycles; it picks
+        the largest candidate that is odd and divides ``max_iterations`` (the
+        CUDA conditional graph needs both) -- 1 since 4.0, which always fits.
         """
         if check_every is not None:
             return max(1, int(check_every))
