@@ -1,5 +1,26 @@
 # 4.0 performance investigation, 2026-10-15
 
+## Completed rerun closeout
+
+**Aggregate FAIL / regression**, measured candidate `b29b9684de071dd1c73a2bf209d8a9ec1601797f` against 3.2.1 `296fa95a9c8b1b904123846e9f7470cd99a3d64a`. All four demos have eight trials per variant; the separate correction study has eight runs. This is not current-master or full 4.0 release qualification.
+
+| Demo | Host / solver ratio | Ceiling | Verdict |
+|---|---:|---:|---|
+| Crown | 1.1650 / 1.2478 | 1.10 | Regression |
+| Dam | 1.1220 / 1.1886 | 1.10 | Inconclusive: ABBA order disagreement |
+| Paddle | 1.0085 / 1.0652 | 1.10 | Pass |
+| Vortex | 1.0122 / 1.0018 | 1.05 | Pass |
+
+Final included evidence: 72 trials (64 matched plus 8 correction), with 3 superseded clean partial Vortex trials and 1 rejected trial retained separately. Correction-only host/solver ratios are 0.952535/0.948531 with identical checkpoint hashes/scalars. No physical workload, cork, resolution, solver tolerance/limit, reducer or budget was relaxed.
+
+The earlier completed sets retain the original process-presence monitoring protocol. Tyler then explicitly authorized up to 10% observed background GPU load for the fresh complete Vortex set: 96 boundary samples were 0–5%, median 1%. WDDM did not provide usable per-process utilization; background was measured only with owned Blender absent, not inferred from benchmark-driven total utilization. This environmental allowance does not alter the 10% regression ceiling (or Vortex's 5% ceiling). The original rejected attempt was not retroactively accepted.
+
+Durable project evidence: [completed report and index](evidence/performance-20261015/completed-rerun/README.md), [machine-readable aggregate](evidence/performance-20261015/completed-rerun/aggregate-budget.json), and raw trials/source snapshots/inputs/monitoring under `F:/FluidSim-performance-fix-20261015/artifacts/performance-20261015-completed`. The index links the SHA-256 copy manifest. Original evidence remains untouched. No new GPU tests, product changes, commits, pushes, merges or publication occurred during this documentation closeout.
+
+## Original investigation record — retained history
+
+The following records the original repair investigation. Its blocked/next-runtime statements and pre-correction-only timing status are superseded by the completed rerun above; the diagnostic observations and prior evidence remain retained.
+
 Status: verifier repaired; allocation correction behavior verified; matched timing rerun BLOCKED by competing Blender/GPU jobs. This is not a release qualification record. Release identity remains 4.0.0.
 
 ## Scope and invariants

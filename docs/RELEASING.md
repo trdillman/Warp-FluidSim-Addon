@@ -219,3 +219,9 @@ Warp's native libraries in process.
   together; a test keeps them equal. A Warp change can alter results, so
   expect the demo report hash to change, and record the new reference in
   the release notes.
+
+## Retained b29b968 performance comparison (2026-10-15)
+
+The completed bounded 3.2.1 comparison is **FAIL / regression**: Crown regresses, Dam is inconclusive because its ABBA orders disagree, and Paddle/Vortex pass. See [the repair report](PERFORMANCE_REPAIR_20261015.md) and [the durable evidence index](evidence/performance-20261015/completed-rerun/README.md). Large raw trials, rejected/superseded records, frozen sources/inputs and monitor logs are retained under `artifacts/performance-20261015-completed/`, with a verified copy manifest.
+
+This record applies only to measured candidate `b29b9684de071dd1c73a2bf209d8a9ec1601797f`; it neither qualifies current master/full 4.0 nor changes production baseline policy. The approved 10% background-noise boundary for the replacement Vortex set is distinct from unchanged performance-regression ceilings. Do not substitute this failed comparison for `artifacts/performance_budget/summary.json` or a passing production-gate manifest.

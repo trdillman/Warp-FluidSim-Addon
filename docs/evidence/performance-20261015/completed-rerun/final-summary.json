@@ -1,0 +1,101 @@
+{
+  "status": "regression",
+  "includedFinalTrials": 72,
+  "includedMatchedTrials": 64,
+  "includedCorrectionTrials": 8,
+  "actualCompletedTrialsAcrossAttempts": 76,
+  "supersededCleanPartialTrials": 3,
+  "retainedRejectedTrials": 1,
+  "newVortexAccepted": 16,
+  "newVortexRejected": 0,
+  "backgroundSamples": 96,
+  "backgroundMin": 0.0,
+  "backgroundMax": 5.0,
+  "backgroundMedian": 1.0,
+  "fullIntervalSamples": 561,
+  "competingWorkerSamples": 0,
+  "earlierThreeDemoResultsUnchanged": true,
+  "iterations": {
+    "crown_splash/baseline": {
+      "trials": 8,
+      "solves": 2816,
+      "medianIterations": 25.0,
+      "totalIterations": 80800,
+      "unconverged": 0,
+      "invalidProjection": 0,
+      "maxResidual": 0.004307094973930621,
+      "medianResidual": 0.002248351604885712
+    },
+    "crown_splash/candidate": {
+      "trials": 8,
+      "solves": 2864,
+      "medianIterations": 5.0,
+      "totalIterations": 14320,
+      "unconverged": 0,
+      "invalidProjection": 0,
+      "maxResidual": 0.0023356811871988493,
+      "medianResidual": 0.0005781443706574568
+    },
+    "dam_break/baseline": {
+      "trials": 8,
+      "solves": 3216,
+      "medianIterations": 50.0,
+      "totalIterations": 180400,
+      "unconverged": 0,
+      "invalidProjection": 0,
+      "maxResidual": 0.008124491153828342,
+      "medianResidual": 0.0007776364820626348
+    },
+    "dam_break/candidate": {
+      "trials": 8,
+      "solves": 3232,
+      "medianIterations": 10.0,
+      "totalIterations": 29200,
+      "unconverged": 0,
+      "invalidProjection": 0,
+      "maxResidual": 0.008495532077551451,
+      "medianResidual": 0.00042606730917384166
+    },
+    "paddle_stir/baseline": {
+      "trials": 8,
+      "solves": 1880,
+      "medianIterations": 50.0,
+      "totalIterations": 77800,
+      "unconverged": 0,
+      "invalidProjection": 0,
+      "maxResidual": 0.00928915990440723,
+      "medianResidual": 0.004578366817425871
+    },
+    "paddle_stir/candidate": {
+      "trials": 8,
+      "solves": 1872,
+      "medianIterations": 5.0,
+      "totalIterations": 12520,
+      "unconverged": 0,
+      "invalidProjection": 0,
+      "maxResidual": 0.0092515288251244,
+      "medianResidual": 0.003384046617003427
+    },
+    "chromatic_vortex/baseline": {
+      "trials": 8,
+      "solves": 4176,
+      "medianIterations": 10.0,
+      "totalIterations": 41600,
+      "unconverged": 0,
+      "invalidProjection": 0,
+      "maxResidual": 0.0010040754956464563,
+      "medianResidual": 0.0003422623160631098
+    },
+    "chromatic_vortex/candidate": {
+      "trials": 8,
+      "solves": 4176,
+      "medianIterations": 10.0,
+      "totalIterations": 41600,
+      "unconverged": 0,
+      "invalidProjection": 0,
+      "maxResidual": 0.0010040754956464563,
+      "medianResidual": 0.0003422623160631098
+    }
+  },
+  "releaseQualified": false
+}

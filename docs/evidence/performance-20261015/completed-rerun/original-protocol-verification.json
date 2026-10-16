@@ -1,0 +1,18 @@
+{
+  "finalInventories": {
+    "before": "bef292bec56cf7cc36cdf37a6a27fdc4b8aa85bccdbb63abe5004e966185cc8b",
+    "after": "3e6769bfc282fb146a63c32ea9f74f748d5aefae45f50941784e04a251d0ad2a",
+    "reference": "c3c07eac12d30c6258f6c2772491d7164d0d9d6d1f51ddbe7b1eb7f60e1f3e14"
+  },
+  "sourceUnchanged": true,
+  "runtimeFilesMatchingRepair": 301,
+  "reducerUnchanged": true,
+  "harnessUnchanged": true,
+  "samples": 622,
+  "contaminatedSamples": 22,
+  "foreignProcesses": [
+    "{\"name\": \"powertoys.environmentvariables.exe\", \"pid\": 39612}"
+  ],
+  "firstContaminationUtc": "2026-10-15T14:27:00.665034+00:00",
+  "lastContaminationUtc": "2026-10-15T14:27:24.428987+00:00"
+}

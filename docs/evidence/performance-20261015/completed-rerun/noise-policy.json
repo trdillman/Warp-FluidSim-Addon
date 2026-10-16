@@ -1,0 +1,13 @@
+{
+  "id": "quiet-work-machine-20261015",
+  "authorization": "Tyler explicitly accepts typical background GPU utilization up to 10% on this work machine. This changes environmental acceptance only.",
+  "backgroundCeilingPercent": 10,
+  "boundarySamples": 3,
+  "sampleSpacingSeconds": 1,
+  "postExitSettleSeconds": 2,
+  "preflightMaximumWaitSeconds": 60,
+  "duringTrial": "Record all activity; total GPU utilization includes owned benchmark and is not classified as background. Pause for other Blender or GPU-listed compute-worker processes; desktop app presence alone is allowed.",
+  "limitations": "NVIDIA WDDM pmon returned no per-process utilization (-), and per-process memory was N/A. Background is observable only with owned Blender absent. No continuous in-trial 10% background ceiling is claimed.",
+  "unchanged": "Frozen sources, child harness, workloads, frame 1 warmup/frames 2-48 timing, 3.2.1 baseline, four ABBA/BAAB blocks, eight trials per variant, reducer and performance ceilings.",
+  "priorEvidence": "All partial/rejected Vortex evidence remains excluded and untouched in evidence-attempt4."
+}
