@@ -143,5 +143,30 @@ Multigrid keep the 1.10x guard. Tests:
 
 ## Gate and release
 
-To be filled in with the gate log, the demo hash and per-demo ratios, the version
-bump, the build, and the smoke install.
+**Full GUI production gate at `f4c38cd`: PASS** (2026-10-15, RTX 4080 SUPER,
+Blender 5.2.0 LTS, Warp 1.18.0, 773.9 s; log
+`C:\Users\Tyler\wt\orch\scratch\r40-final\gate.log`).
+- FULL-PRODUCTION-GATE-PASS, DEMO-ANALYSIS-PASS (21/21).
+- Analysis report sha256 `b20d6606ea3a10f34feb99aeca48bcd87592a977e36c7b634e91f0a63300bcf8`.
+  It differs from `74dada72...` (gate at `479b227`) because the Multigrid stop
+  rule changes every Multigrid bake. The technical report's promoted values
+  and the rebuilt crown_splash and dam_break files are rebound to this run.
+- Paired budget vs 3.2.1, 8 trials, 48 frames (`PERFORMANCE-BUDGET-PASS`):
+
+| Demo | Stage | Host ratio (order spread) | Budget | Residual ratio (limit 6x) | Pressure iterations, 3.2.1 -> 4.0 |
+|---|---|---|---|---|---|
+| dam_break | early stop | **0.869x** (0.065) | 1.10 | 3.68x | 50 -> 7 |
+| crown_splash | full | **1.132x** (0.098) | 1.155 | 0.44x | 25 -> 5 |
+| paddle_stir | full | **1.041x** (0.190) | 1.10 | 0.60x | 50 -> 6 |
+| chromatic_vortex | early stop | **0.189x** (0.021) | 1.05 | 5.42x | 10 -> 8 |
+
+Host ratios move by several percent between gate runs of the same code
+(dam_break: 1.081x when the `ccfbefa` gate was re-scored, 0.869x here;
+paddle_stir's order spread is 0.19). The screen and ABBA figures under
+"Multigrid stop rule" are the better point estimates. Every demo is inside
+its budget in all of them.
+
+Attempts before this one:
+- Attempt 1 stopped on a tracked `.npz` probe file, which was removed.
+- Attempt 2, at `ccfbefa`, failed the residual guard on chromatic_vortex (see
+  "Accuracy guard").
