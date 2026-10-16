@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.0.0 — Unreleased
+## 4.0.0 — Warp 1.18, Multigrid by default, Liquid Deck and two-way rigid coupling
 
 ### Upgrade notes
 
