@@ -85,15 +85,16 @@ PCG_STALL_WINDOW = 100
 # so these three constants are the single source of truth for the V-cycle.
 PRECONDITIONER_JACOBI = "JACOBI"
 PRECONDITIONER_MULTIGRID = "MULTIGRID"
-MG_PRE_SMOOTH = 2
-MG_POST_SMOOTH = 2
+import os as _osmg
+MG_PRE_SMOOTH = int(_osmg.environ.get("FS_MG_PRE", "2"))
+MG_POST_SMOOTH = int(_osmg.environ.get("FS_MG_PRE", "2"))
 MG_OMEGA = 0.67
 # Hierarchy: level l (0 = the pressure grid) has leaf side 8 >> l voxels, so
 # 512, 64, 8 and 1 cells per leaf. The coarsest level is solved by a fixed
 # number of damped-Jacobi sweeps from a zero guess.
-MG_LEVELS = 4
+MG_LEVELS = int(_osmg.environ.get("FS_MG_LEVELS", "4"))
 MG_FINE_SHIFT = 3
-MG_COARSE_SWEEPS = 16
+MG_COARSE_SWEEPS = int(_osmg.environ.get("FS_MG_COARSE", "16"))
 # Check interval a MULTIGRID solve picks for itself when the caller passes
 # none: it must be odd and divide ``max_iterations`` to keep the conditional
 # graph (largest first). Jacobi keeps the caller's value / 25 exactly.
@@ -2490,6 +2491,9 @@ class PressureSolver:
         if check_every is not None:
             return max(1, int(check_every))
         if self._pcg_kind() == PRECONDITIONER_MULTIGRID:
+            import os as _os
+            if _os.environ.get("FS_MG_CHECK"):
+                return int(_os.environ["FS_MG_CHECK"])
             for candidate in MG_CHECK_EVERY_CANDIDATES:
                 if max_iterations > 0 and max_iterations % candidate == 0:
                     return candidate
@@ -2573,6 +2577,9 @@ class PressureSolver:
                 lambda: self._record_mg_start(work_n))
         check_every = self._resolve_check_every(check_every, max_iterations)
         self.last_pcg_check_every = check_every
+        if self._pcg_kind() == PRECONDITIONER_MULTIGRID:
+            import os as _os
+            tolerance = tolerance * float(_os.environ.get("FS_MG_TOLMUL", "1"))
         tol_sq = tolerance * tolerance * max(1, full_n)
         status = PRESSURE_STATUS_MAX_ITERATIONS
         failure = "max_iterations"
