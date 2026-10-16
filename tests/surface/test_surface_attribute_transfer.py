@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -385,7 +386,15 @@ def test_nearest_lookup_retries_after_launch_failure(monkeypatch):
 # grid-hash in output_publication._surface_values must reproduce
 # _nearest_values bitwise (same cells, same tie order, same fallback).
 
-_FIXTURE = Path(__file__).parent / "fixtures" / "chromatic_vortex_f24_surface_colour.npz"
+# Stored as JSON (shortest float32 repr, lossless) because the gate forbids tracked .npz.
+_FIXTURE = Path(__file__).parent / "fixtures" / "chromatic_vortex_f24_surface_colour.json"
+
+
+def _load_fixture():
+    data = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    arrays = {key: np.asarray(data[key], np.float32)
+              for key in ("verts", "positions", "values", "full_frame_values")}
+    return arrays, float(data["cell_size"])
 
 
 def _display_values(device, verts, positions, values, cell_size):
@@ -408,8 +417,8 @@ def _cpu_values(verts, positions, values, cell_size):
 @pytest.mark.parametrize("device", _devices())
 def test_display_lookup_matches_cpu_on_chromatic_vortex_fixture(device):
     """Real frame-24 surface colours: the device map equals the CPU lookup bitwise."""
-    data = np.load(_FIXTURE)
-    args = (data["verts"], data["positions"], data["values"], float(data["cell_size"]))
+    data, cell_size = _load_fixture()
+    args = (data["verts"], data["positions"], data["values"], cell_size)
     cpu = _cpu_values(*args)
 
     assert np.array_equal(cpu[:-3], data["full_frame_values"])
