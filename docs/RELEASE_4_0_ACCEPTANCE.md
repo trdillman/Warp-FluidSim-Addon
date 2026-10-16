@@ -166,6 +166,14 @@ paddle_stir's order spread is 0.19). The screen and ABBA figures under
 "Multigrid stop rule" are the better point estimates. Every demo is inside
 its budget in all of them.
 
+**Build at `3caa0ad`:** `tools/release/build_extension.py --blender <5.2>
+--skip-lint --output C:/fsb/r400 --smoke-platform windows-x64`, with ruff run
+separately (clean). 648 add-on tests passed, 2 skipped; `release_ready: true`.
+The Windows smoke install passed twice (`FLUIDSIM_SMOKE_OK`, Blender 5.2.0
+LTS, Warp 1.18.0, CUDA, all four demos in the gallery).
+- `fluidsim_warp-4.0.0-windows_x64.zip` sha256 `48012484d7f4e60d122f8f3dbd0fd93f0da564b07fbe962df25fc5a66c12adbd`
+- `fluidsim_warp-4.0.0-linux_x64.zip` sha256 `e031fe2776808bac99bacb691c381c1dd3029aaf7081082b42138e96b59f4952`
+
 Attempts before this one:
 - Attempt 1 stopped on a tracked `.npz` probe file, which was removed.
 - Attempt 2, at `ccfbefa`, failed the residual guard on chromatic_vortex (see
