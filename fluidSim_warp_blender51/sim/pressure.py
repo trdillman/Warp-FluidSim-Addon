@@ -102,6 +102,11 @@ MG_COARSE_SWEEPS = 4
 # 4.0 checks every iteration: MULTIGRID converges in 4-6, so a coarser
 # interval ran up to 4 V-cycles past the tolerance (dam_break +1.09x vs 3.2.1).
 MG_CHECK_EVERY_CANDIDATES = (1,)
+# A MULTIGRID solve stops at half the configured tolerance. Stopping at the
+# tolerance itself (7 V-cycles on chromatic_vortex, where 3.2.1 ran on to 10)
+# visibly lowered that demo's liquid level over a full run (mean surface
+# volume -2.9%); half the tolerance costs one V-cycle and restores it.
+MG_TOLERANCE_SCALE = 0.5
 PCG_DEFAULT_CHECK_EVERY = 25
 
 
@@ -2577,6 +2582,8 @@ class PressureSolver:
                 lambda: self._record_mg_start(work_n))
         check_every = self._resolve_check_every(check_every, max_iterations)
         self.last_pcg_check_every = check_every
+        if self._pcg_cmd_kind == PRECONDITIONER_MULTIGRID:
+            tolerance = tolerance * MG_TOLERANCE_SCALE
         tol_sq = tolerance * tolerance * max(1, full_n)
         status = PRESSURE_STATUS_MAX_ITERATIONS
         failure = "max_iterations"

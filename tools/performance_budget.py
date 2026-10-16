@@ -56,13 +56,18 @@ NEUTRAL_ABSENT_EFFECTIVE_SETTINGS = {
 # Accuracy guard: the candidate's median pressure residual may exceed the
 # baseline's by at most this factor.
 RESIDUAL_RATIO_LIMIT = 1.10
-# JACOBI -> MULTIGRID replaces the guard's limit. 3.2.1's Jacobi checks every
-# 25th iteration and so stops far below the pressure tolerance; 4.0's Multigrid
-# checks every iteration and stops at the tolerance (owner decision
-# 2026-10-15: target speed, not 3.2.1's error level). Measured on the demos:
-# dam_break 7.2x, paddle_stir 1.3x, crown_splash 1.1x, with full-run volume
-# unchanged. A looser tolerance still fails it (2x tolerance: 16x residual).
-MULTIGRID_RESIDUAL_RATIO_LIMIT = 10.0
+# A candidate Multigrid solve replaces the guard's limit. 4.0's Multigrid
+# checks every iteration and stops at half the pressure tolerance (owner
+# decision 2026-10-15: target speed, not 3.2.1's error level), while 3.2.1
+# overshoots it: its Jacobi checks every 25th iteration and its Multigrid
+# every 5th. Measured on the demos: dam_break 3.7x, chromatic_vortex 5.4x
+# (Multigrid in both), paddle_stir 0.6x, crown_splash 0.4x. Stopping at the
+# full tolerance (dam_break 7.2x, chromatic_vortex 10.3x) visibly lost
+# chromatic_vortex volume and fails here.
+MULTIGRID_RESIDUAL_RATIO_LIMIT = 6.0
+# The 4.0 Multigrid stop rule where both variants already run Multigrid:
+# no budget allowance, only the residual limit above.
+MULTIGRID_STOP_RULE = {"budgetRatio": 1.0, "residualRatioLimit": MULTIGRID_RESIDUAL_RATIO_LIMIT}
 # Owned release changes, not omissions: field -> (baseline value, candidate
 # value, per-frame budget ratio, residual ratio limit or None). The field may
 # be common or candidate-only. RELEASE_4_0_PLAN.md allows Multigrid +10% and
@@ -457,6 +462,9 @@ def evaluate_budget(runs, demos=DEMOS):
 						invalid_reasons.append(f"{demo}: effectiveSettings.resolved_quality {reason}")
 					elif snap:
 						lattice_snap = snap
+				elif field == "pressure_preconditioner" and all(
+						value == "MULTIGRID" for value in values):
+					intended_changes["multigridStopRule"] = dict(MULTIGRID_STOP_RULE)
 				elif any(value != values[0] for value in values[1:]):
 					change = _intended_change(field, [
 						(run["label"], run["effectiveSettings"][field]) for run in demo_runs])

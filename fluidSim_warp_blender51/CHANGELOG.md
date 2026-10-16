@@ -32,12 +32,14 @@
   (`tests/solver/test_hydrostatic_column.py`). At a tight tolerance both
   converge to the same pressure (relative L2 at most 1e-4).
 - Multigrid checks convergence after every iteration and stops at the first
-  V-cycle that meets the pressure tolerance, instead of running on to the next
-  5th iteration. Its coarsest level uses 4 smoothing sweeps instead of 16. A
-  dam_break solve takes a median of 6 iterations instead of 10, and the demo
-  runs at 1.03x 3.2.1's frame time instead of 1.10x. Liquid volume and
-  surface smoothness over the full demo runs are unchanged within run-to-run
-  variation.
+  V-cycle that meets half the pressure tolerance, instead of running on to the
+  next 5th iteration. Its coarsest level uses 4 smoothing sweeps instead of 16.
+  A dam_break solve takes a median of 7 iterations instead of 10, and the demo
+  runs at about 1.03x 3.2.1's frame time instead of 1.10x. Stopping at the
+  full tolerance was faster still, but over a full run it lowered
+  chromatic_vortex's liquid level by about 3%; at half the tolerance liquid
+  volume and surface smoothness over all four full demo runs match the old
+  rule within run-to-run variation.
 - On Warp 1.18 the liquid surface is extracted from only the occupied tiles of
   the grid. The surface span cap has no effect with sparse extraction and will
   be removed in 4.1.

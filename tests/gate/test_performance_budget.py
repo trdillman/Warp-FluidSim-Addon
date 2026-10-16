@@ -530,7 +530,7 @@ def test_4_0_multigrid_default_is_an_owned_change_with_the_plan_budget():
 	assert demo["budgetRatio"] == 1.10
 	assert demo["effectiveSettings"]["intendedChanges"]["pressure_preconditioner"] == {
 		"baseline": "JACOBI", "candidate": "MULTIGRID", "budgetRatio": 1.10,
-		"residualRatioLimit": 10.0}
+		"residualRatioLimit": 6.0}
 	assert "pressure_preconditioner" not in demo["effectiveSettings"]["neutralAbsentFields"]
 
 
@@ -604,19 +604,40 @@ def test_a_faster_but_less_accurate_candidate_fails():
 
 
 def test_multigrid_residual_allowance_covers_its_stop_rule_but_not_a_looser_tolerance():
-	# 4.0 Multigrid stops at the tolerance where 3.2.1's Jacobi overshot it:
-	# dam_break measured 7.2x the baseline residual.
-	result = evaluate_budget(_multigrid_campaign(candidate=103.0, candidate_residual=7.2e-5))
+	# 4.0 Multigrid stops at half the tolerance where 3.2.1's Jacobi overshot
+	# it: dam_break measured 3.7x the baseline residual.
+	result = evaluate_budget(_multigrid_campaign(candidate=103.0, candidate_residual=3.7e-5))
 	assert result["status"] == "pass", result["reasons"]
-	assert result["demos"]["dam_break"]["residualRatioLimit"] == 10.0
-	# A doubled tolerance measured 16x: still caught.
-	result = evaluate_budget(_multigrid_campaign(candidate=103.0, candidate_residual=1.6e-4))
+	assert result["demos"]["dam_break"]["residualRatioLimit"] == 6.0
+	# Stopping at the full tolerance measured 7.2x: caught.
+	result = evaluate_budget(_multigrid_campaign(candidate=103.0, candidate_residual=7.2e-5))
 	assert result["status"] == "less_accurate"
-	assert any("10.00x" in reason for reason in result["demos"]["dam_break"]["reasons"])
-	# Without the preconditioner change the 10% guard stands.
-	result = evaluate_budget(_campaign(candidate=103.0, candidate_residual=7.2e-5))
+	assert any("6.00x" in reason for reason in result["demos"]["dam_break"]["reasons"])
+	# Without Multigrid the 10% guard stands.
+	result = evaluate_budget(_campaign(candidate=103.0, candidate_residual=3.7e-5))
 	assert result["status"] == "less_accurate"
 	assert result["demos"]["dam_break"]["residualRatioLimit"] == pytest.approx(1.10)
+
+
+def test_multigrid_in_both_versions_owns_the_stop_rule_without_a_budget_allowance():
+	# chromatic_vortex runs Multigrid in 3.2.1 too, which checked every 5th
+	# iteration and ran to 10 V-cycles; 4.0 stops at 8, 5.4x the residual.
+	# Stopping at the full tolerance (7 V-cycles, 10.3x) lost volume.
+	def both(**kwargs):
+		runs = _campaign(**kwargs)
+		for run in runs:
+			run["effectiveSettings"]["pressure_preconditioner"] = "MULTIGRID"
+		return runs
+	result = evaluate_budget(both(candidate=90.0, candidate_residual=5.4e-5))
+	assert result["status"] == "pass", result["reasons"]
+	demo = result["demos"]["dam_break"]
+	assert demo["residualRatioLimit"] == 6.0
+	assert demo["budgetRatio"] == pytest.approx(1.05)
+	assert demo["effectiveSettings"]["intendedChanges"]["multigridStopRule"] == {
+		"budgetRatio": 1.0, "residualRatioLimit": 6.0}
+	assert evaluate_budget(both(candidate=106.0))["status"] == "regression"
+	assert evaluate_budget(both(candidate=90.0, candidate_residual=1.03e-4))["status"] == (
+		"less_accurate")
 
 
 def test_regression_outranks_less_accurate():

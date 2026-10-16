@@ -33,7 +33,9 @@ This run predates the reworked gate (`60b3685`). The gate now compares
 every demo with 3.2.1, decides on the order-balanced host ratio (mean of the two
 order medians), treats JACOBI->MULTIGRID (+10%) and rigid coupling (+5%) as owned
 changes whose allowances multiply, and fails a candidate whose median pressure
-residual is over 1.10x the baseline's (`less_accurate`). There is no
+residual is over 1.10x the baseline's (`less_accurate`), or over 6x when the
+candidate runs Multigrid, whose 4.0 stop rule stops at half the tolerance
+instead of overshooting it (see `RELEASE_4_0_ACCEPTANCE.md`). There is no
 "inconclusive" status. These saved runs lack the new `rigidBodies` and pressure
 fields, so all four demos need one fresh timing run.
 
