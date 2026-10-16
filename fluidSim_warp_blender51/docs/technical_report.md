@@ -1,12 +1,13 @@
 # FluidSim Warp — Technical Report
 
-FluidSim Warp 3.2.1 targets Blender 5.2.0 or newer around the existing
+FluidSim Warp 4.0.0 targets Blender 5.2.0 or newer around the existing
 sparse 8³-leaf NVIDIA Warp PIC/FLIP solver. Live Preview remains interactive;
 Production Bake adds a separate, manifest-authoritative cache-v3 transaction and
 checkpoint layer without rewriting the solver into a different architecture.
 
-- Extension ID: `fluidsim_warp` · manifest/runtime version `3.2.1`
-- Product platforms: Windows x64 and Linux x64
+- Extension ID: `fluidsim_warp` · manifest/runtime version `4.0.0`
+- Product platforms: Windows x64 (certified for 4.0) and Linux x64 (uncertified
+  in 4.0, including USD export; certification is planned for 4.1)
 - Historical validation host: Blender `5.2.0` on Windows x64 with an NVIDIA
   GeForce RTX 4080 SUPER (earlier evidence, not current candidate qualification)
 - Runtime dependency: NVIDIA Warp `1.18.0+cu13` (1.17.0 still loads), installed from Preferences (never bundled)
@@ -16,12 +17,10 @@ checkpoint layer without rewriting the solver into a different architecture.
 
 ## Current installer candidate qualification
 
-The 3.2.1 candidate identifies the PR #19 installer change merged into master.
-Historical solver, Windows/CUDA and GUI receipts below do not
-qualify its downloader, extension-owned runtime path, repair/restart, or
-registration integration. Candidate-specific checks and remaining gates are
-recorded in `../../docs/PR19_INTEGRATION_STATUS.md`. Release approval requires
-the current candidate package checks and GPU/GUI production gate.
+The 4.0.0 candidate is the `release/4.0` branch (PR #30). Its per-item
+acceptance, the Multigrid stop-rule decision and the gate result are recorded
+in `../../docs/RELEASE_4_0_ACCEPTANCE.md`. Release approval requires the
+candidate package checks and the GPU/GUI production gate on Windows x64.
 
 ---
 
