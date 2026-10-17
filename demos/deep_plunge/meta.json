@@ -1,0 +1,39 @@
+{
+  "scene": "deep_plunge",
+  "domain": [
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      1.0,
+      0.5,
+      1.0
+    ]
+  ],
+  "voxel_size": 0.02,
+  "fps": 24,
+  "tank_depth": 0.7,
+  "falling_block": [
+    [
+      0.4,
+      0.15,
+      0.82
+    ],
+    [
+      0.6,
+      0.35,
+      0.97
+    ]
+  ],
+  "narrow_band_voxels": 3.0,
+  "build_mean_particles_narrow_band": 38284.88888888889,
+  "build_mean_particles_full_band": 356400.0,
+  "build_particle_ratio": 9.309155918784318,
+  "build_water_level_narrow_band": 0.7104071002960205,
+  "build_water_level_full_band": 0.7065600806236267,
+  "build_frames": 72,
+  "playable_live_setup": true,
+  "seed_objects": []
+}

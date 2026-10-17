@@ -2,7 +2,7 @@
 
 Provides discovery, inspection, and safe scene loading of the 6 canonical
 simulations (Dam Break, Crown Splash, Paddle Stir, Chromatic Vortex, Density
-Ladder, Water Wheel).
+Ladder, Water Wheel, Viscosity Race, Deep Plunge).
 Loading always appends the demo into a New Scene, preserving active user
 work and initial empty scenes.
 """
@@ -92,6 +92,28 @@ DEMO_CATALOG: dict[str, dict[str, Any]] = {
         "description": "A falling stream turns a six-paddle wheel pinned to its axle; a floor drain keeps the water moving.",
         "tags": ("Dynamic Collider", "Axis Locks", "Inflow + Sink", "0.01m Voxels"),
         "key_feature": "Lock Axes turn a free body into a hinge the liquid drives.",
+    },
+    "viscosity_race": {
+        "title": "Viscosity Race",
+        "scene_title": "Viscosity Race (Demo)",
+        "blend_filename": "viscosity_race.blend",
+        "preview_filename": "viscosity_race_preview.png",
+        "icon": "MOD_SMOOTH",
+        "subtitle": "Per-Source Viscosity",
+        "description": "Three identical columns of water, syrup and tar collapse side by side; each lane's viscosity sets how far its front runs.",
+        "tags": ("Viscosity", "From Particles", "Grippy Floor", "0.01m Voxels"),
+        "key_feature": "Each source carries its own viscosity, so one domain mixes thin and thick liquids.",
+    },
+    "deep_plunge": {
+        "title": "Deep Plunge",
+        "scene_title": "Deep Plunge (Demo)",
+        "blend_filename": "deep_plunge.blend",
+        "preview_filename": "deep_plunge_preview.png",
+        "icon": "PARTICLE_DATA",
+        "subtitle": "Narrow-Band Particles",
+        "description": "A block of water drops into a 70 cm deep tank; particles live only in a thin skin at the surface and the grid carries the calm interior.",
+        "tags": ("Narrow Band", "~9x Fewer Particles", "Multigrid", "0.02m Voxels"),
+        "key_feature": "Deep, calm volumes run on a fraction of the particles with the same water level.",
     },
 }
 

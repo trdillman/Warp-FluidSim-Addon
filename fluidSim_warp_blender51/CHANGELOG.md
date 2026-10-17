@@ -4,6 +4,13 @@
 
 ### Changes
 
+- Two new Demo Gallery scenes, each showing one feature:
+  - **Viscosity Race**: three identical columns of water, syrup and tar
+    collapse side by side. Each source carries its own Viscosity (Domain >
+    Viscosity > From Particles), so the fronts run out in viscosity order.
+  - **Deep Plunge**: a block of water drops into a 70 cm deep tank with
+    Narrow Band on. It runs on about a ninth of the particles a full-band
+    run needs and settles at the same water level.
 - Two new rigid-coupling demos in the Demo Gallery:
   - **Density Ladder**: four blocks (250, 500, 750 and 1500 kg/m³) dropped
     into still water. They float in density order and the heaviest sinks.

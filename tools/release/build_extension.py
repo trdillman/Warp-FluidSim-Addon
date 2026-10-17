@@ -38,7 +38,8 @@ BUNDLED_WHEEL_DIR = "wheels"
 # Demo Gallery searches in installed builds.
 BUNDLED_DEMO_DIR = "resources/demos"
 DEMO_IDS = ("dam_break", "crown_splash", "paddle_stir", "chromatic_vortex",
-            "buoyancy_ladder", "water_wheel")
+            "buoyancy_ladder", "water_wheel",
+            "viscosity_race", "deep_plunge")
 RELEASE_ONLY_FILES = {"pyproject.toml", "requirements-dev.txt"}
 RELEASE_ONLY_RELATIVE_PATHS: set[str] = set()
 RELEASE_ONLY_PATHS = {

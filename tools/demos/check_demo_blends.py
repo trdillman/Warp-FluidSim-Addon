@@ -21,7 +21,8 @@ from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 DEMOS = os.path.join(REPO, "demos")
 SCENES = ("dam_break", "crown_splash", "chromatic_vortex", "paddle_stir",
-          "buoyancy_ladder", "water_wheel")
+          "buoyancy_ladder", "water_wheel",
+          "viscosity_race", "deep_plunge")
 EXPECTED_AUTO_SEEDS = {
     "crown_splash": {"Crown Pool Seed", "Crown Droplet Seed"},
     "paddle_stir": {"Paddle Stir Pool Seed"},
@@ -469,6 +470,94 @@ def check_playback_contract(scene, fs, *, cache_mode=False):
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
 
+RACE_LIVE_FRAMES = 24       # the build checks the front order at frame 24
+
+
+def load_meta(name):
+    with open(os.path.join(DEMOS, name, "meta.json"), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _release_live(scene):
+    scene.fluidsim.live = False
+    if bpy.ops.fluidsim.release.poll():
+        bpy.ops.fluidsim.release()
+
+
+def check_viscosity_race(scene, ds):
+    """Three lane sources carry their own viscosity over a grippy floor; live
+    play keeps the fronts in viscosity order (thinnest furthest)."""
+    meta = load_meta("viscosity_race")
+    lanes = meta["lanes"]
+    sources = [bpy.data.objects.get(f"Race {lane}") for lane in lanes]
+    floor = bpy.data.objects.get("Race Floor")
+    checks = {
+        "per_source_viscosity": bool(
+            ds and ds.viscosity_enabled and ds.viscosity_from_particles
+            and all(obj is not None and obj.fluidsim.role == "SOURCE"
+                    and abs(float(obj.fluidsim.viscosity) - nu) <= 1.0e-6 * max(nu, 1.0e-3)
+                    for nu, obj in zip(lanes.values(), sources))),
+        "grippy_floor": bool(
+            floor and floor.fluidsim.role == "COLLIDER"
+            and abs(float(floor.fluidsim.collider_friction) - 1.0) < 1.0e-6),
+        "fronts_ordered_by_viscosity": False,
+    }
+    report = {}
+    try:
+        from fluidSim_warp_blender51.blender.scene_bridge import session
+
+        start = scene.frame_start
+        for frame in range(scene.frame_current + 1, start + RACE_LIVE_FRAMES + 1):
+            scene.frame_set(frame)
+        pos = session().solver.particle_positions()
+        fronts = []
+        for y0, y1 in meta["lane_bounds"]:
+            x = pos[(pos[:, 1] >= y0) & (pos[:, 1] < y1), 0]
+            fronts.append(float(np.quantile(x, 0.98)) if len(x) else 0.0)
+        report["fronts"] = dict(zip(lanes, fronts))
+        gap = 5 * meta["voxel_size"]
+        checks["fronts_ordered_by_viscosity"] = all(
+            a > b + gap for a, b in zip(fronts, fronts[1:]))
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = repr(exc)
+    finally:
+        _release_live(scene)
+    return checks, report
+
+
+def check_deep_plunge(scene, ds):
+    """Narrow band is on with none of its blockers, and the live tank runs on
+    a fraction of the full-band particle count the build measured."""
+    meta = load_meta("deep_plunge")
+    checks = {
+        "narrow_band_enabled": bool(
+            ds and ds.narrow_band_enabled and ds.narrow_band_voxels > 0.0
+            and not ds.species_enabled and not ds.export_attributes
+            and not (ds.viscosity_enabled and ds.viscosity_from_particles)),
+        "live_particles_narrow_band": False,
+    }
+    report = {}
+    try:
+        from fluidSim_warp_blender51.blender.scene_bridge import session
+
+        count = int(session().solver.particles.refresh_host_count())
+        report["live_particles"] = count
+        report["build_full_band_particles"] = meta["build_mean_particles_full_band"]
+        checks["live_particles_narrow_band"] = bool(
+            0 < count < meta["build_mean_particles_full_band"] / 3.0)
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = repr(exc)
+    finally:
+        _release_live(scene)
+    return checks, report
+
+
+FEATURE_DEMO_CHECKS = {
+    "viscosity_race": check_viscosity_race,
+    "deep_plunge": check_deep_plunge,
+}
+
+
 def is_zstd_blend(path):
     with open(path, "rb") as handle:
         return handle.read(4) == ZSTD_MAGIC
@@ -524,6 +613,10 @@ def check_scene(name):
     checks["playback_advances"] = playback["advances"]
     if playback.get("error"):
         result["playback_contract_error"] = playback["error"]
+    if name in FEATURE_DEMO_CHECKS:
+        # Continues the live session the playback check left running.
+        feature_checks, result["feature"] = FEATURE_DEMO_CHECKS[name](scene, ds)
+        checks.update(feature_checks)
     if name == "dam_break":
         from tools.demos import dam_break_cove as cove
 

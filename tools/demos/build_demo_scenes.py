@@ -1269,6 +1269,444 @@ def build_water_wheel():
 
 
 # ---------------------------------------------------------------------------
+# Feature demos: viscosity, surface tension, narrow-band particles
+# ---------------------------------------------------------------------------
+
+def show_liquid(scene, prefix, color, view="SURFACE_PARTICLES"):
+    """Liquid display with one water-like material."""
+    fs = scene.fluidsim
+    fs.show_particles = view in {"PARTICLES", "SURFACE_PARTICLES"}
+    fs.show_surface = view in {"SURFACE", "SURFACE_PARTICLES"}
+    fs.liquid_view_mode = view
+    fs.particle_display_fraction = 1.0
+    fs.surface_material = demo_material(
+        f"{prefix} Liquid", color, roughness=0.1, transmission=0.4)
+    fs.particle_material = demo_material(
+        f"{prefix} Particles", color, roughness=0.3)
+
+
+def add_label(scene, text, location, size, align="CENTER"):
+    """A flat 3D text label lying face-up in the XY plane."""
+    curve = bpy.data.curves.new(text, type="FONT")
+    curve.body = text
+    curve.size = size
+    curve.align_x = align
+    obj = bpy.data.objects.new(f"Label {text}", curve)
+    scene.collection.objects.link(obj)
+    obj.location = location
+    obj.data.materials.append(demo_material(
+        "Label Ink", (0.08, 0.08, 0.09, 1.0), roughness=0.8))
+    return obj
+
+
+# Viscosity Race: one long channel split into three lanes by thin static
+# walls. Each lane starts with the same column of liquid; only the source's
+# Viscosity differs (water, syrup, tar). With Viscosity on and From Particles
+# on, every column carries its own value, so the three fronts run out at
+# visibly different speeds from the same release.
+RACE_DOMAIN = ((0.0, 0.0, 0.0), (1.6, 0.48, 0.30))
+RACE_VOXEL = 0.01
+RACE_WALL = 0.02
+RACE_FLOOR = 0.02
+RACE_COLUMN = (0.20, 0.20)              # x length, height of each column
+RACE_LANES = (("Water", 0.0), ("Syrup", 0.004), ("Tar", 0.3))
+RACE_FRAMES = 72
+RACE_PREVIEW_FRAME = 24                 # fronts furthest apart in proportion
+RACE_COLOR = (0.10, 0.36, 0.62, 1.0)
+
+
+def race_lane_bounds():
+    """(y_lo, y_hi) of the liquid in each lane, inside the walls."""
+    lo, hi = RACE_DOMAIN
+    pitch = (hi[1] - lo[1]) / len(RACE_LANES)
+    half = 0.5 * RACE_WALL
+    out = []
+    for i in range(len(RACE_LANES)):
+        y0 = lo[1] + pitch * i + (half if i > 0 else 0.0)
+        y1 = lo[1] + pitch * (i + 1) - (half if i < len(RACE_LANES) - 1 else 0.0)
+        out.append((y0, y1))
+    return out
+
+
+def race_fronts(positions):
+    """Leading-edge x (98th percentile) of the liquid in each lane."""
+    pos = np.asarray(positions, dtype=np.float64)
+    fronts = {}
+    for (lane, _nu), (y0, y1) in zip(RACE_LANES, race_lane_bounds()):
+        x = pos[(pos[:, 1] >= y0) & (pos[:, 1] < y1), 0]
+        fronts[lane] = float(np.quantile(x, 0.98)) if len(x) else 0.0
+    return fronts
+
+
+def author_viscosity_race():
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+
+    scene = fresh_scene()
+    lo, hi = RACE_DOMAIN
+    make_domain(scene, lo, hi, "Race Domain")
+    ds = domain_settings(scene)
+    set_resolution(ds, lo, hi, RACE_VOXEL)
+    ds.max_particles = 400_000
+    ds.min_substeps = 1
+    ds.max_substeps = 16
+    ds.viscosity_enabled = True
+    ds.viscosity_from_particles = True
+    ds.profiling_enabled = False
+    show_liquid(scene, "Race", RACE_COLOR)
+    scene.frame_start = 1
+    scene.frame_end = RACE_FRAMES
+    # A grippy (no-slip) floor: viscosity resists shear, and on the domain's
+    # free-slip floor a slumping column would slide out almost as a plug.
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    floor = bpy.context.active_object
+    floor.name = "Race Floor"
+    floor.location = (0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1]),
+                      lo[2] + 0.5 * RACE_FLOOR)
+    floor.dimensions = (hi[0] - lo[0], hi[1] - lo[1], RACE_FLOOR)
+    bpy.context.view_layer.update()
+    floor.data.materials.append(demo_material(
+        "Race Floor", (0.55, 0.55, 0.53, 1.0), roughness=0.8))
+    _colliders.tag_collider(floor, friction=1.0, restitution=0.0)
+    pitch = (hi[1] - lo[1]) / len(RACE_LANES)
+    for i in range(1, len(RACE_LANES)):
+        bpy.ops.mesh.primitive_cube_add(size=1.0)
+        wall = bpy.context.active_object
+        wall.name = f"Race Wall {i}"
+        wall.location = (0.5 * (lo[0] + hi[0]), lo[1] + pitch * i,
+                         0.5 * (lo[2] + hi[2]))
+        wall.dimensions = (hi[0] - lo[0], RACE_WALL, hi[2] - lo[2])
+        bpy.context.view_layer.update()
+        wall.data.materials.append(demo_material(
+            "Race Wall", (0.7, 0.7, 0.68, 1.0), roughness=0.6))
+        _colliders.tag_collider(wall, friction=0.0, restitution=0.0)
+    length, height = RACE_COLUMN
+    for (lane, nu), (y0, y1) in zip(RACE_LANES, race_lane_bounds()):
+        src = make_source_box(scene, (lo[0], y0, lo[2] + RACE_FLOOR),
+                              (lo[0] + length, y1, lo[2] + RACE_FLOOR + height),
+                              f"Race {lane}", emit_rate=8.0,
+                              emission_mode="INITIAL_FILL")
+        src.fluidsim.viscosity = nu
+        # Labels sit off the release end of each lane, read from above.
+        add_label(scene, f"{lane}  {nu:g} m²/s",
+                  (lo[0] - 0.03, 0.5 * (y0 + y1) - 0.016, lo[2]), 0.045,
+                  align="RIGHT")
+    add_camera_light(scene, (0.60, 0.12, 2.00), (0.0, 0.0, 0.0))
+    look_at(scene.camera, (0.60, 0.24, 0.0))
+    scene.camera.data.lens = 34.0
+    add_text_block("Viscosity Race", (
+        "Viscosity Race (FluidSim viscosity)\n\n"
+        "Three lanes, three identical 20 cm columns of liquid released at\n"
+        "once. The only difference is each source's Viscosity (Object\n"
+        "Properties > FluidSim > Source): water 0, syrup 0.004 and tar\n"
+        "0.3 m^2/s. The domain has Viscosity on with From Particles on\n"
+        "(Domain > Simulate > Viscosity), so every column keeps its own\n"
+        "value. The floor is a grippy collider (Friction 1) for the\n"
+        "viscosity to shear against. Press Play: water races to the far\n"
+        "wall, the syrup spreads about half as far, the tar slumps and\n"
+        "creeps.\n"
+        "Try: change a column's Viscosity, or turn From Particles off to\n"
+        "give every lane the domain's single Viscosity value.\n"))
+    return scene
+
+
+def build_viscosity_race():
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    scene = author_viscosity_race()
+    scene.frame_set(1)
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+    checkpoints = {}
+
+    def record(frame):
+        if frame == RACE_PREVIEW_FRAME:
+            use_material_shading(scene)
+            render_preview("viscosity_race", min_water_fraction=0.05)
+        if frame in (6, 12, 24, 48, RACE_FRAMES):
+            checkpoints[frame] = race_fronts(sess.solver.particle_positions())
+            log(f"viscosity_race frame {frame} fronts: " + ", ".join(
+                f"{k} {v:.3f}" for k, v in checkpoints[frame].items()))
+
+    series = run_scene("viscosity_race", RACE_FRAMES, dump_velocities=False,
+                       on_frame=record)
+    order = [lane for lane, _ in RACE_LANES]
+    at24 = checkpoints[24]
+    if not all(at24[a] > at24[b] + 5 * RACE_VOXEL
+               for a, b in zip(order, order[1:])):
+        raise RuntimeError(f"viscosity_race fronts not ordered at frame 24: {at24}")
+    use_material_shading(scene)
+    save_scene("viscosity_race", preview=False)
+    write_meta("viscosity_race", {
+        "scene": "viscosity_race",
+        "domain": [list(RACE_DOMAIN[0]), list(RACE_DOMAIN[1])],
+        "voxel_size": RACE_VOXEL,
+        "fps": FPS,
+        "column": list(RACE_COLUMN),
+        "lanes": {lane: nu for lane, nu in RACE_LANES},
+        "lane_bounds": race_lane_bounds(),
+        "build_fronts": {str(k): v for k, v in sorted(checkpoints.items())},
+        "build_frames": RACE_FRAMES,
+        "build_peak_particles": int(max(series["particle_count"])),
+    })
+    save_playable("viscosity_race", scene, RACE_FRAMES)
+
+
+# Zero-G Droplet: a 6 x 2 x 2 cm bar of water floats with gravity off.
+# Without surface tension nothing acts on it and it stays a bar; with it the
+# Laplace pressure pulls the ends in and the bar contracts and wobbles into a
+# ball (capillary time sqrt(rho R^3 / sigma) is about a fifth of a second).
+DROP_DOMAIN = ((0.0, 0.0, 0.0), (0.10, 0.10, 0.10))
+DROP_VOXEL = 0.002
+DROP_BAR = (0.06, 0.02, 0.02)
+DROP_FRAMES = 48
+DROP_COLOR = (0.12, 0.42, 0.70, 1.0)
+
+
+def blob_aspect(positions):
+    """sqrt(largest / smallest principal variance): 3 for the bar, 1 for a ball."""
+    pos = np.asarray(positions, dtype=np.float64)
+    if len(pos) < 4:
+        return 0.0
+    eig = np.linalg.eigvalsh(np.cov(pos.T))
+    return float(math.sqrt(max(eig[-1], 1e-30) / max(eig[0], 1e-30)))
+
+
+def author_capillary_droplet(surface_tension=True):
+    scene = fresh_scene()
+    lo, hi = DROP_DOMAIN
+    make_domain(scene, lo, hi, "Droplet Domain")
+    ds = domain_settings(scene)
+    set_resolution(ds, lo, hi, DROP_VOXEL)
+    ds.max_particles = 400_000
+    ds.min_substeps = 1
+    # The capillary step limit at 2 mm needs ~28 substeps per frame;
+    # a lower cap clamps it and the drop shakes itself apart.
+    ds.max_substeps = 48
+    ds.use_scene_gravity = False
+    ds.gravity = (0.0, 0.0, 0.0)
+    ds.surface_tension_enabled = surface_tension
+    ds.surface_tension_coefficient = 0.072
+    ds.surface_tension_density = 1000.0
+    ds.profiling_enabled = False
+    show_liquid(scene, "Droplet", DROP_COLOR)
+    scene.frame_start = 1
+    scene.frame_end = DROP_FRAMES
+    c = [0.5 * (lo[i] + hi[i]) for i in range(3)]
+    make_source_box(scene, [c[i] - 0.5 * DROP_BAR[i] for i in range(3)],
+                    [c[i] + 0.5 * DROP_BAR[i] for i in range(3)],
+                    "Droplet Bar", emit_rate=8.0, emission_mode="INITIAL_FILL")
+    add_camera_light(scene, (0.05, -0.17, 0.11), (0.0, 0.0, 0.0))
+    look_at(scene.camera, c)
+    scene.camera.data.lens = 50.0
+    add_text_block("Zero-G Droplet", (
+        "Zero-G Droplet (FluidSim surface tension)\n\n"
+        "A 6 x 2 x 2 cm bar of water floats with gravity off (Domain >\n"
+        "Setup > Use Scene Gravity off, Gravity 0). Surface Tension is on\n"
+        "with water's 0.072 N/m (Domain > Simulate > Surface Tension).\n"
+        "Press Play: the bar's ends pull in and it wobbles into a round\n"
+        "drop within about a second.\n"
+        "Try: turn Surface Tension off and Reset; the bar just hangs there\n"
+        "as a bar. Raise the coefficient for a faster, stiffer wobble.\n"))
+    return scene
+
+
+def build_capillary_droplet():
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    # Reference: the same bar with surface tension off keeps its shape.
+    author_capillary_droplet(surface_tension=False)
+    bpy.ops.fluidsim.initialize()
+    run_scene("capillary_droplet__off", DROP_FRAMES, dump_velocities=False)
+    aspect_off = blob_aspect(session().solver.particle_positions())
+    bpy.ops.fluidsim.release()
+
+    scene = author_capillary_droplet(surface_tension=True)
+    scene.frame_set(1)
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+    aspects = {}
+
+    def record(frame):
+        pos = sess.solver.particle_positions()
+        aspects[frame] = blob_aspect(pos)
+        if frame % 4 == 0:
+            fs = bpy.context.scene.fluidsim
+            log(f"capillary_droplet frame {frame}: aspect {aspects[frame]:.2f} "
+                f"extent {np.ptp(pos, axis=0).round(4).tolist()} "
+                f"st {fs.stat_surface_tension_status} "
+                f"kmax {fs.stat_surface_tension_max_curvature:.0f} "
+                f"amax {fs.stat_surface_tension_max_acceleration:.1f}")
+
+    series = run_scene("capillary_droplet", DROP_FRAMES, dump_velocities=False,
+                       on_frame=record)
+    start = aspects[1]
+    late = float(np.mean([aspects[f] for f in range(DROP_FRAMES - 11,
+                                                    DROP_FRAMES + 1)]))
+    log(f"capillary_droplet aspect: start {start:.2f}, late mean {late:.2f}, "
+        f"min {min(aspects.values()):.2f}, surface tension off {aspect_off:.2f}")
+    if not late < 0.6 * aspect_off:
+        raise RuntimeError(
+            f"capillary_droplet did not round up: aspect {late:.2f} vs "
+            f"{aspect_off:.2f} with surface tension off")
+    use_material_shading(scene)
+    save_scene("capillary_droplet")
+    write_meta("capillary_droplet", {
+        "scene": "capillary_droplet",
+        "domain": [list(DROP_DOMAIN[0]), list(DROP_DOMAIN[1])],
+        "voxel_size": DROP_VOXEL,
+        "fps": FPS,
+        "bar_size": list(DROP_BAR),
+        "surface_tension_coefficient": 0.072,
+        "build_aspect": {str(k): v for k, v in sorted(aspects.items())},
+        "build_late_aspect": late,
+        "build_aspect_surface_tension_off": aspect_off,
+        "build_frames": DROP_FRAMES,
+        "build_peak_particles": int(max(series["particle_count"])),
+    })
+    save_playable("capillary_droplet", scene, DROP_FRAMES)
+
+
+# Deep Plunge: a deep, calm tank with a block of water dropped into it.
+# Narrow-band FLIP keeps particles only within a few cells of the surface and
+# treats the still interior as grid liquid, so the tank needs a small fraction
+# of the particles a full-band run uses. The builder runs both and records the
+# particle counts and the resting water level of each.
+PLUNGE_DOMAIN = ((0.0, 0.0, 0.0), (1.0, 0.5, 1.0))
+PLUNGE_VOXEL = 0.02
+PLUNGE_DEPTH = 0.70
+PLUNGE_BLOCK = ((0.40, 0.15, 0.82), (0.60, 0.35, 0.97))
+PLUNGE_FRAMES = 72
+PLUNGE_PREVIEW_FRAME = 14               # block just through the surface
+PLUNGE_COLOR = (0.06, 0.30, 0.55, 1.0)
+
+
+def water_level(positions, domain=PLUNGE_DOMAIN):
+    """Mean height of the highest particle in each occupied XY column."""
+    pos = np.asarray(positions, dtype=np.float64)
+    if not len(pos):
+        return 0.0
+    lo = domain[0]
+    ij = np.floor((pos[:, :2] - lo[:2]) / PLUNGE_VOXEL).astype(np.int64)
+    key = ij[:, 0] * 100_000 + ij[:, 1]
+    order = np.lexsort((pos[:, 2], key))
+    last = np.r_[key[order][1:] != key[order][:-1], True]
+    return float(np.mean(pos[order][last, 2]))
+
+
+def author_deep_plunge(narrow_band=True):
+    scene = fresh_scene()
+    lo, hi = PLUNGE_DOMAIN
+    make_domain(scene, lo, hi, "Plunge Domain")
+    ds = domain_settings(scene)
+    set_resolution(ds, lo, hi, PLUNGE_VOXEL)
+    ds.max_particles = 900_000
+    ds.min_substeps = 1
+    ds.max_substeps = 16
+    ds.pressure_preconditioner = "MULTIGRID"
+    ds.narrow_band_enabled = narrow_band
+    ds.narrow_band_voxels = 3.0
+    ds.profiling_enabled = False
+    # Particles only: the point is where the particles are (a thin skin).
+    show_liquid(scene, "Plunge", PLUNGE_COLOR, view="PARTICLES")
+    scene.frame_start = 1
+    scene.frame_end = PLUNGE_FRAMES
+    make_source_box(scene, lo, (hi[0], hi[1], PLUNGE_DEPTH), "Plunge Tank Fill",
+                    emit_rate=8.0, emission_mode="INITIAL_FILL")
+    make_source_box(scene, *PLUNGE_BLOCK, "Plunge Falling Block",
+                    emit_rate=8.0, emission_mode="INITIAL_FILL")
+    # Visual-only tank (floor, back and left walls, no collider tag) so the
+    # particle skin reads as the top of a deep, mostly particle-free tank.
+    t = 0.02
+    for name, a, b in (
+            ("Plunge Tank Floor", (lo[0], lo[1], lo[2] - t), (hi[0], hi[1] + t, lo[2])),
+            ("Plunge Tank Back", (lo[0] - t, hi[1], lo[2] - t), (hi[0], hi[1] + t, hi[2])),
+            ("Plunge Tank Side", (lo[0] - t, lo[1], lo[2] - t), (lo[0], hi[1] + t, hi[2]))):
+        bpy.ops.mesh.primitive_cube_add(size=1.0)
+        slab = bpy.context.active_object
+        slab.name = name
+        slab.location = [0.5 * (a[i] + b[i]) for i in range(3)]
+        slab.dimensions = [b[i] - a[i] for i in range(3)]
+        slab.data.materials.append(demo_material(
+            "Plunge Tank", (0.62, 0.64, 0.66, 1.0), roughness=0.6))
+    bpy.context.view_layer.update()
+    add_camera_light(scene, (1.75, -1.55, 1.05), (0.0, 0.0, 0.0))
+    look_at(scene.camera, (0.5, 0.25, 0.55))
+    scene.camera.data.lens = 35.0
+    add_text_block("Deep Plunge", (
+        "Deep Plunge (FluidSim narrow-band particles)\n\n"
+        "A 70 cm deep tank with a block of water dropped into it. Narrow\n"
+        "Band is on (Domain > Simulate > Particles > Narrow Band, 3 voxels):\n"
+        "particles live only near the surface and the calm interior is\n"
+        "carried by the grid, so the tank runs on a fraction of the\n"
+        "particles. Watch the particle count in the Simulate stage.\n"
+        "Try: turn Narrow Band off and Reset; the splash looks the same\n"
+        "but the count jumps several times. Narrow band pays off on deep,\n"
+        "calm volumes; a shallow, splashy scene saves little. It cannot\n"
+        "run with color mixing, viscosity From Particles, a scalar field\n"
+        "source or attribute export.\n"))
+    return scene
+
+
+def build_deep_plunge():
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    # Reference: the same tank as a full-band (every-cell) particle run.
+    author_deep_plunge(narrow_band=False)
+    bpy.ops.fluidsim.initialize()
+    full = run_scene("deep_plunge__full", PLUNGE_FRAMES, dump_velocities=False)
+    full_level = water_level(session().solver.particle_positions())
+    bpy.ops.fluidsim.release()
+
+    scene = author_deep_plunge(narrow_band=True)
+    scene.frame_set(1)
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+
+    def preview(frame):
+        if frame == PLUNGE_PREVIEW_FRAME:
+            use_material_shading(scene)
+            render_preview("deep_plunge", min_water_fraction=0.02)
+
+    series = run_scene("deep_plunge", PLUNGE_FRAMES, dump_velocities=False,
+                       on_frame=preview)
+    level = water_level(sess.solver.particle_positions())
+    full_mean = float(np.mean(full["particle_count"]))
+    band_mean = float(np.mean(series["particle_count"]))
+    ratio = full_mean / max(band_mean, 1.0)
+    expected_level = PLUNGE_DEPTH + (
+        np.prod(np.subtract(PLUNGE_BLOCK[1], PLUNGE_BLOCK[0]))
+        / ((PLUNGE_DOMAIN[1][0] - PLUNGE_DOMAIN[0][0])
+           * (PLUNGE_DOMAIN[1][1] - PLUNGE_DOMAIN[0][1])))
+    log(f"deep_plunge particles: full {full_mean:,.0f}, narrow band "
+        f"{band_mean:,.0f} ({ratio:.1f}x fewer); level full {full_level:.3f}, "
+        f"narrow {level:.3f}, expected ~{expected_level:.3f}")
+    if ratio < 3.0:
+        raise RuntimeError(f"deep_plunge narrow band saved only {ratio:.2f}x")
+    if abs(level - full_level) > 2 * PLUNGE_VOXEL:
+        raise RuntimeError(
+            f"deep_plunge narrow-band level {level:.3f} drifted from the "
+            f"full-band {full_level:.3f}")
+    use_material_shading(scene)
+    save_scene("deep_plunge", preview=False)
+    write_meta("deep_plunge", {
+        "scene": "deep_plunge",
+        "domain": [list(PLUNGE_DOMAIN[0]), list(PLUNGE_DOMAIN[1])],
+        "voxel_size": PLUNGE_VOXEL,
+        "fps": FPS,
+        "tank_depth": PLUNGE_DEPTH,
+        "falling_block": [list(PLUNGE_BLOCK[0]), list(PLUNGE_BLOCK[1])],
+        "narrow_band_voxels": 3.0,
+        "build_mean_particles_narrow_band": band_mean,
+        "build_mean_particles_full_band": full_mean,
+        "build_particle_ratio": ratio,
+        "build_water_level_narrow_band": level,
+        "build_water_level_full_band": full_level,
+        "build_frames": PLUNGE_FRAMES,
+    })
+    save_playable("deep_plunge", scene, PLUNGE_FRAMES)
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     os.makedirs(DEMOS, exist_ok=True)
@@ -1279,6 +1717,9 @@ def main():
         "paddle_stir": build_paddle_stir,
         "buoyancy_ladder": build_buoyancy_ladder,
         "water_wheel": build_water_wheel,
+        "viscosity_race": build_viscosity_race,
+        "capillary_droplet": build_capillary_droplet,
+        "deep_plunge": build_deep_plunge,
     }
     targets = list(DEFAULT_SCENES)
     if "--" in sys.argv:
