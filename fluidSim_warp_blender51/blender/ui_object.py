@@ -195,7 +195,6 @@ class FLUIDSIM_PT_object_lifespan(FluidSimObjectPanel, bpy.types.Panel):
     bl_label = "Source Lifespan"
     bl_idname = "FLUIDSIM_PT_object_lifespan"
     bl_parent_id = "FLUIDSIM_PT_object_source"
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -214,7 +213,6 @@ class FLUIDSIM_PT_object_blending(FluidSimObjectPanel, bpy.types.Panel):
     bl_label = "Field Blending"
     bl_idname = "FLUIDSIM_PT_object_blending"
     bl_order = 30
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):

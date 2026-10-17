@@ -108,3 +108,25 @@ def test_properties_panels_never_poll_on_ui_mode():
                     if "ui_mode" in text or "_advanced_visible" in text:
                         offenders.append(f"{name}:{cls.name}")
     assert offenders == []
+
+
+def test_properties_panels_start_expanded():
+    # A collapsed panel hides every setting inside it until the user finds it,
+    # so no Properties panel (or Physics mirror of one) may be DEFAULT_CLOSED.
+    offenders = []
+    for name in ("ui_scene.py", "ui_physics.py", "ui_object.py", "effect_ui.py",
+                 "effect_workspace.py"):
+        tree = ast.parse((BLENDER / name).read_text(encoding="utf-8"))
+        for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+            if "DEFAULT_CLOSED" in set(_strings(cls)):
+                offenders.append(f"{name}:{cls.name}")
+    assert offenders == []
+
+
+def test_surface_resolution_rows_are_never_greyed():
+    tree = ast.parse((BLENDER / "ui_scene.py").read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef)
+               and n.name == "FLUIDSIM_PT_surface_resolution")
+    text = ast.unparse(cls)
+    for prop in ("surface_resolution_multiplier", "surface_voxel_size"):
+        assert f"layout.prop(fs, '{prop}')" in text

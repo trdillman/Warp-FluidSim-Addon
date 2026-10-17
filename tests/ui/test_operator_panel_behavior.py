@@ -4104,6 +4104,8 @@ def test_basic_and_advanced_draw_the_same_properties_surface(monkeypatch):
     fake_bridge = types.ModuleType("fluidSim_warp_blender51.blender.scene_bridge")
     fake_bridge.current_error = lambda scene: ""
     fake_bridge.capacity_plan_for_scene = lambda scene: None
+    fake_bridge.session = lambda: SimpleNamespace(
+        benchmark_result=None, profiler=None, owns_scene=lambda scene: False)
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.blender.scene_bridge", fake_bridge
     )

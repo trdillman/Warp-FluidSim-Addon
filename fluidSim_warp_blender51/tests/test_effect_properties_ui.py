@@ -20,7 +20,7 @@ def test_custom_effects_is_a_closed_scene_properties_root_at_order_50():
     assert 'bl_region_type = "WINDOW"' in block
     assert 'bl_context = "scene"' in block
     assert "bl_order = 50" in block
-    assert 'bl_options = {"DEFAULT_CLOSED"}' in block
+    assert "DEFAULT_CLOSED" not in block
 
 
 def test_artist_workflow_is_primary_and_engineering_actions_are_not_drawn():
@@ -48,7 +48,7 @@ def test_effect_engineering_is_a_closed_child_panel_in_every_mode():
     source = ARTIST_UI.read_text(encoding="utf-8")
     block = _block(source, "FLUIDSIM_PT_effect_engineering")
     assert 'bl_parent_id = "FLUIDSIM_PT_custom_effects"' in block
-    assert 'bl_options = {"DEFAULT_CLOSED"}' in block
+    assert "DEFAULT_CLOSED" not in block
     assert "ui_mode" not in block
     assert "_draw_effect_workflow(self.layout)" in block
     workflow = source.split("def _draw_effect_workflow", 1)[1].split("\nclass ", 1)[0]
@@ -77,7 +77,7 @@ def test_effect_package_management_is_a_separate_closed_child_panel():
     assert 'bl_parent_id = "FLUIDSIM_PT_custom_effects"' in block
     assert 'bl_space_type = "PROPERTIES"' in block
     assert 'bl_context = "scene"' in block
-    assert 'bl_options = {"DEFAULT_CLOSED"}' in block
+    assert "DEFAULT_CLOSED" not in block
     for operator_id in (
         "fluidsim.effect_import_package",
         "fluidsim.effect_compare_update",
@@ -96,7 +96,7 @@ def test_warp_code_is_an_advanced_scene_properties_child_without_artist_mode_gat
     assert 'bl_space_type = "PROPERTIES"' in block
     assert 'bl_region_type = "WINDOW"' in block
     assert 'bl_context = "scene"' in block
-    assert 'bl_options = {"DEFAULT_CLOSED"}' in block
+    assert "DEFAULT_CLOSED" not in block
     poll = block.split("def poll", 1)[1].split("def draw", 1)[0]
     assert "bool(stack.items)" in poll
     assert "bool(item.kernels)" in poll

@@ -194,7 +194,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `surface_enabled` | SURFACE | domain | domain | - | domain | domain | 0 | OK |
 | `particle_radius_scale` | SURFACE | domain | domain | - | - | domain | 0 | OK |
 | `surface_splat_radius` | SURFACE | domain | domain | - | - | domain | 0 | OK |
-| `surface_resolution_mode` | SURFACE | domain | domain | - | domain | domain | 0 | OK |
+| `surface_resolution_mode` | SURFACE | domain | domain | - | - | domain | 0 | OK |
 | `surface_resolution_multiplier` | SURFACE | domain | domain | - | - | domain | 0 | OK |
 | `surface_voxel_size` | SURFACE | domain | domain | - | - | domain | 0 | OK |
 | `surface_leaf_capacity_scale` | SURFACE | domain | domain | - | - | domain | 0 | OK |

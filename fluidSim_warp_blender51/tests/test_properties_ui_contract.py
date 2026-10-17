@@ -142,10 +142,8 @@ def test_scene_properties_root_order_and_context_are_stable():
     for class_name, order, closed in roots:
         block = _class_block(source, class_name)
         assert f"bl_order = {order}" in block
-        if closed:
-            assert 'bl_options = {"DEFAULT_CLOSED"}' in block
-        else:
-            assert 'bl_options = {"DEFAULT_CLOSED"}' not in block
+        # Every Properties panel starts expanded so all settings are visible.
+        assert "DEFAULT_CLOSED" not in block
         assert "FluidSimScenePanel" in block.splitlines()[0]
 
 
@@ -258,10 +256,10 @@ def test_transport_exposes_complete_state_dependent_artist_actions():
 
 
 def test_step_one_and_step_many_have_distinct_execute_and_dialog_paths():
-    # Manual stepping stays in the default-closed Lifecycle panel in every mode.
+    # Manual stepping stays in the Lifecycle panel in every mode.
     scene_source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     block = _class_block(scene_source, "FLUIDSIM_PT_scene_lifecycle")
-    assert 'bl_options = {"DEFAULT_CLOSED"}' in block
+    assert "DEFAULT_CLOSED" not in block
     assert "_advanced_visible" not in block
     assert 'step_once.operator_context = "EXEC_DEFAULT"' in block
     assert 'step_many.operator_context = "INVOKE_DEFAULT"' in block

@@ -115,7 +115,7 @@ def test_viewport_moves_manual_step_to_advanced_lifecycle():
 
     scene_source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     lifecycle = _block(scene_source, "FLUIDSIM_PT_scene_lifecycle")
-    assert 'bl_options = {"DEFAULT_CLOSED"}' in lifecycle
+    assert "DEFAULT_CLOSED" not in lifecycle
     assert 'step_once.operator_context = "EXEC_DEFAULT"' in lifecycle
     assert 'step_many.operator_context = "INVOKE_DEFAULT"' in lifecycle
 

@@ -891,7 +891,6 @@ class FLUIDSIM_PT_custom_effects(bpy.types.Panel):
     bl_region_type = "WINDOW"
     bl_context = "scene"
     bl_order = 50
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -924,7 +923,6 @@ class FLUIDSIM_PT_effect_engineering(bpy.types.Panel):
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
     bl_context = "scene"
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -941,7 +939,6 @@ class FLUIDSIM_PT_effect_packages(bpy.types.Panel):
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
     bl_context = "scene"
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):

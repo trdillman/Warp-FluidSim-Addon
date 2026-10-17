@@ -253,7 +253,6 @@ class FLUIDSIM_PT_scene_lifecycle(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Lifecycle"
     bl_idname = "FLUIDSIM_PT_scene_lifecycle"
     bl_order = 1
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -307,7 +306,6 @@ class FLUIDSIM_PT_scene_live_timeline(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Live Timeline Recovery"
     bl_idname = "FLUIDSIM_PT_scene_live_timeline"
     bl_parent_id = "FLUIDSIM_PT_scene_lifecycle"
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -484,7 +482,6 @@ class FLUIDSIM_PT_scene_capacity(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Capacity & Safety"
     bl_idname = "FLUIDSIM_PT_scene_capacity"
     bl_parent_id = "FLUIDSIM_PT_scene_domain"
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -503,7 +500,6 @@ class FLUIDSIM_PT_scene_height(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Initial Liquid — Height Fill"
     bl_idname = "FLUIDSIM_PT_scene_height"
     bl_order = 30
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -528,7 +524,6 @@ class FLUIDSIM_PT_scene_simulation(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Simulation Physics"
     bl_idname = "FLUIDSIM_PT_scene_simulation"
     bl_order = 40
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -578,7 +573,6 @@ class FLUIDSIM_PT_sim_pressure(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Pressure"
     bl_idname = "FLUIDSIM_PT_sim_pressure"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -598,7 +592,6 @@ class FLUIDSIM_PT_sim_viscosity(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Viscosity"
     bl_idname = "FLUIDSIM_PT_sim_viscosity"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -616,7 +609,6 @@ class FLUIDSIM_PT_sim_surface_tension(_FluidSimSimulationPanel, bpy.types.Panel)
     bl_label = "Surface Tension"
     bl_idname = "FLUIDSIM_PT_sim_surface_tension"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -641,7 +633,6 @@ class FLUIDSIM_PT_sim_color_mixing(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Color Mixing"
     bl_idname = "FLUIDSIM_PT_sim_color_mixing"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -658,7 +649,6 @@ class FLUIDSIM_PT_sim_relax(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Particle Relaxation"
     bl_idname = "FLUIDSIM_PT_sim_relax"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -673,7 +663,6 @@ class FLUIDSIM_PT_sim_limits(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Velocity Limits"
     bl_idname = "FLUIDSIM_PT_sim_limits"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -688,7 +677,6 @@ class FLUIDSIM_PT_sim_forces(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Global Forces"
     bl_idname = "FLUIDSIM_PT_sim_forces"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -704,7 +692,6 @@ class FLUIDSIM_PT_sim_dissipation(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Dissipation"
     bl_idname = "FLUIDSIM_PT_sim_dissipation"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -720,7 +707,6 @@ class FLUIDSIM_PT_sim_attraction(_FluidSimSimulationPanel, bpy.types.Panel):
     bl_label = "Attraction"
     bl_idname = "FLUIDSIM_PT_sim_attraction"
     bl_parent_id = "FLUIDSIM_PT_scene_simulation"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -735,7 +721,6 @@ class FLUIDSIM_PT_scene_surface(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Surface Reconstruction"
     bl_idname = "FLUIDSIM_PT_scene_surface"
     bl_order = 60
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -763,9 +748,11 @@ class FLUIDSIM_PT_surface_resolution(_SurfaceChild, FluidSimScenePanel, bpy.type
     def draw(self, context):
         layout = _gated(_layout(self), _surface_enabled(context))
         fs = _domain_owner(context)
-        layout.prop(fs, "surface_resolution_mode")
-        _gated(layout, fs.surface_resolution_mode == "MULTIPLIER").prop(fs, "surface_resolution_multiplier")
-        _gated(layout, fs.surface_resolution_mode == "CUSTOM").prop(fs, "surface_voxel_size")
+        # Mode as buttons and both resolution rows always live (never greyed):
+        # the user must be able to see and set every value up front.
+        layout.row().prop(fs, "surface_resolution_mode", expand=True)
+        layout.prop(fs, "surface_resolution_multiplier")
+        layout.prop(fs, "surface_voxel_size")
         draw_property_grid(
             layout,
             fs,
@@ -782,7 +769,6 @@ class FLUIDSIM_PT_surface_reconstruct(_SurfaceChild, FluidSimScenePanel, bpy.typ
     bl_label = "Particle Splat"
     bl_idname = "FLUIDSIM_PT_surface_reconstruct"
     bl_parent_id = "FLUIDSIM_PT_scene_surface"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _gated(_layout(self), _surface_enabled(context))
@@ -794,7 +780,6 @@ class FLUIDSIM_PT_surface_filters(_SurfaceChild, FluidSimScenePanel, bpy.types.P
     bl_label = "Filters"
     bl_idname = "FLUIDSIM_PT_surface_filters"
     bl_parent_id = "FLUIDSIM_PT_scene_surface"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         # D9: the four post-process passes are chunked into their own labeled
@@ -831,7 +816,6 @@ class FLUIDSIM_PT_scene_whitewater(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Whitewater"
     bl_idname = "FLUIDSIM_PT_scene_whitewater"
     bl_order = 70
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -855,7 +839,6 @@ class FLUIDSIM_PT_whitewater_emission(_WhitewaterChild, FluidSimScenePanel, bpy.
     bl_label = "Emission"
     bl_idname = "FLUIDSIM_PT_whitewater_emission"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _gated(_layout(self), _whitewater_enabled(context))
@@ -878,7 +861,6 @@ class FLUIDSIM_PT_whitewater_classification(_WhitewaterChild, FluidSimScenePanel
     bl_label = "Classification"
     bl_idname = "FLUIDSIM_PT_whitewater_classification"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _gated(_layout(self), _whitewater_enabled(context))
@@ -891,7 +873,6 @@ class FLUIDSIM_PT_whitewater_life(_WhitewaterChild, FluidSimScenePanel, bpy.type
     bl_label = "Lifetime"
     bl_idname = "FLUIDSIM_PT_whitewater_life"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _gated(_layout(self), _whitewater_enabled(context))
@@ -902,7 +883,6 @@ class FLUIDSIM_PT_whitewater_dynamics(_WhitewaterChild, FluidSimScenePanel, bpy.
     bl_label = "Dynamics"
     bl_idname = "FLUIDSIM_PT_whitewater_dynamics"
     bl_parent_id = "FLUIDSIM_PT_scene_whitewater"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _gated(_layout(self), _whitewater_enabled(context))
@@ -984,7 +964,6 @@ class FLUIDSIM_PT_output_materials(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Materials & Collection"
     bl_idname = "FLUIDSIM_PT_output_materials"
     bl_parent_id = "FLUIDSIM_PT_scene_outputs"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -1013,7 +992,6 @@ class FLUIDSIM_PT_output_attributes(FluidSimScenePanel, bpy.types.Panel):
     # Top-level in the Physics mirror (its Scene parent is not mirrored), so it
     # needs an explicit position below the simulation and surface groups.
     bl_order = 80
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -1028,7 +1006,6 @@ class FLUIDSIM_PT_attrs_surface(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Surface Attributes"
     bl_idname = "FLUIDSIM_PT_attrs_surface"
     bl_parent_id = "FLUIDSIM_PT_output_attributes"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         _draw_attribute_group(_layout(self), _domain_owner(context), "surface")
@@ -1038,7 +1015,6 @@ class FLUIDSIM_PT_attrs_particles(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Particle Attributes"
     bl_idname = "FLUIDSIM_PT_attrs_particles"
     bl_parent_id = "FLUIDSIM_PT_output_attributes"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         _draw_attribute_group(_layout(self), _domain_owner(context), "particles")
@@ -1048,7 +1024,6 @@ class FLUIDSIM_PT_attrs_whitewater(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Whitewater Attributes"
     bl_idname = "FLUIDSIM_PT_attrs_whitewater"
     bl_parent_id = "FLUIDSIM_PT_output_attributes"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         _draw_attribute_group(_layout(self), _domain_owner(context), "whitewater")
@@ -1184,7 +1159,6 @@ class FLUIDSIM_PT_scene_diagnostics(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Diagnostics"
     bl_idname = "FLUIDSIM_PT_scene_diagnostics"
     bl_order = 100
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -1204,7 +1178,6 @@ class FLUIDSIM_PT_scene_runtime_stats(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Telemetry"
     bl_idname = "FLUIDSIM_PT_scene_runtime_stats"
     bl_parent_id = "FLUIDSIM_PT_scene_diagnostics"
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -1268,7 +1241,6 @@ class FLUIDSIM_PT_diagnostics_profiling(FluidSimScenePanel, bpy.types.Panel):
     bl_parent_id = "FLUIDSIM_PT_scene_diagnostics"
     # Top-level in the Physics mirror (its Scene parent is not mirrored); last.
     bl_order = 100
-    bl_options = {"DEFAULT_CLOSED"}
 
     @classmethod
     def poll(cls, context):
@@ -1305,7 +1277,6 @@ class FLUIDSIM_PT_diagnostics_benchmark(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Benchmark"
     bl_idname = "FLUIDSIM_PT_diagnostics_benchmark"
     bl_parent_id = "FLUIDSIM_PT_scene_diagnostics"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)
@@ -1327,7 +1298,6 @@ class FLUIDSIM_PT_diagnostics_report(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Report & Export"
     bl_idname = "FLUIDSIM_PT_diagnostics_report"
     bl_parent_id = "FLUIDSIM_PT_scene_diagnostics"
-    bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context):
         layout = _layout(self)

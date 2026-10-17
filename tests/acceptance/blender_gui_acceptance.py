@@ -531,8 +531,8 @@ def _run_phase(phase, scene):
             operator_id="fluidsim.step",
         )
         check(
-            "Lifecycle defaults closed",
-            "DEFAULT_CLOSED" in bpy.types.FLUIDSIM_PT_scene_lifecycle.bl_options,
+            "Lifecycle starts expanded",
+            "DEFAULT_CLOSED" not in bpy.types.FLUIDSIM_PT_scene_lifecycle.bl_options,
         )
         scene.fluidsim.ui_mode = "BASIC"
 
