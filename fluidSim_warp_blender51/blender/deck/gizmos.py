@@ -13,18 +13,18 @@ Pending Settings classifies the edit exactly as for a panel edit (spec trap 5).
 - Collider (role ``COLLIDER``): a friction dial (``collider_friction``) and a
   Dynamic toggle bound to ``collider_dynamic`` only when that property exists (it
   arrives with the 4.0 rigid-coupling lane; until then no toggle is created).
-- Domain: six face handles. Dragging previews the resized domain's grid (cell
-  counts, padded grid, cell size, from ``resolve_quality`` as the Scene panel's
-  readout computes it) without writing anything; release writes the domain
-  object's location and scale, as typing its dimensions would, and keeps the
-  opposite face in place. ``resolution_divisions`` is unchanged: resizing changes
+- Domain: six face handles. Dragging writes the domain object's location and
+  scale on every step, as typing its dimensions would, so the viewport follows
+  the handle; the opposite face stays in place. The overlay previews the resized
+  grid (cell counts, padded grid, cell size, from ``resolve_quality`` as the
+  Scene panel's readout computes it) until release. ``resolution_divisions`` is unchanged: resizing changes
   the cell size, not the count. The domain bounds are Reinitialize-class, so the
   chip shows REINIT. The handles are offered only for an unparented, unrotated
   domain, where location and scale map one-to-one onto the world box.
 
 The gizmos keep only drag bookkeeping (start value, start pointer) between
-``invoke`` and ``exit``; a cancelled drag restores the start value. ``exit`` writes
-only to the object the drag started on, and does nothing once that object has left
+``invoke`` and ``exit``; a cancelled drag restores the start value. Gizmos write
+only to the object the drag started on, and do nothing once that object has left
 the scene (the active object may have changed or gone in the meantime).
 """
 
@@ -351,6 +351,14 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
         _ACTIVE_PREVIEW = domain_preview(context.scene, bounds)
         return {"RUNNING_MODAL"}
 
+    def _apply(self, context, scale, location):
+        """Write the face's axis of the domain it started on (gone: no-op)."""
+        obj = _started_object(context, getattr(self, "target", None))
+        if obj is None:
+            return  # the domain was deleted mid-drag
+        obj.scale[self.axis] = scale
+        obj.location[self.axis] = location
+
     def modal(self, context, event, tweak):
         global _ACTIVE_PREVIEW
         axis = self.axis
@@ -367,20 +375,15 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
         scale[axis] = new_scale
         self.result = (new_scale, shift)
         _ACTIVE_PREVIEW = domain_preview(context.scene, world_bounds(location, scale, low, high))
+        # Resize the domain while dragging, so the viewport follows the handle.
+        self._apply(context, new_scale, location[axis])
         return {"RUNNING_MODAL"}
 
     def exit(self, context, cancel):
         global _ACTIVE_PREVIEW
         _ACTIVE_PREVIEW = None
-        result = getattr(self, "result", None)
-        if cancel or result is None:
-            return
-        obj = _started_object(context, getattr(self, "target", None))
-        if obj is None:
-            return  # the domain was deleted mid-drag
-        new_scale, shift = result
-        obj.scale[self.axis] = new_scale
-        obj.location[self.axis] = self.start_location[self.axis] + shift
+        if cancel and getattr(self, "result", None) is not None:
+            self._apply(context, self.start_scale[self.axis], self.start_location[self.axis])
 
 
 # Gizmo groups ---------------------------------------------------------------------

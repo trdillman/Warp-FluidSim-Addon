@@ -265,24 +265,40 @@ def test_domain_face_drag_previews_the_same_grid_as_typing_the_size(env):
     assert preview.quality.padded_voxel_dimensions == typed.padded_voxel_dimensions
     assert preview.quality.unpadded_voxel_dimensions == typed.unpadded_voxel_dimensions
     assert "80 × 50 × 38" in preview.label
-    # Nothing is written while dragging.
-    assert domain.scale == [1.0, 1.0, 1.0]
+    # Written live while dragging: the opposite face stays put.
+    assert domain.scale == pytest.approx([1.28, 1.0, 1.0])
+    assert domain.location == pytest.approx([0.7, 0.0, 0.0])
 
     gizmo.exit(context, False)
     assert env.deck.gizmos.active_domain_preview() is None
-    # Commit on release: the opposite face stays put, divisions are untouched.
+    # Release keeps the last drag step; divisions are untouched.
     assert domain.scale == pytest.approx([1.28, 1.0, 1.0])
     assert domain.location == pytest.approx([0.7, 0.0, 0.0])
     assert domain.fluidsim_domain.resolution_divisions == 80
 
 
-def test_domain_face_drag_cancel_writes_nothing(env):
+def test_domain_face_drag_follows_every_step(env):
+    scene, domain = _domain()
+    context = _context(scene, domain)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_face()
+    gizmo.axis, gizmo.side = 0, 1
+    gizmo.invoke(context, _event(0.0))
+    seen = []
+    for x in (40.0, 80.0, 140.0):
+        gizmo.modal(context, _event(x), set())
+        seen.append(domain.scale[0])
+    assert seen == sorted(seen) and len(set(seen)) == 3
+    assert seen[-1] == pytest.approx(1.28)
+
+
+def test_domain_face_drag_cancel_restores_the_start_box(env):
     scene, domain = _domain()
     context = _context(scene, domain)
     gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_face()
     gizmo.axis, gizmo.side = 2, -1
     gizmo.invoke(context, _event(0.0, 0.0))
     gizmo.modal(context, _event(0.0, -100.0), set())
+    assert domain.scale != [1.0, 1.0, 1.0]
     gizmo.exit(context, True)
     assert domain.scale == [1.0, 1.0, 1.0]
     assert domain.location == [0.0, 0.0, 0.0]
@@ -311,12 +327,15 @@ def test_domain_face_release_writes_the_domain_it_started_on(env, active):
     assert other.scale == [1.0, 1.0, 1.0] and other.location == [5.0, 0.0, 0.0]
 
 
-def test_domain_face_release_is_a_no_op_when_the_domain_is_gone(env):
+@pytest.mark.parametrize("cancel", [False, True])
+def test_domain_face_is_a_no_op_once_the_domain_is_gone(env, cancel):
     scene, domain, context, gizmo = _drag_domain(env)
+    written = (list(domain.scale), list(domain.location))
     scene.objects.remove(domain)
     context.active_object = None
-    gizmo.exit(context, False)
-    assert domain.scale == [1.0, 1.0, 1.0]
+    gizmo.modal(context, _event(200.0), set())
+    gizmo.exit(context, cancel)
+    assert (domain.scale, domain.location) == written
     assert env.deck.gizmos.active_domain_preview() is None
 
 
