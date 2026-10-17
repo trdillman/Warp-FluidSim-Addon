@@ -238,11 +238,19 @@ The root summarizes active solver features. Children are:
 
 ##### Transfer
 
-**Transfer** chooses how velocity moves between particles and the grid:
+**Transfer** chooses how velocity moves between particles and the grid. It
+changes the look of the motion, not the pressure solver. Switch it in the
+sidebar's **Simulate** stage, the viewport-header popover, or **Time &
+Transfer** on the Physics tab.
 
-- **PIC** — smooth and dissipative.
-- **FLIP** (default) — keeps motion and can be noisier. **FLIP Ratio** appears
-  only for FLIP and blends PIC and FLIP updates.
+- **PIC** — particles take the grid velocity outright: very stable, but detail
+  is averaged away each step, so liquid looks thick and loses energy.
+- **FLIP** (default) — particles keep their own velocity and add only the
+  grid's change: splashes and swirls survive, with some jitter. **FLIP Ratio**
+  appears only for FLIP and mixes the two: 1.0 is pure FLIP (most energetic,
+  can get noisy), the default 0.97 adds a little PIC to keep noise down,
+  0.8–0.9 is noticeably calmer, and 0.0 behaves like PIC. Lower it if the
+  liquid looks jittery; raise it if motion dies down too quickly.
 - **APIC** — each particle also carries a 3 × 3 affine matrix (its local
   rotation and shear), so swirl and spin survive the trip through the grid
   instead of being averaged away.

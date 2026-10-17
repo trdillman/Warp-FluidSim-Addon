@@ -19,6 +19,11 @@
     into still water. They float in density order and the heaviest sinks.
   - **Water Wheel**: a six-paddle wheel locked to its axle, turned by an
     inflow stream.
+- **Transfer** (PIC, FLIP, APIC) now sits beside **FLIP Ratio** in the
+  sidebar's Simulate stage and the viewport-header popover, and the user
+  guide explains what each choice and FLIP Ratio value looks like.
+- Selecting a collider shows its surface and rigid-body settings in the
+  3D View sidebar's Setup stage.
 
 ### Fixes
 

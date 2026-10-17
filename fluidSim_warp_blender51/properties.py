@@ -1337,11 +1337,11 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     sample_type: EnumProperty(
         name="Transfer", items=_items(ParticleSampleType), default="FLIP",
         update=_request_live,
-        description="Choose the particle/grid velocity-transfer method; PIC is smoother and more dissipative, FLIP preserves motion and can be noisier, and APIC keeps rotation and swirl with little noise at 72 bytes of extra memory per particle")
+        description="Choose the particle/grid velocity-transfer method; PIC is smoother and more dissipative, FLIP preserves motion and can be noisier, and APIC keeps rotation and swirl with little noise at 72 bytes of extra memory per particle; this changes the look of the motion, not the pressure solver")
     flip_ratio: FloatProperty(
         name="FLIP Ratio", default=0.97, min=0.0, max=1.0,
         update=_request_live,
-        description="Blend PIC and FLIP velocity updates; increase toward 1 for more energetic, less dissipative motion, or decrease toward 0 for smoother, more damped motion")
+        description="FLIP mode only: blend PIC and FLIP velocity updates; increase toward 1 for more energetic, less dissipative motion, or decrease toward 0 for smoother, more damped motion")
     trace_mode: EnumProperty(
         name="Trace", items=_items(TraceMode), default="RK3",
         update=_request_live,

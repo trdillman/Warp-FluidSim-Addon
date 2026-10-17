@@ -45,6 +45,7 @@ from .ui_object import draw_collider_settings
 # re-deriving them from draw code.
 SETUP_DOMAIN_PROPS = ("resolution_divisions", "particles_per_voxel")
 SIMULATE_PROPS = (
+    "sample_type",
     "flip_ratio",
     "viscosity_enabled",
     "viscosity_constant",
@@ -284,8 +285,10 @@ def draw_simulate_controls(layout, scene, domain):
     One drawing shared by the Simulate stage and the viewport-header popover, so
     both surfaces bind the same properties to the same owner.
     """
+    transfer = layout.column(align=True)
+    _prop(transfer, scene, "sample_type")
     if domain.sample_type == "FLIP":
-        _prop(layout, scene, "flip_ratio")
+        _prop(transfer, scene, "flip_ratio")
 
     viscosity = layout.column(align=True)
     _prop(viscosity, scene, "viscosity_enabled")

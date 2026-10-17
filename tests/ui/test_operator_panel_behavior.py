@@ -2504,6 +2504,20 @@ def test_workflow_stage_panels_bind_each_control_to_its_owner(monkeypatch):
     )
 
 
+def test_workflow_stage_simulate_shows_transfer_switch_beside_flip_ratio(monkeypatch):
+    """Transfer is switchable where FLIP Ratio lives; the ratio shows only for FLIP."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+
+    for sample_type, ratio_shown in (("FLIP", True), ("APIC", False), ("PIC", False)):
+        context, _scene, _domain = _stage_context(sample_type=sample_type)
+        drawn = list(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context).props)
+        assert "sample_type" in drawn, sample_type
+        assert ("flip_ratio" in drawn) is ratio_shown, sample_type
+        if ratio_shown:
+            assert drawn.index("sample_type") < drawn.index("flip_ratio")
+
+
 def test_workflow_stage_simulate_hides_inactive_controls(monkeypatch):
     _install_bpy_stub(monkeypatch)
     ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
@@ -2513,6 +2527,7 @@ def test_workflow_stage_simulate_hides_inactive_controls(monkeypatch):
         _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context).props
     )
     assert drawn == {
+        "sample_type",
         "viscosity_enabled",
         "surface_tension_enabled",
         "use_scene_gravity",
@@ -4844,6 +4859,7 @@ def test_header_popover_hides_inactive_simulate_controls(monkeypatch):
     _env, layout, _scene, _domain = _draw_header_popover(monkeypatch, sample_type="PIC")
     assert set(layout.props) == {
         "quality",
+        "sample_type",
         "viscosity_enabled",
         "surface_tension_enabled",
         "use_scene_gravity",
