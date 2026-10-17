@@ -136,6 +136,49 @@ class FLUIDSIM_OT_install_warp(bpy.types.Operator):
         return self.execute(context)
 
 
+class FLUIDSIM_OT_install_warp_from_file(bpy.types.Operator):
+    """Install the certified NVIDIA Warp wheel from a file on this computer."""
+
+    bl_idname = "fluidsim.install_warp_from_file"
+    bl_label = "Install Warp from File"
+    bl_description = (
+        "Install the certified NVIDIA Warp wheel from a .whl file you downloaded "
+        "yourself. FluidSim checks the file's size and SHA-256 before installing. "
+        "No internet connection needed"
+    )
+    bl_options = {"INTERNAL"}
+
+    filepath: StringProperty(subtype="FILE_PATH")
+    filter_glob: StringProperty(default="*.whl", options={"HIDDEN"})
+
+    def execute(self, context):
+        if not self.filepath:
+            self.report({"ERROR"}, "Choose the Warp .whl file")
+            return {"CANCELLED"}
+        result = install_warp(
+            wheel_file=bpy.path.abspath(self.filepath),
+            progress_callback=lambda msg: self.report({"INFO"}, msg),
+        )
+        if result.success:
+            self.report({"INFO"}, result.message)
+            if not result.already_installed:
+                _refresh_runtime(_preferences(context))
+            return {"FINISHED"}
+        self.report({"ERROR"}, result.message)
+        return {"CANCELLED"}
+
+    def invoke(self, context, _event):
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+
+def _draw_install_buttons(box, text: str = "Install Warp") -> None:
+    row = box.row(align=True)
+    row.scale_y = 1.5
+    row.operator("fluidsim.install_warp", text=text, icon="IMPORT")
+    row.operator("fluidsim.install_warp_from_file", text="Install from File", icon="FILEBROWSER")
+
+
 class FLUIDSIM_OT_refresh_runtime_probe(bpy.types.Operator):
     """Refresh Warp import state and the CUDA device list."""
 
@@ -231,9 +274,7 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
             row.alert = True
             row.label(text="Remove the other Warp copy first", icon="ERROR")
             box.label(text=blocked)
-            row = box.row()
-            row.scale_y = 1.5
-            row.operator("fluidsim.install_warp", text="Install Warp", icon="IMPORT")
+            _draw_install_buttons(box)
         else:
             warp_installed, warp_info = get_installed_warp_info()
             status = owned_install_status()
@@ -241,13 +282,17 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
                 row = box.row()
                 row.alert = True
                 row.label(text="Warp is not installed", icon="ERROR")
-                row = box.row()
-                row.scale_y = 1.5
-                row.operator("fluidsim.install_warp", text="Install Warp", icon="IMPORT")
+                _draw_install_buttons(box)
                 box.label(
                     text=(
                         f"Downloads certified NVIDIA Warp {CERTIFIED_WARP_VERSION} "
                         "(CUDA 13; needs an NVIDIA R580 or newer driver) from PyPI."
+                    )
+                )
+                box.label(
+                    text=(
+                        "On a slow or offline connection, download the warp-lang "
+                        f"{CERTIFIED_WARP_VERSION} wheel from pypi.org and use Install from File."
                     )
                 )
             else:
@@ -275,13 +320,7 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
                     )
                     repair.force_reinstall = True
                 if status == "unsupported":
-                    row = box.row()
-                    row.alert = True
-                    row.operator(
-                        "fluidsim.install_warp",
-                        text="Install Certified Warp",
-                        icon="IMPORT",
-                    )
+                    _draw_install_buttons(box, "Install Certified Warp")
 
         authoring = layout.box()
         authoring.label(text="Custom Effects", icon="MODIFIER")
@@ -308,6 +347,7 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
 
 CLASSES = (
     FLUIDSIM_OT_install_warp,
+    FLUIDSIM_OT_install_warp_from_file,
     FLUIDSIM_OT_refresh_runtime_probe,
     FLUIDSIM_OT_redetect_device,
     FLUIDSIM_AP_preferences,

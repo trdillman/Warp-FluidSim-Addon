@@ -23,6 +23,7 @@ reports success and does not download or write.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -30,11 +31,12 @@ import platform as _platform
 import shutil
 import sys
 import tempfile
+import time
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from .runtime.warp_runtime import (
     cuda_driver_floor_reason,
@@ -44,6 +46,12 @@ from .runtime.warp_runtime import (
 from .version import CERTIFIED_WARP_VERSION
 
 _CHUNK_SIZE = 1024 * 1024
+# A dropped connection resumes from the bytes already received (HTTP Range).
+# The limit counts drops in a row with no progress, so a slow link that keeps
+# moving between drops still finishes; the file size bounds the loop.
+_DOWNLOAD_ATTEMPTS = 8
+_RETRY_DELAY_SECONDS = 2.0
+_READ_TIMEOUT_SECONDS = 60
 _LOCK_PATH = Path(__file__).with_name("warp_wheels.lock.json")
 _OWNED_LOCAL_DIR = ".local"
 _PENDING_REPAIR_WHEEL = ".fluidsim-warp-repair.whl"
@@ -111,6 +119,35 @@ def _sha256_path(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _download_range(
+    url: str,
+    temp: Path,
+    offset: int,
+    expected_size: int,
+    progress_callback: Callable[[int, int], None] | None,
+) -> None:
+    """Append bytes from ``offset`` to ``temp``; restart if the server ignores Range."""
+    request = Request(url, headers={"Range": f"bytes={offset}-"} if offset else {})
+    with urlopen(request, timeout=_READ_TIMEOUT_SECONDS) as response:
+        if offset and getattr(response, "status", 200) != 206:
+            offset = 0  # The server sent the whole file: start over.
+        size = offset
+        with temp.open("r+b" if offset else "wb") as handle:
+            handle.seek(offset)
+            handle.truncate()
+            while chunk := response.read(_CHUNK_SIZE):
+                handle.write(chunk)
+                size += len(chunk)
+                if size > expected_size:
+                    raise RuntimeError(
+                        f"Downloaded wheel is larger than the locked {expected_size} bytes"
+                    )
+                if progress_callback:
+                    progress_callback(size, expected_size)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+
 def _download_wheel(
     url: str,
     destination: Path,
@@ -124,25 +161,41 @@ def _download_wheel(
         raise RuntimeError(f"Wheel URL must use HTTPS: {url}")
 
     temp = destination.with_name(destination.name + ".part")
-    digest = hashlib.sha256()
-    size = 0
+    temp.unlink(missing_ok=True)
     try:
-        with urlopen(url, timeout=300) as response:
-            with temp.open("wb") as handle:
-                while chunk := response.read(_CHUNK_SIZE):
-                    handle.write(chunk)
-                    digest.update(chunk)
-                    size += len(chunk)
-                    if progress_callback:
-                        progress_callback(size, expected_size)
-                handle.flush()
-                os.fsync(handle.fileno())
+        failures = 0
+        last_error: Exception | None = None
+        while True:
+            size = temp.stat().st_size if temp.exists() else 0
+            if size >= expected_size:
+                break
+            if failures >= _DOWNLOAD_ATTEMPTS:
+                raise RuntimeError(
+                    f"connection kept dropping ({failures} attempts, "
+                    f"{size / 1024 / 1024:.1f} of {expected_size / 1024 / 1024:.1f} MB "
+                    f"received; last error: {last_error}). Try again, or download "
+                    "the wheel in a browser and use Install from File"
+                )
+            try:
+                _download_range(url, temp, size, expected_size, progress_callback)
+            except (OSError, http.client.HTTPException) as exc:
+                last_error = exc
+            else:
+                received = temp.stat().st_size
+                if received >= expected_size:
+                    continue
+                last_error = RuntimeError(f"the server ended the file at {received} bytes")
+            received = temp.stat().st_size if temp.exists() else 0
+            failures = 1 if received >= size + _CHUNK_SIZE else failures + 1
+            if failures < _DOWNLOAD_ATTEMPTS:
+                time.sleep(_RETRY_DELAY_SECONDS * failures)
 
+        size = temp.stat().st_size
         if size != expected_size:
             raise RuntimeError(
                 f"Downloaded wheel size mismatch: expected {expected_size}, got {size}"
             )
-        actual = digest.hexdigest()
+        actual = _sha256_path(temp)
         if actual != expected_sha256:
             raise RuntimeError(
                 "Downloaded wheel checksum mismatch: "
@@ -548,8 +601,13 @@ def install_warp(
     *,
     force_reinstall: bool = False,
     progress_callback: Callable[[str], None] | None = None,
+    wheel_file: str | os.PathLike[str] | None = None,
 ) -> InstallResult:
     """Install the locked Warp wheel into this extension's own directory.
+
+    ``wheel_file`` installs from a wheel already on disk instead of
+    downloading. It needs no online access, and it is accepted only when its
+    size and SHA-256 match the lock, exactly like a downloaded wheel.
 
     A certified copy there, and a newer 1.x copy there, is success and does
     not download or write. An explicit ``force_reinstall`` stages a locked
@@ -595,7 +653,7 @@ def install_warp(
                     already_installed=True,
                 )
 
-    online = _online_access_block_reason()
+    online = None if wheel_file else _online_access_block_reason()
     if online:
         return InstallResult(success=False, message=online)
 
@@ -621,21 +679,39 @@ def install_warp(
             message=f"No certified Warp wheel is published for this platform ({host})",
         )
 
-    report(
-        f"Downloading Warp {CERTIFIED_WARP_VERSION} "
-        f"({wheel_info.size / 1024 / 1024:.1f} MB)..."
-    )
     with tempfile.TemporaryDirectory() as tmpdir:
-        wheel_path = Path(tmpdir) / wheel_info.filename
-        try:
-            _download_wheel(
-                wheel_info.url,
-                wheel_path,
-                expected_sha256=wheel_info.sha256,
-                expected_size=wheel_info.size,
+        if wheel_file:
+            wheel_path = Path(wheel_file)
+            report(f"Checking {wheel_path.name}...")
+            try:
+                matches = _wheel_matches_lock(wheel_path, wheel_info)
+            except OSError as exc:
+                return InstallResult(success=False, message=f"Could not read {wheel_path}: {exc}")
+            if not matches:
+                return InstallResult(
+                    success=False,
+                    message=(
+                        f"{wheel_path.name} is not the certified Warp wheel for this "
+                        f"computer. Download {wheel_info.filename} from "
+                        "pypi.org/project/warp-lang/"
+                        f"{CERTIFIED_WARP_VERSION}/#files and choose that file"
+                    ),
+                )
+        else:
+            report(
+                f"Downloading Warp {CERTIFIED_WARP_VERSION} "
+                f"({wheel_info.size / 1024 / 1024:.1f} MB)..."
             )
-        except Exception as exc:  # noqa: BLE001 - the button reports the failure
-            return InstallResult(success=False, message=f"Download failed: {exc}")
+            wheel_path = Path(tmpdir) / wheel_info.filename
+            try:
+                _download_wheel(
+                    wheel_info.url,
+                    wheel_path,
+                    expected_sha256=wheel_info.sha256,
+                    expected_size=wheel_info.size,
+                )
+            except Exception as exc:  # noqa: BLE001 - the button reports the failure
+                return InstallResult(success=False, message=f"Download failed: {exc}")
         if _sha256_path(wheel_path) != wheel_info.sha256:
             return InstallResult(
                 success=False,

@@ -10,6 +10,9 @@ Covers:
 3. Foreign Warp in shared extensions/.local:
    - Does not count as owned or already installed for FluidSim.
    - Refuses to overwrite or change foreign Warp.
+4. Install from File with online access off (needs FLUIDSIM_TEST_WARP_WHEEL):
+   - A wheel that is not the locked one is refused before anything is written.
+   - The locked wheel installs into the add-on's own extension path.
 
 Optional FLUIDSIM_TEST_WARP_WHEEL reuses a locally retained locked wheel for
 installation/repair qualification. That mode does not qualify network transfer;
@@ -251,6 +254,66 @@ print('OFFLINE-REFUSE-VERIFIED')
     )
     assert result.returncode == 0, f"Blender failed: {result.stderr}\n{result.stdout}"
     assert "OFFLINE-REFUSE-VERIFIED" in result.stdout
+
+
+def test_install_from_file_offline_in_real_blender(tmp_path: Path, built_package: Path):
+    """Install from File works with online access off and refuses a wrong wheel."""
+    wheel = os.environ.get("FLUIDSIM_TEST_WARP_WHEEL")
+    if not wheel:
+        pytest.skip("FLUIDSIM_TEST_WARP_WHEEL names no locally retained locked wheel")
+    blender = _find_blender()
+    env = _setup_isolated_blender(tmp_path, built_package)
+    wrong = tmp_path / Path(wheel).name
+    wrong.write_bytes(b"not the certified wheel")
+    env["FLUIDSIM_TEST_WRONG_WHEEL"] = str(wrong)
+
+    script = """
+import bpy
+import importlib
+import os
+from pathlib import Path
+
+assert bpy.app.online_access is False
+module = 'bl_ext.test_repo.fluidsim_warp'
+owned_dir = Path(bpy.utils.extension_path_user(module, path='.local', create=False))
+
+try:
+    bpy.ops.fluidsim.install_warp_from_file(filepath=os.environ['FLUIDSIM_TEST_WRONG_WHEEL'])
+    raise AssertionError('Expected refusal of a wheel that is not the locked one')
+except RuntimeError as exc:
+    assert 'is not the certified Warp wheel' in str(exc), f'Unexpected message: {exc}'
+assert not (owned_dir / 'warp').exists(), 'A refused wheel left Warp behind'
+
+res = bpy.ops.fluidsim.install_warp_from_file(filepath=os.environ['FLUIDSIM_TEST_WARP_WHEEL'])
+assert res == {'FINISHED'}, f'Expected FINISHED, got {res}'
+warp_init = owned_dir / 'warp' / '__init__.py'
+assert warp_init.is_file(), f'Expected Warp installed at {warp_init}'
+assert not (Path(bpy.utils.user_resource('EXTENSIONS')) / '.local' / 'warp').exists()
+
+runtime = importlib.import_module(module + '.runtime.warp_runtime')
+probe = runtime.probe_runtime(force=True)
+assert probe.warp_version == os.environ['FLUIDSIM_TEST_LOCKED_WARP'], probe
+assert Path(probe.module_file).resolve() == warp_init.resolve()
+print('INSTALL-FROM-FILE-OFFLINE-VERIFIED')
+"""
+    result = _run_blender(
+        [
+            str(blender),
+            "--background",
+            "--factory-startup",
+            "--offline-mode",
+            "--python-exit-code",
+            "1",
+            "--python-expr",
+            _factory_script(script),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"Blender failed: {result.stderr}\n{result.stdout}"
+    assert "INSTALL-FROM-FILE-OFFLINE-VERIFIED" in result.stdout
 
 
 def test_online_install_and_idempotency_in_real_blender(tmp_path: Path, built_package: Path):

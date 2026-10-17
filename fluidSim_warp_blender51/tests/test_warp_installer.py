@@ -611,11 +611,66 @@ def test_shipped_wheel_lock_matches_the_release_lock():
     assert shipped["warp_version"] == "1.18.0"
 
 
-def test_preferences_register_the_install_warp_button():
-    source = (ROOT / "preferences.py").read_text(encoding="utf-8")
-    assert 'bl_idname = "fluidsim.install_warp"' in source
-    assert 'text="Install Warp"' in source
-    assert "network" not in source or "PyPI" in (ROOT / "blender_manifest.toml").read_text()
+def test_preferences_offer_download_and_install_from_file_when_warp_is_missing(monkeypatch):
+    preferences, _operator_instance = _operator(monkeypatch)
+    monkeypatch.setattr(preferences, "foreign_warp_block_reason", lambda: None)
+    monkeypatch.setattr(preferences, "get_installed_warp_info", lambda: (False, "missing"))
+    monkeypatch.setattr(preferences, "owned_install_status", lambda: None)
+    monkeypatch.setattr(preferences, "developer_override_active", lambda _path: False)
+    operators = []
+
+    class RecordingLayout:
+        scale_y = 1.0
+
+        def box(self):
+            return self
+
+        def row(self, **_kwargs):
+            return self
+
+        def label(self, **_kwargs):
+            return None
+
+        def prop(self, *_args, **_kwargs):
+            return None
+
+        def operator(self, identifier, **kwargs):
+            operators.append((identifier, kwargs.get("text")))
+            return SimpleNamespace()
+
+    prefs = preferences.FLUIDSIM_AP_preferences.__new__(preferences.FLUIDSIM_AP_preferences)
+    prefs.layout = RecordingLayout()
+    prefs.draw(None)
+
+    assert ("fluidsim.install_warp", "Install Warp") in operators
+    assert ("fluidsim.install_warp_from_file", "Install from File") in operators
+    assert preferences.FLUIDSIM_OT_install_warp_from_file in preferences.CLASSES
+
+
+def test_install_from_file_operator_passes_the_chosen_wheel(tmp_path, monkeypatch):
+    preferences, _operator_instance = _operator(monkeypatch)
+    monkeypatch.setattr(
+        preferences.bpy, "path", SimpleNamespace(abspath=lambda value: value), raising=False
+    )
+    calls = []
+
+    def fake_install(**kwargs):
+        calls.append(kwargs)
+        return warp_result(success=False, message="not the certified Warp wheel")
+
+    from fluidSim_warp_blender51.warp_installer import InstallResult as warp_result
+
+    monkeypatch.setattr(preferences, "install_warp", fake_install)
+    operator = preferences.FLUIDSIM_OT_install_warp_from_file.__new__(
+        preferences.FLUIDSIM_OT_install_warp_from_file
+    )
+    operator.filepath = str(tmp_path / "warp.whl")
+    operator.reports = []
+    operator.report = lambda level, message: operator.reports.append((set(level), message))
+
+    assert operator.execute(None) == {"CANCELLED"}
+    assert calls[0]["wheel_file"] == str(tmp_path / "warp.whl")
+    assert ({"ERROR"}, "not the certified Warp wheel") in operator.reports
 
 
 def test_install_warp_fails_for_unsupported_platform(tmp_path, monkeypatch):
@@ -790,13 +845,226 @@ def test_download_wheel_verifies_checksum():
 
         with mock.patch("fluidSim_warp_blender51.warp_installer.urlopen") as mock_urlopen:
             mock_urlopen.return_value = FakeResponse(b"fake wheel data")
-            with pytest.raises(RuntimeError, match="size mismatch|checksum mismatch"):
+            with pytest.raises(RuntimeError, match="checksum mismatch"):
                 _download_wheel(
                     "https://example.com/test.whl",
                     dest,
                     expected_sha256=wrong_hash,
-                    expected_size=100,
+                    expected_size=len(b"fake wheel data"),
                 )
+        assert not dest.exists()
+        assert not dest.with_name(dest.name + ".part").exists()
+
+
+class _ScriptedServer:
+    """Fake urlopen: each call plays the next scripted response.
+
+    A script entry is ``(status, body, error)``: the response sends ``body``
+    and then raises ``error`` (if any) instead of ending cleanly.
+    """
+
+    def __init__(self, payload: bytes, script):
+        self.payload = payload
+        self.script = list(script)
+        self.ranges: list[str | None] = []
+
+    def __call__(self, request, timeout=None):
+        self.ranges.append(request.get_header("Range"))
+        status, body, error = self.script.pop(0)
+
+        class Response:
+            def __init__(self):
+                self.status = status
+                self.data = body
+                self.pos = 0
+
+            def read(self, size):
+                if self.pos >= len(self.data) and error is not None:
+                    raise error
+                chunk = self.data[self.pos:self.pos + size]
+                self.pos += len(chunk)
+                return chunk
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        return Response()
+
+
+def test_download_wheel_resumes_after_a_connection_reset(tmp_path, monkeypatch):
+    """A reset mid-download (WinError 10054 on a slow link) resumes with a Range request."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    payload = bytes(range(256)) * 40_000  # ~10 MB, several chunks
+    cut = 3 * 1024 * 1024 + 17
+    server = _ScriptedServer(payload, [
+        (200, payload[:cut], ConnectionResetError(10054, "connection reset")),
+        (206, payload[cut:], None),
+    ])
+    monkeypatch.setattr(warp_installer, "urlopen", server)
+    monkeypatch.setattr(warp_installer.time, "sleep", lambda _s: None)
+    dest = tmp_path / "warp.whl"
+
+    warp_installer._download_wheel(
+        "https://files.pythonhosted.org/warp.whl",
+        dest,
+        expected_sha256=hashlib.sha256(payload).hexdigest(),
+        expected_size=len(payload),
+    )
+
+    assert dest.read_bytes() == payload
+    assert server.ranges == [None, f"bytes={cut}-"]
+
+
+def test_download_wheel_restarts_when_the_server_ignores_range(tmp_path, monkeypatch):
+    from fluidSim_warp_blender51 import warp_installer
+
+    payload = b"wheel-bytes" * 300_000
+    cut = 2 * 1024 * 1024
+    server = _ScriptedServer(payload, [
+        (200, payload[:cut], ConnectionResetError(10054, "connection reset")),
+        (200, payload, None),  # Range ignored: the whole file again.
+    ])
+    monkeypatch.setattr(warp_installer, "urlopen", server)
+    monkeypatch.setattr(warp_installer.time, "sleep", lambda _s: None)
+    dest = tmp_path / "warp.whl"
+
+    warp_installer._download_wheel(
+        "https://files.pythonhosted.org/warp.whl",
+        dest,
+        expected_sha256=hashlib.sha256(payload).hexdigest(),
+        expected_size=len(payload),
+    )
+
+    assert dest.read_bytes() == payload
+
+
+def test_download_wheel_gives_up_after_drops_without_progress(tmp_path, monkeypatch):
+    """A dead link stops after the attempt limit, cleans up, and points at Install from File."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    payload = b"x" * 1000
+    attempts = warp_installer._DOWNLOAD_ATTEMPTS
+    server = _ScriptedServer(payload, [
+        (200, b"", ConnectionResetError(10054, "connection reset"))
+    ] * attempts)
+    monkeypatch.setattr(warp_installer, "urlopen", server)
+    sleeps = []
+    monkeypatch.setattr(warp_installer.time, "sleep", sleeps.append)
+    dest = tmp_path / "warp.whl"
+
+    with pytest.raises(RuntimeError, match="Install from File"):
+        warp_installer._download_wheel(
+            "https://files.pythonhosted.org/warp.whl",
+            dest,
+            expected_sha256=hashlib.sha256(payload).hexdigest(),
+            expected_size=len(payload),
+        )
+
+    assert len(server.ranges) == attempts
+    assert len(sleeps) == attempts - 1
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_wheel_does_not_spin_on_a_short_clean_response(tmp_path, monkeypatch):
+    """A response that ends early without an error counts as a failed attempt."""
+    from fluidSim_warp_blender51 import warp_installer
+
+    payload = b"y" * 1000
+    attempts = warp_installer._DOWNLOAD_ATTEMPTS
+    server = _ScriptedServer(payload, [(200, payload[:10], None)] * attempts)
+    monkeypatch.setattr(warp_installer, "urlopen", server)
+    monkeypatch.setattr(warp_installer.time, "sleep", lambda _s: None)
+
+    with pytest.raises(RuntimeError, match="kept dropping"):
+        warp_installer._download_wheel(
+            "https://files.pythonhosted.org/warp.whl",
+            tmp_path / "warp.whl",
+            expected_sha256=hashlib.sha256(payload).hexdigest(),
+            expected_size=len(payload),
+        )
+    assert len(server.ranges) == attempts
+
+
+def _locked_test_wheel(tmp_path):
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("warp/__init__.py", '__version__ = "1.18.0"\n')
+        archive.writestr("warp_lang-1.18.0.dist-info/METADATA", "Name: warp-lang\n")
+    wheel_bytes = payload.getvalue()
+    wheel = tmp_path / "download" / "warp_lang-1.18.0-py3-none-win_amd64.whl"
+    wheel.parent.mkdir()
+    wheel.write_bytes(wheel_bytes)
+    info = mock.Mock(
+        filename=wheel.name,
+        sha256=hashlib.sha256(wheel_bytes).hexdigest(),
+        size=len(wheel_bytes),
+        url="https://files.pythonhosted.org/packages/locked/warp.whl",
+        platform="windows-x64",
+    )
+    return wheel, info
+
+
+def test_install_warp_from_a_local_wheel_needs_no_download_or_online_access(
+    tmp_path, monkeypatch
+):
+    from fluidSim_warp_blender51 import warp_installer
+
+    wheel, info = _locked_test_wheel(tmp_path)
+    owned = tmp_path / "owned"
+    _isolate_install(monkeypatch, owned)
+    monkeypatch.setattr(warp_installer, "get_wheel_info_for_platform", lambda platform=None: info)
+    monkeypatch.setattr(warp_installer, "cuda_driver_floor_reason", lambda _v: None)
+    monkeypatch.setattr(
+        warp_installer,
+        "_online_access_block_reason",
+        lambda: "Online access required to install Warp.",
+    )
+    download = mock.Mock()
+    monkeypatch.setattr(warp_installer, "_download_wheel", download)
+
+    result = warp_installer.install_warp(wheel_file=str(wheel))
+
+    assert result.success is True, result.message
+    assert result.version == "1.18.0"
+    assert (owned / "warp" / "__init__.py").is_file()
+    download.assert_not_called()
+    assert wheel.is_file()  # The user's file is left where it was.
+
+
+def test_install_warp_refuses_a_local_wheel_that_is_not_the_locked_one(tmp_path, monkeypatch):
+    from fluidSim_warp_blender51 import warp_installer
+
+    wheel, info = _locked_test_wheel(tmp_path)
+    wheel.write_bytes(wheel.read_bytes() + b"tampered")
+    owned = tmp_path / "owned"
+    _isolate_install(monkeypatch, owned)
+    monkeypatch.setattr(warp_installer, "get_wheel_info_for_platform", lambda platform=None: info)
+    monkeypatch.setattr(warp_installer, "cuda_driver_floor_reason", lambda _v: None)
+
+    result = warp_installer.install_warp(wheel_file=wheel)
+
+    assert result.success is False
+    assert "is not the certified Warp wheel" in result.message
+    assert info.filename in result.message
+    assert not owned.exists()
+
+
+def test_install_warp_reports_a_missing_local_wheel(tmp_path, monkeypatch):
+    from fluidSim_warp_blender51 import warp_installer
+
+    _wheel, info = _locked_test_wheel(tmp_path)
+    _isolate_install(monkeypatch, tmp_path / "owned")
+    monkeypatch.setattr(warp_installer, "get_wheel_info_for_platform", lambda platform=None: info)
+    monkeypatch.setattr(warp_installer, "cuda_driver_floor_reason", lambda _v: None)
+
+    result = warp_installer.install_warp(wheel_file=tmp_path / "nope.whl")
+
+    assert result.success is False
+    assert "not the certified Warp wheel" in result.message
 
 
 def test_download_wheel_rejects_non_https():

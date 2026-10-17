@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.0.1 — Install Warp from a file, and downloads that survive slow links
+
+- **Install from File** in Add-on Preferences installs the certified Warp
+  wheel from a `.whl` you downloaded yourself (pypi.org/project/warp-lang).
+  FluidSim checks the file's size and SHA-256 against its lock before
+  installing, and refuses any other file. No internet connection needed.
+- **Install Warp** now resumes a dropped download from where it stopped
+  instead of starting over, and only gives up after eight drops in a row
+  with no progress. On a slow link that keeps moving it finishes.
+- A Production Bake resumed from a checkpoint now continues Dynamic
+  colliders bit-for-bit as if it had never stopped. Restoring no longer
+  renormalises an already-unit rotation, which moved its last digit.
 ## 4.0.0 — Warp 1.18, Multigrid by default, Liquid Deck and two-way rigid coupling
 
 ### Upgrade notes

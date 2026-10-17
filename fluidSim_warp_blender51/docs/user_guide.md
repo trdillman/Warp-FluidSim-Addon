@@ -1,6 +1,6 @@
 # FluidSim Warp — User Guide
 
-FluidSim Warp 4.0.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
+FluidSim Warp 4.0.1 is a sparse-grid PIC/FLIP liquid simulator for Blender
 5.2.0 or newer using NVIDIA Warp / CUDA. It has two distinct workflows:
 
 - **Live Preview** advances from Blender timeline events for interactive setup
@@ -14,7 +14,7 @@ FluidSim Warp 4.0.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 
 | Area | Target |
 |---|---|
-| FluidSim | 4.0.0 |
+| FluidSim | 4.0.1 |
 | Blender | Blender 5.2.0 LTS or newer 5.2.x |
 | Operating systems | Windows x64 and Linux x64 |
 | GPU-gate certified | Windows 11 x64 on an NVIDIA GeForce RTX 4080 SUPER. Linux x64 is packaged from the same source but not certified |
@@ -30,7 +30,9 @@ safe to press again: when that copy is already 1.18.0 it reports success and
 does not write. If Warp is already loaded from another add-on, or an older
 Warp is in Blender's user site-packages, the button stops and asks you to
 remove that copy. It also stops when Online Access is turned off in System
-preferences, or when Blender was started with `--offline-mode`. An NVIDIA
+preferences, or when Blender was started with `--offline-mode`; on a slow or
+offline connection, download the wheel in a browser and press **Install from
+File** instead. An NVIDIA
 driver that supports CUDA 13 (R580 series or newer) is required for
 Warp 1.18. On an older driver the button names the driver floor before
 downloading and keeps an existing Warp 1.17.0, which FluidSim still runs.
@@ -373,7 +375,12 @@ from PyPI, checks its SHA-256 against the shipped lock, and extracts that
 file into this extension's own directory. Pressing it again when that copy is
 already 1.18.0 does nothing further. A Warp copy FluidSim does not own is not
 modified; remove it and press the button again. The button does not download
-when Blender's online access is off. The external-Warp developer path
+when Blender's online access is off. A dropped connection resumes from the
+bytes already received. **Install from File** installs the same wheel from a
+`.whl` you downloaded yourself (pypi.org/project/warp-lang, the
+`win_amd64` or `manylinux` 1.18.0 file); it checks the file's size and
+SHA-256 against the lock, refuses any other file, and needs no internet
+connection. The external-Warp developer path
 appears only when `FLUIDSIM_ALLOW_EXTERNAL_WARP=1`. Device selection does not
 appear in scene panels.
 
