@@ -218,11 +218,15 @@ def _routing(monkeypatch):
     button = bar.Item((10.0, 10.0, 40.0, 40.0), "button", controls.PLAY, "Play")
     layout = bar.BarLayout(card=(0.0, 0.0, 300.0, 50.0), items=(button,))
     monkeypatch.setattr(bar, "current_layout", lambda _ctx: layout)
-    monkeypatch.setattr(controls, "control_enabled", lambda _ctx, _c: True)
+    status = {"value": (True, "")}
+    monkeypatch.setattr(controls, "control_status", lambda _ctx, _c: status["value"])
     ran = []
     monkeypatch.setattr(controls, "run_control", lambda _ctx, control: ran.append(control))
     operator = modal.FLUIDSIM_OT_deck_modal()
     operator.generation = modal._GENERATION
+    operator.status = status
+    operator.reports = []
+    operator.report = lambda kind, message: operator.reports.append((kind, message))
     return modal, operator, context, ran
 
 
@@ -231,7 +235,7 @@ def _event(kind, x, y, value="PRESS"):
 
 
 def test_deck_events_consume_clicks_only_over_the_bar_and_never_esc(monkeypatch):
-    modal, operator, context, ran = _routing(monkeypatch)
+    _modal, operator, context, ran = _routing(monkeypatch)
     # A click on the Play button (region-space 20,20 -> window 120,20) runs it.
     assert operator.modal(context, _event("LEFTMOUSE", 120, 20)) == {"RUNNING_MODAL"}
     assert [c.target for c in ran] == ["screen.animation_play"]
@@ -243,6 +247,14 @@ def test_deck_events_consume_clicks_only_over_the_bar_and_never_esc(monkeypatch)
     assert operator.modal(context, _event("LEFTMOUSE", 850, 20)) == {"PASS_THROUGH"}
     assert operator.modal(context, _event("ESC", 120, 20)) == {"PASS_THROUGH"}
     assert len(ran) == 1
+
+
+def test_a_refused_bar_click_runs_nothing_and_says_why(monkeypatch):
+    _modal, operator, context, ran = _routing(monkeypatch)
+    operator.status["value"] = (False, "A Production Bake is running")
+    assert operator.modal(context, _event("LEFTMOUSE", 120, 20)) == {"RUNNING_MODAL"}
+    assert ran == []
+    assert operator.reports == [({"WARNING"}, "Play: A Production Bake is running")]
 
 
 def test_a_modal_from_an_earlier_register_retires_itself(monkeypatch):

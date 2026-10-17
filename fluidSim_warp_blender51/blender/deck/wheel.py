@@ -57,6 +57,19 @@ def clamp_centre(x, y, width, height, scale=1.0):
     return cx, cy
 
 
+def slot_tip(stage, hover, statuses):
+    """``(title, body, note)`` for the hovered hub or slot; empty strings when none."""
+    if hover == "HUB":
+        following = controls.STAGE_LABELS[controls.next_stage(stage)]
+        return (f"Stage: {controls.STAGE_LABELS[stage]}",
+                f"Click to show the {following} actions", "")
+    if not isinstance(hover, int):
+        return "", "", ""
+    control = STAGE_SLOTS[stage][hover]
+    ready, reason = statuses[hover]
+    return control.label, control.tooltip, "" if ready else f"Unavailable: {reason}"
+
+
 def current_stage(scene) -> str:
     stage = str(getattr(getattr(scene, "fluidsim", None), "deck_stage", "SETUP"))
     return stage if stage in STAGE_SLOTS else controls.STAGES[0]
@@ -74,10 +87,11 @@ def _draw_wheel(operator):
         size = 11.0 * scale
         _draw.circle(cx, cy, (RING_RADIUS + SLOT_RADIUS + 8.0) * scale,
                      tokens.rgba(palette.surface, tokens.CARD_ALPHA * 0.85), 64)
+        statuses = [controls.control_status(context, c) for c in STAGE_SLOTS[stage]]
         for index, control in enumerate(STAGE_SLOTS[stage]):
             ox, oy = slot_centre(index)
             x, y = cx + ox * scale, cy + oy * scale
-            enabled = controls.control_enabled(context, control)
+            enabled = statuses[index][0]
             on = controls.control_active(context, control)
             fill = palette.accent if (index == operator.hover or on) and enabled else palette.text_dim
             _draw.circle(x, y, SLOT_RADIUS * scale,
@@ -91,6 +105,15 @@ def _draw_wheel(operator):
         label = controls.STAGE_LABELS[stage]
         width = _draw.text_width(label, size)
         _draw.text(cx - width / 2.0, cy - size / 3.0, label, size, tokens.rgba(palette.text))
+        title, body, note = slot_tip(stage, operator.hover, statuses)
+        if title:
+            # Above the wheel when it fits, else below it.
+            extent = (RING_RADIUS + SLOT_RADIUS + 8.0) * scale
+            height = bar.tip_card_height(scale, size, note)
+            y0 = cy + extent + bar.GAP * scale
+            if y0 + height > getattr(context.region, "height", y0 + height):
+                y0 = cy - extent - bar.GAP * scale - height
+            bar.draw_tip_card(context, cx, y0, title, body, palette, scale, size, note)
     except Exception as exc:  # noqa: BLE001 - a draw callback must never raise
         print(f"FluidSim Liquid Deck: wheel draw failed: {exc!r}")
 
@@ -145,6 +168,11 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
             scene.fluidsim.deck_stage = controls.next_stage(current_stage(scene))
             return None
         control = STAGE_SLOTS[current_stage(scene)][target]
+        ready, reason = controls.control_status(context, control)
+        if not ready:
+            # Keep the wheel open and say why, rather than closing and doing nothing.
+            self.report({"WARNING"}, f"{control.label}: {reason}")
+            return None
         self._close(context)
         controls.run_control(context, control)
         return {"FINISHED"}
@@ -170,7 +198,7 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
         if event.type == self.opened_with and event.value == "RELEASE":
             # Press-drag-release onto a slot runs it; releasing elsewhere keeps the wheel.
             if isinstance(target, int):
-                return self._pick(context, target)
+                return self._pick(context, target) or {"RUNNING_MODAL"}
             return {"RUNNING_MODAL"}
         if event.type in {"LEFTMOUSE", "RIGHTMOUSE"} and event.value == "PRESS":
             if target is None:

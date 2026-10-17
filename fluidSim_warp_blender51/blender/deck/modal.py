@@ -130,8 +130,12 @@ class FLUIDSIM_OT_deck_modal(bpy.types.Operator):
             if event.type == "MOUSEMOVE" or not over:
                 return {"PASS_THROUGH"}
             if item is not None and item.control is not None and event.value == "PRESS":
-                if controls.control_enabled(bpy.context, item.control):
+                ready, reason = controls.control_status(bpy.context, item.control)
+                if ready:
                     controls.run_control(bpy.context, item.control)
+                else:
+                    # A refused click says why in the status bar instead of doing nothing.
+                    self.report({"WARNING"}, f"{item.control.label}: {reason}")
                 region.tag_redraw()
         return {"RUNNING_MODAL"}
 

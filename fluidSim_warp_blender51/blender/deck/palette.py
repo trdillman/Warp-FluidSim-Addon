@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 import bpy
 
-from . import _draw, bar, tokens
+from . import _draw, bar, controls, tokens
 
 EXCLUDED_OPERATORS = frozenset({
     "fluidsim.command_palette", "fluidsim.radial_wheel", "fluidsim.deck_modal"})
@@ -240,12 +240,8 @@ def commit_inline(scene, entry: Entry, text: str) -> None:
 
 # Operator ------------------------------------------------------------------------
 
-def _call(idname, **properties):
-    module, _, name = idname.partition(".")
-    op = getattr(getattr(bpy.ops, module), name)
-    if op.poll():
-        return op("INVOKE_DEFAULT", **properties)
-    return {"CANCELLED"}
+# What a palette filtered to one kind (the wheel's Preset and Demo slots) prompts.
+KIND_PROMPTS = {"preset": "Choose a preset…", "demo": "Choose a demo…"}
 
 
 def _is_shortcut(event) -> bool:
@@ -276,7 +272,8 @@ def _draw_palette(operator):
         _draw.rounded_rect(x0, y0, x1, y1, radius, tokens.rgba(palette.surface, tokens.CARD_ALPHA))
         prompt = operator.edit_text if operator.editing else operator.query
         caption = (f"{operator.editing.label} = {prompt}_" if operator.editing
-                   else (prompt + "_" if prompt else "Search FluidSim…"))
+                   else (prompt + "_" if prompt else KIND_PROMPTS.get(operator.kind_filter,
+                                                                      "Search FluidSim…")))
         _draw.text(x0 + 12 * scale, y1 - row, caption, size,
                    tokens.rgba(palette.text if prompt or operator.editing else palette.text_dim))
         for index, entry in enumerate(operator.results[:VISIBLE_ROWS]):
@@ -305,6 +302,10 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
         "Search FluidSim operators, presets, demos and settings; Enter runs an "
         "operator or edits a number inline. Click outside to close")
 
+    kinds: bpy.props.StringProperty(
+        name="Kinds", description="Show only entries of this kind (preset, demo); empty shows all",
+        default="", options={"HIDDEN", "SKIP_SAVE"})
+
     @classmethod
     def poll(cls, context):
         from . import deck_visible
@@ -316,6 +317,9 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
         from .registry import REGISTRY
 
         self.entries = build_index(context.scene)
+        self.kind_filter = str(getattr(self, "kinds", "") or "")
+        if self.kind_filter:
+            self.entries = [entry for entry in self.entries if entry.kind == self.kind_filter]
         self.query = ""
         self.results = search("", self.entries)
         self.selected = 0
@@ -344,16 +348,22 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
         self.results = search(self.query, self.entries)
         self.selected = 0
 
+    def _call(self, idname, **properties):
+        result, message = controls.call_operator(idname, **properties)
+        if message:
+            self.report({"WARNING"}, message)
+        return result
+
     def _run(self, context, entry):
         if entry.kind == "operator":
-            return _call(entry.target)
+            return self._call(entry.target)
         if entry.kind == "demo":
-            return _call("fluidsim.load_demo", demo_id=entry.target)
+            return self._call("fluidsim.load_demo", demo_id=entry.target)
         if entry.kind == "preset":
             context.scene.fluidsim.product_preset = entry.target
-            return _call("fluidsim.apply_product_preset")
+            return self._call("fluidsim.apply_product_preset")
         if not entry.editable:
-            return _call(entry.jump_operator)
+            return self._call(entry.jump_operator)
         if entry.value_type == "BOOLEAN":
             commit_inline(context.scene, entry, "")
             return {"FINISHED"}

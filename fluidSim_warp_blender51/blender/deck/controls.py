@@ -116,10 +116,11 @@ STAGE_SLOTS = OrderedDict((
                  "Make the selected object a collider"),
         operator("fluidsim.use_active_as_domain", "Domain", "CUBE",
                  "Use the active object as the liquid domain"),
-        operator("fluidsim.apply_product_preset", "Preset", "PRESET",
-                 "Apply the selected preset to this scene"),
-        operator("fluidsim.load_demo", "Demo", "FILE_BLEND",
-                 "Load the Dam Break demo into a new scene", demo_id="dam_break"),
+        # Preset and Demo open the palette filtered to that list, so the wheel picks one.
+        operator("fluidsim.command_palette", "Preset", "PRESET",
+                 "Choose a preset and apply it to this scene", kinds="preset"),
+        operator("fluidsim.command_palette", "Demo", "FILE_BLEND",
+                 "Choose a demo and load it into a new scene", kinds="demo"),
     )),
     ("SIMULATE", (
         PLAY,
@@ -220,10 +221,85 @@ def property_owner(context, control):
 
 
 def control_enabled(context, control) -> bool:
+    """Whether the control's target exists (it may still be unable to run right now)."""
     if control.kind == "operator":
         return operator_available(control.target)
     group = property_owner(context, control)
     return group is not None and hasattr(group, control.target)
+
+
+_MISSING_GROUP = {
+    "object": "Select a FluidSim object first",
+    "domain": "Assign a FluidSim domain first (Setup > Domain or Set Up Scene)",
+    "scene": "No scene is open",
+}
+
+
+class _PollProbe:
+    """Stands in for an operator class so its ``poll`` can be called to read its message."""
+
+    def __init__(self, cls):
+        self._cls = cls
+        self.message = ""
+
+    def __getattr__(self, name):
+        return getattr(self._cls, name)
+
+    def poll_message_set(self, message, *args):
+        self.message = message(*args) if callable(message) else str(message)
+
+
+def poll_reason(context, idname: str) -> str:
+    """The message the operator's ``poll`` gives for failing, or ``""`` when it gives none."""
+    import bpy
+
+    module, _, name = idname.partition(".")
+    try:
+        identifier = getattr(getattr(bpy.ops, module), name).get_rna_type().identifier
+        cls = getattr(bpy.types, identifier, None)
+        poll = getattr(getattr(cls, "poll", None), "__func__", None)
+        if poll is None:
+            return ""
+        probe = _PollProbe(cls)
+        poll(probe, context)
+        return probe.message
+    except Exception:  # noqa: BLE001 - only the message is wanted; poll() decides
+        return ""
+
+
+def control_status(context, control) -> tuple[bool, str]:
+    """``(can run now, why not)`` for drawing a control and explaining a refused click."""
+    if control.kind == "operator":
+        if not operator_available(control.target):
+            return False, "Not available in this build"
+        import bpy
+
+        module, _, name = control.target.partition(".")
+        if getattr(getattr(bpy.ops, module), name).poll():
+            return True, ""
+        return False, (poll_reason(context, control.target)
+                       or "Not available in the current state")
+    group = property_owner(context, control)
+    if group is None:
+        return False, _MISSING_GROUP.get(control.owner, "Not available")
+    if not hasattr(group, control.target):
+        return False, "Not available on this object"
+    return True, ""
+
+
+def call_operator(idname: str, call_context="INVOKE_DEFAULT", **properties):
+    """``(result, message)``: run ``idname`` if it can run, else say why it did not."""
+    import bpy
+
+    module, _, name = idname.partition(".")
+    op = getattr(getattr(bpy.ops, module), name)
+    if not op.poll():
+        return {"CANCELLED"}, (poll_reason(bpy.context, idname)
+                               or "Not available in the current state")
+    try:
+        return op(call_context, **properties), ""
+    except RuntimeError as exc:
+        return {"CANCELLED"}, str(exc)
 
 
 def control_active(context, control) -> bool:
@@ -239,13 +315,8 @@ def run_control(context, control):
     if control.kind == "operator":
         if not operator_available(control.target):
             return {"CANCELLED"}
-        import bpy
-
-        module, _, name = control.target.partition(".")
-        op = getattr(getattr(bpy.ops, module), name)
-        if not op.poll():
-            return {"CANCELLED"}
-        return op(control.call_context, **dict(control.properties))
+        return call_operator(control.target, control.call_context,
+                             **dict(control.properties))[0]
     group = property_owner(context, control)
     if group is None or not isinstance(getattr(group, control.target, None), bool):
         return {"CANCELLED"}

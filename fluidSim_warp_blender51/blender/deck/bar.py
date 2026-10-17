@@ -311,25 +311,44 @@ def _draw_icon(icon, cx, cy, r, colour, accent, fraction=None):
         _draw.circle(cx, cy, 0.5 * r, colour, 16)
 
 
-def _draw_tip(context, layout, item, palette, s, size):
-    """A two-line tip card above the hovered item, kept inside the region."""
+def tip_card_height(s, size, note=""):
+    lines = 3 if note else 2
+    return size * 1.1 * lines + size * 0.9 + 1.5 * PAD * s
+
+
+def draw_tip_card(context, centre_x, y0, title, body, palette, s, size, note=""):
+    """A tip card (title, body, and why it cannot run) centred on ``centre_x``, inside the region."""
     from . import _draw
 
-    if not item.tip:
-        return
-    title, body = item.tip
     pad = PAD * s
-    width = max(_draw.text_width(title, size), _draw.text_width(body, size * 0.9)) + 2 * pad
-    height = size * 2.0 + size * 0.9 + 1.5 * pad
+    width = max(_draw.text_width(title, size), _draw.text_width(body, size * 0.9),
+                _draw.text_width(note, size * 0.9) if note else 0.0) + 2 * pad
+    height = tip_card_height(s, size, note)
     region_width = float(getattr(getattr(context, "region", None), "width", width))
-    x0 = (item.rect[0] + item.rect[2] - width) / 2.0
-    x0 = max(GAP * s, min(x0, region_width - width - GAP * s))
-    y0 = layout.card[3] + GAP * s
+    x0 = max(GAP * s, min(centre_x - width / 2.0, region_width - width - GAP * s))
     radius = tokens.RADIUS_SCALE[1] * s
     _draw.rounded_rect(x0, y0, x0 + width, y0 + height, radius,
                        tokens.rgba(palette.surface, tokens.CARD_ALPHA))
     _draw.text(x0 + pad, y0 + height - pad - size * 0.8, title, size, tokens.rgba(palette.text))
-    _draw.text(x0 + pad, y0 + pad, body, size * 0.9, tokens.rgba(palette.text_dim))
+    line = size * 1.1
+    if note:
+        _draw.text(x0 + pad, y0 + pad + line, body, size * 0.9, tokens.rgba(palette.text_dim))
+        _draw.text(x0 + pad, y0 + pad, note, size * 0.9, tokens.rgba(palette.reset))
+    else:
+        _draw.text(x0 + pad, y0 + pad, body, size * 0.9, tokens.rgba(palette.text_dim))
+
+
+def _draw_tip(context, layout, item, palette, s, size):
+    """The hovered item's tip above the bar, with the reason when it cannot run now."""
+    if not item.tip:
+        return
+    title, body = item.tip
+    note = ""
+    if item.control is not None:
+        ready, reason = controls.control_status(context, item.control)
+        note = "" if ready else f"Unavailable: {reason}"
+    draw_tip_card(context, (item.rect[0] + item.rect[2]) / 2.0, layout.card[3] + GAP * s,
+                  title, body, palette, s, size, note)
 
 
 def _paint(context, layout, palette, hover):
@@ -348,7 +367,7 @@ def _paint(context, layout, palette, hover):
         mid_y = (y0 + y1) / 2.0 - size / 3.0
         if item.role in {"button", "chip_action"}:
             control = item.control
-            enabled = controls.control_enabled(context, control)
+            enabled = controls.control_status(context, control)[0]
             on = control in {controls.PAUSE} or controls.control_active(context, control)
             hovered = hover is not None and hover.rect == item.rect and enabled
             fill = palette.accent if (hovered or on) else palette.text_dim
