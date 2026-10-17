@@ -351,16 +351,29 @@ def workflow():
     yield 0.4
     check("tagged_collider", cube.fluidsim.role == "COLLIDER", cube.fluidsim.role)
 
-    hits = yield from find_widgets(inp, props, ["fluidsim.collider_dynamic"])
+    body_type = "fluidsim.collider_body_type"
+    hits = yield from find_widgets(inp, props, [body_type])
     check("static_panel_draws_transfer_velocity",
           "fluidsim.transfer_velocity" in hits
           and "fluidsim.collider_density" not in hits)
-    if "fluidsim.collider_dynamic" not in hits:
-        check("dynamic_toggle_drawn", False, sorted(hits))
+    if body_type not in hits:
+        check("body_type_dropdown_drawn", False, sorted(hits))
         return
-    inp.click(*hits["fluidsim.collider_dynamic"])
+    # Open the Body Type dropdown and pick Dynamic by its accelerator key;
+    # fall back to Ctrl+wheel, which steps an enum under the cursor.
+    inp.click(*hits[body_type])
+    yield 0.3
+    inp.key("D")
     yield 0.4
-    check("dynamic_on", cube.fluidsim.collider_dynamic)
+    for _ in range(3):
+        if cube.fluidsim.collider_body_type == "DYNAMIC":
+            break
+        inp.move(*hits[body_type])
+        inp.win.event_simulate(type="WHEELDOWNMOUSE", value="PRESS",
+                               x=inp.x, y=inp.y, ctrl=True)
+        yield 0.3
+    check("dynamic_on", cube.fluidsim.collider_dynamic,
+          cube.fluidsim.collider_body_type)
 
     dynamic_paths = ["fluidsim.collider_density", "fluidsim.collider_drag",
                      "fluidsim.collider_initial_velocity[0]"]
