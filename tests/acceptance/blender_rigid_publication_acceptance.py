@@ -31,7 +31,6 @@ import tempfile
 import traceback
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import bpy
 import numpy as np

@@ -20,7 +20,6 @@ import pytest
 from fluidSim_warp_blender51.io import cache_schema, checkpoint
 from fluidSim_warp_blender51.io.cache_schema import (
     CacheManifestV3,
-    FrameEntry,
     RigidBodyRecord,
 )
 
