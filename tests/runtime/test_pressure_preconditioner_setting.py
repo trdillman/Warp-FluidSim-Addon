@@ -111,12 +111,12 @@ def test_pending_settings_classifies_it_as_live(monkeypatch):
     assert "pressure_preconditioner" in pending._LIVE_SETTING_FIELDS
 
 
-def test_pressure_panel_shows_it_only_for_pcg():
+def test_pressure_panel_greys_it_unless_pcg():
     source = (PKG / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     block = source[source.index("class FLUIDSIM_PT_sim_pressure"):]
     block = block[:block.index("\nclass ", 10)]
-    guarded = block[block.index('if fs.pressure_solver == "PCG"'):]
-    assert 'layout.prop(fs, "pressure_preconditioner")' in guarded
+    guarded = block[block.index('pcg = _gated(layout, fs.pressure_solver == "PCG")'):]
+    assert 'pcg.prop(fs, "pressure_preconditioner")' in guarded
 
 
 def _operator_context(*, active, domain):

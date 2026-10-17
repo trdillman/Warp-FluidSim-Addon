@@ -258,11 +258,11 @@ def test_transport_exposes_complete_state_dependent_artist_actions():
 
 
 def test_step_one_and_step_many_have_distinct_execute_and_dialog_paths():
-    # Manual stepping remains available in the default-closed Advanced lifecycle.
+    # Manual stepping stays in the default-closed Lifecycle panel in every mode.
     scene_source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     block = _class_block(scene_source, "FLUIDSIM_PT_scene_lifecycle")
     assert 'bl_options = {"DEFAULT_CLOSED"}' in block
-    assert "_advanced_visible(context)" in block
+    assert "_advanced_visible" not in block
     assert 'step_once.operator_context = "EXEC_DEFAULT"' in block
     assert 'step_many.operator_context = "INVOKE_DEFAULT"' in block
     operator_source = (ROOT / "operator_domains" / "session.py").read_text(encoding="utf-8")
@@ -320,10 +320,10 @@ def test_manage_cache_panel_requires_a_recognized_fluidsim_cache_directory():
     assert "cache_manage_available(context)" in shelf
 
 
-def test_live_timeline_recovery_is_advanced_and_nested_under_lifecycle():
+def test_live_timeline_recovery_is_nested_under_lifecycle_in_every_mode():
     source = (ROOT / "blender" / "ui_scene.py").read_text(encoding="utf-8")
     block = _class_block(source, "FLUIDSIM_PT_scene_live_timeline")
     assert 'bl_parent_id = "FLUIDSIM_PT_scene_lifecycle"' in block
-    assert "_advanced_visible(context)" in block
+    assert "_advanced_visible" not in block
     assert "max_frame_catchup" in block
 

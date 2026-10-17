@@ -1,6 +1,6 @@
 """Learned pressure initial guess (4.0 lane N, SPEC-learned-pressure-guess).
 
-The feature is gated: ``pressure_learned_guess`` is off by default and hidden,
+The feature is gated: ``pressure_learned_guess`` is off by default (drawn greyed under PCG),
 and no trained weights ship. These tests pin the contract that holds whatever
 weights are (or are not) present:
 

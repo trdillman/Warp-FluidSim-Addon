@@ -150,8 +150,9 @@ class FLUIDSIM_PT_object_region(FluidSimObjectPanel, bpy.types.Panel):
         elif role == "SOURCE" and region == "POINTS":
             layout.prop(settings, "point_source_representation")
             layout.prop(settings, "point_input_object")
-            if settings.point_source_representation == "RASTERIZED_REGION":
-                layout.prop(settings, "point_rasterize_radius")
+            radius = layout.column()
+            radius.active = settings.point_source_representation == "RASTERIZED_REGION"
+            radius.prop(settings, "point_rasterize_radius")
         # Point, volume and field inputs are evaluated on the same First /
         # Every Sim Frame cadence as meshes (B47).
         if uses_native_source_plan(settings):
@@ -333,10 +334,12 @@ class FLUIDSIM_PT_object_volume(FluidSimObjectPanel, bpy.types.Panel):
                 layout.prop(settings, "volume_scalar_grid")
             else:
                 layout.prop(settings, "volume_vector_grid")
-                if not settings.volume_vector_grid:
-                    layout.prop(settings, "volume_vector_x_grid")
-                    layout.prop(settings, "volume_vector_y_grid")
-                    layout.prop(settings, "volume_vector_z_grid")
+                # Per-axis grids apply only when no packed vector grid is named.
+                axes = layout.column()
+                axes.active = not settings.volume_vector_grid
+                axes.prop(settings, "volume_vector_x_grid")
+                axes.prop(settings, "volume_vector_y_grid")
+                axes.prop(settings, "volume_vector_z_grid")
 
 
 OBJECT_PANEL_CLASSES = (

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import bpy
 
-from . import file_compat, output_publication, ui_object, ui_scene
+from . import effect_ui, file_compat, output_publication, ui_object, ui_scene
 from .scene_access import active_domain_object
 from .ui_common import FluidSimObjectPanel, active_object_role
 
@@ -71,6 +71,7 @@ def _make_panel_mirrors(
     group: str,
     accepted_kinds: frozenset[str],
     kinds_by_panel=None,
+    order_offset: int = 0,
 ):
     """Mirror existing panels under the Physics root without copying state.
 
@@ -78,7 +79,8 @@ def _make_panel_mirrors(
     panels through ``ui_scene._domain_owner``), and the DOMAIN kind already
     means a domain object is designated, so a mirror needs no redirect.
     ``kinds_by_panel`` narrows individual source panels to fewer kinds than
-    the group accepts.
+    the group accepts. ``order_offset`` shifts the mirrors' ``bl_order`` so a
+    group can be placed after another group's top-level panels.
     """
     kinds_by_panel = dict(kinds_by_panel or {})
     source_panels = tuple(source_panels)
@@ -116,7 +118,7 @@ def _make_panel_mirrors(
             "bl_space_type": FluidSimPhysicsPanel.bl_space_type,
             "bl_region_type": FluidSimPhysicsPanel.bl_region_type,
             "bl_context": FluidSimPhysicsPanel.bl_context,
-            "bl_order": int(getattr(source_panel, "bl_order", 0)),
+            "bl_order": int(getattr(source_panel, "bl_order", 0)) + order_offset,
             "bl_options": set(getattr(source_panel, "bl_options", set())),
             "draw": draw_for(source_panel),
             "poll": poll_for(source_panel),
@@ -167,10 +169,7 @@ class FLUIDSIM_PT_physics_root(FluidSimPhysicsPanel, bpy.types.Panel):
             text="Open Scene FluidSim Settings",
             icon="PROPERTIES",
         )
-        if (
-            (kind == "DOMAIN" or kind in _OUTPUT_KINDS.values())
-            and ui_scene._advanced_visible(context)
-        ):
+        if kind == "DOMAIN" or kind in _OUTPUT_KINDS.values():
             install = layout.operator(
                 "fluidsim.install_render_nodes",
                 text="Create / Repair Outputs",
@@ -260,7 +259,7 @@ SURFACE_SOURCE_PANELS = (
 SURFACE_PANEL_CLASSES = _make_panel_mirrors(
     SURFACE_SOURCE_PANELS,
     group="surface",
-    accepted_kinds=frozenset({"SURFACE"}),
+    accepted_kinds=frozenset({"DOMAIN", "SURFACE"}),
 )
 
 # Admission-Status readbacks were consolidated into the scene Diagnostics
@@ -280,10 +279,29 @@ WHITEWATER_SOURCE_PANELS = (
 WHITEWATER_PANEL_CLASSES = _make_panel_mirrors(
     WHITEWATER_SOURCE_PANELS,
     group="whitewater",
-    accepted_kinds=frozenset({"WHITEWATER", "FOAM", "BUBBLES", "SPRAY"}),
+    accepted_kinds=frozenset({"DOMAIN", "WHITEWATER", "FOAM", "BUBBLES", "SPRAY"}),
     kinds_by_panel={
-        ui_scene.FLUIDSIM_PT_whitewater_dynamics: frozenset({"WHITEWATER"}),
+        ui_scene.FLUIDSIM_PT_whitewater_dynamics: frozenset({"DOMAIN", "WHITEWATER"}),
     },
+)
+
+# "All Simulation Settings" opens this tab when the domain is active, so the
+# domain carries every FluidSim setting: the scene-level panels (status,
+# presets, outputs, display, cache & bake, diagnostics) are mirrored after the
+# domain's own groups. They still edit ``Scene.fluidsim``; the Scene tab keeps
+# its own copy for scenes viewed without the domain selected.
+SCENE_ON_DOMAIN_PANEL_CLASSES = _make_panel_mirrors(
+    ui_scene.SCENE_PANEL_CLASSES,
+    group="scene",
+    accepted_kinds=frozenset({"DOMAIN"}),
+    order_offset=200,
+)
+
+EFFECTS_ON_DOMAIN_PANEL_CLASSES = _make_panel_mirrors(
+    effect_ui.EFFECT_PANEL_CLASSES,
+    group="effects",
+    accepted_kinds=frozenset({"DOMAIN"}),
+    order_offset=200,
 )
 
 
@@ -310,9 +328,8 @@ class FLUIDSIM_PT_physics_surface_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "liquid_view_mode")
         layout.prop(fs, "surface_material")
         layout.prop(fs, "surface_attribute_mode")
-        if ui_scene._advanced_visible(context):
-            ui_scene._draw_attribute_group(
-                layout, ui_scene._domain_owner(context), "surface")
+        ui_scene._draw_attribute_group(
+            layout, ui_scene._domain_owner(context), "surface")
 
 
 class FLUIDSIM_PT_physics_particles_output(_OutputPanel, bpy.types.Panel):
@@ -329,9 +346,8 @@ class FLUIDSIM_PT_physics_particles_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "particle_display_scale")
         layout.prop(fs, "particle_attribute_mode")
         layout.prop(fs, "particle_material")
-        if ui_scene._advanced_visible(context):
-            ui_scene._draw_attribute_group(
-                layout, ui_scene._domain_owner(context), "particles")
+        ui_scene._draw_attribute_group(
+            layout, ui_scene._domain_owner(context), "particles")
 
 
 class FLUIDSIM_PT_physics_whitewater_output(_OutputPanel, bpy.types.Panel):
@@ -349,9 +365,8 @@ class FLUIDSIM_PT_physics_whitewater_output(_OutputPanel, bpy.types.Panel):
         layout.prop(fs, "whitewater_display_scale")
         layout.prop(fs, "whitewater_attribute_mode")
         layout.prop(fs, "whitewater_material")
-        if ui_scene._advanced_visible(context):
-            ui_scene._draw_attribute_group(
-                layout, ui_scene._domain_owner(context), "whitewater")
+        ui_scene._draw_attribute_group(
+            layout, ui_scene._domain_owner(context), "whitewater")
 
 
 class FLUIDSIM_PT_physics_foam_output(_OutputPanel, bpy.types.Panel):
@@ -451,6 +466,8 @@ PHYSICS_PANEL_CLASSES = (
     *DOMAIN_PANEL_CLASSES,
     *SURFACE_PANEL_CLASSES,
     *WHITEWATER_PANEL_CLASSES,
+    *SCENE_ON_DOMAIN_PANEL_CLASSES,
+    *EFFECTS_ON_DOMAIN_PANEL_CLASSES,
     *OUTPUT_PANEL_CLASSES,
 )
 

@@ -821,6 +821,11 @@ class FLUIDSIM_PT_effect_warp_code(bpy.types.Panel):
             row.label(text="Cadence")
             row.prop(kernel, "cadence", text="")
             row.prop(kernel, "safe_mode", text="Safe Mode")
+            frames = box.row(align=True)
+            frames.prop(kernel, "frame_start", text="Start")
+            frames.prop(kernel, "frame_end", text="End")
+            frames.prop(kernel, "frame_step", text="Every")
+            box.prop(kernel, "parameter_keys_csv", text="Parameters")
 
             source_row = box.row(align=True)
             source_row.prop(kernel, "source_text", text="Source")

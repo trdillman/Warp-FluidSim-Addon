@@ -478,7 +478,7 @@ def _draw_physics_mirrors(module_name: str, group: str, source_ids) -> dict[str,
 def _assert_scene_and_object_draws(module_name: str) -> dict[str, object]:
     scene = bpy.context.scene
     ds = _ensure_domain()
-    # Representative draws cover the Advanced panels; Basic (the default) hides them.
+    # Properties panels draw the same in Basic and Advanced; Advanced is set for parity.
     scene.fluidsim.ui_mode = "ADVANCED"
     ds.surface_enabled = True
     ds.whitewater_enabled = True

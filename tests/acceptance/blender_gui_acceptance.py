@@ -509,15 +509,14 @@ def _run_phase(phase, scene):
             "Basic guided setup action",
             operator_id="fluidsim.setup_scene",
         )
+        # Basic trims the 3D View sidebar only; Properties lists every panel.
         _assert_panel_disclosure(
-            "FLUIDSIM_PT_scene_lifecycle", "Basic hides Lifecycle", False)
+            "FLUIDSIM_PT_scene_lifecycle", "Basic shows Lifecycle", True)
         _assert_panel_disclosure(
-            "FLUIDSIM_PT_scene_diagnostics", "Basic hides Diagnostics", False)
+            "FLUIDSIM_PT_scene_diagnostics", "Basic shows Diagnostics", True)
         _assert_panel_disclosure(
-            "FLUIDSIM_PT_effect_engineering", "Basic hides Effect Engineering", False)
+            "FLUIDSIM_PT_effect_engineering", "Basic shows Effect Engineering", True)
 
-        # Legacy manual controls remain available only through the explicit
-        # Advanced disclosure tier.
         scene.fluidsim.ui_mode = "ADVANCED"
         _assert_panel_disclosure(
             "FLUIDSIM_PT_scene_lifecycle", "Advanced shows Lifecycle", True)

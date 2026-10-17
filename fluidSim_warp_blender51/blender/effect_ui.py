@@ -916,7 +916,7 @@ class FLUIDSIM_PT_custom_effects(bpy.types.Panel):
 
 
 class FLUIDSIM_PT_effect_engineering(bpy.types.Panel):
-    """Legacy compile/test tools retained for Advanced troubleshooting."""
+    """Compile/test tools; Properties lists them in Basic and Advanced alike."""
 
     bl_label = "Effect Engineering"
     bl_idname = "FLUIDSIM_PT_effect_engineering"
@@ -928,12 +928,7 @@ class FLUIDSIM_PT_effect_engineering(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        scene = getattr(context, "scene", None)
-        fs = getattr(scene, "fluidsim", None) if scene is not None else None
-        return bool(
-            getattr(scene, "fluidsim_effects", None) is not None
-            and (fs is None or getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED")
-        )
+        return getattr(getattr(context, "scene", None), "fluidsim_effects", None) is not None
 
     def draw(self, context):
         _draw_effect_workflow(self.layout)
@@ -1021,6 +1016,13 @@ CLASSES = (
     FLUIDSIM_OT_effect_compare_update,
     FLUIDSIM_OT_effect_rename_installed,
     FLUIDSIM_OT_effect_export_package,
+    FLUIDSIM_PT_custom_effects,
+    FLUIDSIM_PT_effect_engineering,
+    FLUIDSIM_PT_effect_packages,
+)
+
+# Properties panels, also mirrored onto the domain's Physics tab.
+EFFECT_PANEL_CLASSES = (
     FLUIDSIM_PT_custom_effects,
     FLUIDSIM_PT_effect_engineering,
     FLUIDSIM_PT_effect_packages,

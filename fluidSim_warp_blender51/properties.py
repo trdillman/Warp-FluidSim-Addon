@@ -114,8 +114,8 @@ HEIGHT_BACK_MODE_ITEMS = (
 # Two-tier UI disclosure (design D2). These are presentation-only settings:
 # they change which panels and controls the add-on shows, never solver state.
 UI_MODE_ITEMS = (
-    ("BASIC", "Basic", "Show only the everyday controls needed to author and run a liquid; hide expert solver internals"),
-    ("ADVANCED", "Advanced", "Reveal the full set of solver, surfacing, whitewater, and export controls for expert tuning"),
+    ("BASIC", "Basic", "Sidebar shows only the everyday controls needed to author and run a liquid; Properties still shows everything"),
+    ("ADVANCED", "Advanced", "Sidebar reveals the full set of solver, surfacing, whitewater, and export controls for expert tuning"),
 )
 QUALITY_ITEMS = (
     ("DRAFT", "Draft", "Fastest, lowest-fidelity preview for iterating on staging and motion"),
@@ -862,7 +862,7 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     # UI disclosure (presentation-only; never touches solver state)
     ui_mode: EnumProperty(
         name="Interface", items=UI_MODE_ITEMS, default="BASIC",
-        description="Choose how much of the interface is shown: Basic hides expert solver internals, Advanced reveals the full control set")
+        description="Choose how much of the 3D View sidebar is shown: Basic hides expert solver internals there, Advanced reveals them. Properties (All Simulation Settings) always shows every setting")
     quality: EnumProperty(
         name="Quality", items=QUALITY_ITEMS, default="PREVIEW",
         update=_request_rebuild,
@@ -1482,12 +1482,12 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         ],
         default="MULTIGRID", update=_request_live,
         description="Choose the preconditioner for the PCG pressure solver; Multigrid can converge in fewer iterations on large domains, while Jacobi is cheaper per iteration. Used only by the PCG solver")
-    # Hidden and off in 4.0: no trained weights ship because the ship gate
-    # (docs/specs/4.0/SPEC-learned-pressure-guess.md) was not met. Not drawn
-    # in any panel; see docs/RELEASE_4_0_STATUS.md for the measured numbers.
+    # Off by default: no trained weights ship because the 4.0 ship gate
+    # (docs/specs/4.0/SPEC-learned-pressure-guess.md) was not met, so turning
+    # it on falls back to a zero guess. Drawn under PCG so every setting is
+    # reachable; see docs/RELEASE_4_0_STATUS.md for the measured numbers.
     pressure_learned_guess: BoolProperty(
         name="Learned Pressure Guess", default=False, update=_request_reset,
-        options={'HIDDEN'},
         description="Start each PCG pressure solve from a guess predicted by a small trained network instead of from zero; the solve still runs to the same tolerance, falls back to zero silently when no valid weights file is installed, and changing it resets the solver")
     pressure_threshold: FloatProperty(
         name="Threshold", default=0.0, min=0.0, max=1.0,

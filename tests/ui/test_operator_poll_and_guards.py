@@ -246,6 +246,7 @@ def test_scene_domain_panel_draw_does_not_inspect_broken_domain_geometry(monkeyp
     assert layout.properties == [
         "domain_object",
         "resolution_divisions",
+        "voxel_size",
         "particles_per_voxel",
         "max_particles",
         "auto_grow_particles",

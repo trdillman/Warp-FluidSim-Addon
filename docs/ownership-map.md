@@ -22,16 +22,16 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 152 | UI writes exactly where the consumer reads |
+| OK | 155 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
-| PUBLISHED | 30 | the runtime publishes it where its reader looks |
+| PUBLISHED | 29 | the runtime publishes it where its reader looks |
 | PUBLISHED_MULTI | 0 | published and observed, but by more than one path |
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
 | WRITE_ONLY | 0 | UI writes it; no consumer read resolved statically |
-| READ_ONLY | 29 | something reads it; nothing resolved writes it |
+| READ_ONLY | 27 | something reads it; nothing resolved writes it |
 | INTERNAL | 9 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
 | **total** | **226** | |
@@ -138,11 +138,11 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `gravity` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `use_scene_gravity` | LIVE | domain | domain | - | domain | domain | 0 | OK |
 | `resolution_divisions` | REINITIALIZE | domain | domain | domain | - | domain | 1 | OK |
-| `voxel_size` | REINITIALIZE | - | domain | domain | domain | domain | 1 | PUBLISHED |
+| `voxel_size` | REINITIALIZE | domain | domain | domain | domain | domain | 1 | OK |
 | `leaf_capacity` | REINITIALIZE | domain | domain | - | - | domain | 0 | OK |
 | `topology_expand` | RESET | domain | domain | - | - | domain | 0 | OK |
 | `open_boundaries` | RESET | domain | domain | - | - | domain | 0 | OK |
-| `domain_sdf_walls` | RESET | - | domain | - | - | domain | 0 | READ_ONLY |
+| `domain_sdf_walls` | RESET | domain | domain | - | - | domain | 0 | OK |
 | `max_particles` | REINITIALIZE | domain | domain | - | - | domain | 2 | OK |
 | `auto_grow_particles` | LIVE | domain | domain | - | domain | domain | 0 | OK |
 | `particle_growth_failure_policy` | LIVE | domain | domain | - | - | domain | 0 | OK |
@@ -173,7 +173,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `pressure_iterations` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `pressure_tolerance` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `pressure_preconditioner` | LIVE | domain | domain | domain | - | domain | 1 | OK |
-| `pressure_learned_guess` | RESET | - | domain | - | domain | domain | 0 | READ_ONLY |
+| `pressure_learned_guess` | RESET | domain | domain | - | domain | domain | 0 | OK |
 | `pressure_threshold` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `viscosity_enabled` | LIVE | domain | domain | - | domain | domain | 1 | OK |
 | `viscosity_solver` | LIVE | domain | domain | - | domain | domain | 0 | OK |

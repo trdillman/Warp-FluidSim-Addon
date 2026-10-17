@@ -1,4 +1,4 @@
-"""Learned pressure guess setting: RESET class, hidden, Live Readout row (4.0 lane N)."""
+"""Learned pressure guess setting: RESET class, drawn under PCG, Live Readout row (4.0 lane N)."""
 
 from __future__ import annotations
 
@@ -44,20 +44,22 @@ def _property_call(name):
     raise AssertionError(f"{name} not declared")
 
 
-def test_property_is_hidden_off_reset_and_has_a_tooltip():
+def test_property_is_off_reset_and_has_a_tooltip():
     call = _property_call("pressure_learned_guess")
     kw = {k.arg: k.value for k in call.keywords}
     assert ast.literal_eval(kw["default"]) is False
     assert kw["update"].id == "_request_reset"
-    assert "HIDDEN" in ast.literal_eval(kw["options"])
+    assert "options" not in kw
     assert "resets the solver" in ast.literal_eval(kw["description"])
 
 
-def test_setting_is_not_drawn_in_any_panel():
-    drawn = re.compile(r"prop\([^)]*[\"']pressure_learned_guess[\"']")
+def test_setting_is_drawn_with_the_pcg_rows():
+    # Every setting is reachable from All Simulation Settings; this one sits
+    # with the PCG rows and greys out with them.
+    drawn = re.compile(r"pcg\.prop\([^)]*[\"']pressure_learned_guess[\"']")
     hits = [p.name for p in (ADDON / "blender").glob("*.py")
             if drawn.search(p.read_text(encoding="utf-8"))]
-    assert hits == []
+    assert hits == ["ui_scene.py"]
 
 
 def test_stat_is_published_and_cleared_on_playback():

@@ -44,12 +44,12 @@ def test_artist_workflow_is_primary_and_engineering_actions_are_not_drawn():
     assert "_draw_effect_workflow" not in block
 
 
-def test_effect_engineering_is_an_advanced_closed_child_panel():
+def test_effect_engineering_is_a_closed_child_panel_in_every_mode():
     source = ARTIST_UI.read_text(encoding="utf-8")
     block = _block(source, "FLUIDSIM_PT_effect_engineering")
     assert 'bl_parent_id = "FLUIDSIM_PT_custom_effects"' in block
     assert 'bl_options = {"DEFAULT_CLOSED"}' in block
-    assert 'getattr(fs, "ui_mode", "ADVANCED") == "ADVANCED"' in block
+    assert "ui_mode" not in block
     assert "_draw_effect_workflow(self.layout)" in block
     workflow = source.split("def _draw_effect_workflow", 1)[1].split("\nclass ", 1)[0]
     for operator_id in (
