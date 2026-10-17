@@ -67,8 +67,8 @@ twin of an existing operator or property.
 - **Tokens** (`tokens.py`): single source of colours, radii, blur fallback (no
   backdrop blur on backends without it; use a 2-tap approximation), timing.
 
-Settings: preference `deck_mode` ∈ {AUTO, ON, OFF} (AUTO = on for files saved by ≥ 4.0,
-off for older files); scene flag `deck_shown`. No Deck state is saved per object.
+Settings: preference `deck_mode` ∈ {AUTO, ON, OFF}, default ON (AUTO = on for files saved
+by ≥ 4.0, off for older files); scene flag `deck_shown`. No Deck state is saved per object.
 
 ## Reference mockup
 

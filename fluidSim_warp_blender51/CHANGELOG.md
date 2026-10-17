@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- The **Liquid Deck** preference now defaults to **On**, so the Deck and its
+  on-object handles show in every file, including files saved by 3.x. Set it
+  to Auto for the old behaviour (3.x files open without the Deck).
+
+### Fixes
+
+- Dragging a domain face handle resizes the domain live; before, the viewport
+  only updated when you let go of the mouse.
+
 ## 4.0.1 — Install Warp from a file, and downloads that survive slow links
 
 - **Install from File** in Add-on Preferences installs the certified Warp

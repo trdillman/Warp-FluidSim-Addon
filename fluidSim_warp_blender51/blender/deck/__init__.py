@@ -6,8 +6,8 @@ gizmo or inline edit writes an existing property (see ``controls.py``).
 
 Visibility is decided by two things the user owns:
 
-- the add-on preference ``deck_mode``: ``OFF`` hides it everywhere, ``ON`` shows
-  it wherever the scene's ``deck_shown`` flag is set, and ``AUTO`` (the default)
+- the add-on preference ``deck_mode``: ``OFF`` hides it everywhere, ``ON`` (the
+  default) shows it wherever the scene's ``deck_shown`` flag is set, and ``AUTO``
   also shows it, except that a file saved before FluidSim 4.0 opens with the
   flag cleared, so files from 3.x look as they did;
 - the scene flag ``scene.fluidsim.deck_shown`` (the header toggle).

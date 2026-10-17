@@ -241,7 +241,7 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
             ("ON", "On", "Show the Liquid Deck wherever the scene's Liquid Deck toggle is on"),
             ("OFF", "Off", "Never show the Liquid Deck; the panels work as before"),
         ),
-        default="AUTO",
+        default="ON",
         description=(
             "Choose when the in-viewport Liquid Deck (bar, palette, wheel and handles) "
             "appears; Off hides it everywhere without changing any simulation setting"

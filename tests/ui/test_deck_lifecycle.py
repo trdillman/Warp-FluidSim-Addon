@@ -277,3 +277,17 @@ def test_file_load_restarts_the_event_layer_even_if_blender_never_cancelled_it(m
     modal._ensure_running()
     assert started == [window]
     assert operator.modal(context, _event("MOUSEMOVE", 0, 0)) == {"FINISHED", "PASS_THROUGH"}
+
+
+def test_deck_mode_preference_defaults_to_on():
+    """A fresh install shows the Deck everywhere; AUTO hid it in every 3.x file."""
+    import ast
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
+              / "preferences.py").read_text(encoding="utf-8")
+    call = next(node.annotation for node in ast.walk(ast.parse(source))
+                if isinstance(node, ast.AnnAssign) and isinstance(node.annotation, ast.Call)
+                and getattr(node.target, "id", "") == "deck_mode")
+    default = next(kw.value.value for kw in call.keywords if kw.arg == "default")
+    assert default == "ON"
