@@ -69,7 +69,18 @@ REVERT = operator("fluidsim.revert_pending", "Revert", "LOOP_BACK",
 LIQUID_PREVIEW = setting("liquid_preview_enabled", "Liquid Preview", "SHADING_RENDERED",
                          "Toggle the Liquid Preview look in the 3D View")
 
-BAR_CONTROLS = (PLAY, PAUSE, CANCEL_BAKE, STEP, RESTART, APPLY, REVERT, LIQUID_PREVIEW)
+SEARCH = operator("fluidsim.command_palette", "Search", "VIEWZOOM",
+                  "Search every FluidSim command, preset, demo and setting (Ctrl+K)")
+WHEEL = operator("fluidsim.radial_wheel", "Wheel", "PROP_CON",
+                 "Open the wheel of actions for the current stage (Alt+Right-click)")
+BAKE = operator("fluidsim.bake_start", "Bake", "RENDER_ANIMATION",
+                "Start a Production Bake of the frame range")
+# The Deck's own surfaces: they open the Deck's palette and wheel, so no panel twins them.
+DECK_OPERATORS = frozenset({SEARCH.target, WHEEL.target})
+
+# Right-hand group of the bar, after the pending chip.
+TOOL_CONTROLS = (LIQUID_PREVIEW, SEARCH, WHEEL, BAKE)
+BAR_CONTROLS = (PLAY, PAUSE, CANCEL_BAKE, STEP, RESTART, APPLY, REVERT, *TOOL_CONTROLS)
 PENDING_ACTIONS = (APPLY, REVERT)
 
 
@@ -132,8 +143,7 @@ STAGE_SLOTS = OrderedDict((
         setting("show_overlay", "Overlay", "OVERLAY", "Show the simulation stats overlay"),
     )),
     ("BAKE", (
-        operator("fluidsim.bake_start", "Bake", "RENDER_ANIMATION",
-                 "Start a Production Bake of the frame range"),
+        BAKE,
         operator("fluidsim.bake_resume", "Resume", "PLAY",
                  "Resume the Production Bake from its last checkpoint"),
         operator("fluidsim.cache_preview_start", "Play Cache", "FILE_MOVIE",

@@ -40,6 +40,23 @@ def slot_at(dx: float, dy: float, scale: float = 1.0, count: int = 6):
     return int((angle + math.pi / count) // (2.0 * math.pi / count)) % count
 
 
+def pointer_in_region(event, region):
+    """Region-space pointer; window-relative so it is right when invoked from another handler."""
+    try:
+        return float(event.mouse_x - region.x), float(event.mouse_y - region.y)
+    except (AttributeError, TypeError):
+        return float(event.mouse_region_x), float(event.mouse_region_y)
+
+
+def clamp_centre(x, y, width, height, scale=1.0):
+    """Keep the whole wheel inside the region and above the Deck bar (it opens from there too)."""
+    extent = (RING_RADIUS + SLOT_RADIUS + 8.0) * scale
+    floor = extent + (bar.BOTTOM + bar.HEIGHT + bar.GAP) * scale
+    cx = min(max(x, extent), max(extent, float(width) - extent))
+    cy = min(max(y, floor), max(floor, float(height) - extent))
+    return cx, cy
+
+
 def current_stage(scene) -> str:
     stage = str(getattr(getattr(scene, "fluidsim", None), "deck_stage", "SETUP"))
     return stage if stage in STAGE_SLOTS else controls.STAGES[0]
@@ -97,10 +114,13 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
     def invoke(self, context, event):
         from .registry import REGISTRY
 
-        self.centre = (float(event.mouse_region_x), float(event.mouse_region_y))
-        self.hover = None
         self.region = context.region
-        self.opened_with = event.type
+        pointer = pointer_in_region(event, self.region)
+        self.centre = clamp_centre(*pointer, getattr(self.region, "width", 0),
+                                   getattr(self.region, "height", 0), bar._ui_scale(context))
+        self.hover = None
+        # A wheel moved off the pointer (opened from the bar) has no press-drag-release pick.
+        self.opened_with = event.type if self.centre == pointer else ""
         # Replacing the handler retires a wheel still open in another window.
         self.handle = REGISTRY.add_draw_handler("wheel", bpy.types.SpaceView3D, _draw_wheel,
                                                 (self,), "WINDOW", "POST_PIXEL")
@@ -139,8 +159,8 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
             return {"CANCELLED", "PASS_THROUGH"}
         area.tag_redraw()
         scale = bar._ui_scale(context)
-        target = slot_at(event.mouse_region_x - self.centre[0],
-                         event.mouse_region_y - self.centre[1], scale)
+        x, y = pointer_in_region(event, self.region)
+        target = slot_at(x - self.centre[0], y - self.centre[1], scale)
         self.hover = target
         if event.type == "MOUSEMOVE":
             return {"RUNNING_MODAL"}

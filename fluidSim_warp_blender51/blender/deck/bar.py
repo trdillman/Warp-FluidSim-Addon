@@ -115,66 +115,115 @@ def sample_readout(scene) -> Readout:
                    samples=tuple(history[1]))
 
 
+
 # Layout -----------------------------------------------------------------------
 
-BUTTON = 32.0
-GAP = 6.0
 PAD = 8.0
+GAP = 6.0
 HEIGHT = 44.0
 BOTTOM = 14.0
-READOUT = 150.0
+BUTTON_HEIGHT = 30.0
+ICON = 14.0  # icon box inside a button
+ICON_ONLY = 32.0  # compact button width
+SEPARATOR = 1.0
+READOUT = 268.0
+READOUT_COMPACT = 160.0
 SPARKLINE = 72.0
 CHIP_ACTION = 56.0
-RING = 32.0
 CHAR = 6.5  # estimated glyph width at the bar text size, for layout only
+
+# Hover tips for the bar parts that are not buttons: (title, body).
+INFO_TIPS = {
+    "readout": ("Live stats",
+                "Current frame, live particles, solver substeps and milliseconds per frame"),
+    "sparkline": ("Step time", "Milliseconds per frame over the last 48 frames; lower is faster"),
+    "chip": ("Pending changes", "Edits that need a reset or re-initialize wait here: "
+             "Apply runs it, Revert puts the old values back. Live edits flash green"),
+}
 
 
 @dataclass(frozen=True)
 class Item:
     rect: tuple  # (x0, y0, x1, y1), region pixels
-    role: str  # "button" | "chip_action" | "readout" | "sparkline" | "chip" | "ring"
+    role: str  # "button" | "chip_action" | "readout" | "sparkline" | "chip" | "separator"
     control: controls.Control | None = None
     label: str = ""
+    tip: tuple = ()  # (title, body) shown on hover
+
 
 
 @dataclass(frozen=True)
 class BarLayout:
     card: tuple
     items: tuple = field(default_factory=tuple)
+    compact: bool = False
 
     def hits(self):
-        """Items a click acts on, then the card itself (clicks on it are consumed)."""
-        return tuple(item for item in self.items if item.control is not None)
+        """Items the pointer can hover (buttons and the informational parts)."""
+        return tuple(item for item in self.items if item.control is not None or item.tip)
+
+
+def button_width(control, compact: bool) -> float:
+    if compact:
+        return ICON_ONLY
+    return PAD + ICON + GAP + CHAR * len(control.label) + PAD
+
+
+def _parts(transport, chip: Chip, tools, compact: bool):
+    parts = [("button", c, button_width(c, compact)) for c in transport]
+    parts.append(("separator", None, SEPARATOR))
+    parts.append(("readout", None, READOUT_COMPACT if compact else READOUT))
+    parts.append(("sparkline", None, SPARKLINE))
+    parts.append(("separator", None, SEPARATOR))
+    parts.append(("chip", None, max(80.0, CHAR * len(chip.text or "No pending changes")
+                                     + 2 * PAD + 12.0)))
+    parts.extend(("chip_action", next(c for c in controls.PENDING_ACTIONS
+                                      if c.target == target), CHIP_ACTION)
+                 for target, _label in chip.actions)
+    parts.append(("separator", None, SEPARATOR))
+    parts.extend(("button", c, button_width(c, compact)) for c in tools)
+    return parts
+
+
+def _width(parts, s):
+    return sum(w for _r, _c, w in parts) * s + GAP * s * (len(parts) - 1) + 2 * PAD * s
+
+
+def _tip(role, control, chip):
+    if control is not None:
+        return (control.label, control.tooltip)
+    if role == "chip" and chip.detail:
+        return (chip.text, chip.detail)
+    return INFO_TIPS.get(role, ())
 
 
 def bar_layout(region_width: float, scale: float, transport, chip: Chip,
-               bake, preview_button: bool) -> BarLayout:
-    """Place the bar's parts left to right, centred at the bottom of the region."""
+               bake=None, tools=None) -> BarLayout:
+    """Place the bar's parts left to right, centred at the bottom of the region.
+
+    Buttons carry an icon and their full label; when that does not fit the region
+    the bar falls back to icon-only buttons (the hover tip still names each one).
+    """
     s = max(0.5, float(scale))
-    parts = [("button", c, BUTTON) for c in transport]
-    parts.append(("readout", None, READOUT))
-    parts.append(("sparkline", None, SPARKLINE))
-    if chip.kind != "NONE":
-        parts.append(("chip", None, max(80.0, CHAR * len(chip.text) + 2 * PAD)))
-        parts.extend(("chip_action", next(c for c in controls.PENDING_ACTIONS
-                                          if c.target == target), CHIP_ACTION)
-                     for target, _label in chip.actions)
-    if bake is not None:
-        parts.append(("ring", None, RING))
-    if preview_button:
-        parts.append(("button", controls.LIQUID_PREVIEW, BUTTON))
-    width = sum(w for _r, _c, w in parts) * s + GAP * s * (len(parts) - 1) + 2 * PAD * s
+    tools = controls.TOOL_CONTROLS if tools is None else tuple(tools)
+    compact = False
+    parts = _parts(transport, chip, tools, compact)
+    if _width(parts, s) > float(region_width) - 2 * GAP * s:
+        compact = True
+        parts = _parts(transport, chip, tools, compact)
+    width = _width(parts, s)
     x = max(0.0, (float(region_width) - width) / 2.0)
     y0, y1 = BOTTOM * s, (BOTTOM + HEIGHT) * s
     card = (x, y0, x + width, y1)
     x += PAD * s
+    inset = (HEIGHT - BUTTON_HEIGHT) / 2.0 * s
     items = []
     for role, control, w in parts:
-        inset = (HEIGHT - BUTTON) / 2.0 * s
         rect = (x, y0 + inset, x + w * s, y1 - inset)
-        items.append(Item(rect, role, control, control.label if control else ""))
+        items.append(Item(rect, role, control, control.label if control else "",
+                          _tip(role, control, chip)))
         x += (w + GAP) * s
-    return BarLayout(card=card, items=tuple(items))
+    return BarLayout(card=card, items=tuple(items), compact=compact)
 
 
 def _ui_scale(context) -> float:
@@ -199,11 +248,11 @@ def current_layout(context):
     transport = controls.transport_controls(str(state.get("id", "IDLE")), playing,
                                             bool(state.get("owns_scene")))
     return bar_layout(region.width, _ui_scale(context), transport, chip_state(scene),
-                      bake_fraction(scene), True)
+                      bake_fraction(scene))
 
 
 def hit_test(layout: BarLayout | None, x: float, y: float):
-    """``(over_deck, item)`` for a region-space point."""
+    """``(over_deck, item)`` for a region-space point; ``item.control`` may be ``None``."""
     if layout is None:
         return False, None
     for item in layout.hits():
@@ -221,6 +270,68 @@ def _chip_colour(palette, kind):
             "REINIT_PENDING": palette.reinit}.get(kind, palette.text_dim)
 
 
+def _draw_icon(icon, cx, cy, r, colour, accent, fraction=None):
+    """A small vector icon for ``icon`` (the control's Blender icon name)."""
+    from . import _draw
+
+    if icon == "PLAY":
+        _draw.triangle((cx - 0.6 * r, cy - 0.8 * r), (cx - 0.6 * r, cy + 0.8 * r),
+                       (cx + 0.8 * r, cy), colour)
+    elif icon == "PAUSE":
+        _draw.rect(cx - 0.7 * r, cy - 0.8 * r, cx - 0.2 * r, cy + 0.8 * r, colour)
+        _draw.rect(cx + 0.2 * r, cy - 0.8 * r, cx + 0.7 * r, cy + 0.8 * r, colour)
+    elif icon == "CANCEL":
+        _draw.rect(cx - 0.65 * r, cy - 0.65 * r, cx + 0.65 * r, cy + 0.65 * r, colour)
+    elif icon == "FRAME_NEXT":
+        _draw.triangle((cx - 0.8 * r, cy - 0.8 * r), (cx - 0.8 * r, cy + 0.8 * r),
+                       (cx + 0.4 * r, cy), colour)
+        _draw.rect(cx + 0.45 * r, cy - 0.8 * r, cx + 0.8 * r, cy + 0.8 * r, colour)
+    elif icon == "FILE_REFRESH":
+        _draw.ring(cx, cy, 0.7 * r, 0.28 * r, 0.78, colour)
+        _draw.triangle((cx - 0.15 * r, cy + 0.35 * r), (cx - 0.15 * r, cy + 1.05 * r),
+                       (cx - 0.65 * r, cy + 0.7 * r), colour)
+    elif icon == "SHADING_RENDERED":
+        _draw.ring(cx, cy, 0.8 * r, 0.22 * r, 1.0, colour)
+        _draw.circle(cx - 0.15 * r, cy + 0.15 * r, 0.45 * r, colour, 20)
+    elif icon == "VIEWZOOM":
+        _draw.ring(cx - 0.15 * r, cy + 0.15 * r, 0.55 * r, 0.25 * r, 1.0, colour)
+        _draw.polyline([(cx + 0.25 * r, cy - 0.25 * r), (cx + 0.85 * r, cy - 0.85 * r)],
+                       colour, 0.3 * r)
+    elif icon == "PROP_CON":
+        _draw.ring(cx, cy, 0.8 * r, 0.22 * r, 1.0, colour)
+        _draw.circle(cx, cy, 0.3 * r, colour, 16)
+    elif icon == "RENDER_ANIMATION":
+        if fraction is None:
+            _draw.circle(cx, cy, 0.55 * r, colour, 20)
+            _draw.ring(cx, cy, 0.85 * r, 0.2 * r, 1.0, colour)
+        else:
+            _draw.ring(cx, cy, 0.8 * r, 0.3 * r, 1.0, tokens.rgba(colour[:3], 0.3))
+            _draw.ring(cx, cy, 0.8 * r, 0.3 * r, fraction, accent)
+    else:
+        _draw.circle(cx, cy, 0.5 * r, colour, 16)
+
+
+def _draw_tip(context, layout, item, palette, s, size):
+    """A two-line tip card above the hovered item, kept inside the region."""
+    from . import _draw
+
+    if not item.tip:
+        return
+    title, body = item.tip
+    pad = PAD * s
+    width = max(_draw.text_width(title, size), _draw.text_width(body, size * 0.9)) + 2 * pad
+    height = size * 2.0 + size * 0.9 + 1.5 * pad
+    region_width = float(getattr(getattr(context, "region", None), "width", width))
+    x0 = (item.rect[0] + item.rect[2] - width) / 2.0
+    x0 = max(GAP * s, min(x0, region_width - width - GAP * s))
+    y0 = layout.card[3] + GAP * s
+    radius = tokens.RADIUS_SCALE[1] * s
+    _draw.rounded_rect(x0, y0, x0 + width, y0 + height, radius,
+                       tokens.rgba(palette.surface, tokens.CARD_ALPHA))
+    _draw.text(x0 + pad, y0 + height - pad - size * 0.8, title, size, tokens.rgba(palette.text))
+    _draw.text(x0 + pad, y0 + pad, body, size * 0.9, tokens.rgba(palette.text_dim))
+
+
 def _paint(context, layout, palette, hover):
     from . import _draw
 
@@ -231,38 +342,63 @@ def _paint(context, layout, palette, hover):
     _draw.rounded_rect(*layout.card, radius_card, tokens.rgba(palette.surface, tokens.CARD_ALPHA))
     readout = sample_readout(scene)
     chip = chip_state(scene)
+    bake = bake_fraction(scene)
     for item in layout.items:
         x0, y0, x1, y1 = item.rect
         mid_y = (y0 + y1) / 2.0 - size / 3.0
         if item.role in {"button", "chip_action"}:
-            enabled = controls.control_enabled(context, item.control)
-            fill = palette.accent if item == hover and enabled else palette.text_dim
+            control = item.control
+            enabled = controls.control_enabled(context, control)
+            on = control in {controls.PAUSE} or controls.control_active(context, control)
+            hovered = hover is not None and hover.rect == item.rect and enabled
+            fill = palette.accent if (hovered or on) else palette.text_dim
             _draw.rounded_rect(x0, y0, x1, y1, radius_control,
-                               tokens.rgba(fill, 0.28 if enabled else 0.10))
-            label = item.control.label if item.role == "chip_action" else item.control.label[:1]
-            colour = palette.text if enabled else palette.text_dim
-            width = _draw.text_width(label, size)
-            _draw.text((x0 + x1 - width) / 2.0, mid_y, label, size, tokens.rgba(colour))
+                               tokens.rgba(fill, (0.40 if hovered else 0.30) if enabled else 0.10))
+            colour = tokens.rgba(palette.text if enabled else palette.text_dim)
+            if item.role == "chip_action":
+                width = _draw.text_width(control.label, size)
+                _draw.text((x0 + x1 - width) / 2.0, mid_y, control.label, size, colour)
+                continue
+            fraction = bake if control is controls.BAKE and bake is not None else None
+            r = ICON / 2.0 * s
+            if layout.compact:
+                _draw_icon(control.icon, (x0 + x1) / 2.0, (y0 + y1) / 2.0, r, colour,
+                           tokens.rgba(palette.accent), fraction)
+            else:
+                _draw_icon(control.icon, x0 + PAD * s + r, (y0 + y1) / 2.0, r, colour,
+                           tokens.rgba(palette.accent), fraction)
+                label = f"{round(fraction * 100)}%" if fraction is not None else control.label
+                _draw.text(x0 + (PAD + ICON + GAP) * s, mid_y, label, size, colour)
+        elif item.role == "separator":
+            _draw.rect(x0, y0 + 2 * s, x1, y1 - 2 * s, tokens.rgba(palette.text_dim, 0.35))
         elif item.role == "readout":
-            line = (f"f{readout.frame}  {readout.particles:,} pts  "
-                    f"{readout.substeps} sub  {readout.step_ms:.1f} ms")
+            if layout.compact:
+                line = (f"f{readout.frame}  {readout.particles:,} pts  "
+                        f"{readout.substeps} sub  {readout.step_ms:.1f} ms")
+            else:
+                line = (f"frame {readout.frame}   {readout.particles:,} particles   "
+                        f"{readout.substeps} substeps   {readout.step_ms:.1f} ms")
             _draw.text(x0, mid_y, line, size * 0.9, tokens.rgba(palette.text))
-        elif item.role == "sparkline" and len(readout.samples) > 1:
-            peak = max(readout.samples) or 1.0
-            step = (x1 - x0) / (len(readout.samples) - 1)
-            points = [(x0 + i * step, y0 + (y1 - y0) * (value / peak))
-                      for i, value in enumerate(readout.samples)]
-            _draw.polyline(points, tokens.rgba(palette.accent), 1.5 * s)
+        elif item.role == "sparkline":
+            _draw.rect(x0, y0, x1, y0 + 1.0 * s, tokens.rgba(palette.text_dim, 0.35))
+            if len(readout.samples) > 1:
+                peak = max(readout.samples) or 1.0
+                step = (x1 - x0) / (len(readout.samples) - 1)
+                points = [(x0 + i * step, y0 + (y1 - y0) * (value / peak))
+                          for i, value in enumerate(readout.samples)]
+                _draw.polyline(points, tokens.rgba(palette.accent), 1.5 * s)
         elif item.role == "chip":
             colour = _chip_colour(palette, chip.kind)
-            _draw.rounded_rect(x0, y0, x1, y1, radius_chip, tokens.rgba(colour, 0.22))
-            _draw.text(x0 + PAD * s, mid_y, chip.text, size, tokens.rgba(colour))
-        elif item.role == "ring":
-            fraction = bake_fraction(scene) or 0.0
-            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
-            _draw.ring(cx, cy, (x1 - x0) / 2.6, 3.0 * s, 1.0, tokens.rgba(palette.text_dim, 0.3))
-            _draw.ring(cx, cy, (x1 - x0) / 2.6, 3.0 * s, fraction, tokens.rgba(palette.accent))
+            _draw.rounded_rect(x0, y0, x1, y1, radius_chip,
+                               tokens.rgba(colour, 0.10 if chip.kind == "NONE" else 0.22))
+            _draw.circle(x0 + PAD * s + 3 * s, (y0 + y1) / 2.0, 3.5 * s, tokens.rgba(colour), 12)
+            _draw.text(x0 + PAD * s + 12 * s, mid_y, chip.text or "No pending changes", size,
+                       tokens.rgba(colour))
+    from .registry import REGISTRY
 
+    # The palette and wheel draw above the bar; a stale hover tip would cover them.
+    if hover is not None and not any(REGISTRY.draw_handle(k) for k in ("palette", "wheel")):
+        _draw_tip(context, layout, hover, palette, s, size)
 
 def draw_deck():
     """``POST_PIXEL`` callback for every 3D View: the bar, then gizmo labels."""

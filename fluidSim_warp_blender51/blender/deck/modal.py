@@ -129,7 +129,7 @@ class FLUIDSIM_OT_deck_modal(bpy.types.Operator):
             self._set_hover(region, item)
             if event.type == "MOUSEMOVE" or not over:
                 return {"PASS_THROUGH"}
-            if item is not None and event.value == "PRESS":
+            if item is not None and item.control is not None and event.value == "PRESS":
                 if controls.control_enabled(bpy.context, item.control):
                     controls.run_control(bpy.context, item.control)
                 region.tag_redraw()

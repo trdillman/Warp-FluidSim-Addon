@@ -56,21 +56,29 @@ def rounded_rect(x0, y0, x1, y1, radius, colour):
     _draw_tris(_fan(((x0 + x1) / 2.0, (y0 + y1) / 2.0), outline), colour)
 
 
+def rect(x0, y0, x1, y1, colour):
+    _draw_tris([(x0, y0), (x1, y0), (x1, y1), (x0, y0), (x1, y1), (x0, y1)], colour)
+
+
+def triangle(a, b, c, colour):
+    _draw_tris([a, b, c], colour)
+
+
 def circle(cx, cy, radius, colour, segments=32):
     outline = [(cx + radius * math.cos(2 * math.pi * i / segments),
                 cy + radius * math.sin(2 * math.pi * i / segments)) for i in range(segments)]
     _draw_tris(_fan((cx, cy), outline), colour)
 
 
-def ring(cx, cy, radius, thickness, fraction, colour, segments=48):
-    """An arc from 12 o'clock, clockwise, covering ``fraction`` of the circle."""
+def ring(cx, cy, radius, thickness, fraction, colour, segments=48, start=math.pi / 2):
+    """An arc from ``start`` (12 o'clock), clockwise, covering ``fraction`` of the circle."""
     fraction = max(0.0, min(1.0, float(fraction)))
     count = max(1, int(segments * fraction))
     inner, outer = radius - thickness / 2.0, radius + thickness / 2.0
     tris = []
     for i in range(count):
-        a0 = math.pi / 2 - 2 * math.pi * fraction * i / count
-        a1 = math.pi / 2 - 2 * math.pi * fraction * (i + 1) / count
+        a0 = start - 2 * math.pi * fraction * i / count
+        a1 = start - 2 * math.pi * fraction * (i + 1) / count
         p0 = (cx + inner * math.cos(a0), cy + inner * math.sin(a0))
         p1 = (cx + outer * math.cos(a0), cy + outer * math.sin(a0))
         p2 = (cx + outer * math.cos(a1), cy + outer * math.sin(a1))

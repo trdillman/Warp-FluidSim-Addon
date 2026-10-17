@@ -105,6 +105,9 @@ def test_every_deck_control_targets_an_existing_operator_or_property_a_panel_als
             # disables the control until its target exists.
             continue
         assert _target_exists(control, operators), control
+        if control.target in deck.controls.DECK_OPERATORS:
+            # The bar's Search and Wheel buttons open the Deck's own palette and wheel.
+            continue
         if control.kind == "operator":
             assert control.target in panel_ops, f"{control.target} has no panel twin"
         else:
