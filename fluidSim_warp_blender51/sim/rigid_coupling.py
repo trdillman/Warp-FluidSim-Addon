@@ -271,7 +271,12 @@ class RigidBody:
         row = np.asarray(row, dtype=np.float64)
         self.pos = row[0:3].copy()
         quat = row[3:7].copy()
-        self.quat = quat / max(np.linalg.norm(quat), 1.0e-300)
+        # Renormalising a quaternion that is already unit can move its last
+        # bit, so a restored checkpoint would no longer match the run it saved.
+        norm = np.linalg.norm(quat)
+        if abs(norm - 1.0) > 1.0e-12:
+            quat = quat / max(norm, 1.0e-300)
+        self.quat = quat
         self.lin_vel = row[7:10].copy()
         self.ang_vel = row[10:13].copy()
 
