@@ -193,7 +193,7 @@ def validate(
     )
     resource_solver = surface_tension.SurfaceTensionSolver(resource_owner)
     resource_solver.ensure_resources()
-    expected_scratch = 512 * 24
+    expected_scratch = 512 * 32  # two vec3 normals + two float distances
     if resource_solver.temporary_bytes != expected_scratch or profiler.bytes != expected_scratch:
         raise AssertionError("surface-tension scratch allocation accounting is incorrect")
     resource_settings.surface_tension_coefficient = 0.0

@@ -635,7 +635,8 @@ CPU-only.
   shaders. This intentionally trades render geometry/memory for correctness;
   display fraction, output toggles, and attribute inventory control the cost.
 - Disabled optional color/source-ID/UID channels allocate no full-capacity pool.
-- Surface tension allocates two optional `vec3` fields (24 bytes per sparse-grid
+- Surface tension allocates two optional `vec3` fields and two float distance
+  fields (32 bytes per sparse-grid
   voxel) only while enabled. Fine voxels and high coefficients can make the
   capillary limit, rather than CFL, dominate substep cost.
 - Typed whitewater always uses one persistent int32 type array. Separate Blender
