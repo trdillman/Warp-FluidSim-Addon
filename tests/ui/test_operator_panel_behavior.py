@@ -2558,10 +2558,10 @@ def test_workflow_stages_without_a_domain_lead_with_guided_setup(monkeypatch):
     assert any("domain" in label["text"].lower() for label in simulate.labels)
 
 
-def _collider_settings(dynamic):
+def _collider_settings(body_type):
     return SimpleNamespace(
         role="COLLIDER", collider_friction=0.2, collider_restitution=0.0,
-        collider_dynamic=dynamic, transfer_velocity=True, collider_density=500.0,
+        collider_body_type=body_type, collider_dynamic=body_type == "DYNAMIC", transfer_velocity=True, collider_density=500.0,
         collider_drag=0.1, collider_initial_velocity=(0.0, 0.0, 0.0),
         collider_lock_axes=(False,) * 6)
 
@@ -2576,14 +2576,14 @@ def test_setup_stage_shows_the_active_colliders_rigid_body_controls(monkeypatch)
 
     context, _scene, _domain = _stage_context()
     assert not shelf.poll(context)  # the domain is active, not a collider
-    settings = _collider_settings(dynamic=True)
+    settings = _collider_settings("DYNAMIC")
     context.object = SimpleNamespace(name="Crate", fluidsim=settings)
     assert shelf.poll(context)
 
     layout = _draw_stage(shelf, context)
     drawn = {call["name"]: call["data"] for call in layout.prop_calls}
     assert set(drawn) == {
-        "collider_friction", "collider_restitution", "collider_dynamic",
+        "collider_friction", "collider_restitution", "collider_body_type",
         "collider_density", "collider_drag", "collider_initial_velocity",
         "collider_lock_axes",
     }
@@ -2592,11 +2592,16 @@ def test_setup_stage_shows_the_active_colliders_rigid_body_controls(monkeypatch)
     assert locks == [0, 1, 2, 3, 4, 5]
     assert {"text": "Crate", "icon": "OBJECT_DATA"} in layout.labels
 
-    # A static collider shows the surface controls without the rigid-body ones.
-    context.object.fluidsim = _collider_settings(dynamic=False)
+    # An animated collider shows the surface controls without the rigid-body ones.
+    context.object.fluidsim = _collider_settings("ANIMATED")
+    animated = {call["name"] for call in _draw_stage(shelf, context).prop_calls}
+    assert animated == {"collider_friction", "collider_restitution", "collider_body_type",
+                        "transfer_velocity"}
+
+    # A static collider never moves, so it has no velocity to transfer either.
+    context.object.fluidsim = _collider_settings("STATIC")
     static = {call["name"] for call in _draw_stage(shelf, context).prop_calls}
-    assert static == {"collider_friction", "collider_restitution", "collider_dynamic",
-                      "transfer_velocity"}
+    assert static == {"collider_friction", "collider_restitution", "collider_body_type"}
 
 
 def test_workflow_stage_advanced_shelf_is_gated_by_ui_mode(monkeypatch):

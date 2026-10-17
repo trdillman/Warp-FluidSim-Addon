@@ -4,6 +4,16 @@
 
 ### Changes
 
+- **Body Type** on each collider: **Static**, **Animated** (the default,
+  same behaviour as before) or **Dynamic**. Files saved before 4.1 keep
+  working unchanged. A Static collider never moves: liquid and rigid
+  bodies hit it, but nothing pushes it.
+- **Rigid-body contact.** Dynamic bodies now land on and slide off Static
+  and Animated colliders using each collider's Friction and Bounce, collide
+  with each other, and rest stacked on one another. The same bake run twice
+  gives identical results. Contact costs about 1 ms per substep with 8
+  touching bodies; dense Animated collider meshes add about 0.8 ms per
+  substep, only when a Dynamic body is in the scene.
 - Three new Demo Gallery scenes, each showing one feature:
   - **Viscosity Race**: three identical columns of water, syrup and tar
     collapse side by side. Each source carries its own Viscosity (Domain >

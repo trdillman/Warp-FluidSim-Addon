@@ -1,4 +1,6 @@
-"""Dynamic collider scene rules (4.0 two-way rigid coupling), free of bpy and Warp.
+"""Collider body-type scene rules (Static / Animated / Dynamic), free of bpy and Warp.
+
+Dynamic is the 4.0 two-way rigid coupling; the rules below cover it.
 
 Two answers every caller shares:
 
@@ -40,6 +42,22 @@ def is_dynamic_collider(obj) -> bool:
         and getattr(fs, "role", "NONE") == "COLLIDER"
         and getattr(fs, "enabled", True)
         and getattr(fs, "collider_dynamic", False)
+        and getattr(obj, "type", "MESH") == "MESH")
+
+
+def is_static_collider(obj) -> bool:
+    """A collider that never moves: it is read once and ignores animation.
+
+    Dynamic wins when both flags are set; an Animated collider (neither flag)
+    follows its keyframes and pushes the liquid with its motion.
+    """
+    fs = _settings(obj)
+    return bool(
+        fs is not None
+        and getattr(fs, "role", "NONE") == "COLLIDER"
+        and getattr(fs, "enabled", True)
+        and getattr(fs, "collider_static", False)
+        and not getattr(fs, "collider_dynamic", False)
         and getattr(obj, "type", "MESH") == "MESH")
 
 

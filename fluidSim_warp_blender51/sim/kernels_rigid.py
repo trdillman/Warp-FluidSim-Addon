@@ -54,8 +54,10 @@ BODY_WIDTH = 30
 
 # Per-body constants (``body_const``), uploaded with the state: density,
 # mesh volume, bounding radius, body-frame inertia per unit density (9, row
-# major), axis locks (loc x y z, rot x y z; 1 = locked), and the slice of the
-# concatenated body-frame mesh points used for wall contact.
+# major), axis locks (loc x y z, rot x y z; 1 = locked), the slice of the
+# concatenated body-frame mesh points used for wall contact, the slice of the
+# concatenated contact points (mesh points plus boundary samples) and the
+# body's own friction and restitution.
 CONST_DENSITY = 0
 CONST_VOLUME = 1
 CONST_RADIUS = 2
@@ -63,7 +65,17 @@ CONST_INERTIA = 3
 CONST_LOCK = 12
 CONST_POINT_FIRST = 18
 CONST_POINT_COUNT = 19
-CONST_WIDTH = 20
+CONST_CONTACT_FIRST = 20
+CONST_CONTACT_COUNT = 21
+CONST_FRICTION = 22
+CONST_RESTITUTION = 23
+CONST_WIDTH = 24
+
+# One collider-vertex contact partial (``k_rigid_contact_collider_points``):
+# weight sum, deepest penetration, then depth-weighted sums of the push
+# direction (3), contact point (3), collider velocity (3), friction and
+# restitution.
+PARTIAL_WIDTH = 15
 
 
 @wp.func
@@ -495,6 +507,485 @@ def k_rigid_integrate(
     body_state[b, 27] = qx
     body_state[b, 28] = qy
     body_state[b, 29] = qz
+
+
+@wp.func
+def _vec3d(v: wp.vec3) -> wp.vec3d:
+    return wp.vec3d(wp.float64(v[0]), wp.float64(v[1]), wp.float64(v[2]))
+
+
+@wp.func
+def _vec3f(v: wp.vec3d) -> wp.vec3:
+    return wp.vec3(float(v[0]), float(v[1]), float(v[2]))
+
+
+@wp.func
+def _inverse_inertia(body_const: wp.array2d(dtype=wp.float64), b: int,
+                     rot: wp.mat33d) -> wp.mat33d:
+    zero = wp.float64(0.0)
+    unit = wp.mat33d(
+        body_const[b, 3], body_const[b, 4], body_const[b, 5],
+        body_const[b, 6], body_const[b, 7], body_const[b, 8],
+        body_const[b, 9], body_const[b, 10], body_const[b, 11])
+    inertia = (rot * unit * wp.transpose(rot)) * body_const[b, 0]
+    if wp.determinant(inertia) != zero:
+        return wp.inverse(inertia)
+    return wp.mat33d(zero, zero, zero, zero, zero, zero, zero, zero, zero)
+
+
+@wp.func
+def _effective_mass(mass: wp.float64, inverse: wp.mat33d, r: wp.vec3d,
+                    d: wp.vec3d) -> wp.float64:
+    """Inverse effective mass of a body along ``d`` at arm ``r``."""
+    return wp.float64(1.0) / mass + wp.dot(wp.cross(inverse * wp.cross(r, d), r), d)
+
+
+@wp.kernel
+def k_rigid_contact_points(
+    body_state: wp.array2d(dtype=wp.float64),
+    body_const: wp.array2d(dtype=wp.float64),
+    contact_points: wp.array(dtype=wp.vec3d),
+    contact_owner: wp.array(dtype=wp.int32),
+    body_meshes: wp.array(dtype=wp.uint64),
+    body_count: wp.int32,
+    meshes: wp.array(dtype=wp.uint64),
+    mesh_lin: wp.array(dtype=wp.vec3),
+    mesh_ang: wp.array(dtype=wp.vec3),
+    mesh_center: wp.array(dtype=wp.vec3),
+    mesh_material: wp.array(dtype=wp.vec2),
+    mesh_count: wp.int32,
+    max_dist: float,
+    out_depth: wp.array(dtype=float),
+    out_normal: wp.array(dtype=wp.vec3),
+    out_point: wp.array(dtype=wp.vec3d),
+    out_velocity: wp.array(dtype=wp.vec3),
+    out_material: wp.array(dtype=wp.vec2),
+    out_partner: wp.array(dtype=wp.int32),
+):
+    """Penetration of one body contact point into anything solid.
+
+    One thread per contact point (a body's mesh points and its boundary
+    samples, so an edge or face crossing a collider edge is seen too). The
+    point is tested against the scene's Static and Animated colliders at their
+    current substep pose and against every other Dynamic body's mesh at its
+    current pose. A point inside one (negative signed distance, found within
+    ``max_dist`` of the surface) records its depth, the direction that takes
+    it out, its world position, the collider's velocity there (colliders
+    only), the (friction, restitution) of the pair and the partner: -1 for a
+    collider, else the other body's index. The deepest partner wins; depth 0
+    means no contact. Every point is independent, so the result is bitwise
+    repeatable; ``k_rigid_contact_resolve`` reads it in point order.
+    """
+    tid = wp.tid()
+    b = contact_owner[tid]
+    world = _body_vec(body_state, b, 1) + _body_rot(body_state, b) * contact_points[tid]
+    p = _vec3f(world)
+    best = float(0.0)  # noqa: UP018 - Warp needs a dynamic variable here
+    partner = int(-1)  # noqa: UP018 - Warp needs a dynamic variable here
+    normal = wp.vec3(0.0, 0.0, 0.0)
+    velocity = wp.vec3(0.0, 0.0, 0.0)
+    material = wp.vec2(0.0, 0.0)
+    for m in range(mesh_count):
+        q = wp.mesh_query_point_sign_normal(meshes[m], p, max_dist)
+        if q.result and q.sign < 0.0:
+            cp = wp.mesh_eval_position(meshes[m], q.face, q.u, q.v)
+            out = cp - p
+            depth = wp.length(out)
+            if depth > best:
+                best = depth
+                if depth > 1.0e-7:
+                    normal = out / depth
+                else:
+                    normal = wp.normalize(wp.mesh_eval_face_normal(meshes[m], q.face))
+                velocity = mesh_lin[m] + wp.cross(mesh_ang[m], p - mesh_center[m])
+                material = mesh_material[m]
+                partner = -1
+    own = wp.vec2(float(body_const[b, 22]), float(body_const[b, 23]))
+    for c in range(body_count):
+        if c == b:
+            continue
+        center = _body_vec(body_state, c, 1)
+        if wp.length(world - center) > body_const[c, 2] + wp.float64(max_dist):
+            continue
+        rot = _body_rot(body_state, c)
+        local = _vec3f(wp.transpose(rot) * (world - center))
+        q = wp.mesh_query_point_sign_normal(body_meshes[c], local, max_dist)
+        if q.result and q.sign < 0.0:
+            cp = wp.mesh_eval_position(body_meshes[c], q.face, q.u, q.v)
+            out = cp - local
+            depth = wp.length(out)
+            if depth > best:
+                best = depth
+                away = wp.vec3(0.0, 0.0, 0.0)
+                if depth > 1.0e-7:
+                    away = out / depth
+                else:
+                    away = wp.normalize(wp.mesh_eval_face_normal(body_meshes[c], q.face))
+                normal = _vec3f(rot * _vec3d(away))
+                velocity = wp.vec3(0.0, 0.0, 0.0)
+                material = 0.5 * (own + wp.vec2(float(body_const[c, 22]),
+                                                float(body_const[c, 23])))
+                partner = c
+    out_depth[tid] = best
+    out_normal[tid] = normal
+    out_point[tid] = world
+    out_velocity[tid] = velocity
+    out_material[tid] = material
+    out_partner[tid] = partner
+
+
+@wp.kernel
+def k_rigid_contact_collider_points(
+    body_state: wp.array2d(dtype=wp.float64),
+    body_const: wp.array2d(dtype=wp.float64),
+    body_meshes: wp.array(dtype=wp.uint64),
+    meshes: wp.array(dtype=wp.uint64),
+    mesh_lin: wp.array(dtype=wp.vec3),
+    mesh_ang: wp.array(dtype=wp.vec3),
+    mesh_center: wp.array(dtype=wp.vec3),
+    mesh_material: wp.array(dtype=wp.vec2),
+    chunk_mesh: wp.array(dtype=wp.int32),
+    chunk_first: wp.array(dtype=wp.int32),
+    chunk_count: wp.array(dtype=wp.int32),
+    chunks: wp.int32,
+    max_dist: float,
+    partials: wp.array2d(dtype=wp.float64),
+):
+    """Collider vertices inside one body, as one partial per (body, chunk).
+
+    The other half of collider contact: a sharp collider point (a spike, a
+    corner, an edge vertex) pressed into a flat body face has no body point
+    inside the collider, so it is found from the collider side. One thread
+    walks one chunk of one collider mesh's points in order and sums, depth
+    weighted, the direction that pushes the body off each point inside it,
+    the point, the collider's velocity there and its material (layout:
+    ``PARTIAL_WIDTH``). ``k_rigid_contact_resolve`` adds a body's partials in
+    chunk order, so the sum is bitwise repeatable.
+    """
+    tid = wp.tid()
+    b = tid // chunks
+    k = tid - b * chunks
+    zero = wp.float64(0.0)
+    wsum = wp.float64(0.0)
+    dmax = wp.float64(0.0)
+    nsum = wp.vec3d(zero, zero, zero)
+    psum = wp.vec3d(zero, zero, zero)
+    vsum = wp.vec3d(zero, zero, zero)
+    fsum = wp.float64(0.0)
+    esum = wp.float64(0.0)
+    m = chunk_mesh[k]
+    points = wp.mesh_get(meshes[m]).points
+    center = _body_vec(body_state, b, 1)
+    rot = _body_rot(body_state, b)
+    reach = body_const[b, 2] + wp.float64(max_dist)
+    material = mesh_material[m]
+    first = chunk_first[k]
+    for v in range(first, first + chunk_count[k]):
+        pw = points[v]
+        pd = _vec3d(pw)
+        if wp.length(pd - center) > reach:
+            continue
+        local = _vec3f(wp.transpose(rot) * (pd - center))
+        q = wp.mesh_query_point_sign_normal(body_meshes[b], local, max_dist)
+        if q.result and q.sign < 0.0:
+            out = wp.mesh_eval_position(body_meshes[b], q.face, q.u, q.v) - local
+            depth = wp.length(out)
+            if depth > 1.0e-7:
+                w = wp.float64(depth)
+                # The point leaves the body through its nearest surface
+                # point, so the body moves the other way.
+                nsum = nsum - (rot * _vec3d(out / depth)) * w
+                psum = psum + pd * w
+                vel = mesh_lin[m] + wp.cross(mesh_ang[m], pw - mesh_center[m])
+                vsum = vsum + _vec3d(vel) * w
+                fsum = fsum + wp.float64(material[0]) * w
+                esum = esum + wp.float64(material[1]) * w
+                wsum = wsum + w
+                dmax = wp.max(dmax, w)
+    partials[tid, 0] = wsum
+    partials[tid, 1] = dmax
+    for a in range(3):
+        partials[tid, 2 + a] = nsum[a]
+        partials[tid, 5 + a] = psum[a]
+        partials[tid, 8 + a] = vsum[a]
+    partials[tid, 11] = fsum
+    partials[tid, 12] = esum
+    partials[tid, 13] = zero
+    partials[tid, 14] = zero
+
+
+@wp.kernel
+def k_rigid_contact_pairs(
+    depth: wp.array(dtype=float),
+    normal: wp.array(dtype=wp.vec3),
+    point: wp.array(dtype=wp.vec3d),
+    velocity: wp.array(dtype=wp.vec3),
+    material: wp.array(dtype=wp.vec2),
+    partner: wp.array(dtype=wp.int32),
+    chunk_first: wp.array(dtype=wp.int32),
+    chunk_count: wp.array(dtype=wp.int32),
+    chunks: wp.int32,
+    pairs: wp.array2d(dtype=wp.float64),
+):
+    """Body contact points reduced per (partner, chunk), in point order.
+
+    Row ``(g + 1) * chunks + k`` holds, depth weighted (layout:
+    ``PARTIAL_WIDTH``), the contacts of the points in chunk ``k`` (one body's
+    run of ``CONTACT_CHUNK`` points) whose partner is ``g`` (-1 for the
+    colliders). Contact points do not change between the resolve passes, so
+    this runs once per substep and every pass reads rows, not points; each
+    row is one thread's fixed-order sum, so the result is bitwise repeatable.
+    """
+    tid = wp.tid()
+    s = tid // chunks
+    k = tid - s * chunks
+    g = s - 1
+    zero = wp.float64(0.0)
+    wsum = wp.float64(0.0)
+    dmax = wp.float64(0.0)
+    nsum = wp.vec3d(zero, zero, zero)
+    psum = wp.vec3d(zero, zero, zero)
+    vsum = wp.vec3d(zero, zero, zero)
+    fsum = wp.float64(0.0)
+    esum = wp.float64(0.0)
+    first = chunk_first[k]
+    for i in range(first, first + chunk_count[k]):
+        if depth[i] > 0.0 and partner[i] == g:
+            w = wp.float64(depth[i])
+            nsum = nsum + _vec3d(normal[i]) * w
+            psum = psum + point[i] * w
+            vsum = vsum + _vec3d(velocity[i]) * w
+            fsum = fsum + wp.float64(material[i][0]) * w
+            esum = esum + wp.float64(material[i][1]) * w
+            wsum = wsum + w
+            dmax = wp.max(dmax, w)
+    pairs[tid, 0] = wsum
+    pairs[tid, 1] = dmax
+    for a in range(3):
+        pairs[tid, 2 + a] = nsum[a]
+        pairs[tid, 5 + a] = psum[a]
+        pairs[tid, 8 + a] = vsum[a]
+    pairs[tid, 11] = fsum
+    pairs[tid, 12] = esum
+    pairs[tid, 13] = zero
+    pairs[tid, 14] = zero
+
+
+@wp.kernel
+def k_rigid_contact_resolve(
+    body_const: wp.array2d(dtype=wp.float64),
+    prev_state: wp.array2d(dtype=wp.float64),
+    pairs: wp.array2d(dtype=wp.float64),
+    pair_chunks: wp.int32,
+    body_chunk_first: wp.array(dtype=wp.int32),
+    body_chunk_count: wp.array(dtype=wp.int32),
+    partials: wp.array2d(dtype=wp.float64),
+    chunks: wp.int32,
+    body_count: wp.int32,
+    max_dist: float,
+    gravity: wp.vec3d,
+    dt: wp.float64,
+    push: wp.int32,
+    body_points: wp.array(dtype=wp.vec3d),
+    domain_lo: wp.vec3d,
+    domain_hi: wp.vec3d,
+    prev_support: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    voxels_dim: wp.vec3i,
+    box_margin: wp.int32,
+    body_state: wp.array2d(dtype=wp.float64),
+    support: wp.array(dtype=wp.int32),
+):
+    """Push one body out of what it touches and bounce it off.
+
+    One thread per body; ``prev_state`` and ``prev_support`` are copies taken
+    before the launch, so a thread reads its partners without racing their
+    writes. Contacts are grouped by partner: first the Static and Animated
+    colliders together (the body's points inside them plus the collider
+    points inside the body), then each other Dynamic body (this body's points
+    inside it and its points inside this body, so both bodies see the same
+    contact with opposite normals). Each group is reduced, depth weighted, in
+    chunk order from the ``k_rigid_contact_pairs`` and collider partial rows
+    to one contact: a normal ``n``, a contact point and the partner's
+    velocity there.
+
+    One impulse along ``n`` at the contact arm cancels the approach speed
+    (restitution below the resting threshold ``2 |g| dt`` is dropped so a
+    resting body does not jitter) and a Coulomb friction impulse removes
+    tangential slip; the impulse acts at the arm, so an off-centre contact
+    tips the body. Against another body the impulse uses the pair's effective
+    mass and each body applies its own half, so the pair's momentum is kept.
+    When ``push`` is set the body is also translated out along ``n`` by the
+    deepest penetration (its inverse-mass share of it against a body).
+
+    A stack needs support to travel up it (shock propagation): a body is
+    supported when the domain floor or a collider holds it up against
+    gravity, or when it rests on a supported body. A supported body below
+    acts as immovable ground for the body above it, and a supported body
+    ignores the bodies resting on it, so the weight of a stack does not push
+    its bottom through the floor. Repeating the launch (Jacobi iterations)
+    carries support one body up per launch. Axis locks hold.
+    """
+    b = wp.tid()
+    zero = wp.float64(0.0)
+    one = wp.float64(1.0)
+    pos0 = _body_vec(prev_state, b, 1)
+    rot = _body_rot(prev_state, b)
+    pos = _body_vec(prev_state, b, 1)
+    lin = _body_vec(prev_state, b, 13)
+    omega = _body_vec(prev_state, b, 16)
+    mass = body_const[b, 0] * body_const[b, 1]
+    inverse = _inverse_inertia(body_const, b, rot)
+    radius = body_const[b, 2]
+    rest = wp.float64(2.0) * wp.length(gravity) * dt
+    down = wp.vec3d(zero, zero, zero)
+    if wp.length(gravity) > zero:
+        down = wp.normalize(gravity)
+    supported = int(prev_support[b])
+    # The domain floor (the wall gravity points at) holds the body up.
+    pfirst = int(body_const[b, 18])
+    pcount = int(body_const[b, 19])
+    if pcount > 0 and supported == 0:
+        low = rot * body_points[pfirst]
+        high = low
+        for i in range(pfirst + 1, pfirst + pcount):
+            corner = rot * body_points[i]
+            low = wp.min(low, corner)
+            high = wp.max(high, corner)
+        tol =wp.float64(0.05 * voxel_size)
+        for axis in range(3):
+            if down[axis] <= wp.float64(-0.5) and pos0[axis] + low[axis] <= domain_lo[axis] + tol:
+                supported = 1
+            if down[axis] >= wp.float64(0.5) and pos0[axis] + high[axis] >= domain_hi[axis] - tol:
+                supported = 1
+    for g in range(-1, body_count):
+        if g == b:
+            continue
+        if g >= 0:
+            gap = wp.length(_body_vec(prev_state, g, 1) - pos0)
+            if gap > radius + body_const[g, 2] + wp.float64(2.0 * max_dist):
+                continue
+        wsum = wp.float64(0.0)
+        dmax = wp.float64(0.0)
+        nsum = wp.vec3d(zero, zero, zero)
+        psum = wp.vec3d(zero, zero, zero)
+        vsum = wp.vec3d(zero, zero, zero)
+        fsum = wp.float64(0.0)
+        esum = wp.float64(0.0)
+        own = (g + 1) * pair_chunks
+        cfirst = body_chunk_first[b]
+        for k in range(cfirst, cfirst + body_chunk_count[b]):
+            row = own + k
+            if pairs[row, 0] > zero:
+                wsum = wsum + pairs[row, 0]
+                dmax = wp.max(dmax, pairs[row, 1])
+                nsum = nsum + wp.vec3d(pairs[row, 2], pairs[row, 3], pairs[row, 4])
+                psum = psum + wp.vec3d(pairs[row, 5], pairs[row, 6], pairs[row, 7])
+                vsum = vsum + wp.vec3d(pairs[row, 8], pairs[row, 9], pairs[row, 10])
+                fsum = fsum + pairs[row, 11]
+                esum = esum + pairs[row, 12]
+        if g < 0:
+            for k in range(chunks):
+                row = b * chunks + k
+                if partials[row, 0] > zero:
+                    wsum = wsum + partials[row, 0]
+                    dmax = wp.max(dmax, partials[row, 1])
+                    nsum = nsum + wp.vec3d(partials[row, 2], partials[row, 3], partials[row, 4])
+                    psum = psum + wp.vec3d(partials[row, 5], partials[row, 6], partials[row, 7])
+                    vsum = vsum + wp.vec3d(partials[row, 8], partials[row, 9], partials[row, 10])
+                    fsum = fsum + partials[row, 11]
+                    esum = esum + partials[row, 12]
+        else:
+            # ``g``'s points inside this body: the same contact, seen from g.
+            mine = (b + 1) * pair_chunks
+            gfirst = body_chunk_first[g]
+            for k in range(gfirst, gfirst + body_chunk_count[g]):
+                row = mine + k
+                if pairs[row, 0] > zero:
+                    wsum = wsum + pairs[row, 0]
+                    dmax = wp.max(dmax, pairs[row, 1])
+                    nsum = nsum - wp.vec3d(pairs[row, 2], pairs[row, 3], pairs[row, 4])
+                    psum = psum + wp.vec3d(pairs[row, 5], pairs[row, 6], pairs[row, 7])
+                    fsum = fsum + pairs[row, 11]
+                    esum = esum + pairs[row, 12]
+        if wsum <= zero:
+            continue
+        nlen = wp.length(nsum)
+        if nlen <= wp.float64(1.0e-12):
+            continue
+        n = nsum / nlen
+        lift = wp.dot(n, -down)
+        if g < 0:
+            if lift >= wp.float64(0.5):
+                supported = 1
+        elif lift <= wp.float64(-0.5) and supported != 0:
+            # ``g`` rests on this supported body: it does not push back.
+            continue
+        contact = psum / wsum
+        r = contact - pos0
+        mu = wp.min(wp.max(fsum / wsum, zero), one)
+        restitution = wp.min(wp.max(esum / wsum, zero), one)
+        vc = vsum / wsum
+        share = wp.float64(1.0)
+        rg = wp.vec3d(zero, zero, zero)
+        mass_g = wp.float64(1.0)
+        inverse_g = wp.mat33d(zero, zero, zero, zero, zero, zero, zero, zero, zero)
+        movable = int(0)  # noqa: UP018 - Warp needs a dynamic variable here
+        if g >= 0:
+            rg = contact - _body_vec(prev_state, g, 1)
+            vc = _body_vec(prev_state, g, 13) + wp.cross(_body_vec(prev_state, g, 16), rg)
+            if lift >= wp.float64(0.5) and prev_support[g] != 0:
+                # A supported body underneath is ground.
+                supported = 1
+            else:
+                movable = 1
+                mass_g = body_const[g, 0] * body_const[g, 1]
+                inverse_g = _inverse_inertia(body_const, g, _body_rot(prev_state, g))
+                share = (one / mass) / (one / mass + one / mass_g)
+        if push != 0:
+            for axis in range(3):
+                if body_const[b, 12 + axis] == zero:
+                    pos[axis] = pos[axis] + n[axis] * dmax * share
+        vrel = lin + wp.cross(omega, r) - vc
+        vn = wp.dot(vrel, n)
+        if vn < zero:
+            kn = _effective_mass(mass, inverse, r, n)
+            if movable != 0:
+                kn = kn + _effective_mass(mass_g, inverse_g, rg, n)
+            e = restitution
+            if -vn < rest:
+                e = zero
+            j = -(one + e) * vn / kn
+            lin = lin + n * (j / mass)
+            omega = omega + inverse * (wp.cross(r, n) * j)
+            vslip = lin + wp.cross(omega, r) - vc
+            vt = vslip - n * wp.dot(vslip, n)
+            vtl = wp.length(vt)
+            if vtl > wp.float64(1.0e-12) and mu > zero:
+                t = vt / vtl
+                kt = _effective_mass(mass, inverse, r, t)
+                if movable != 0:
+                    kt = kt + _effective_mass(mass_g, inverse_g, rg, t)
+                jt = wp.min(mu * j, vtl / kt)
+                lin = lin - t * (jt / mass)
+                omega = omega - inverse * (wp.cross(r, t) * jt)
+        for axis in range(3):
+            if body_const[b, 12 + axis] != zero:
+                lin[axis] = zero
+            if body_const[b, 15 + axis] != zero:
+                omega[axis] = zero
+
+    support[b] = supported
+    h = wp.float64(voxel_size)
+    for k in range(3):
+        body_state[b, 1 + k] = pos[k]
+        body_state[b, 13 + k] = lin[k]
+        body_state[b, 16 + k] = omega[k]
+        extent = int(body_state[b, 23 + k])
+        lo = int(wp.floor((pos[k] - radius - wp.float64(origin[k])) / h)) - box_margin
+        lo = wp.min(wp.max(lo, 0), voxels_dim[k] - extent)
+        body_state[b, 20 + k] = wp.float64(lo)
 
 
 @wp.kernel

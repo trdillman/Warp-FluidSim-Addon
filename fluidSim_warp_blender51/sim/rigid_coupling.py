@@ -15,6 +15,12 @@ Dynamic collider (Blender's rigid-body world cannot take per-frame forces):
   on the body's solid faces plus quadratic drag at its boundary samples
   (``kernels_rigid``: segmented gathers, no atomics) and advances the body
   with semi-implicit Euler in float64.
+* A body also collides with every Static and Animated collider and with
+  every other Dynamic body: after the integrator, the body's points (mesh
+  points plus boundary samples) are tested against those meshes at their
+  substep pose, collider points against the body, and the body is pushed out
+  and bounced off; a pair of bodies shares one impulse
+  (``kernels_rigid.k_rigid_contact_*``).
 * The state stays on the device for the whole frame (no per-substep host
   round trip) and is copied back once, at the end of the frame.
 
@@ -42,15 +48,24 @@ from .kernels_rigid import (
     BODY_ROT,
     BODY_VEL,
     BODY_WIDTH,
+    CONST_CONTACT_COUNT,
+    CONST_CONTACT_FIRST,
     CONST_DENSITY,
+    CONST_FRICTION,
     CONST_INERTIA,
     CONST_LOCK,
     CONST_POINT_COUNT,
     CONST_POINT_FIRST,
     CONST_RADIUS,
+    CONST_RESTITUTION,
     CONST_VOLUME,
     CONST_WIDTH,
+    PARTIAL_WIDTH,
     k_rasterize_rigid_ranked,
+    k_rigid_contact_collider_points,
+    k_rigid_contact_pairs,
+    k_rigid_contact_points,
+    k_rigid_contact_resolve,
     k_rigid_drag_chunks,
     k_rigid_face_chunks,
     k_rigid_integrate,
@@ -65,6 +80,10 @@ DRAG_CHUNK = 8               # boundary samples per drag partial
 FACE_VOXELS_PER_PARTIAL = 64
 MAX_FACE_PARTIALS = 4096
 BOX_MARGIN_VOXELS = 2        # face-gather box margin beyond the bounding sphere
+CONTACT_BAND_VOXELS = 4.0    # deepest penetration a vertex query still resolves
+CONTACT_CHUNK = 256          # body contact points per (partner, chunk) row
+COLLIDER_CHUNK = 64          # collider points per contact partial
+CONTACT_ITERATIONS = 4       # Jacobi passes when bodies can touch each other
 STATE_WIDTH = 13             # pos 3, quat 4 (w x y z), lin_vel 3, ang_vel 3
 SURFACE_OFFSET_VOXELS = 1.0  # air-centre p = 0 above the particle interface
 
@@ -351,6 +370,12 @@ class RigidCoupling:
         self._gather_buffers = None
         self._points_key = None
         self._points = None
+        self._contact_key = None
+        self._contact_buffers = None
+        self._contactors_key = None
+        self._contactors = None
+        self._contact_points_key = None
+        self._contact_points = None
         self._partials = 1
         self._dirty = True          # host state newer than the device copy
         self._host_stale = False    # device state newer than the host copy
@@ -376,6 +401,12 @@ class RigidCoupling:
         self._gather_buffers = None
         self._points_key = None
         self._points = None
+        self._contact_key = None
+        self._contact_buffers = None
+        self._contactors_key = None
+        self._contactors = None
+        self._contact_points_key = None
+        self._contact_points = None
         self._dirty = True
         self._host_stale = False
 
@@ -447,7 +478,8 @@ class RigidCoupling:
         state = np.zeros((n, BODY_WIDTH), dtype=np.float64)
         const = np.zeros((n, CONST_WIDTH), dtype=np.float64)
         first = 0
-        for index, (rank, _, body) in enumerate(self.attached):
+        contact_first = 0
+        for index, (rank, desc, body) in enumerate(self.attached):
             state[index, BODY_RANK] = float(rank)
             state[index, BODY_COM:BODY_COM + 3] = body.pos
             state[index, BODY_ROT:BODY_ROT + 9] = body.rotation().ravel()
@@ -468,9 +500,15 @@ class RigidCoupling:
             const[index, CONST_POINT_FIRST] = first
             const[index, CONST_POINT_COUNT] = len(body.body_points)
             first += len(body.body_points)
+            const[index, CONST_CONTACT_FIRST] = contact_first
+            const[index, CONST_CONTACT_COUNT] = len(body.body_points) + len(body.samples)
+            contact_first += len(body.body_points) + len(body.samples)
+            const[index, CONST_FRICTION] = float(getattr(desc, "friction", 0.0))
+            const[index, CONST_RESTITUTION] = float(getattr(desc, "restitution", 0.0))
         buf["state"].assign(state)
         buf["const"].assign(const)
         self._body_points()
+        self._contact_body_points()
         self._dirty = False
         self._host_stale = False
 
@@ -483,6 +521,48 @@ class RigidCoupling:
             self._points = wp.array(stacked, dtype=wp.vec3d, device=self.device)
             self._points_key = key
         return self._points
+
+    def _contact_body_points(self):
+        """Body-frame contact points (mesh points, then boundary samples, per
+        body in attached order), their owners, the bodies' mesh ids, the total
+        and the point chunk table ``(first, count, body_first, body_count,
+        chunks)``: each body's points split into runs of ``CONTACT_CHUNK`` for
+        ``k_rigid_contact_pairs``, and each body's range of those chunks."""
+        key = tuple((body.uid, id(body)) for _, _, body in self.attached)
+        if key != self._contact_points_key:
+            dev = self.device
+            points, owner = [], []
+            chunk_first, chunk_count, body_first, body_count = [], [], [], []
+            start = 0
+            for index, (_, _, body) in enumerate(self.attached):
+                for part in (body.body_points, body.samples):
+                    if len(part):
+                        points.append(np.asarray(part, dtype=np.float64))
+                        owner.append(np.full(len(part), index, dtype=np.int32))
+                size = len(body.body_points) + len(body.samples)
+                body_first.append(len(chunk_first))
+                for offset in range(0, size, CONTACT_CHUNK):
+                    chunk_first.append(start + offset)
+                    chunk_count.append(min(CONTACT_CHUNK, size - offset))
+                body_count.append(len(chunk_first) - body_first[-1])
+                start += size
+
+            def ints(values):
+                return wp.array(np.asarray(values or [0], dtype=np.int32),
+                                dtype=wp.int32, device=dev)
+
+            self._contact_points = (
+                wp.array(np.concatenate(points) if points else np.zeros((1, 3)),
+                         dtype=wp.vec3d, device=dev),
+                wp.array(np.concatenate(owner) if owner else np.zeros(1, dtype=np.int32),
+                         dtype=wp.int32, device=dev),
+                wp.array(np.asarray([body.local_mesh.id for _, _, body in self.attached],
+                                    dtype=np.uint64), dtype=wp.uint64, device=dev),
+                sum(len(p) for p in points),
+                (ints(chunk_first), ints(chunk_count), ints(body_first),
+                 ints(body_count), len(chunk_first)))
+            self._contact_points_key = key
+        return self._contact_points
 
     def sync_host(self):
         """Copy the device-resident body state back to the host objects."""
@@ -656,6 +736,7 @@ class RigidCoupling:
         self.prepare(solver)
         self._launch_integrate(
             solver, dt, self._launch_gather(solver, dt, pressure_valid))
+        self._launch_contact(solver, dt)
 
     def _launch_integrate(self, solver, dt, impulses):
         """Advance the device state by ``dt`` from (bodies, 14) ``impulses``."""
@@ -674,13 +755,162 @@ class RigidCoupling:
             outputs=[buf["state"]], device=self.device)
         self._host_stale = True
 
+    def _contact_meshes(self, solver):
+        """Device arrays of the Static and Animated colliders a body can touch.
+
+        ``(meshes, lin, ang, center, material, count, chunk_mesh, chunk_first,
+        chunk_count, chunks)``; the chunk table splits every collider's points
+        into runs of ``COLLIDER_CHUNK`` for ``k_rigid_contact_collider_points``.
+        The arrays are built once per collider set; an Animated collider's
+        velocity and pivot move with the substep, so those three are uploaded
+        into the same arrays every call. With no such collider the arrays are
+        one-element placeholders and both counts are 0.
+        """
+        live = [col for col in getattr(solver, "colliders", ())
+                if col.mesh is not None and not getattr(col, "dynamic", False)]
+        moving = any(col.base_points is not None for col in live)
+        key = tuple((id(col.mesh), int(col.mesh.id), int(col.mesh.points.shape[0]),
+                     float(col.friction), float(col.restitution)) for col in live)
+        size = max(len(live), 1)
+        lin = np.zeros((size, 3), dtype=np.float32)
+        ang = np.zeros((size, 3), dtype=np.float32)
+        center = np.zeros((size, 3), dtype=np.float32)
+        if moving:
+            for index, col in enumerate(live):
+                if col.base_points is not None:
+                    lin[index] = col.linear_velocity
+                    ang[index] = col.angular_velocity
+                    center[index] = getattr(col, "pose_center", None) or col.center
+        if key == self._contactors_key:
+            if moving:
+                self._contactors[1].assign(lin)
+                self._contactors[2].assign(ang)
+                self._contactors[3].assign(center)
+            return self._contactors
+        dev = self.device
+        material = np.zeros((size, 2), dtype=np.float32)
+        ids = np.zeros(size, dtype=np.uint64)
+        chunk_mesh, chunk_first, chunk_count = [], [], []
+        for index, col in enumerate(live):
+            ids[index] = col.mesh.id
+            material[index] = (col.friction, col.restitution)
+            total = int(col.mesh.points.shape[0])
+            for start in range(0, total, COLLIDER_CHUNK):
+                chunk_mesh.append(index)
+                chunk_first.append(start)
+                chunk_count.append(min(COLLIDER_CHUNK, total - start))
+        chunks = len(chunk_mesh)
+        if not chunks:
+            chunk_mesh, chunk_first, chunk_count = [0], [0], [0]
+
+        def ints(values):
+            return wp.array(np.asarray(values, dtype=np.int32), dtype=wp.int32, device=dev)
+
+        contactors = (
+            wp.array(ids, dtype=wp.uint64, device=dev),
+            wp.array(lin, dtype=wp.vec3, device=dev),
+            wp.array(ang, dtype=wp.vec3, device=dev),
+            wp.array(center, dtype=wp.vec3, device=dev),
+            wp.array(material, dtype=wp.vec2, device=dev),
+            len(live), ints(chunk_mesh), ints(chunk_first), ints(chunk_count),
+            chunks)
+        self._contactors_key = key
+        self._contactors = contactors
+        return contactors
+
+    def _contact_scratch(self, total, partials, pairs):
+        key = (total, partials, pairs)
+        if self._contact_key != key:
+            dev = self.device
+            self._contact_buffers = {
+                "depth": wp.zeros(total, dtype=float, device=dev),
+                "normal": wp.zeros(total, dtype=wp.vec3, device=dev),
+                "point": wp.zeros(total, dtype=wp.vec3d, device=dev),
+                "velocity": wp.zeros(total, dtype=wp.vec3, device=dev),
+                "material": wp.zeros(total, dtype=wp.vec2, device=dev),
+                "partner": wp.zeros(total, dtype=wp.int32, device=dev),
+                "partials": wp.zeros((max(partials, 1), PARTIAL_WIDTH),
+                                     dtype=wp.float64, device=dev),
+                "pairs": wp.zeros((max(pairs, 1), PARTIAL_WIDTH),
+                                  dtype=wp.float64, device=dev),
+                "prev":wp.zeros((len(self.attached), BODY_WIDTH),
+                                 dtype=wp.float64, device=dev),
+                "support": wp.zeros(len(self.attached), dtype=wp.int32, device=dev),
+                "prev_support": wp.zeros(len(self.attached), dtype=wp.int32, device=dev),
+            }
+            self._contact_key = key
+        return self._contact_buffers
+
+    def _launch_contact(self, solver, dt):
+        """Resolve contact with the colliders and between bodies (device)."""
+        n = len(self.attached)
+        (meshes, lin, ang, center, material, count, chunk_mesh, chunk_first,
+         chunk_count, chunks) = self._contact_meshes(solver)
+        if count == 0 and n < 2:
+            return
+        points, owner, body_meshes, total, point_chunks = self._contact_body_points()
+        if total == 0:
+            return
+        pair_first, pair_count, body_chunk_first, body_chunk_count, pair_chunks = point_chunks
+        scratch = self._contact_scratch(total, n * chunks, (n + 1) * pair_chunks)
+        g = solver.grid
+        band = float(CONTACT_BAND_VOXELS * g.voxel_size)
+        buf = self._gather_buffers
+        dev = self.device
+        fast_launch(
+            k_rigid_contact_points, dim=total,
+            inputs=[buf["state"], buf["const"], points, owner, body_meshes, n,
+                    meshes, lin, ang, center, material, int(count), band],
+            outputs=[scratch["depth"], scratch["normal"], scratch["point"],
+                     scratch["velocity"], scratch["material"], scratch["partner"]],
+            device=dev)
+        if chunks:
+            fast_launch(
+                k_rigid_contact_collider_points, dim=n * chunks,
+                inputs=[buf["state"], buf["const"], body_meshes, meshes, lin, ang,
+                        center, material, chunk_mesh, chunk_first, chunk_count,
+                        int(chunks), band],
+                outputs=[scratch["partials"]], device=dev)
+        # Every body's points reduced per (partner, chunk) once, so each
+        # resolve pass reads a few rows instead of rescanning every point.
+        fast_launch(
+            k_rigid_contact_pairs, dim=(n + 1) * pair_chunks,
+            inputs=[scratch["depth"], scratch["normal"], scratch["point"],
+                    scratch["velocity"], scratch["material"], scratch["partner"],
+                    pair_first, pair_count, int(pair_chunks)],
+            outputs=[scratch["pairs"]], device=dev)
+        s = solver.settings
+        gravity = wp.vec3d(*(float(v) for v in s.gravity))
+        domain_lo = wp.vec3d(*(float(v) for v in s.domain_min))
+        domain_hi = wp.vec3d(*(float(v) for v in s.domain_max))
+        support = scratch["support"]
+        support.zero_()
+        # One pass settles a body against colliders; bodies that can touch
+        # each other exchange impulses Jacobi style, so a stack needs a few,
+        # and push out of each other once support has travelled up it.
+        iterations = 1 if n < 2 else CONTACT_ITERATIONS
+        for iteration in range(iterations):
+            wp.copy(scratch["prev"], buf["state"])
+            wp.copy(scratch["prev_support"], support)
+            fast_launch(
+                k_rigid_contact_resolve, dim=n,
+                inputs=[buf["const"], scratch["prev"], scratch["pairs"],
+                        int(pair_chunks), body_chunk_first, body_chunk_count,
+                        scratch["partials"], int(chunks), n, band, gravity,
+                        float(dt), int(iteration == iterations - 1),
+                        self._points, domain_lo, domain_hi,
+                        scratch["prev_support"], g.origin, float(g.voxel_size),
+                        g.voxels_dim, int(BOX_MARGIN_VOXELS)],
+                outputs=[buf["state"], support], device=dev)
+        self._host_stale = True
+
     @staticmethod
     def _contain(body, lo, hi):
         """Inelastic contact with the domain walls (host reference).
 
-        Body-body and body-collider contact are not modelled in 4.0; the
-        domain box is, so a sinking body rests on the floor instead of
-        leaving the grid. ``k_rigid_integrate`` is the device port.
+        Only the domain box is handled here (collider and body-body contact
+        are ``k_rigid_contact_*``), so a sinking body rests on the floor
+        instead of leaving the grid. ``k_rigid_integrate`` is the device port.
         """
         if not len(body.body_points):
             return

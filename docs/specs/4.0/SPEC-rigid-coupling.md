@@ -48,6 +48,28 @@ buoyancy test; nothing else.
   collider path (`_update_moving_colliders`), which already handles velocity history.
 - Settings per collider object: `collider_dynamic` (bool), `collider_density`,
   `collider_drag`, `collider_initial_velocity`, `collider_lock_axes` (6 bools).
+- Body Type (`collider_body_type`, a view of the stored `collider_static` and
+  `collider_dynamic` flags): Static is read once per lifecycle and carries no
+  velocity; Animated follows its keyframes; Dynamic is this spec. Every collider type
+  collides with the liquid and with Dynamic bodies; only Dynamic bodies are moved.
+- Contact (`RigidCoupling._launch_contact`, after integration each substep):
+  `k_rigid_contact_points` tests every body point (mesh vertices plus boundary samples)
+  against the Static/Animated collider meshes at their substep pose and against the
+  other bodies' meshes; `k_rigid_contact_collider_points` tests collider vertices
+  against each body mesh (a spike tip pressing into a flat face), in chunks of
+  `COLLIDER_CHUNK`, reduced into fixed per-(body, chunk) partials. `k_rigid_contact_pairs`
+  reduces the body points the same way, per (partner, chunk of `CONTACT_CHUNK` points),
+  once per substep. `k_rigid_contact_resolve` (one thread per body, fixed order, no
+  atomics, so bakes stay bitwise deterministic) sums those rows per partner and applies
+  one depth-weighted normal + friction impulse per partner with that partner's
+  friction/restitution, then pushes the body out. Reading rows instead of rescanning
+  every point keeps 8 touching bodies near the cost of one.
+- Body-body contact is Jacobi: `CONTACT_ITERATIONS` passes over a snapshot of the body
+  states, each partner treated as movable with its own effective mass (momentum is
+  conserved in zero gravity). Stacks use shock propagation: a body touching the domain
+  wall gravity points at, or a collider with an upward normal, is *supported*; a body
+  resting on a supported body becomes supported, sees it as immovable, and a supported
+  body ignores bodies resting on it. Push-out runs on the last pass only.
 - Publication: Output Publication writes `matrix_world` keyframes per published frame
   (live and cache playback), tagged so they can be cleared on Reset.
 
@@ -62,5 +84,12 @@ buoyancy test; nothing else.
   identical.
 - `tests/cache/test_cache_v31_rigid.py`: v3 cache loads with empty body records; v3.1
   resume restores body state.
+- `tests/solver/test_rigid_static_collider_contact.py` and
+  `tests/solver/test_rigid_body_contact.py`: a body rests on Static/Animated colliders
+  and on spike tips that touch no body point; a body rests on another body; head-on
+  bodies stop and keep momentum; contact is deterministic.
+- `tests/acceptance/blender_collider_body_type_acceptance.py` (Body Type enum, Static
+  frozen pose) and `tests/acceptance/blender_static_collider_bake_acceptance.py` (a
+  Production Bake drops two stacked cubes onto a Static shelf, which never moves).
 - Demo: crown_splash gains a floating cork; `check_demo_blends` asserts its pose track
   moves and the Alembic export carries it. Budget ≤ 5% per frame on crown_splash.

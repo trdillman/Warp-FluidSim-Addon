@@ -140,6 +140,9 @@ BACKGROUND_ACCEPTANCE = (
     ("tests/acceptance/blender_demo_gallery_acceptance.py", "DEMO-GALLERY-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_cache_v3_stamp_acceptance.py", "CACHE-V3-STAMP-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_rigid_publication_acceptance.py", "RIGID_PUBLICATION_OK"),
+    ("tests/acceptance/blender_collider_body_type_acceptance.py", "COLLIDER_BODY_TYPE_OK"),
+    ("tests/acceptance/blender_static_collider_bake_acceptance.py",
+     "STATIC-COLLIDER-BAKE-ACCEPTANCE-PASS"),
 )
 # Acceptance scripts that take --json-out: (label, script, report path, marker).
 REPORT_ACCEPTANCE = (
@@ -391,6 +394,7 @@ def _run_parallel(steps, max_workers=4):
 # these always run alone in a fresh Blender.
 CUDA_HIDDEN_ACCEPTANCE = frozenset({
     "tests/acceptance/blender_alembic_export_acceptance.py",
+    "tests/acceptance/blender_collider_body_type_acceptance.py",
     "tests/acceptance/blender_rigid_publication_acceptance.py",
     "tests/acceptance/blender_usd_export_acceptance.py",
 })

@@ -450,6 +450,29 @@ def _volume_input_poll(_settings, obj):
     return getattr(obj, "type", None) == "VOLUME"
 
 
+COLLIDER_BODY_TYPE_ITEMS = (
+    ("STATIC", "Static",
+     "Fully stationary: read once at Initialize, ignores animation, never pushes the liquid by motion, and is never moved by it. Still collides with the liquid and with Dynamic bodies"),
+    ("ANIMATED", "Animated",
+     "Follows its keyframes and pushes the liquid (and Dynamic bodies) with its motion, but is never moved by them"),
+    ("DYNAMIC", "Dynamic",
+     "A rigid body: the liquid pushes, floats and sinks it. FluidSim solves its motion and writes it as keyframes"),
+)
+
+
+def _get_collider_body_type(self) -> int:
+    if self.collider_dynamic:
+        return 2
+    return 0 if self.collider_static else 1
+
+
+def _set_collider_body_type(self, value: int) -> None:
+    # The two stored flags stay the source of truth so files saved before Body
+    # Type existed (only collider_dynamic) read back unchanged.
+    self.collider_dynamic = value == 2
+    self.collider_static = value == 0
+
+
 class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
     role: EnumProperty(
         name="Role",
@@ -747,6 +770,15 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         name="Transfer Velocity", default=True,
         update=_request_sync,
         description="Enable to push liquid with animated collider motion; disable to keep collisions stationary even when the object moves")
+    # Body type: Static / Animated (neither flag) / Dynamic. The enum is a view
+    # of the two stored flags below.
+    collider_body_type: EnumProperty(
+        name="Body Type", items=COLLIDER_BODY_TYPE_ITEMS,
+        get=_get_collider_body_type, set=_set_collider_body_type,
+        description="Choose how this collider behaves: Static never moves, Animated follows its keyframes and pushes the liquid, Dynamic is moved by the liquid; every type collides with the liquid and with Dynamic bodies")
+    collider_static: BoolProperty(
+        name="Static", default=False, update=_request_reset,
+        description="Keep this collider fully stationary: it is read once at Initialize and ignores later animation. Part of Body Type; ignored when Dynamic is on")
     # Two-way rigid coupling (4.0): the liquid moves a Dynamic collider.
     collider_dynamic: BoolProperty(
         name="Dynamic", default=False, update=_request_reset,

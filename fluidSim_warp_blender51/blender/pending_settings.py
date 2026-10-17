@@ -329,7 +329,7 @@ _RESET_OBJECT_FIELDS = frozenset({
     "emission_mode", "auto_inject_seed",
     "emit_rate", "source_sampling_mode", "source_sampling_multiplier",
     # Two-way rigid coupling: a Dynamic body restarts from its authored state.
-    "collider_dynamic", "collider_initial_velocity",
+    "collider_dynamic", "collider_static", "collider_initial_velocity",
 })
 
 def _signature_owners(scene):

@@ -1251,17 +1251,25 @@ class SceneInputs:
             if obj.type != "MESH" or obj.hide_viewport:
                 continue
             object_id = _object_identity(obj)
-            cache_key = (
-                "EVALUATED_MESH", object_id,
-                MeshEvaluationMode.EVERY_SIM_FRAME.name)
-            collider_cache_keys.add(cache_key)
             dynamic = rigid_scene.is_dynamic_collider(obj)
+            # A Static collider is captured once per lifecycle (Initialize /
+            # Reset) and never re-read, so animating the object cannot move it.
+            static = rigid_scene.is_static_collider(obj)
+            cache_key = (
+                "STATIC_MESH" if static else "EVALUATED_MESH", object_id,
+                MeshEvaluationMode.FIRST_SIM_FRAME.name if static
+                else MeshEvaluationMode.EVERY_SIM_FRAME.name)
+            collider_cache_keys.add(cache_key)
             authored = (
                 rigid_publication.authored_world(obj) if dynamic else None)
-            entry, error = self._evaluated_mesh(
-                obj, depsgraph, cache_key, force_refresh=False,
-                sync_generation=sync_generation, strict_degenerate=False,
-                matrix_override=authored)
+            entry = self._evaluated_mesh_cache.get(cache_key) if static else None
+            if entry is not None and entry.get("mesh") is not None:
+                error = ""
+            else:
+                entry, error = self._evaluated_mesh(
+                    obj, depsgraph, cache_key, force_refresh=False,
+                    sync_generation=sync_generation, strict_degenerate=False,
+                    matrix_override=authored)
             if entry is None:
                 self._evaluated_mesh_cache.pop(cache_key, None)
                 _set_mesh_error(obj.fluidsim, error)
@@ -1273,8 +1281,11 @@ class SceneInputs:
             matrix_world = authored if dynamic else evaluated.matrix_world
             desc = ColliderDesc()
             desc.mesh, desc.aabb_min, desc.aabb_max = warp_mesh, tuple(map(float, aabb_min)), tuple(map(float, aabb_max))
-            center = matrix_world.translation
-            desc.center = (center.x, center.y, center.z)
+            if static:
+                desc.center = tuple(entry["force_center"])
+            else:
+                center = matrix_world.translation
+                desc.center = (center.x, center.y, center.z)
             desc.friction = float(obj.fluidsim.collider_friction)
             desc.restitution = float(obj.fluidsim.collider_restitution)
             if dynamic:
@@ -1288,7 +1299,7 @@ class SceneInputs:
                     float(v) for v in obj.fluidsim.collider_initial_velocity)
                 desc.lock_axes = tuple(
                     bool(v) for v in obj.fluidsim.collider_lock_axes)
-            elif obj.fluidsim.transfer_velocity:
+            elif not static and obj.fluidsim.transfer_velocity:
                 desc.linear_velocity = self.object_velocity(evaluated, scene)
                 desc.angular_velocity = self.object_angular_velocity(evaluated, scene)
             descriptors.append(desc)

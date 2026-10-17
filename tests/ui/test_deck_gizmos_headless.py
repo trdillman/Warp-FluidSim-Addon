@@ -100,7 +100,7 @@ def _emitter_scene(pending, **object_values):
         role="SOURCE", point_source_representation="AUTO", mesh_evaluation_mode="EVALUATED",
         emission_mode="CONTINUOUS_INFLOW", auto_inject_seed=False, emit_rate=8.0,
         source_sampling_mode="MULTIPLIER", source_sampling_multiplier=1.0,
-        collider_dynamic=False, collider_initial_velocity=(0.0, 0.0, 0.0),
+        collider_dynamic=False, collider_static=False, collider_initial_velocity=(0.0, 0.0, 0.0),
         initial_velocity=(0.0, 0.0, 0.0), use_object_velocity=True,
     )
     values.update(object_values)

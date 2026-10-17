@@ -246,11 +246,12 @@ def draw_collider_settings(layout, settings, *, columns: int = 2):
     The narrow sidebar passes ``columns=1`` so labels are not cut off.
     """
     dynamic = bool(getattr(settings, "collider_dynamic", False))
+    static = getattr(settings, "collider_body_type", None) == "STATIC"
     draw_property_grid(
         layout,
         settings,
-        ("collider_friction", "collider_restitution", "collider_dynamic")
-        + (() if dynamic else ("transfer_velocity",)),
+        ("collider_body_type", "collider_friction", "collider_restitution")
+        + (() if dynamic or static else ("transfer_velocity",)),
         columns=columns,
     )
     if dynamic:
