@@ -131,14 +131,64 @@ def draw_status_message(layout, text: str, severity: str = "INFO") -> None:
     row.label(text=f"{prefix}{text}", icon=icon)
 
 
+def quality_effective_note(data, name: str) -> str:
+    """``"→ 8 (Final)"`` when the Quality tier changes what the solver uses.
+
+    Draft and Final rescale a few authored knobs (``QUALITY_SCALED_FIELDS``) as
+    they are projected into the solver; the field itself keeps the authored
+    value. This note puts the value the simulation actually runs next to it.
+    Empty at Preview/Custom, for unscaled fields, and whenever it cannot be
+    resolved (a label must never break panel drawing).
+    """
+    try:
+        from ..sim.quality_contract import (
+            MIN_RESOLUTION_DIVISIONS,
+            QUALITY_SCALED_FIELDS,
+            scale_quality_value,
+        )
+        from .solver_settings import scene_quality_fidelity
+
+        if name not in QUALITY_SCALED_FIELDS and name != "resolution_divisions":
+            return ""
+        scene = bpy.context.scene
+        fidelity = scene_quality_fidelity(scene)
+        if fidelity == 1.0:
+            return ""
+        authored = getattr(data, name)
+        if name == "resolution_divisions":
+            # Divisions set the voxel size; the tier scales that voxel size, so
+            # the solver runs ``divisions * fidelity`` cells along the long axis.
+            effective = max(MIN_RESOLUTION_DIVISIONS, int(round(authored * fidelity)))
+        else:
+            effective = scale_quality_value(name, authored, fidelity)
+        if effective == authored:
+            return ""
+        shown = f"{effective:.4g} m" if name == "voxel_size" else f"{effective:g}"
+        tier = str(scene.fluidsim.quality).title()
+    except Exception:
+        return ""
+    return f"→ {shown} ({tier})"
+
+
 def draw_property(layout, data, name: str, *, text: str | None = None, **kwargs) -> bool:
-    """Draw an RNA property when present; return whether it was drawn."""
+    """Draw an RNA property when present; return whether it was drawn.
+
+    A field the Quality tier rescales gets the value the solver will actually
+    use drawn beside it (see ``quality_effective_note``).
+    """
     if data is None or not hasattr(data, name):
         return False
+    note = quality_effective_note(data, name)
+    if note:
+        layout = layout.row(align=True)
     if text is None:
         layout.prop(data, name, **kwargs)
     else:
         layout.prop(data, name, text=text, **kwargs)
+    if note:
+        label = layout.row()
+        label.ui_units_x = 5
+        label.label(text=note)
     return True
 
 

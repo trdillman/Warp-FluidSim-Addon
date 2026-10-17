@@ -5034,3 +5034,42 @@ def test_prepare_workspace_without_a_spare_area_adds_no_timeline(monkeypatch):
     assert [a.type for a in workspace.screens[0].areas] == ["VIEW_3D", "PROPERTIES"]
     # A workspace object that lists no screens is tolerated too.
     env.ui_header.prepare_workspace(SimpleNamespace(object_mode="EDIT"))
+
+
+def test_quality_scaled_settings_show_the_effective_value(monkeypatch):
+    """Draft/Final rescale a few knobs as they reach the solver; the field keeps
+    the authored value, so the value the solver runs is drawn beside it
+    (Max Substeps 4 at Final runs 8 -- the HUD's count must not look wrong)."""
+    _install_bpy_stub(monkeypatch)
+    ui_common = _reload_module("fluidSim_warp_blender51.blender.ui_common")
+    data = SimpleNamespace(
+        max_substeps=4, pressure_iterations=40, voxel_size=0.02,
+        particles_per_voxel=8, resolution_divisions=64, cfl=1.0,
+    )
+
+    def labels(quality):
+        sys.modules["bpy"].context = SimpleNamespace(
+            scene=SimpleNamespace(fluidsim=SimpleNamespace(quality=quality))
+        )
+        layout = _Layout()
+        for name in ("max_substeps", "pressure_iterations", "voxel_size",
+                     "particles_per_voxel", "resolution_divisions", "cfl"):
+            assert ui_common.draw_property(layout, data, name)
+        return [item["text"] for item in layout.labels], layout.props
+
+    texts, props = labels("FINAL")
+    assert "\u2192 8 (Final)" in texts          # max_substeps 4 -> 8
+    assert "\u2192 80 (Final)" in texts         # pressure_iterations
+    assert "\u2192 0.01 m (Final)" in texts     # voxel_size halves
+    assert "\u2192 16 (Final)" in texts         # particles_per_voxel
+    assert "\u2192 128 (Final)" in texts        # resolution_divisions
+    assert len(texts) == 5                      # cfl is not scaled: no note
+    assert len(props) == 6                      # every field is still editable
+
+    texts, _ = labels("DRAFT")
+    assert "\u2192 2 (Draft)" in texts
+    assert "\u2192 0.04 m (Draft)" in texts
+
+    texts, props = labels("PREVIEW")
+    assert texts == []                          # x1: nothing to explain
+    assert len(props) == 6

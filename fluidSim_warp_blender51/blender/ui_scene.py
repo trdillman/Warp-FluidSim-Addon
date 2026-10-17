@@ -578,7 +578,7 @@ class FLUIDSIM_PT_sim_pressure(_FluidSimSimulationPanel, bpy.types.Panel):
         layout = _layout(self)
         fs = _domain_owner(context)
         layout.prop(fs, "pressure_solver")
-        layout.prop(fs, "pressure_iterations")
+        draw_property(layout, fs, "pressure_iterations")
         pcg = _gated(layout, fs.pressure_solver == "PCG")
         pcg.prop(fs, "pressure_preconditioner")
         pcg.prop(fs, "pressure_tolerance")

@@ -47,7 +47,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | field | tier | UI writes | consumer reads | runtime writes | UI reads | declared owner | getattr defaults | verdict |
 |---|---|---|---|---|---|---|---:|---|
 | `ui_mode` | PRESENTATION | scene | - | - | scene | scene | 0 | UI_STATE |
-| `quality` | REINITIALIZE | scene | scene | - | - | scene | 0 | OK |
+| `quality` | REINITIALIZE | scene | scene | - | scene | scene | 0 | OK |
 | `live` | ADAPTER | - | scene | scene | - | scene | 5 | PUBLISHED |
 | `playback_advanced_expanded` | PRESENTATION | - | - | - | - | scene | 0 | UNOBSERVED |
 | `max_frame_catchup` | ADAPTER | scene | scene | - | - | scene | 1 | OK |
