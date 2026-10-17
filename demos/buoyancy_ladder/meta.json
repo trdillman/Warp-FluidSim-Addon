@@ -1,0 +1,62 @@
+{
+  "scene": "buoyancy_ladder",
+  "domain": [
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.96,
+      0.26,
+      0.36
+    ]
+  ],
+  "voxel_size": 0.01,
+  "fps": 24,
+  "pool_depth": 0.18,
+  "block_size": [
+    0.12,
+    0.12,
+    0.06
+  ],
+  "densities": [
+    250.0,
+    500.0,
+    750.0,
+    1500.0
+  ],
+  "expected_drafts": {
+    "Ladder Block 250": 0.015,
+    "Ladder Block 500": 0.03,
+    "Ladder Block 750": 0.045,
+    "Ladder Block 1500": null
+  },
+  "build_surface_z": 0.17774904429912566,
+  "build_settled": {
+    "Ladder Block 250": {
+      "center_z": 0.18217471636557822,
+      "bottom_z": 0.15217471636557822,
+      "draft": 0.02557432793354744
+    },
+    "Ladder Block 500": {
+      "center_z": 0.17509951072462618,
+      "bottom_z": 0.14509951072462618,
+      "draft": 0.032649533574499484
+    },
+    "Ladder Block 750": {
+      "center_z": 0.1648696823003772,
+      "bottom_z": 0.1348696823003772,
+      "draft": 0.04287936199874845
+    },
+    "Ladder Block 1500": {
+      "center_z": 0.03000000119209299,
+      "bottom_z": 1.1920929902931032e-09,
+      "draft": 0.17774904310703268
+    }
+  },
+  "build_frames": 96,
+  "build_peak_particles": 359424,
+  "playable_live_setup": true,
+  "seed_objects": []
+}

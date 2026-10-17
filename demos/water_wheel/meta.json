@@ -1,0 +1,55 @@
+{
+  "scene": "water_wheel",
+  "domain": [
+    [
+      0.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.6,
+      0.2,
+      0.6
+    ]
+  ],
+  "voxel_size": 0.01,
+  "fps": 24,
+  "wheel": {
+    "name": "Water Wheel",
+    "axle": [
+      0.3,
+      0.1,
+      0.3
+    ],
+    "radius": 0.14,
+    "paddles": 6,
+    "density": 300.0,
+    "lock_axes": [
+      true,
+      true,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "stream": {
+    "lo": [
+      0.37,
+      0.06,
+      0.5
+    ],
+    "hi": [
+      0.45,
+      0.14,
+      0.55
+    ],
+    "speed": 0.5
+  },
+  "build_frames": 96,
+  "build_turned_rad": 27.690483850889954,
+  "build_axle_drift": 1.8836858755210363e-08,
+  "build_peak_particles": 30859,
+  "playable_live_setup": true,
+  "seed_objects": []
+}

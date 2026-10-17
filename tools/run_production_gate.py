@@ -860,6 +860,7 @@ def _production_main(argv=None):
         "tests/acceptance/blender_phase4_live_interaction_acceptance.py",
         "tests/acceptance/blender_gui_acceptance.py",
         "tests/acceptance/blender_gui_playback_probe.py",
+        "tests/acceptance/blender_rigid_authoring_ui_acceptance.py",
         "tests/acceptance/blender_viewport_2frame_gate.py",
         "tests/acceptance/blender_pre_bridge_file_acceptance.py",
         "tests/acceptance/_phase2_source_acceptance_common.py",
@@ -996,6 +997,15 @@ def _production_main(argv=None):
             "--expected-blend",
             playback_env["FLUIDSIM_PLAYBACK_BLEND"],
         ], env=env, expect_marker="SAVED-DEMO-GUI-PLAYBACK-PASS")
+        # Real mouse/keyboard events through Blender's event simulator.
+        _run("rigid body authoring UI workflow", _blender(
+            blender_exe,
+            "--factory-startup",
+            "--enable-event-simulate",
+            "--python",
+            "tests/acceptance/blender_rigid_authoring_ui_acceptance.py",
+        ), env=env, reject_output=True,
+           expect_marker="RIGID-AUTHORING-UI-ACCEPTANCE-PASS")
     if os.environ.get("FLUIDSIM_USER_PATH_PROFILE") == "1":
         _run("interactive user-path profile", _blender(
             blender_exe,

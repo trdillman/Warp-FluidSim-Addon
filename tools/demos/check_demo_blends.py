@@ -5,6 +5,7 @@ Run with Blender:
 """
 
 import json
+import math
 import os
 import sys
 
@@ -19,7 +20,8 @@ if REPO not in sys.path:
 from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
 DEMOS = os.path.join(REPO, "demos")
-SCENES = ("dam_break", "crown_splash", "chromatic_vortex", "paddle_stir")
+SCENES = ("dam_break", "crown_splash", "chromatic_vortex", "paddle_stir",
+          "buoyancy_ladder", "water_wheel")
 EXPECTED_AUTO_SEEDS = {
     "crown_splash": {"Crown Pool Seed", "Crown Droplet Seed"},
     "paddle_stir": {"Paddle Stir Pool Seed"},
@@ -271,6 +273,123 @@ def check_cork_motion(name):
             bpy.ops.fluidsim.release()
         shutil.rmtree(work, ignore_errors=True)
     return checks, report
+
+
+LADDER_DENSITIES = (250.0, 500.0, 750.0, 1500.0)
+LADDER_HALF_HEIGHT = 0.03   # 6 cm blocks, origin at the centre
+LADDER_LIVE_FRAMES = 72     # drafts settle by ~frame 48
+WHEEL_NAME = "Water Wheel"
+WHEEL_LOCK = (True, True, True, True, False, True)
+WHEEL_LIVE_FRAMES = 24
+
+
+def _play_live_then_replay(scene, bodies, frames):
+    """Play ``frames`` live frames, release the solver, then replay the
+    published keyframes with no solver attached.
+
+    Returns ``(owned, matrices)``: whether every body's action carries the
+    FluidSim ownership tag, and each body's replayed world matrices.
+    """
+    from fluidSim_warp_blender51.sim import rigid_scene
+
+    fs = scene.fluidsim
+    start = scene.frame_start
+    for frame in range(start + 1, start + frames + 1):
+        scene.frame_set(frame)
+    fs.live = False
+    bpy.ops.fluidsim.release()
+    owned = all(
+        obj.animation_data is not None and obj.animation_data.action is not None
+        and obj.animation_data.action.get(rigid_scene.OWNED_ACTION_TAG)
+        for obj in bodies)
+    matrices = {obj.name: [] for obj in bodies}
+    for frame in range(start, start + frames + 1):
+        scene.frame_set(frame)
+        for obj in bodies:
+            matrices[obj.name].append(np.asarray(obj.matrix_world, dtype=np.float64))
+    return owned, {key: np.asarray(value) for key, value in matrices.items()}
+
+
+def _release(scene):
+    scene.fluidsim.live = False
+    if bpy.ops.fluidsim.release.poll():
+        bpy.ops.fluidsim.release()
+
+
+def check_buoyancy_ladder(name):
+    """Every block is a Dynamic collider of its labelled density; live play
+    floats the three lighter blocks in density order and sinks the heaviest."""
+    open_demo_blend(os.path.join(DEMOS, name + ".blend"))
+    scene = bpy.context.scene
+    blocks = [bpy.data.objects.get(f"Ladder Block {int(d)}") for d in LADDER_DENSITIES]
+    contract = all(
+        obj is not None and obj.fluidsim.role == "COLLIDER" and obj.fluidsim.enabled
+        and obj.fluidsim.collider_dynamic
+        and abs(float(obj.fluidsim.collider_density) - density) < 1.0e-6
+        for obj, density in zip(blocks, LADDER_DENSITIES))
+    checks = {"ladder_contract": contract, "ladder_pose_tracks_owned": False,
+              "ladder_floats_in_density_order": False,
+              "ladder_heaviest_sinks": False}
+    report = {}
+    if not contract:
+        return checks, report
+    try:
+        owned, matrices = _play_live_then_replay(scene, blocks, LADDER_LIVE_FRAMES)
+        bottoms = [float(matrices[obj.name][-1][2, 3]) - LADDER_HALF_HEIGHT
+                   for obj in blocks]
+        travel = [float(np.ptp(matrices[obj.name][:, 2, 3])) for obj in blocks]
+        report.update(bottoms=bottoms, vertical_travel=travel)
+        checks["ladder_pose_tracks_owned"] = bool(owned and min(travel) > 1.0e-3)
+        # Lighter blocks ride higher; the floaters stay well off the floor.
+        floaters = bottoms[:3]
+        checks["ladder_floats_in_density_order"] = bool(
+            floaters[0] > floaters[1] > floaters[2] > 0.08)
+        checks["ladder_heaviest_sinks"] = bottoms[3] < 0.01
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = repr(exc)
+    finally:
+        _release(scene)
+    return checks, report
+
+
+def check_water_wheel(name):
+    """The wheel is a Dynamic collider pinned to its axle; live play turns it
+    about Y while the locked axes stay still."""
+    open_demo_blend(os.path.join(DEMOS, name + ".blend"))
+    scene = bpy.context.scene
+    wheel = bpy.data.objects.get(WHEEL_NAME)
+    contract = bool(
+        wheel and wheel.fluidsim.role == "COLLIDER" and wheel.fluidsim.enabled
+        and wheel.fluidsim.collider_dynamic
+        and tuple(bool(v) for v in wheel.fluidsim.collider_lock_axes) == WHEEL_LOCK)
+    checks = {"wheel_contract": contract, "wheel_pose_track_owned": False,
+              "wheel_turns": False, "wheel_axle_held": False}
+    report = {}
+    if not contract:
+        return checks, report
+    try:
+        owned, matrices = _play_live_then_replay(scene, [wheel], WHEEL_LIVE_FRAMES)
+        mats = matrices[wheel.name]
+        angle = np.unwrap(np.arctan2(mats[:, 0, 2], mats[:, 0, 0]))
+        turned = float(abs(angle[-1] - angle[0]))
+        drift = float(np.ptp(mats[:, :3, 3], axis=0).max())
+        # The Y axis of a pure Y rotation never moves.
+        tilt = float(np.abs(mats[:, :3, 1] - np.array([0.0, 1.0, 0.0])).max())
+        report.update(turned_rad=turned, axle_drift=drift, axis_tilt=tilt)
+        checks["wheel_pose_track_owned"] = bool(owned)
+        checks["wheel_turns"] = turned > math.pi / 2
+        checks["wheel_axle_held"] = drift < 1.0e-4 and tilt < 1.0e-4
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = repr(exc)
+    finally:
+        _release(scene)
+    return checks, report
+
+
+RIGID_DEMO_CHECKS = {
+    "buoyancy_ladder": check_buoyancy_ladder,
+    "water_wheel": check_water_wheel,
+}
 
 
 def point_count(obj):
@@ -543,6 +662,10 @@ def check_scene(name):
         # Last: it reopens the .blend, which stales every RNA reference above.
         cork_checks, result["cork_motion"] = check_cork_motion(name)
         checks.update(cork_checks)
+    if name in RIGID_DEMO_CHECKS:
+        # Last for the same reason: it reopens the .blend.
+        rigid_checks, result["rigid_motion"] = RIGID_DEMO_CHECKS[name](name)
+        checks.update(rigid_checks)
     return result
 
 

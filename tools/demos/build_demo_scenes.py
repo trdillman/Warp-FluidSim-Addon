@@ -898,6 +898,377 @@ def build_paddle_stir():
 
 
 # ---------------------------------------------------------------------------
+# Scenes 4-5: two-way rigid coupling (4.0 Dynamic colliders)
+# ---------------------------------------------------------------------------
+
+def add_dynamic_collider(obj, *, density, drag=1.0, lock_axes=None):
+    """Tag ``obj`` as a Dynamic collider the way the Object panel does."""
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+
+    _colliders.tag_collider(obj, friction=0.0, restitution=0.0,
+                            transfer_velocity=False)
+    obj.fluidsim.enabled = True
+    obj.fluidsim.collider_dynamic = True
+    obj.fluidsim.collider_density = density
+    obj.fluidsim.collider_drag = drag
+    if lock_axes is not None:
+        obj.fluidsim.collider_lock_axes = lock_axes
+    bpy.context.view_layer.update()
+    return obj
+
+
+def body_states(sess):
+    """{object name: state record} of the live solver's Dynamic colliders."""
+    from fluidSim_warp_blender51.blender.scene_inputs import persistent_source_key
+    from fluidSim_warp_blender51.sim import rigid_scene
+
+    by_uid = {persistent_source_key(obj): obj.name
+              for obj in rigid_scene.dynamic_collider_objects(
+                  bpy.context.scene.objects)}
+    states = {}
+    for record in sess.solver.rigid_body_states():
+        states[by_uid.get(str(record["object_uid"]), str(record["object_uid"]))] = record
+    return states
+
+
+def save_playable(name, scene, frames):
+    """Reset to frame 1 (clears the published poses) and save live-ready."""
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    fs = scene.fluidsim
+    fs.live = False
+    scene.frame_set(1)
+    session().reset(scene)
+    fs.live = True
+    scene["fluidsim_playback_ready"] = True
+    scene["fluidsim_simulated_frames"] = frames
+    bpy.ops.wm.save_as_mainfile(
+        filepath=os.path.join(DEMOS, f"{name}.blend"), check_existing=False)
+    log(f"{name}: saved live-playback-ready frame 1")
+    bpy.ops.fluidsim.release()
+
+
+def write_meta(name, meta):
+    os.makedirs(os.path.join(DEMOS, name), exist_ok=True)
+    meta["playable_live_setup"] = True
+    meta["seed_objects"] = []
+    with open(os.path.join(DEMOS, name, "meta.json"), "w",
+              encoding="utf-8", newline="\n") as fh:
+        json.dump(meta, fh, indent=2)
+        fh.write("\n")
+
+
+# Density Ladder: four flat blocks of rising density dropped onto a still
+# pool. Archimedes says each settles with draft = (density / 1000) x height
+# and the 1500 block sinks to the floor. Width/height 2 keeps every block
+# stable flat side up (a box floats upright when width/height > 1.23). The
+# sinker's rotation is locked: a falling plate flutters, and 4.0 floor contact
+# only stops a body (it has no tipping torque), so an unlocked sinker can come
+# to rest balanced on a corner.
+LADDER_DOMAIN = ((0.0, 0.0, 0.0), (0.96, 0.26, 0.36))
+LADDER_VOXEL = 0.01
+LADDER_POOL_DEPTH = 0.18
+LADDER_BLOCK = (0.12, 0.12, 0.06)
+LADDER_DROP_GAP = 0.01        # block bottoms start this far above the pool
+LADDER_DENSITIES = (250.0, 500.0, 750.0, 1500.0)
+LADDER_SINKER_LOCK = (False, False, False, True, True, True)
+LADDER_FRAMES = 96
+LADDER_COLORS = ((0.86, 0.74, 0.52, 1.0), (0.66, 0.47, 0.27, 1.0),
+                 (0.42, 0.26, 0.15, 1.0), (0.35, 0.36, 0.40, 1.0))
+
+
+def ladder_block_name(density):
+    return f"Ladder Block {int(density)}"
+
+
+def ladder_expected_drafts():
+    """Settled draft per block (height submerged), heavier-than-water = None."""
+    height = LADDER_BLOCK[2]
+    return {ladder_block_name(d): (d / 1000.0 * height if d < 1000.0 else None)
+            for d in LADDER_DENSITIES}
+
+
+def author_buoyancy_ladder():
+    scene = fresh_scene()
+    fs = scene.fluidsim
+    lo, hi = LADDER_DOMAIN
+    make_domain(scene, lo, hi, "Ladder Domain")
+    ds = domain_settings(scene)
+    set_resolution(ds, lo, hi, LADDER_VOXEL)
+    ds.max_particles = 700_000
+    ds.min_substeps = 1
+    ds.max_substeps = 16
+    ds.flip_ratio = 0.95
+    ds.profiling_enabled = False
+    fs.show_particles = True
+    fs.particle_display_fraction = 1.0
+    scene.frame_start = 1
+    scene.frame_end = LADDER_FRAMES
+    make_source_box(scene, lo, (hi[0], hi[1], LADDER_POOL_DEPTH),
+                    "Ladder Pool Fill", emit_rate=8.0,
+                    emission_mode="INITIAL_FILL")
+    pitch = (hi[0] - lo[0]) / len(LADDER_DENSITIES)
+    sx, sy, sz = LADDER_BLOCK
+    for i, (density, color) in enumerate(zip(LADDER_DENSITIES, LADDER_COLORS)):
+        bpy.ops.mesh.primitive_cube_add(size=1.0, location=(
+            lo[0] + pitch * (i + 0.5), 0.5 * (lo[1] + hi[1]),
+            LADDER_POOL_DEPTH + LADDER_DROP_GAP + 0.5 * sz))
+        block = bpy.context.active_object
+        block.name = ladder_block_name(density)
+        block.scale = (sx, sy, sz)
+        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+        block.data.materials.append(demo_material(
+            block.name, color, roughness=0.6))
+        block.color = color
+        block.show_name = True
+        add_dynamic_collider(
+            block, density=density,
+            lock_axes=LADDER_SINKER_LOCK if density >= 1000.0 else None)
+    add_camera_light(scene, (0.48, -0.78, 0.62), (0.0, 0.0, 0.0))
+    look_at(scene.camera, (0.48, 0.13, 0.14))
+    scene.camera.data.lens = 30.0
+    add_text_block("Density Ladder", (
+        "Density Ladder (FluidSim 4.0 Dynamic colliders)\n\n"
+        "Four 12 x 12 x 6 cm blocks of density 250, 500, 750 and 1500 kg/m^3\n"
+        "drop onto a still pool. Each is a Collider with Dynamic on\n"
+        "(Object Properties > FluidSim > Collider). The liquid floats them at\n"
+        "a quarter, half and three quarters of their height; the 1500 block\n"
+        "sinks and rests on the domain floor; its rotation is locked\n"
+        "(Lock Rotation X/Y/Z) so it lands flat. Play the timeline to watch;\n"
+        "Reset clears the solved keyframes.\n"))
+    return scene
+
+
+def build_buoyancy_ladder():
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    scene = author_buoyancy_ladder()
+    scene.frame_set(1)
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+    tracks = {ladder_block_name(d): [] for d in LADDER_DENSITIES}
+
+    def record(_frame):
+        for block_name, state in body_states(sess).items():
+            if block_name in tracks:
+                tracks[block_name].append(list(state["pos"]))
+
+    series = run_scene("buoyancy_ladder", LADDER_FRAMES, dump_velocities=False,
+                       on_frame=record)
+    positions = sess.solver.particle_positions()
+    surface = surface_height(positions)
+    settled = {}
+    half = 0.5 * LADDER_BLOCK[2]
+    for block_name, track in tracks.items():
+        if not track:
+            raise RuntimeError(f"buoyancy_ladder: no solved pose for {block_name}")
+        z = float(np.mean(np.asarray(track[-12:])[:, 2]))
+        settled[block_name] = {"center_z": z, "bottom_z": z - half,
+                               "draft": surface - (z - half)}
+        log(f"buoyancy_ladder: {block_name} settled bottom {z - half:.4f} "
+            f"draft {surface - (z - half):.4f}")
+    scene.frame_set(LADDER_FRAMES)
+    save_scene("buoyancy_ladder")
+    write_meta("buoyancy_ladder", {
+        "scene": "buoyancy_ladder",
+        "domain": [list(LADDER_DOMAIN[0]), list(LADDER_DOMAIN[1])],
+        "voxel_size": LADDER_VOXEL,
+        "fps": FPS,
+        "pool_depth": LADDER_POOL_DEPTH,
+        "block_size": list(LADDER_BLOCK),
+        "densities": list(LADDER_DENSITIES),
+        "expected_drafts": ladder_expected_drafts(),
+        "build_surface_z": surface,
+        "build_settled": settled,
+        "build_frames": LADDER_FRAMES,
+        "build_peak_particles": int(max(series["particle_count"])),
+    })
+    save_playable("buoyancy_ladder", scene, LADDER_FRAMES)
+
+
+def surface_height(positions, quantile=0.98):
+    """Free-surface height of a resting pool from its particle heights.
+
+    Particles fill the liquid uniformly, so the surface sits about half a
+    particle spacing above a high quantile of their z.
+    """
+    z = np.asarray(positions, dtype=np.float64)[:, 2]
+    if not len(z):
+        return 0.0
+    return float(np.quantile(z, quantile)) + 0.25 * LADDER_VOXEL
+
+
+# Water Wheel: a light paddle wheel on a fixed axle. Its translation and its
+# rotation about X and Z are locked, so the only freedom left is the spin about
+# Y; a falling stream on one side of the axle turns it and a floor sink keeps
+# the pool from filling up.
+WHEEL_DOMAIN = ((0.0, 0.0, 0.0), (0.6, 0.2, 0.6))
+WHEEL_VOXEL = 0.01
+WHEEL_NAME = "Water Wheel"
+WHEEL_AXLE = (0.3, 0.1, 0.3)
+WHEEL_RADIUS = 0.14
+WHEEL_HUB_RADIUS = 0.035
+WHEEL_PADDLES = 6
+WHEEL_PADDLE_THICKNESS = 0.02
+WHEEL_WIDTH = 0.14
+WHEEL_DENSITY = 300.0
+WHEEL_DRAG = 1.0
+WHEEL_LOCK = (True, True, True, True, False, True)
+WHEEL_STREAM_LO = (0.37, 0.06, 0.50)
+WHEEL_STREAM_HI = (0.45, 0.14, 0.55)
+WHEEL_STREAM_SPEED = 0.5
+WHEEL_FRAMES = 96
+
+
+def wheel_profile():
+    """Star outline (XZ plane, about the axle) of the hub and paddles."""
+    half = 0.5 * WHEEL_PADDLE_THICKNESS
+    outline = []
+    for k in range(WHEEL_PADDLES):
+        theta = 2.0 * math.pi * k / WHEEL_PADDLES
+        c, s = math.cos(theta), math.sin(theta)
+        for r, t in ((WHEEL_HUB_RADIUS, -half), (WHEEL_RADIUS, -half),
+                     (WHEEL_RADIUS, half), (WHEEL_HUB_RADIUS, half)):
+            outline.append((r * c - t * s, r * s + t * c))
+    return outline
+
+
+def make_wheel_mesh(scene):
+    """One closed mesh: the star profile extruded along Y, fanned from the
+    axle so every cap triangle is convex."""
+    outline = wheel_profile()
+    n = len(outline)
+    y0, y1 = -0.5 * WHEEL_WIDTH, 0.5 * WHEEL_WIDTH
+    verts = [(x, y0, z) for x, z in outline] + [(x, y1, z) for x, z in outline]
+    verts += [(0.0, y0, 0.0), (0.0, y1, 0.0)]
+    c0, c1 = 2 * n, 2 * n + 1
+    faces = []
+    # The outline turns from +X toward +Z, a negative turn about +Y, so these
+    # windings give outward normals.
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append((n + i, n + j, j, i))       # side wall
+        faces.append((c0, i, j))                 # front cap (-Y)
+        faces.append((c1, n + j, n + i))         # back cap (+Y)
+    mesh = bpy.data.meshes.new(WHEEL_NAME)
+    mesh.from_pydata(verts, [], faces)
+    if mesh.validate(verbose=True):
+        raise RuntimeError("water wheel mesh needed repair")
+    mesh.update()
+    import bmesh
+
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    volume = bm.calc_volume(signed=True)
+    bm.free()
+    if volume <= 0.0:
+        # An inside-out collider makes everything outside it solid.
+        raise RuntimeError(f"water wheel mesh is inside out (volume {volume:.3e})")
+    obj = bpy.data.objects.new(WHEEL_NAME, mesh)
+    scene.collection.objects.link(obj)
+    obj.location = WHEEL_AXLE
+    return obj
+
+
+def wheel_spin_angle(quat):
+    """Signed rotation about +Y of a (w, x, y, z) quaternion, in radians."""
+    w, _x, y, _z = (float(v) for v in quat)
+    return 2.0 * math.atan2(y, w)
+
+
+def author_water_wheel():
+    scene = fresh_scene()
+    fs = scene.fluidsim
+    lo, hi = WHEEL_DOMAIN
+    make_domain(scene, lo, hi, "Wheel Domain")
+    ds = domain_settings(scene)
+    set_resolution(ds, lo, hi, WHEEL_VOXEL)
+    ds.max_particles = 600_000
+    ds.min_substeps = 1
+    ds.max_substeps = 16
+    ds.flip_ratio = 0.95
+    ds.profiling_enabled = False
+    fs.show_particles = True
+    fs.particle_display_fraction = 1.0
+    scene.frame_start = 1
+    scene.frame_end = WHEEL_FRAMES
+    stream = make_source_box(scene, WHEEL_STREAM_LO, WHEEL_STREAM_HI,
+                             "Wheel Stream", emit_rate=8.0,
+                             emission_mode="CONTINUOUS_INFLOW")
+    stream.fluidsim.initial_velocity = (0.0, 0.0, -WHEEL_STREAM_SPEED)
+    from fluidSim_warp_blender51.blender import sources as _sources
+
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    drain = bpy.context.active_object
+    drain.name = "Wheel Floor Drain"
+    drain.location = (0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1]), 0.02)
+    drain.dimensions = (hi[0] - lo[0], hi[1] - lo[1], 0.04)
+    _sources.tag_sink(drain, shape="BOX")
+    drain.show_name = True
+    wheel = make_wheel_mesh(scene)
+    wheel.data.materials.append(demo_material(
+        "Wheel Timber", (0.45, 0.30, 0.18, 1.0), roughness=0.7))
+    wheel.show_name = True
+    add_dynamic_collider(wheel, density=WHEEL_DENSITY, drag=WHEEL_DRAG,
+                         lock_axes=WHEEL_LOCK)
+    add_camera_light(scene, (0.3, -1.05, 0.32), (math.pi / 2, 0.0, 0.0))
+    add_text_block("Water Wheel", (
+        "Water Wheel (FluidSim 4.0 Dynamic colliders)\n\n"
+        "A light (300 kg/m^3) paddle wheel is a Collider with Dynamic on.\n"
+        "Its Lock toggles hold X, Y, Z movement and X, Z rotation, so it can\n"
+        "only spin about its Y axle. The stream falls on the paddles right\n"
+        "of the axle and turns the wheel; the floor sink drains the water.\n"
+        "Play the timeline to watch; Reset clears the solved keyframes.\n"))
+    return scene
+
+
+def build_water_wheel():
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+
+    scene = author_water_wheel()
+    scene.frame_set(1)
+    bpy.ops.fluidsim.initialize()
+    sess = session()
+    angles, offsets = [], []
+
+    def record(_frame):
+        state = body_states(sess).get(WHEEL_NAME)
+        if state is None:
+            return
+        angles.append(wheel_spin_angle(state["quat"]))
+        offsets.append(float(np.linalg.norm(
+            np.subtract(state["pos"], WHEEL_AXLE))))
+
+    series = run_scene("water_wheel", WHEEL_FRAMES, dump_velocities=False,
+                       on_frame=record)
+    if not angles:
+        raise RuntimeError("water_wheel: no solved pose for the wheel")
+    turned = float(np.unwrap(np.asarray(angles))[-1])
+    log(f"water_wheel: turned {math.degrees(turned):.1f} deg in "
+        f"{WHEEL_FRAMES} frames; axle drift {max(offsets):.2e} m")
+    scene.frame_set(WHEEL_FRAMES)
+    save_scene("water_wheel")
+    write_meta("water_wheel", {
+        "scene": "water_wheel",
+        "domain": [list(WHEEL_DOMAIN[0]), list(WHEEL_DOMAIN[1])],
+        "voxel_size": WHEEL_VOXEL,
+        "fps": FPS,
+        "wheel": {
+            "name": WHEEL_NAME, "axle": list(WHEEL_AXLE),
+            "radius": WHEEL_RADIUS, "paddles": WHEEL_PADDLES,
+            "density": WHEEL_DENSITY, "lock_axes": list(WHEEL_LOCK),
+        },
+        "stream": {"lo": list(WHEEL_STREAM_LO), "hi": list(WHEEL_STREAM_HI),
+                   "speed": WHEEL_STREAM_SPEED},
+        "build_frames": WHEEL_FRAMES,
+        "build_turned_rad": turned,
+        "build_axle_drift": max(offsets),
+        "build_peak_particles": int(max(series["particle_count"])),
+    })
+    save_playable("water_wheel", scene, WHEEL_FRAMES)
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     os.makedirs(DEMOS, exist_ok=True)
@@ -906,6 +1277,8 @@ def main():
         "dam_break": build_dam_break,
         "crown_splash": build_crown_splash,
         "paddle_stir": build_paddle_stir,
+        "buoyancy_ladder": build_buoyancy_ladder,
+        "water_wheel": build_water_wheel,
     }
     targets = list(DEFAULT_SCENES)
     if "--" in sys.argv:

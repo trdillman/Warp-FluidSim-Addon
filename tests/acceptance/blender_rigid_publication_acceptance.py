@@ -136,6 +136,16 @@ def main(work):
           simulation_admission.rigid_refusal(scene.objects) == "")
     bpy.data.objects.remove(tap)
 
+    # Keying then deleting the last key leaves an emptied action assigned. It
+    # is not animation: Play is admitted and publishing replaces it.
+    cork.keyframe_insert("location", frame=1)
+    for fcurve in rigid_scene._action_fcurves(cork.animation_data.action) or ():
+        fcurve.keyframe_points.clear()
+    emptied = cork.animation_data.action
+    check("emptied artist action is not refused",
+          simulation_admission.rigid_refusal(scene.objects) == "",
+          simulation_admission.rigid_refusal(scene.objects))
+
     signature_before = cache_identity.source_signature(
         scene, bpy.context.evaluated_depsgraph_get())
 
@@ -163,6 +173,8 @@ def main(work):
     action = getattr(cork.animation_data, "action", None)
     check("poses are keyframes in a FluidSim-owned action",
           action is not None and bool(action.get(rigid_scene.OWNED_ACTION_TAG)))
+    check("publishing replaced the emptied artist action",
+          action is not emptied and emptied.users == 0)
     check("owned keyframes are not refused as foreign animation",
           simulation_admission.rigid_refusal(scene.objects) == "")
     check("rigid body is set to kinematic",
@@ -257,10 +269,19 @@ def main(work):
                   f"max error {error:.2e}")
 
     # Reset clears the solver output and restores the authored pose.
+    owned_name = cork.animation_data.action.name
     cleared = rigid_publication.clear_poses(scene)
     check("reset clears one published body", cleared == 1, str(cleared))
     check("owned action removed",
           cork.animation_data is None or cork.animation_data.action is None)
+    # Reset runs inside frame handlers; freeing the action there left the
+    # handler's depsgraph updates dangling (access violation on reopen+play).
+    retired = [a for a in bpy.data.actions
+               if a.name.startswith(rigid_publication.RETIRED_ACTION_NAME)]
+    check("reset defers freeing the action", len(retired) == 1 and retired[0].users == 0,
+          str([(a.name, a.users) for a in bpy.data.actions]))
+    check("owned action name is free for the next run",
+          owned_name not in bpy.data.actions, owned_name)
     check("authored pose restored", np.allclose(_matrix(cork), rest, atol=1e-6))
     check("rest marker removed", rigid_publication.REST_PROP not in cork.keys())
 

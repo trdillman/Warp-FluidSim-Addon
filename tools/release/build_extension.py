@@ -37,7 +37,8 @@ BUNDLED_WHEEL_DIR = "wheels"
 # them there); builds copy them into this ignored add-on directory, which the
 # Demo Gallery searches in installed builds.
 BUNDLED_DEMO_DIR = "resources/demos"
-DEMO_IDS = ("dam_break", "crown_splash", "paddle_stir", "chromatic_vortex")
+DEMO_IDS = ("dam_break", "crown_splash", "paddle_stir", "chromatic_vortex",
+            "buoyancy_ladder", "water_wheel")
 RELEASE_ONLY_FILES = {"pyproject.toml", "requirements-dev.txt"}
 RELEASE_ONLY_RELATIVE_PATHS: set[str] = set()
 RELEASE_ONLY_PATHS = {

@@ -80,6 +80,30 @@ def test_foreign_animation_is_refused_but_owned_keyframes_are_not():
     assert rs.scene_blocking_reasons([owned]) == ()
 
 
+def _curve(keys=0, modifiers=0):
+    return SimpleNamespace(keyframe_points=[object()] * keys, modifiers=[object()] * modifiers)
+
+
+def _layered(*curves):
+    bag = SimpleNamespace(fcurves=list(curves))
+    return SimpleNamespace(layers=[SimpleNamespace(strips=[SimpleNamespace(channelbags=[bag])])],
+                           get=lambda key, default=None: default)
+
+
+def test_emptied_action_is_not_animation():
+    # Deleting the last keyframe leaves the emptied action assigned; the
+    # refusal told the artist to remove the keyframes, so Play must now run.
+    assert rs.scene_blocking_reasons([_cork(action=_layered())]) == ()
+    legacy = SimpleNamespace(fcurves=[], get=lambda key, default=None: default)
+    assert rs.scene_blocking_reasons([_cork(action=legacy)]) == ()
+
+
+@pytest.mark.parametrize("curve", [_curve(keys=1), _curve(modifiers=1)])
+def test_keyed_or_modified_curve_is_animation(curve):
+    reasons = rs.scene_blocking_reasons([_cork(action=_layered(_curve(), curve))])
+    assert len(reasons) == 1 and "animat" in reasons[0]
+
+
 def test_more_than_the_body_limit_is_refused():
     bodies = [_object(f"B{i}", "COLLIDER", dynamic=True) for i in range(rs.MAX_BODIES + 1)]
     reasons = rs.scene_blocking_reasons(bodies)

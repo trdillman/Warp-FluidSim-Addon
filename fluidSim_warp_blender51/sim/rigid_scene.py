@@ -47,6 +47,39 @@ def dynamic_collider_objects(scene_objects: Iterable[object]) -> list:
     return [obj for obj in scene_objects or () if is_dynamic_collider(obj)]
 
 
+def _action_fcurves(action):
+    """The action's F-Curves (legacy ``fcurves`` and layered channelbags), or
+    None when the action exposes neither."""
+    curves = []
+    found = False
+    legacy = getattr(action, "fcurves", None)
+    if legacy is not None:
+        found = True
+        curves.extend(legacy)
+    layers = getattr(action, "layers", None)
+    if layers is not None:
+        found = True
+        for layer in layers:
+            for strip in getattr(layer, "strips", ()) or ():
+                for bag in getattr(strip, "channelbags", ()) or ():
+                    curves.extend(getattr(bag, "fcurves", ()) or ())
+    return curves if found else None
+
+
+def action_animates(action) -> bool:
+    """Whether an action moves anything: some F-Curve has keys or modifiers.
+
+    Deleting an object's last keyframe leaves its emptied action assigned;
+    that action animates nothing. An action of unknown shape counts as
+    animating.
+    """
+    curves = _action_fcurves(action)
+    if curves is None:
+        return True
+    return any(len(getattr(curve, "keyframe_points", ()) or ())
+               or len(getattr(curve, "modifiers", ()) or ()) for curve in curves)
+
+
 def has_foreign_animation(obj) -> bool:
     """True when the object is keyframed by an action FluidSim does not own."""
     animation = getattr(obj, "animation_data", None)
@@ -54,7 +87,9 @@ def has_foreign_animation(obj) -> bool:
     if action is None:
         return False
     getter = getattr(action, "get", None)
-    return not (callable(getter) and bool(getter(OWNED_ACTION_TAG, False)))
+    if callable(getter) and bool(getter(OWNED_ACTION_TAG, False)):
+        return False
+    return action_animates(action)
 
 
 def _rides_on(obj, bodies) -> object | None:

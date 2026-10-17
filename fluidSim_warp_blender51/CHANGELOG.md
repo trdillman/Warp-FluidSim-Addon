@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.1.0 — Static colliders, rigid contact and five new demos
+
+### Changes
+
+- Two new rigid-coupling demos in the Demo Gallery:
+  - **Density Ladder**: four blocks (250, 500, 750 and 1500 kg/m³) dropped
+    into still water. They float in density order and the heaviest sinks.
+  - **Water Wheel**: a six-paddle wheel locked to its axle, turned by an
+    inflow stream.
+
+### Fixes
+
+- Fixed a possible crash after reopening a saved scene with Dynamic
+  colliders and pressing Play or rewinding. Reset freed the pose action
+  while Blender was still processing the frame change. It now frees the
+  action right after the frame change finishes.
+- Play no longer refuses a Dynamic collider whose keyframes you deleted.
+  Deleting the last key left an empty action on the object, which still
+  counted as animation.
+
 ## 4.0.1 — Install Warp from a file, and downloads that survive slow links
 
 - **Install from File** in Add-on Preferences installs the certified Warp

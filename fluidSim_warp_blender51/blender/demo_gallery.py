@@ -1,7 +1,8 @@
 """Demo Gallery for FluidSim canonical scenes in the 3D Viewport N-panel.
 
-Provides discovery, inspection, and safe scene loading of the 4 canonical
-simulations (Dam Break, Crown Splash, Paddle Stir, Chromatic Vortex).
+Provides discovery, inspection, and safe scene loading of the 6 canonical
+simulations (Dam Break, Crown Splash, Paddle Stir, Chromatic Vortex, Density
+Ladder, Water Wheel).
 Loading always appends the demo into a New Scene, preserving active user
 work and initial empty scenes.
 """
@@ -69,6 +70,28 @@ DEMO_CATALOG: dict[str, dict[str, Any]] = {
         "description": "Dual dye streams (red & blue) mixing inside a glass vessel under a vortex force.",
         "tags": ("Color Mixing", "Vortex Force", "Glass Vessel Collider", "Dye Advection"),
         "key_feature": "Advected dye concentration field mixing with GPU color blending.",
+    },
+    "buoyancy_ladder": {
+        "title": "Density Ladder",
+        "scene_title": "Density Ladder (Demo)",
+        "blend_filename": "buoyancy_ladder.blend",
+        "preview_filename": "buoyancy_ladder_preview.png",
+        "icon": "SORTSIZE",
+        "subtitle": "Two-Way Rigid Coupling: Buoyancy",
+        "description": "Four blocks of 250, 500, 750 and 1500 kg/m3 drop into a pool; the liquid floats the light ones at their own depth and sinks the heavy one.",
+        "tags": ("Dynamic Colliders", "Buoyancy", "Pose Keyframes", "0.01m Voxels"),
+        "key_feature": "Each block's draft comes from its density, solved by the liquid.",
+    },
+    "water_wheel": {
+        "title": "Water Wheel",
+        "scene_title": "Water Wheel (Demo)",
+        "blend_filename": "water_wheel.blend",
+        "preview_filename": "water_wheel_preview.png",
+        "icon": "MOD_SCREW",
+        "subtitle": "Two-Way Rigid Coupling: Locked Axes",
+        "description": "A falling stream turns a six-paddle wheel pinned to its axle; a floor drain keeps the water moving.",
+        "tags": ("Dynamic Collider", "Axis Locks", "Inflow + Sink", "0.01m Voxels"),
+        "key_feature": "Lock Axes turn a free body into a hinge the liquid drives.",
     },
 }
 

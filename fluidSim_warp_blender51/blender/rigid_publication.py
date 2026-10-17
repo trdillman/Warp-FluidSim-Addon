@@ -86,6 +86,12 @@ def _rotation_path(obj):
 
 
 def _insert_keys(obj, frame):
+    animation = obj.animation_data
+    if (animation is not None and animation.action is not None
+            and not animation.action.get(rigid_scene.OWNED_ACTION_TAG)):
+        # Admission let it through, so it animates nothing (its keyframes were
+        # deleted): unassign it so the solver keys go to an owned action.
+        animation.action = None
     for path in ("location", _rotation_path(obj), "scale"):
         obj.keyframe_insert(data_path=path, frame=float(frame), group=KEY_GROUP)
     action = obj.animation_data.action
@@ -198,6 +204,37 @@ def _owned_action(obj):
     return None
 
 
+RETIRED_ACTION_NAME = "FluidSim Dynamic (cleared)"
+
+
+def _remove_retired_actions():
+    import bpy
+
+    for action in list(bpy.data.actions):
+        if action.users == 0 and action.get(rigid_scene.OWNED_ACTION_TAG):
+            bpy.data.actions.remove(action)
+    return None
+
+
+def _retire_action(action):
+    """Unassigned owned action: free it later, never here.
+
+    Reset runs inside frame-change handlers, whose depsgraph ``updates`` still
+    reference the action; freeing it there crashed the next collider sync
+    (use-after-free in ``update.id``). Renaming frees the name for the next
+    run's action; a timer removes the orphan once the handler has returned,
+    and a zero-user action is never saved.
+    """
+    action.name = RETIRED_ACTION_NAME
+    try:
+        import bpy
+
+        if not bpy.app.timers.is_registered(_remove_retired_actions):
+            bpy.app.timers.register(_remove_retired_actions, first_interval=0.0)
+    except (ImportError, AttributeError, ValueError):
+        pass
+
+
 def clear_poses(scene) -> int:
     """Reset: drop the published keyframes and restore every authored pose."""
     cleared = 0
@@ -209,9 +246,7 @@ def clear_poses(scene) -> int:
         if action is not None:
             obj.animation_data.action = None
             if action.users == 0:
-                import bpy
-
-                bpy.data.actions.remove(action)
+                _retire_action(action)
         if rest is not None:
             obj.matrix_world = Matrix(rest.tolist())
             del obj[REST_PROP]

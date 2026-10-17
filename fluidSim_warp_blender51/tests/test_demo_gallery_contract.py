@@ -56,9 +56,10 @@ resolve_demo_preview_path = demo_gallery.resolve_demo_preview_path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_demo_catalog_contains_only_the_four_canonical_demos():
-    """Per DEMO_SCENE_CONTRACT.md, only 4 canonical demos exist."""
-    canonical_keys = {"dam_break", "crown_splash", "paddle_stir", "chromatic_vortex"}
+def test_demo_catalog_contains_only_the_canonical_demos():
+    """Per DEMO_SCENE_CONTRACT.md, only the 6 canonical demos exist."""
+    canonical_keys = {"dam_break", "crown_splash", "paddle_stir", "chromatic_vortex",
+                      "buoyancy_ladder", "water_wheel"}
     assert set(DEMO_CATALOG.keys()) == canonical_keys
 
     for key, meta in DEMO_CATALOG.items():
@@ -72,7 +73,7 @@ def test_demo_catalog_contains_only_the_four_canonical_demos():
 
 
 def test_resolve_demo_blend_paths_find_all_repo_demos():
-    """All 4 canonical demo blend files must be found in the repository."""
+    """All canonical demo blend files must be found in the repository."""
     for key in DEMO_CATALOG:
         path = resolve_demo_blend_path(key)
         assert path is not None, f"Could not resolve blend path for {key}"
@@ -299,9 +300,10 @@ def test_gallery_uses_loaded_thumbnails_as_button_icons(monkeypatch):
 
 
 def test_gallery_marks_a_missing_demo_file_instead_of_offering_it(monkeypatch):
-    log = _draw_gallery(monkeypatch, ("dam_break", "crown_splash", "paddle_stir"))
+    present = ("dam_break", "crown_splash", "paddle_stir", "buoyancy_ladder", "water_wheel")
+    log = _draw_gallery(monkeypatch, present)
     offered = {e[3].demo_id for e in log if e[0] == "operator"}
-    assert offered == {"dam_break", "crown_splash", "paddle_stir"}
+    assert offered == set(present)
     missing = [e for e in log if e[0] == "label" and "file missing" in e[1]]
     assert len(missing) == 1
     assert missing[0][1].startswith(DEMO_CATALOG["chromatic_vortex"]["title"])
