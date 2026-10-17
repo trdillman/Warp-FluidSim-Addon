@@ -1,11 +1,11 @@
 # FluidSim Warp — Technical Report
 
-FluidSim Warp 4.0.1 targets Blender 5.2.0 or newer around the existing
+FluidSim Warp 4.1.0 targets Blender 5.2.0 or newer around the existing
 sparse 8³-leaf NVIDIA Warp PIC/FLIP solver. Live Preview remains interactive;
 Production Bake adds a separate, manifest-authoritative cache-v3 transaction and
 checkpoint layer without rewriting the solver into a different architecture.
 
-- Extension ID: `fluidsim_warp` · manifest/runtime version `4.0.1`
+- Extension ID: `fluidsim_warp` · manifest/runtime version `4.1.0`
 - Product platforms: Windows x64 (certified for 4.0) and Linux x64 (uncertified
   in 4.0, including USD export; certification is planned for 4.1)
 - Historical validation host: Blender `5.2.0` on Windows x64 with an NVIDIA
