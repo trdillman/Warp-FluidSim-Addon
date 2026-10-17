@@ -490,7 +490,7 @@ class _Layout:
         assert len(set(states)) == 1, f"{name} drawn with conflicting greyout"
         return states[0]
 
-    def column(self, align=False):
+    def column(self, align=False, heading=""):
         return _Layout(self._root, self._box_scope, self.enabled, self.alert)
 
     def row(self, align=False):
@@ -2541,6 +2541,47 @@ def test_workflow_stages_without_a_domain_lead_with_guided_setup(monkeypatch):
     simulate = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_simulate, context)
     assert not simulate.props
     assert any("domain" in label["text"].lower() for label in simulate.labels)
+
+
+def _collider_settings(dynamic):
+    return SimpleNamespace(
+        role="COLLIDER", collider_friction=0.2, collider_restitution=0.0,
+        collider_dynamic=dynamic, transfer_velocity=True, collider_density=500.0,
+        collider_drag=0.1, collider_initial_velocity=(0.0, 0.0, 0.0),
+        collider_lock_axes=(False,) * 6)
+
+
+def test_setup_stage_shows_the_active_colliders_rigid_body_controls(monkeypatch):
+    """Selecting a collider shows its rigid-body settings in the 3D View sidebar."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    shelf = ui_stages.FLUIDSIM_STAGE_PT_setup_collider
+    assert shelf.bl_parent_id == ui_stages.FLUIDSIM_STAGE_PT_setup.bl_idname
+    assert shelf in ui_stages.STAGE_PANEL_CLASSES
+
+    context, _scene, _domain = _stage_context()
+    assert not shelf.poll(context)  # the domain is active, not a collider
+    settings = _collider_settings(dynamic=True)
+    context.object = SimpleNamespace(name="Crate", fluidsim=settings)
+    assert shelf.poll(context)
+
+    layout = _draw_stage(shelf, context)
+    drawn = {call["name"]: call["data"] for call in layout.prop_calls}
+    assert set(drawn) == {
+        "collider_friction", "collider_restitution", "collider_dynamic",
+        "collider_density", "collider_drag", "collider_initial_velocity",
+        "collider_lock_axes",
+    }
+    assert all(owner is settings for owner in drawn.values())
+    locks = [c["index"] for c in layout.prop_calls if c["name"] == "collider_lock_axes"]
+    assert locks == [0, 1, 2, 3, 4, 5]
+    assert {"text": "Crate", "icon": "OBJECT_DATA"} in layout.labels
+
+    # A static collider shows the surface controls without the rigid-body ones.
+    context.object.fluidsim = _collider_settings(dynamic=False)
+    static = {call["name"] for call in _draw_stage(shelf, context).prop_calls}
+    assert static == {"collider_friction", "collider_restitution", "collider_dynamic",
+                      "transfer_velocity"}
 
 
 def test_workflow_stage_advanced_shelf_is_gated_by_ui_mode(monkeypatch):

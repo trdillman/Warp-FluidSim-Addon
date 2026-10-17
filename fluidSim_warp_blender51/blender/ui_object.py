@@ -237,29 +237,31 @@ class FLUIDSIM_PT_object_collider(FluidSimObjectPanel, bpy.types.Panel):
         return role_poll(context, "COLLIDER")
 
     def draw(self, context):
-        layout = _layout(self)
-        settings = _settings(context)
-        dynamic = bool(getattr(settings, "collider_dynamic", False))
+        draw_collider_settings(_layout(self), _settings(context))
+
+
+def draw_collider_settings(layout, settings, *, columns: int = 2):
+    """Collider surface and rigid-body controls; shared with the 3D View Setup stage.
+
+    The narrow sidebar passes ``columns=1`` so labels are not cut off.
+    """
+    dynamic = bool(getattr(settings, "collider_dynamic", False))
+    draw_property_grid(
+        layout,
+        settings,
+        ("collider_friction", "collider_restitution", "collider_dynamic")
+        + (() if dynamic else ("transfer_velocity",)),
+        columns=columns,
+    )
+    if dynamic:
+        # Two-way rigid coupling: the liquid moves this collider.
         draw_property_grid(
-            layout,
-            settings,
-            ("collider_friction", "collider_restitution", "collider_dynamic")
-            + (() if dynamic else ("transfer_velocity",)),
-        )
-        if dynamic:
-            # Two-way rigid coupling: the liquid moves this collider.
-            draw_property_grid(
-                layout, settings, ("collider_density", "collider_drag"))
-            layout.prop(settings, "collider_initial_velocity")
-            locks = layout.column(heading="Lock")
-            row = locks.row(align=True)
+            layout, settings, ("collider_density", "collider_drag"), columns=columns)
+        layout.prop(settings, "collider_initial_velocity")
+        for heading, first in (("Lock Position", 0), ("Lock Rotation", 3)):
+            row = layout.column(heading=heading).row(align=True)
             for index, label in enumerate(("X", "Y", "Z")):
-                row.prop(settings, "collider_lock_axes", index=index,
-                         text=label, toggle=True)
-            locks.label(text="Rotation")
-            row = locks.row(align=True)
-            for index, label in enumerate(("X", "Y", "Z")):
-                row.prop(settings, "collider_lock_axes", index=3 + index,
+                row.prop(settings, "collider_lock_axes", index=first + index,
                          text=label, toggle=True)
 
 

@@ -28,6 +28,7 @@ from .pending_settings import declaring_group
 from .scene_access import active_domain_settings
 from .ui_common import (
     FluidSimView3DPanel,
+    active_object_role,
     draw_property,
     draw_readout_grid,
 )
@@ -38,6 +39,7 @@ from .ui_scene import (
     draw_cache_playback,
     draw_resolution_readout,
 )
+from .ui_object import draw_collider_settings
 
 # Stage controls, kept as data so the Blender validator can pin them without
 # re-deriving them from draw code.
@@ -251,6 +253,29 @@ class FLUIDSIM_STAGE_PT_setup_advanced(FluidSimStagePanel, bpy.types.Panel):
             text="All Domain Settings…",
             icon="PROPERTIES",
         )
+
+
+class FLUIDSIM_STAGE_PT_setup_collider(FluidSimStagePanel, bpy.types.Panel):
+    """The active collider's surface and rigid-body controls, beside the viewport."""
+
+    bl_label = "Active Collider"
+    bl_idname = "FLUIDSIM_STAGE_PT_setup_collider"
+    bl_parent_id = "FLUIDSIM_STAGE_PT_setup"
+
+    @classmethod
+    def poll(cls, context):
+        return (FluidSimStagePanel.poll(context)
+                and getattr(getattr(context, "object", None), "fluidsim", None) is not None
+                and active_object_role(context) == "COLLIDER")
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon="MOD_PHYSICS")
+
+    def draw(self, context):
+        layout = _layout(self)
+        obj = context.object
+        layout.label(text=obj.name, icon="OBJECT_DATA")
+        draw_collider_settings(layout, obj.fluidsim, columns=1)
 
 
 def draw_simulate_controls(layout, scene, domain):
@@ -540,6 +565,7 @@ class FLUIDSIM_STAGE_PT_bake_manage(FluidSimStagePanel, bpy.types.Panel):
 
 STAGE_PANEL_CLASSES = (
     FLUIDSIM_STAGE_PT_setup,
+    FLUIDSIM_STAGE_PT_setup_collider,
     FLUIDSIM_STAGE_PT_setup_advanced,
     FLUIDSIM_STAGE_PT_simulate,
     FLUIDSIM_STAGE_PT_look,
