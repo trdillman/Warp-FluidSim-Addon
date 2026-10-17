@@ -108,6 +108,22 @@ MG_CHECK_EVERY_CANDIDATES = (1,)
 # volume -2.9%); half the tolerance costs one V-cycle and restores it.
 MG_TOLERANCE_SCALE = 0.5
 PCG_DEFAULT_CHECK_EVERY = 25
+# The residual is in right-hand-side units, -divergence * h^2, so a fixed
+# tolerance allows divergence ~ tolerance / h^2: 25x more at 2 mm than at
+# 1 cm. At 2 mm the initial residual already passed and the solve ran 0-1
+# iterations, so any force (surface tension first) compressed the liquid.
+# Finer grids keep the divergence a 1 cm grid allows; 1 cm and coarser grids
+# (every shipped demo) keep the tolerance unchanged.
+PRESSURE_TOLERANCE_REFERENCE_VOXEL = 0.01
+
+
+def effective_pressure_tolerance(tolerance: float, voxel_size: float) -> float:
+    """The PCG stop tolerance for ``tolerance`` on a grid of ``voxel_size``."""
+
+    ratio = float(voxel_size) / PRESSURE_TOLERANCE_REFERENCE_VOXEL
+    if not math.isfinite(ratio) or ratio <= 0.0:
+        return float(tolerance)
+    return float(tolerance) * min(1.0, ratio * ratio)
 
 
 @wp.func
@@ -2370,7 +2386,9 @@ class PressureSolver:
                 guess = None
             self.solve_pcg(
                 voxel_type, settings.pressure_iterations,
-                settings.pressure_tolerance, initial_guess=guess)
+                effective_pressure_tolerance(
+                    settings.pressure_tolerance, self.grid.voxel_size),
+                initial_guess=guess)
             if guess is not None:
                 guess.observe(self, voxel_type)
         # Original FIELD semantics blend into the existing pressure field.

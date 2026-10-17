@@ -4,13 +4,16 @@
 
 ### Changes
 
-- Two new Demo Gallery scenes, each showing one feature:
+- Three new Demo Gallery scenes, each showing one feature:
   - **Viscosity Race**: three identical columns of water, syrup and tar
     collapse side by side. Each source carries its own Viscosity (Domain >
     Viscosity > From Particles), so the fronts run out in viscosity order.
   - **Deep Plunge**: a block of water drops into a 70 cm deep tank with
     Narrow Band on. It runs on about a ninth of the particles a full-band
     run needs and settles at the same water level.
+  - **Zero-G Droplet**: a 6 cm bar of liquid floats with gravity off, and
+    surface tension pulls it into a round drop. With Surface Tension off
+    it just hangs there as a bar.
 - Two new rigid-coupling demos in the Demo Gallery:
   - **Density Ladder**: four blocks (250, 500, 750 and 1500 kg/m³) dropped
     into still water. They float in density order and the heaviest sinks.
@@ -19,6 +22,19 @@
 
 ### Fixes
 
+- **Surface tension no longer loses liquid on fine grids.** On voxels
+  smaller than 1 cm the pressure solve stopped too early (its tolerance
+  did not scale with voxel size), so surface tension squeezed the liquid
+  away: a 2 mm bar shrank to a few voxels in half a second. The pressure
+  tolerance now scales with voxel area below 1 cm; 1 cm and coarser
+  domains, which includes every shipped demo, solve exactly as before.
+  Fine-grid bakes may take a few more pressure iterations. Re-bake
+  fine-grid caches.
+- **Surface tension no longer churns the inside of the liquid.** It now
+  measures curvature from a distance field rebuilt from the free surface
+  instead of the particle field, whose gaps between particles read as
+  tiny bubbles. Drops oscillate cleanly instead of gaining energy. This
+  adds 8 bytes per voxel while Surface Tension is on.
 - Fixed a possible crash after reopening a saved scene with Dynamic
   colliders and pressing Play or rewinding. Reset freed the pose action
   while Blender was still processing the frame change. It now frees the

@@ -1451,15 +1451,18 @@ def build_viscosity_race():
     save_playable("viscosity_race", scene, RACE_FRAMES)
 
 
-# Zero-G Droplet: a 6 x 2 x 2 cm bar of water floats with gravity off.
+# Zero-G Droplet: a 6 x 2 x 2 cm bar of oily liquid floats with gravity off.
 # Without surface tension nothing acts on it and it stays a bar; with it the
-# Laplace pressure pulls the ends in and the bar contracts and wobbles into a
-# ball (capillary time sqrt(rho R^3 / sigma) is about a fifth of a second).
+# Laplace pressure pulls the ends in and the bar contracts into a ball
+# (capillary time sqrt(rho R^3 / sigma) is about a fifth of a second). Water
+# would ring for seconds; an oil-like viscosity damps it to one overshoot.
 DROP_DOMAIN = ((0.0, 0.0, 0.0), (0.10, 0.10, 0.10))
 DROP_VOXEL = 0.002
 DROP_BAR = (0.06, 0.02, 0.02)
 DROP_FRAMES = 48
+DROP_PREVIEW_FRAME = 6                  # mid-contraction: ends pulling in
 DROP_COLOR = (0.12, 0.42, 0.70, 1.0)
+DROP_VISCOSITY = 3e-4                   # m^2/s, a light oil (water is 1e-6)
 
 
 def blob_aspect(positions):
@@ -1487,6 +1490,8 @@ def author_capillary_droplet(surface_tension=True):
     ds.surface_tension_enabled = surface_tension
     ds.surface_tension_coefficient = 0.072
     ds.surface_tension_density = 1000.0
+    ds.viscosity_enabled = True
+    ds.viscosity_constant = DROP_VISCOSITY
     ds.profiling_enabled = False
     show_liquid(scene, "Droplet", DROP_COLOR)
     scene.frame_start = 1
@@ -1500,13 +1505,14 @@ def author_capillary_droplet(surface_tension=True):
     scene.camera.data.lens = 50.0
     add_text_block("Zero-G Droplet", (
         "Zero-G Droplet (FluidSim surface tension)\n\n"
-        "A 6 x 2 x 2 cm bar of water floats with gravity off (Domain >\n"
+        "A 6 x 2 x 2 cm bar of liquid floats with gravity off (Domain >\n"
         "Setup > Use Scene Gravity off, Gravity 0). Surface Tension is on\n"
-        "with water's 0.072 N/m (Domain > Simulate > Surface Tension).\n"
-        "Press Play: the bar's ends pull in and it wobbles into a round\n"
-        "drop within about a second.\n"
+        "at water's 0.072 N/m (Domain > Simulate > Surface Tension), and\n"
+        "Viscosity is set to a light oil (3e-4 m^2/s) so the wobble dies.\n"
+        "Press Play: the bar's ends pull in, it overshoots and settles\n"
+        "into a round drop within two seconds.\n"
         "Try: turn Surface Tension off and Reset; the bar just hangs there\n"
-        "as a bar. Raise the coefficient for a faster, stiffer wobble.\n"))
+        "as a bar. Lower the viscosity for a longer, water-like wobble.\n"))
     return scene
 
 
@@ -1527,15 +1533,10 @@ def build_capillary_droplet():
     aspects = {}
 
     def record(frame):
-        pos = sess.solver.particle_positions()
-        aspects[frame] = blob_aspect(pos)
-        if frame % 4 == 0:
-            fs = bpy.context.scene.fluidsim
-            log(f"capillary_droplet frame {frame}: aspect {aspects[frame]:.2f} "
-                f"extent {np.ptp(pos, axis=0).round(4).tolist()} "
-                f"st {fs.stat_surface_tension_status} "
-                f"kmax {fs.stat_surface_tension_max_curvature:.0f} "
-                f"amax {fs.stat_surface_tension_max_acceleration:.1f}")
+        if frame == DROP_PREVIEW_FRAME:
+            use_material_shading(scene)
+            render_preview("capillary_droplet", min_water_fraction=0.02)
+        aspects[frame] = blob_aspect(sess.solver.particle_positions())
 
     series = run_scene("capillary_droplet", DROP_FRAMES, dump_velocities=False,
                        on_frame=record)
@@ -1557,6 +1558,7 @@ def build_capillary_droplet():
         "fps": FPS,
         "bar_size": list(DROP_BAR),
         "surface_tension_coefficient": 0.072,
+        "viscosity": DROP_VISCOSITY,
         "build_aspect": {str(k): v for k, v in sorted(aspects.items())},
         "build_late_aspect": late,
         "build_aspect_surface_tension_off": aspect_off,

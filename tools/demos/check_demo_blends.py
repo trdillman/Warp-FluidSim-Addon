@@ -22,7 +22,7 @@ from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 DEMOS = os.path.join(REPO, "demos")
 SCENES = ("dam_break", "crown_splash", "chromatic_vortex", "paddle_stir",
           "buoyancy_ladder", "water_wheel",
-          "viscosity_race", "deep_plunge")
+          "viscosity_race", "deep_plunge", "capillary_droplet")
 EXPECTED_AUTO_SEEDS = {
     "crown_splash": {"Crown Pool Seed", "Crown Droplet Seed"},
     "paddle_stir": {"Paddle Stir Pool Seed"},
@@ -552,9 +552,51 @@ def check_deep_plunge(scene, ds):
     return checks, report
 
 
+DROP_LIVE_FRAMES = 12       # the bar has contracted past a ball and back
+
+
+def check_capillary_droplet(scene, ds):
+    """Gravity is off and surface tension is on and reachable; live play
+    pulls the floating bar well toward a ball."""
+    meta = load_meta("capillary_droplet")
+    checks = {
+        "zero_gravity": bool(
+            ds and not ds.use_scene_gravity
+            and all(abs(float(g)) < 1.0e-9 for g in ds.gravity)),
+        "surface_tension_enabled": bool(
+            ds and ds.surface_tension_enabled
+            and float(ds.surface_tension_coefficient) > 0.0
+            and float(ds.surface_tension_density) > 0.0),
+        "viscosity_damped": bool(
+            ds and ds.viscosity_enabled and float(ds.viscosity_constant) > 0.0),
+        "bar_rounds_up": False,
+    }
+    report = {}
+    try:
+        from fluidSim_warp_blender51.blender.scene_bridge import session
+
+        start = scene.frame_start
+        for frame in range(scene.frame_current + 1, start + DROP_LIVE_FRAMES + 1):
+            scene.frame_set(frame)
+        pos = session().solver.particle_positions().astype(np.float64)
+        eig = np.linalg.eigvalsh(np.cov(pos.T)) if len(pos) >= 4 else [1.0, 1.0]
+        aspect = float(np.sqrt(max(eig[-1], 1e-30) / max(eig[0], 1e-30)))
+        report["live_aspect"] = aspect
+        report["build_aspect_surface_tension_off"] = meta["build_aspect_surface_tension_off"]
+        checks["bar_rounds_up"] = bool(
+            len(pos) > 0
+            and aspect < 0.75 * meta["build_aspect_surface_tension_off"])
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = repr(exc)
+    finally:
+        _release_live(scene)
+    return checks, report
+
+
 FEATURE_DEMO_CHECKS = {
     "viscosity_race": check_viscosity_race,
     "deep_plunge": check_deep_plunge,
+    "capillary_droplet": check_capillary_droplet,
 }
 
 

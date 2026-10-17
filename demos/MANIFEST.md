@@ -4,14 +4,14 @@ Shipped demo scenes. Paths here are hard-coded by tools, tests and the
 performance-budget hash inventory, so the layout is intentionally flat; do not
 move or rename anything without patching every consumer listed below.
 
-Eight demos exist: `dam_break`, `crown_splash`, `paddle_stir`,
+Nine demos exist: `dam_break`, `crown_splash`, `paddle_stir`,
 `chromatic_vortex`, the two rigid-coupling demos `buoyancy_ladder` and
-`water_wheel`, and the feature demos `viscosity_race` and `deep_plunge`.
-`.blend` bytes feed the production gate and the
+`water_wheel`, and the three feature demos `viscosity_race`, `deep_plunge`
+and `capillary_droplet`. `.blend` bytes feed the production gate and the
 performance inventory hash (`tools/benchmark_versions.py::_inventory`), so any
 change to them is a real, gate-visible change.
 
-The eight `.blend` files also ship in the extension:
+The nine `.blend` files also ship in the extension:
 `tools/release/build_extension.py` (`stage_demo_assets`) copies them into the
 git-ignored `fluidSim_warp_blender51/resources/demos/` before each build, and
 the in-add-on Demo Gallery (`blender/demo_gallery.py`) loads them from there in
@@ -27,8 +27,9 @@ installed builds. A new or renamed demo must also be added to `DEMO_IDS` in
 | `water_wheel.blend` | generated, committed | Six-paddle Dynamic collider wheel, locked to spin about its axle, turned by an inflow stream (opt-in build: `build_demo_scenes.py -- water_wheel`) | `check_demo_blends.py` (`check_water_wheel`) | `build_demo_scenes.py` |
 | `viscosity_race.blend` | generated, committed | Three columns (water 0, syrup 0.004, tar 0.3 m^2/s per-source viscosity, From Particles on) collapse in walled lanes over a Friction 1 floor; the fronts run out in viscosity order (opt-in build: `build_demo_scenes.py -- viscosity_race`) | `check_demo_blends.py` (`check_viscosity_race`) | `build_demo_scenes.py` |
 | `deep_plunge.blend` | generated, committed | A block dropped into a 70 cm tank with Narrow Band on; the builder also runs it full-band and requires 3x fewer particles at the same water level (measured 9.3x) (opt-in build: `build_demo_scenes.py -- deep_plunge`) | `check_demo_blends.py` (`check_deep_plunge`) | `build_demo_scenes.py` |
+| `capillary_droplet.blend` | generated, committed | Zero-G Droplet: a 6 x 2 x 2 cm bar floats with gravity off; surface tension (0.072 N/m, 2 mm voxels, oil-like viscosity 3e-4 m^2/s) pulls it into a ball. The builder also runs it with surface tension off and requires the late aspect ratio below 0.6x of that run (measured 1.05 vs 3.00) (opt-in build: `build_demo_scenes.py -- capillary_droplet`) | `check_demo_blends.py` (`check_capillary_droplet`) | `build_demo_scenes.py` |
 | `chromatic_vortex.blend` | authored/committed (no builder script) | Colour-mixing vortex demo | `check_demo_blends.py`, `benchmark_versions.py`, `tests/acceptance/blender_chromatic_vortex_containment_acceptance.py`, `tests/acceptance/blender_color_mixing_*_acceptance.py` | by hand in Blender |
-| `dam_break/meta.json`, `crown_splash/meta.json`, `paddle_stir/meta.json`, `buoyancy_ladder/meta.json`, `water_wheel/meta.json`, `viscosity_race/meta.json`, `deep_plunge/meta.json` | generated, committed | Scene geometry/settings sidecar (domain, voxel size, particle counts) | `tools/demos/analyze_demos.py` (`load_meta`) | `build_demo_scenes.py` |
+| `dam_break/meta.json`, `crown_splash/meta.json`, `paddle_stir/meta.json`, `buoyancy_ladder/meta.json`, `water_wheel/meta.json`, `viscosity_race/meta.json`, `deep_plunge/meta.json`, `capillary_droplet/meta.json` | generated, committed | Scene geometry/settings sidecar (domain, voxel size, particle counts) | `tools/demos/analyze_demos.py` (`load_meta`) | `build_demo_scenes.py` |
 
 Not stored here: per-frame demo caches and fresh analysis output go to
 `artifacts/demo_cache/` and `artifacts/demo_analysis/` (git-ignored, regenerated

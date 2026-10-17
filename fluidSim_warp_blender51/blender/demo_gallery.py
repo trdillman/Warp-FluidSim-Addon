@@ -1,8 +1,8 @@
 """Demo Gallery for FluidSim canonical scenes in the 3D Viewport N-panel.
 
-Provides discovery, inspection, and safe scene loading of the 6 canonical
+Provides discovery, inspection, and safe scene loading of the 9 canonical
 simulations (Dam Break, Crown Splash, Paddle Stir, Chromatic Vortex, Density
-Ladder, Water Wheel, Viscosity Race, Deep Plunge).
+Ladder, Water Wheel, Viscosity Race, Deep Plunge, Zero-G Droplet).
 Loading always appends the demo into a New Scene, preserving active user
 work and initial empty scenes.
 """
@@ -114,6 +114,17 @@ DEMO_CATALOG: dict[str, dict[str, Any]] = {
         "description": "A block of water drops into a 70 cm deep tank; particles live only in a thin skin at the surface and the grid carries the calm interior.",
         "tags": ("Narrow Band", "~9x Fewer Particles", "Multigrid", "0.02m Voxels"),
         "key_feature": "Deep, calm volumes run on a fraction of the particles with the same water level.",
+    },
+    "capillary_droplet": {
+        "title": "Zero-G Droplet",
+        "scene_title": "Zero-G Droplet (Demo)",
+        "blend_filename": "capillary_droplet.blend",
+        "preview_filename": "capillary_droplet_preview.png",
+        "icon": "META_BALL",
+        "subtitle": "Surface Tension",
+        "description": "A 6 cm bar of liquid floats with gravity off; surface tension pulls its ends in until it settles into a round drop.",
+        "tags": ("Surface Tension", "Zero Gravity", "Viscosity", "0.002m Voxels"),
+        "key_feature": "Surface tension alone shapes the liquid: with it off, the bar just hangs there.",
     },
 }
 

@@ -9,14 +9,25 @@ The implementation uses the simulation-grid liquid signed-distance field (SDF):
   narrow band;
 * cell-centred acceleration is averaged onto the staggered MAC faces.
 
-Only two temporary ``vec3`` fields are allocated.  They are reused as the
-normal ping-pong buffers and the final acceleration field, so the persistent
-scratch cost is 24 bytes per allocated sparse-grid voxel.
+The particle SDF is a union of spheres: outside the liquid it is a distance,
+but inside it only measures the gap to the nearest particle, so it hovers
+near zero and crosses it between particles.  Read directly, every interior
+gap looks like a tiny bubble at the curvature clamp and the force churns the
+whole body of liquid.  ``k_surface_tension_seed_phi`` and
+``k_surface_tension_propagate_phi`` therefore rebuild the inside of the
+field as a chamfer distance carried in from the free surface (liquid cells
+that touch air), which leaves exactly one interface: the real one.
+
+Two temporary ``vec3`` fields are reused as the normal ping-pong buffers and
+the final acceleration field, and two ``float`` fields hold the capillary
+distance ping-pong, so the persistent scratch cost is 32 bytes per allocated
+sparse-grid voxel.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import time
 
 import warp as wp
@@ -67,6 +78,122 @@ def _read_vec3(
     if flat < 0:
         return default
     return data[flat]
+
+
+@wp.func
+def _is_air(voxel_type: wp.array(dtype=wp.int32), flat: wp.int32) -> bool:
+    # A missing neighbour is a domain wall to the pressure solve, not air.
+    if flat < 0:
+        return False
+    vt = voxel_type[flat]
+    return (vt & C.VOXEL_FLUID) == 0 and (vt & C.VOXEL_COLLISION) == 0
+
+
+@wp.func
+def _is_interior_liquid(
+    voxel_type: wp.array(dtype=wp.int32),
+    collision_sdf: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    tid: int,
+    ijk: wp.vec3i,
+) -> bool:
+    """A liquid cell none of whose six face neighbours is air."""
+
+    if (voxel_type[tid] & C.VOXEL_FLUID) == 0 or collision_sdf[tid] < 0.0:
+        return False
+    for axis in range(3):
+        for step in range(-1, 2, 2):
+            o = wp.vec3i(ijk[0], ijk[1], ijk[2])
+            if axis == 0:
+                o = wp.vec3i(ijk[0] + step, ijk[1], ijk[2])
+            elif axis == 1:
+                o = wp.vec3i(ijk[0], ijk[1] + step, ijk[2])
+            else:
+                o = wp.vec3i(ijk[0], ijk[1], ijk[2] + step)
+            if _is_air(voxel_type,
+                       voxel_flat_index(leaf_table, voxels_dim, leaves_dim, o)):
+                return False
+    return True
+
+
+@wp.kernel
+def k_surface_tension_seed_phi(
+    sdf: wp.array(dtype=float),
+    voxel_type: wp.array(dtype=wp.int32),
+    collision_sdf: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    unknown: float,
+    phi: wp.array(dtype=float),
+):
+    """Keep the particle SDF at and outside the free surface; mark the
+    liquid interior unknown so propagation can replace it."""
+
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    if _is_interior_liquid(voxel_type, collision_sdf, leaf_table,
+                           voxels_dim, leaves_dim, tid, ijk):
+        phi[tid] = unknown
+    else:
+        phi[tid] = sdf[tid]
+
+
+register_fn(
+    k_surface_tension_seed_phi,
+    "fluidSimSurfaceTensionSeedPhi",
+    notes="Free-surface seed for the capillary interior distance.",
+)
+
+
+@wp.kernel
+def k_surface_tension_propagate_phi(
+    src: wp.array(dtype=float),
+    voxel_type: wp.array(dtype=wp.int32),
+    collision_sdf: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    num_leaves: wp.array(dtype=wp.int32),
+    voxel_size: float,
+    dst: wp.array(dtype=float),
+):
+    """One 26-neighbour chamfer pass: an interior cell lies at least the
+    neighbour offset deeper than its shallowest neighbour."""
+
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    value = src[tid]
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    if _is_interior_liquid(voxel_type, collision_sdf, leaf_table,
+                           voxels_dim, leaves_dim, tid, ijk):
+        for dz in range(-1, 2):
+            for dy in range(-1, 2):
+                for dx in range(-1, 2):
+                    if dx != 0 or dy != 0 or dz != 0:
+                        n = voxel_flat_index(
+                            leaf_table, voxels_dim, leaves_dim,
+                            wp.vec3i(ijk[0] + dx, ijk[1] + dy, ijk[2] + dz))
+                        if n >= 0:
+                            step = voxel_size * wp.sqrt(
+                                float(dx * dx + dy * dy + dz * dz))
+                            value = wp.max(value, src[n] - step)
+    dst[tid] = value
+
+
+register_fn(
+    k_surface_tension_propagate_phi,
+    "fluidSimSurfaceTensionPropagatePhi",
+    notes="Chamfer distance carried from the free surface into the liquid.",
+)
 
 
 @wp.kernel
@@ -333,6 +460,8 @@ class SurfaceTensionSolver:
         self.solver = solver
         self._normal_a = None
         self._normal_b = None
+        self._phi_a = None
+        self._phi_b = None
         self._active_count = wp.zeros(1, dtype=wp.int32, device=solver.device)
         self._frame_max_active_count = wp.zeros(
             1, dtype=wp.int32, device=solver.device)
@@ -364,6 +493,8 @@ class SurfaceTensionSolver:
     def _release_resources(self) -> None:
         self._normal_a = None
         self._normal_b = None
+        self._phi_a = None
+        self._phi_b = None
         self._set_accounted_bytes(0)
 
     def ensure_resources(self) -> None:
@@ -373,11 +504,16 @@ class SurfaceTensionSolver:
         self._release_resources()
         # Allocate transactionally: a failure while creating the second buffer
         # must not leave one unaccounted device allocation attached to the solver.
-        normal_a = wp.zeros(capacity, dtype=wp.vec3, device=self.solver.device)
-        normal_b = wp.zeros(capacity, dtype=wp.vec3, device=self.solver.device)
+        device = self.solver.device
+        normal_a = wp.zeros(capacity, dtype=wp.vec3, device=device)
+        normal_b = wp.zeros(capacity, dtype=wp.vec3, device=device)
+        phi_a = wp.zeros(capacity, dtype=float, device=device)
+        phi_b = wp.zeros(capacity, dtype=float, device=device)
         self._normal_a = normal_a
         self._normal_b = normal_b
-        self._set_accounted_bytes(capacity * 2 * 3 * 4)
+        self._phi_a = phi_a
+        self._phi_b = phi_b
+        self._set_accounted_bytes(capacity * (2 * 3 + 2) * 4)
 
     def reset(self) -> None:
         self._last_status = "DISABLED"
@@ -392,7 +528,7 @@ class SurfaceTensionSolver:
             self._normal_a.zero_()
             self._normal_b.zero_()
         else:
-            # Release the 24-byte/voxel optional scratch allocation when the
+            # Release the 32-byte/voxel optional scratch allocation when the
             # feature is disabled through a solver reset.
             self._release_resources()
 
@@ -456,6 +592,7 @@ class SurfaceTensionSolver:
 
         self.ensure_resources()
         assert self._normal_a is not None and self._normal_b is not None
+        assert self._phi_a is not None and self._phi_b is not None
         grid = self.solver.grid
         half_width = max(
             float(settings.surface_tension_band_voxels), 0.5
@@ -473,11 +610,12 @@ class SurfaceTensionSolver:
             DEFAULT_CURVATURE_CLAMP_VOXELS / float(grid.voxel_size)
         )
         start = time.perf_counter()
+        phi = self._capillary_phi(normal_band)
         fast_launch(
             k_surface_tension_normals,
             dim=self.solver._nvox,
             inputs=[
-                self.solver.surface_sdf.data,
+                phi,
                 self.solver.collision_sdf.data,
                 grid.leaf_table,
                 grid.leaf_coords,
@@ -498,7 +636,7 @@ class SurfaceTensionSolver:
                 dim=self.solver._nvox,
                 inputs=[
                     current,
-                    self.solver.surface_sdf.data,
+                    phi,
                     self.solver.collision_sdf.data,
                     grid.leaf_table,
                     grid.leaf_coords,
@@ -521,7 +659,7 @@ class SurfaceTensionSolver:
             dim=self.solver._nvox,
             inputs=[
                 current,
-                self.solver.surface_sdf.data,
+                phi,
                 self.solver.collision_sdf.data,
                 grid.leaf_table,
                 grid.leaf_coords,
@@ -574,6 +712,47 @@ class SurfaceTensionSolver:
         self._last_status = "ACTIVE"
         self._last_message = ""
         return True
+
+    def _capillary_phi(self, normal_band: float):
+        """The particle SDF with its interior rebuilt as a distance.
+
+        Each chamfer pass carries the free-surface value one cell deeper, so
+        ``ceil(normal_band / h) + 1`` passes reach every cell the normal and
+        curvature stencils read.  Cells deeper than that start (and stay) at
+        a floor just beyond the support, so no stencil sees a cliff.
+        """
+
+        grid = self.solver.grid
+        h = float(grid.voxel_size)
+        passes = int(math.ceil(normal_band / h)) + 1
+        floor = -(passes + 1) * h
+        common = [
+            self.solver.voxel_type.data,
+            self.solver.collision_sdf.data,
+            grid.leaf_table,
+            grid.leaf_coords,
+            grid.voxels_dim,
+            grid.leaves_dim,
+            grid.num_leaves,
+        ]
+        fast_launch(
+            k_surface_tension_seed_phi,
+            dim=self.solver._nvox,
+            inputs=[self.solver.surface_sdf.data, *common, floor],
+            outputs=[self._phi_a],
+            device=self.solver.device,
+        )
+        src, dst = self._phi_a, self._phi_b
+        for _ in range(passes):
+            fast_launch(
+                k_surface_tension_propagate_phi,
+                dim=self.solver._nvox,
+                inputs=[src, *common, h],
+                outputs=[dst],
+                device=self.solver.device,
+            )
+            src, dst = dst, src
+        return src
 
     def diagnostics(self) -> SurfaceTensionDiagnostics:
         if not self._enabled():

@@ -57,10 +57,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_demo_catalog_contains_only_the_canonical_demos():
-    """Per DEMO_SCENE_CONTRACT.md, only the 8 canonical demos exist."""
+    """Per DEMO_SCENE_CONTRACT.md, only the 9 canonical demos exist."""
     canonical_keys = {"dam_break", "crown_splash", "paddle_stir", "chromatic_vortex",
                       "buoyancy_ladder", "water_wheel",
-                      "viscosity_race", "deep_plunge"}
+                      "viscosity_race", "deep_plunge", "capillary_droplet"}
     assert set(DEMO_CATALOG.keys()) == canonical_keys
 
     for key, meta in DEMO_CATALOG.items():
@@ -302,7 +302,8 @@ def test_gallery_uses_loaded_thumbnails_as_button_icons(monkeypatch):
 
 def test_gallery_marks_a_missing_demo_file_instead_of_offering_it(monkeypatch):
     present = ("dam_break", "crown_splash", "paddle_stir", "buoyancy_ladder", "water_wheel",
-               "viscosity_race", "deep_plunge")
+               "viscosity_race", "deep_plunge",
+               "capillary_droplet")
     log = _draw_gallery(monkeypatch, present)
     offered = {e[3].demo_id for e in log if e[0] == "operator"}
     assert offered == set(present)

@@ -53,7 +53,7 @@ SUCCESS_MARKER = "FLUIDSIM_SMOKE_OK"
 # Gallery order; build_extension.DEMO_IDS stages the same files.
 DEMO_IDS = ("dam_break", "crown_splash", "paddle_stir", "chromatic_vortex",
             "buoyancy_ladder", "water_wheel",
-            "viscosity_race", "deep_plunge")
+            "viscosity_race", "deep_plunge", "capillary_droplet")
 
 
 @wp.kernel

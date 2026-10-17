@@ -1575,6 +1575,8 @@ def test_compute_substeps_still_adapts_to_high_particle_speed(cuda_device):
 
 def test_project_frame_owns_algorithm_selection_and_projection_guard(monkeypatch):
     solver = object.__new__(PressureSolver)
+    # A 2 mm grid: the PCG tolerance is scaled by (h / 1 cm)^2 below 1 cm.
+    solver.grid = type("Grid", (), {"voxel_size": 0.002})()
     calls = []
 
     def record(name, status=None):
@@ -1633,3 +1635,4 @@ def test_project_frame_owns_algorithm_selection_and_projection_guard(monkeypatch
     assert [call[0] for call in calls] == [
         "build_rhs", "build_preconditioner", "solve_pcg",
     ]
+    assert calls[-1][1][2] == pytest.approx(settings.pressure_tolerance * 0.04)
