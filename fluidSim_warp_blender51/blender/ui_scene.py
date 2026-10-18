@@ -1308,10 +1308,9 @@ class FLUIDSIM_PT_diagnostics_report(FluidSimScenePanel, bpy.types.Panel):
         row.operator("fluidsim.export_frame", text="Export Current Frame…", icon="EXPORT")
 
 
-# The Scene tab registers only the panels that edit scene-owned settings or show
-# scene-level runtime state. Every domain setting is authored in the Physics tab
-# (``ui_physics`` mirrors the classes below) and in the staged sidebar; the
-# Scene tab no longer carries a second copy of those controls.
+# Panels that edit scene-owned settings or show scene-level runtime state. The
+# Physics tab mirrors these onto the domain; the Scene tab registers them plus
+# the domain panels below (``SCENE_TAB_PANEL_CLASSES``).
 SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_scene_lifecycle,
     FLUIDSIM_PT_scene_control,
@@ -1329,13 +1328,12 @@ SCENE_PANEL_CLASSES = (
     FLUIDSIM_PT_diagnostics_report,
 )
 
-# Draw sources for domain settings. These classes are never registered under
-# the Scene tab: ``ui_physics._make_panel_mirrors`` builds the Physics-tab panels
-# from them, and each draws through ``_domain_owner`` so it edits
-# ``obj.fluidsim_domain``. Their ``bl_parent_id`` values name sibling sources
-# (and, for the three that formerly sat under a Scene-tab parent, a parent that
-# stays in the Scene tab); the mirror maps parents it does not mirror to the
-# Physics root.
+# Domain-setting panels. They are registered in the Scene tab (see
+# ``SCENE_TAB_PANEL_CLASSES``) and ``ui_physics._make_panel_mirrors`` also builds
+# the Physics-tab copies from them; each draws through ``_domain_owner`` so it
+# edits ``obj.fluidsim_domain``. Their ``bl_parent_id`` values name sibling
+# panels (and, for three, a scene-owned parent); the mirror maps parents it does
+# not mirror to the Physics root.
 DOMAIN_DRAW_SOURCE_CLASSES = (
     FLUIDSIM_PT_scene_domain,
     FLUIDSIM_PT_scene_capacity,
@@ -1369,12 +1367,21 @@ DOMAIN_DRAW_SOURCE_CLASSES = (
 )
 
 
+# Everything the Scene tab registers. "All Simulation Settings" opens the Scene
+# tab, so it must show every setting: the domain panels are registered here as
+# well as mirrored into the domain's Physics tab. They draw through
+# ``_domain_owner`` (the designated ``fluidsim.domain_object``), so they edit the
+# right owner whichever object is active. Scene-owned panels come first because
+# two domain panels are children of them.
+SCENE_TAB_PANEL_CLASSES = SCENE_PANEL_CLASSES + DOMAIN_DRAW_SOURCE_CLASSES
+
+
 def register():
-    for cls in SCENE_PANEL_CLASSES:
+    for cls in SCENE_TAB_PANEL_CLASSES:
         bpy.utils.register_class(cls)
 
 
 def unregister():
     from ..unregister_guard import unregister_classes
 
-    unregister_classes(SCENE_PANEL_CLASSES)
+    unregister_classes(SCENE_TAB_PANEL_CLASSES)

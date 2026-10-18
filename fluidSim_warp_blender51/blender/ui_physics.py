@@ -215,13 +215,10 @@ INPUT_PANEL_CLASSES = _make_panel_mirrors(
     accepted_kinds=frozenset({"NONE", "INPUT"}),
 )
 
-# The Scene tab no longer registers any of these (``ui_scene.SCENE_PANEL_CLASSES``
-# keeps only scene-owned panels), so this list is the only registered home of
-# the domain controls besides the staged sidebar. Height Fill, Persistent
-# Attributes and Profiling were Scene-tab-only before; they are mirrored here so
-# no domain control loses its only UI. Persistent Attributes and Profiling were
-# children of Scene panels that stay in the Scene tab, so the mirror makes them
-# top-level domain panels.
+# The domain controls, mirrored onto the domain's Physics tab (the Scene tab
+# registers the same draw sources, ``ui_scene.SCENE_TAB_PANEL_CLASSES``).
+# Persistent Attributes and Profiling are children of scene-owned panels in the
+# Scene tab, so the mirror makes them top-level domain panels.
 DOMAIN_SOURCE_PANELS = (
     ui_scene.FLUIDSIM_PT_scene_domain,
     ui_scene.FLUIDSIM_PT_scene_capacity,
@@ -285,11 +282,9 @@ WHITEWATER_PANEL_CLASSES = _make_panel_mirrors(
     },
 )
 
-# "All Simulation Settings" opens this tab when the domain is active, so the
-# domain carries every FluidSim setting: the scene-level panels (status,
-# presets, outputs, display, cache & bake, diagnostics) are mirrored after the
-# domain's own groups. They still edit ``Scene.fluidsim``; the Scene tab keeps
-# its own copy for scenes viewed without the domain selected.
+# The domain's Physics tab also carries every FluidSim setting: the scene-level
+# panels (status, presets, outputs, display, cache & bake, diagnostics) are
+# mirrored after the domain's own groups. They still edit ``Scene.fluidsim``.
 SCENE_ON_DOMAIN_PANEL_CLASSES = _make_panel_mirrors(
     ui_scene.SCENE_PANEL_CLASSES,
     group="scene",

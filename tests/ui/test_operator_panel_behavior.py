@@ -3110,24 +3110,40 @@ SCENE_TAB_PANEL_IDS = frozenset({
 })
 
 
-def test_scene_tab_registers_only_scene_owned_panels(monkeypatch):
-    """The Scene tab holds scene-level state; domain controls are Physics-tab only.
+def test_scene_tab_registers_every_domain_panel(monkeypatch):
+    """"All Simulation Settings" opens the Scene tab, so it carries every setting.
 
-    ``SCENE_PANEL_CLASSES`` is the registered set, ``DOMAIN_DRAW_SOURCE_CLASSES``
-    the draw functions the Physics mirrors reuse. Registering a domain panel
-    under Scene again would put a second, unreachable-by-poll copy of every
-    domain control in a tab that has no domain context.
+    The Scene tab registers the scene-owned panels plus every domain panel
+    (Surface > Resolution & Cadence, Simulation, Whitewater, ...); the same draw
+    sources are also mirrored onto the domain's Physics tab. Scene-owned
+    panels register first because two domain panels are their children.
     """
     _install_bpy_stub(monkeypatch)
     ui_scene = _reload_module("fluidSim_warp_blender51.blender.ui_scene")
     ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
 
-    registered = {cls.bl_idname for cls in ui_scene.SCENE_PANEL_CLASSES}
+    scene_owned = {cls.bl_idname for cls in ui_scene.SCENE_PANEL_CLASSES}
     draw_sources = {cls.bl_idname for cls in ui_scene.DOMAIN_DRAW_SOURCE_CLASSES}
-    assert registered == SCENE_TAB_PANEL_IDS
-    assert len(registered) == len(ui_scene.SCENE_PANEL_CLASSES)
+    assert scene_owned == SCENE_TAB_PANEL_IDS
+    assert len(scene_owned) == len(ui_scene.SCENE_PANEL_CLASSES)
     assert len(draw_sources) == len(ui_scene.DOMAIN_DRAW_SOURCE_CLASSES) == 29
-    assert not registered & draw_sources
+    assert not scene_owned & draw_sources
+    assert ui_scene.SCENE_TAB_PANEL_CLASSES == (
+        ui_scene.SCENE_PANEL_CLASSES + ui_scene.DOMAIN_DRAW_SOURCE_CLASSES)
+    assert "FLUIDSIM_PT_surface_resolution" in draw_sources
+    assert all(cls.bl_context == "scene" for cls in ui_scene.SCENE_TAB_PANEL_CLASSES)
+    # Parents register before children.
+    seen = set()
+    for cls in ui_scene.SCENE_TAB_PANEL_CLASSES:
+        parent = getattr(cls, "bl_parent_id", "")
+        assert not parent or parent in seen, (cls.bl_idname, parent)
+        seen.add(cls.bl_idname)
+
+    registered = []
+    monkeypatch.setattr(ui_scene.bpy.utils, "register_class", registered.append,
+                        raising=False)
+    ui_scene.register()
+    assert tuple(registered) == ui_scene.SCENE_TAB_PANEL_CLASSES
 
     mirrored = {
         cls.bl_idname
