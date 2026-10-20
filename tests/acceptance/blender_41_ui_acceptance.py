@@ -172,4 +172,3 @@ def finish():
     bpy.app.timers.register(lambda: bpy.ops.wm.quit_blender(), first_interval=2.0)
 
 bpy.app.timers.register(finish, first_interval=2.0)
-
