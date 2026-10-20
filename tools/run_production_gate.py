@@ -163,6 +163,8 @@ SOURCE_REPORT_ACCEPTANCE = (
 # tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
+    "tests/acceptance/blender_41_ui_acceptance.py":
+        "focused foreground UI review via launch_profile_safe_addon_review.py; requires a designated domain and profile-safe temporary add-on",
     "tests/acceptance/blender_deck_gizmo_realtime_acceptance.py":
         "needs a real GUI window and --enable-event-simulate; drags every Deck gizmo live",
     "tests/acceptance/blender_vdb_writer_acceptance.py":

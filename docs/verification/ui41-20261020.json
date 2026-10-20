@@ -1,0 +1,186 @@
+{
+  "base_commit": "fa2b82beea67b9638d1bf5970433cbec12a68ff4",
+  "scope": "FluidSim 4.1 integrated UI, Windows Blender 5.2.0 LTS",
+  "addon_ui_common_sha256": "9f254dc9091ce3038c6e4401cdea513a6a4c2ce2b3ed73fe1f9df8af0b7e7062",
+  "blender": {
+    "binary": "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+    "binary_reported": "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+    "executable": "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+    "executable_sha256": "0060916d6921eb4d46c57254609d805a2ea711917399051391a52ba14beb6327",
+    "version": "5.2.0 LTS",
+    "version_tuple": [
+      5,
+      2,
+      0
+    ]
+  },
+  "host_checks": {
+    "status": "VERIFIED",
+    "passed": 234,
+    "coverage": [
+      "29 Scene domain panels registered with ordered parents",
+      "all 29 Scene draw paths and Physics mirror property bindings",
+      "designated domain ownership with unrelated active object",
+      "domain navigation to Physics; unrelated selection navigation to Scene",
+      "Draft/Final/Preview/Custom labels versus build_settings projection without authored-value mutation",
+      "Draft minimum/odd divisions and Final divisions against actual domain bounds and unpadded grid",
+      "no-domain visible panels have no domain-setting bindings",
+      "RNA editability and native redraws"
+    ]
+  },
+  "quality": {
+    "CUSTOM": {
+      "max_substeps": {
+        "authored": 4,
+        "note": "",
+        "solver": 4
+      },
+      "min_substeps": {
+        "authored": 1,
+        "note": "",
+        "solver": 1
+      },
+      "particles_per_voxel": {
+        "authored": 8,
+        "note": "",
+        "solver": 8
+      },
+      "pressure_iterations": {
+        "authored": 40,
+        "note": "",
+        "solver": 40
+      },
+      "voxel_size": {
+        "authored": 0.03999999910593033,
+        "note": "",
+        "solver": 0.03999999910593033
+      }
+    },
+    "DRAFT": {
+      "max_substeps": {
+        "authored": 4,
+        "note": "\u2192 2 (Draft)",
+        "solver": 2
+      },
+      "min_substeps": {
+        "authored": 1,
+        "note": "",
+        "solver": 1
+      },
+      "particles_per_voxel": {
+        "authored": 8,
+        "note": "\u2192 4 (Draft)",
+        "solver": 4.0
+      },
+      "pressure_iterations": {
+        "authored": 40,
+        "note": "\u2192 20 (Draft)",
+        "solver": 20
+      },
+      "voxel_size": {
+        "authored": 0.03999999910593033,
+        "note": "\u2192 0.08 m (Draft)",
+        "solver": 0.07999999821186066
+      }
+    },
+    "FINAL": {
+      "max_substeps": {
+        "authored": 4,
+        "note": "\u2192 8 (Final)",
+        "solver": 8
+      },
+      "min_substeps": {
+        "authored": 1,
+        "note": "\u2192 2 (Final)",
+        "solver": 2
+      },
+      "particles_per_voxel": {
+        "authored": 8,
+        "note": "\u2192 16 (Final)",
+        "solver": 16.0
+      },
+      "pressure_iterations": {
+        "authored": 40,
+        "note": "\u2192 80 (Final)",
+        "solver": 80
+      },
+      "voxel_size": {
+        "authored": 0.03999999910593033,
+        "note": "\u2192 0.02 m (Final)",
+        "solver": 0.019999999552965164
+      }
+    },
+    "PREVIEW": {
+      "max_substeps": {
+        "authored": 4,
+        "note": "",
+        "solver": 4
+      },
+      "min_substeps": {
+        "authored": 1,
+        "note": "",
+        "solver": 1
+      },
+      "particles_per_voxel": {
+        "authored": 8,
+        "note": "",
+        "solver": 8
+      },
+      "pressure_iterations": {
+        "authored": 40,
+        "note": "",
+        "solver": 40
+      },
+      "voxel_size": {
+        "authored": 0.03999999910593033,
+        "note": "",
+        "solver": 0.03999999910593033
+      }
+    }
+  },
+  "profile_unchanged": true,
+  "profile_file_signatures": {
+    "before": {
+      "startup.blend": null,
+      "userpref.blend": "e333e305868bf61f9109091e0309454f2bb6cc992b548ec02b06e3dacd44eeac"
+    },
+    "after": {
+      "startup.blend": null,
+      "userpref.blend": "e333e305868bf61f9109091e0309454f2bb6cc992b548ec02b06e3dacd44eeac"
+    }
+  },
+  "owned_process_exited": true,
+  "temporary_addon_removed": true,
+  "source_tests": {
+    "command": "python -m pytest -q tests/ui/test_operator_panel_behavior.py tests/runtime/test_quality_contract.py tests/runtime/test_solver_settings_projection.py tests/runtime/test_unregister_loops_guarded.py tests/gate/test_production_gate_coverage.py tests/perf/test_profile_safe_addon_review.py",
+    "passed": 234
+  },
+  "red_controls": {
+    "resolution": "3 failed, 1 passed before resolution fix; Draft8 also failed in Blender host",
+    "layout": "vertical-flow test failed before layout fix; native before screenshot shows squeezed fields/notes"
+  },
+  "screenshots": {
+    "before": "ui41-20261020-before.png",
+    "after": "ui41-20261020-after.png",
+    "assessment": "Inspected native Time & Transfer popup at captured window size: after fix, editable substep values and effective labels are readable."
+  },
+  "review": "Independent source review found no blockers; host outputs and screenshots separately verified.",
+  "lint": {
+    "changed_ui_and_host_script": "PASS",
+    "preexisting_findings": {
+      "tests/ui/test_operator_panel_behavior.py": 17,
+      "tools/run_production_gate.py": 2
+    },
+    "new_findings": 0
+  },
+  "limitations": [
+    "Draw-binding recorder is not a native UILayout; native redraw and popup screenshot supplement it.",
+    "Only captured popup layout visually inspected; no exhaustive DPI, width or all-panel screenshot matrix.",
+    "RNA edits executed; mouse/keyboard editing gestures not automated.",
+    "build_settings projection executed; no Warp solver stepping, CUDA execution, or full production gate.",
+    "Temporary legacy-style source copy tested, not extension zip installation.",
+    "No simulation cache writes or blend/preferences saves requested. Tracked blend files unchanged.",
+    "Initial installed-extension collision and test-authoring failures retained in local artifacts; excluded from passing evidence.",
+    "Blender logged shader-compilation subprocess errors in this environment; native panel screenshot verified, viewport rendering not certified."
+  ]
+}
