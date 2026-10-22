@@ -5089,3 +5089,77 @@ def test_quality_scaled_settings_show_the_effective_value(monkeypatch):
     texts, props = labels("PREVIEW")
     assert texts == []                          # x1: nothing to explain
     assert len(props) == 6
+
+@pytest.mark.parametrize("divisions,voxel,tier", [
+    (8, 0.125, "DRAFT"), (17, 1.0 / 17, "DRAFT"),
+    (64, 0.0001, "FINAL"), (64, 0.02, "FINAL"),
+])
+def test_resolution_quality_note_matches_solver_grid(monkeypatch, divisions, voxel, tier):
+    _install_bpy_stub(monkeypatch)
+    ui_common = _reload_module("fluidSim_warp_blender51.blender.ui_common")
+    from fluidSim_warp_blender51.sim.quality_contract import (
+        AuthoredQualitySettings,
+        quality_tier_fidelity,
+        resolve_quality,
+        scale_quality_value,
+    )
+    sys.modules["bpy"].context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=SimpleNamespace(quality=tier)))
+    data = SimpleNamespace(resolution_divisions=divisions, voxel_size=voxel)
+    size = divisions * voxel
+    effective_voxel = scale_quality_value("voxel_size", voxel, quality_tier_fidelity(tier))
+    resolved = resolve_quality(AuthoredQualitySettings(voxel_size=effective_voxel),
+                               ((0, 0, 0), (size, size / 2, size / 2)))
+    actual = max(resolved.unpadded_voxel_dimensions)
+    note = ui_common.quality_effective_note(data, "resolution_divisions")
+    assert note == (f"\u2192 {actual} ({tier.title()})" if actual != divisions else "")
+    assert data.resolution_divisions == divisions
+    assert data.voxel_size == voxel
+
+
+def test_quality_note_does_not_share_horizontal_space_with_editable_value(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_common = _reload_module("fluidSim_warp_blender51.blender.ui_common")
+    sys.modules["bpy"].context = SimpleNamespace(
+        scene=SimpleNamespace(fluidsim=SimpleNamespace(quality="FINAL")))
+
+    class Layout:
+        def __init__(self, direction="COLUMN"):
+            self.direction = direction
+            self.items = []
+
+        def column(self, **kwargs):
+            child = Layout("COLUMN")
+            self.items.append(child)
+            return child
+
+        def row(self, **kwargs):
+            child = Layout("ROW")
+            self.items.append(child)
+            return child
+
+        def prop(self, *args, **kwargs):
+            self.items.append("PROP")
+
+        def label(self, **kwargs):
+            self.items.append("LABEL")
+
+    def leaves(item):
+        if isinstance(item, str):
+            return {item}
+        result = set()
+        for child in item.items:
+            result.update(leaves(child))
+        return result
+
+    def check_flow(item):
+        if isinstance(item, str):
+            return
+        assert item.direction != "ROW" or not {"PROP", "LABEL"} <= leaves(item)
+        for child in item.items:
+            check_flow(child)
+
+    layout = Layout()
+    assert ui_common.draw_property(layout, SimpleNamespace(max_substeps=4), "max_substeps")
+    assert leaves(layout) == {"PROP", "LABEL"}
+    check_flow(layout)

@@ -142,8 +142,9 @@ def quality_effective_note(data, name: str) -> str:
     """
     try:
         from ..sim.quality_contract import (
-            MIN_RESOLUTION_DIVISIONS,
             QUALITY_SCALED_FIELDS,
+            AuthoredQualitySettings,
+            resolve_quality,
             scale_quality_value,
         )
         from .solver_settings import scene_quality_fidelity
@@ -156,9 +157,16 @@ def quality_effective_note(data, name: str) -> str:
             return ""
         authored = getattr(data, name)
         if name == "resolution_divisions":
-            # Divisions set the voxel size; the tier scales that voxel size, so
-            # the solver runs ``divisions * fidelity`` cells along the long axis.
-            effective = max(MIN_RESOLUTION_DIVISIONS, int(round(authored * fidelity)))
+            # Use the solver's ceil/tolerance and minimum-cell-size clamp.
+            # The authored minimum of eight does not constrain the effective
+            # unpadded grid (Draft may request four cells, padded to one leaf).
+            voxel = float(data.voxel_size)
+            span = authored * voxel
+            resolved = resolve_quality(
+                AuthoredQualitySettings(voxel_size=scale_quality_value(
+                    "voxel_size", voxel, fidelity)),
+                ((0.0, 0.0, 0.0), (span, span, span)))
+            effective = max(resolved.unpadded_voxel_dimensions)
         else:
             effective = scale_quality_value(name, authored, fidelity)
         if effective == authored:
@@ -174,21 +182,20 @@ def draw_property(layout, data, name: str, *, text: str | None = None, **kwargs)
     """Draw an RNA property when present; return whether it was drawn.
 
     A field the Quality tier rescales gets the value the solver will actually
-    use drawn beside it (see ``quality_effective_note``).
+    use drawn below it (see ``quality_effective_note``).
     """
     if data is None or not hasattr(data, name):
         return False
     note = quality_effective_note(data, name)
     if note:
-        layout = layout.row(align=True)
+        # A grid cell must retain its full width for the editable value.
+        layout = layout.column(align=True)
     if text is None:
         layout.prop(data, name, **kwargs)
     else:
         layout.prop(data, name, text=text, **kwargs)
     if note:
-        label = layout.row()
-        label.ui_units_x = 5
-        label.label(text=note)
+        layout.label(text=note)
     return True
 
 

@@ -352,3 +352,25 @@ Plain Python scripts run inside Blender (headless) or directly. `smoke_core.py` 
 ## Add-on's own tests: `fluidSim_warp_blender51/tests/` (not restructured)
 
 58 test modules plus their own `conftest.py` ship beside the add-on source and run standalone (`cd fluidSim_warp_blender51; python -m pytest`, using the add-on's `pyproject.toml`, importlib mode) as well as from the root via `pytest.ini`. They cover the extension packaging and the add-on's internal layers: build/manifest/wheel handling and release identity (`test_build_extension`, `test_manifest_wheels`, `test_wheel_fetch`, `test_release_*`), the effects system (`test_effect_*`), cache schema/manager and attribute caches, presets, properties/UI source contracts, registration, Warp runtime and validator API, diagnostics, whitewater/surface-tension source, and capacity planning. They are mostly source-level and pure-Python and none imports `bpy`; `test_warp_runtime.py`, `test_diagnostics_report.py` and `test_runtime_integration_source.py` use the `cuda_device` fixture and skip without CUDA. Their `conftest.py` mirrors the root `cuda_device` fixture (`tests/repo/test_cuda_device_fixture.py` asserts the two agree). Keep their basenames distinct from every file in `tests/`.
+
+
+### FluidSim 4.1 integrated UI probe
+
+Run the focused, foreground probe through the existing profile-safe launcher:
+
+```powershell
+python tools/gate/launch_profile_safe_addon_review.py --blender <Blender-5.2-exe> --blend demos/dam_break.blend --report artifacts/ui41.json --review-script tests/acceptance/blender_41_ui_acceptance.py --conflicting-addon bl_ext.user_default.fluidsim_warp
+```
+
+The explicit conflict identity disables an installed FluidSim extension only in
+this owned process. The launcher verifies the temporary source inventory,
+unchanged preferences/startup files and owned-process cleanup. The probe checks
+all 29 registered domain panels, draw bindings with an unrelated selection,
+Physics mirror consistency, both navigation targets, real RNA editability,
+authored-value preservation, and labels against projected SolverSettings and
+unpadded grid resolution. It also requests native redraws and a Time & Transfer
+popup screenshot. The draw recorder is not a native UILayout; the screenshot is
+visual evidence requiring inspection, not an automated readability verdict.
+No simulation stepping, cache writes, preferences saves or release qualification
+are requested. The ordinary production gate lists this as a manual foreground
+probe; it does not silently substitute these checks for the full GUI/GPU gate.
