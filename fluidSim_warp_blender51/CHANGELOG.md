@@ -58,6 +58,15 @@
   Deleting the last key left an empty action on the object, which still
   counted as animation.
 
+### Known limitations
+
+- 4.1 is certified on Windows only, as in 4.0. Linux builds, including USD
+  export, are still not CI-tested or certified.
+- Alembic still exports particle point clouds as empty transforms on
+  Blender 5.2; only the surface mesh is written.
+- The Surface span cap setting is still shown but has no effect with
+  sparse extraction (Warp 1.18 or newer).
+
 ## 4.0.1 — Install Warp from a file, and downloads that survive slow links
 
 - **Install from File** in Add-on Preferences installs the certified Warp

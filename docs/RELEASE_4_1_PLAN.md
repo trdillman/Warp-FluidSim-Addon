@@ -2,6 +2,51 @@
 
 Date: 2026-10-16, re-ranked 2026-10-17 · Baseline: origin/master `454839e` (v4.0.0)
 
+## 0. Status on master (2026-10-23, `8cd30c0`)
+
+Master already says 4.1.0 (`blender_manifest.toml`, CHANGELOG, user guide and
+technical report). There is no `v4.1.0` tag or GitHub release yet; the last
+tag is `v4.0.1` at `46cdf3c`. What shipped is narrower than §3: Wave 0 plus
+new features (Body Type, rigid contact, five demos, surface-tension fixes,
+the integrated settings UI). Waves A–C are mostly still open.
+
+**Done**
+- #1 4.0.1 installer branch: merged and tagged `v4.0.1` (`46cdf3c`).
+- #2 Rewind crash and emptied-action fixes: landed with the rigid demos
+  (in the 4.1.0 CHANGELOG Fixes).
+- #3 Transfer clarity UI: `f007c58`.
+- #7 Rigid demos: decided as Demo Gallery scenes (Density Ladder, Water
+  Wheel), `9c796e5`, with the real-UI rigid authoring test.
+- #9 Real-Blender installer test: closed by removing it (`10dfca9`); the
+  faked-download tests cover the installer.
+- Version bump to 4.1.0 (`70585dd`) and the 4.1.0 CHANGELOG entry.
+- Integrated UI evidence: `docs/verification/ui41-20261020.json`.
+
+**Not in the plan, but landed for 4.1**
+- Collider Body Type (Static/Animated/Dynamic) and rigid-body contact (`11df9d2`).
+- Viscosity Race, Deep Plunge, Zero-G Droplet demos; fine-grid surface
+  tension fix (`7bb7b51`, `5396f87`).
+- Every domain setting shown in the Scene tab and All Simulation Settings
+  (PR #33).
+
+**Still open**
+- #4 Span cap: the setting is still in `properties.py:1607` and its hover
+  text still says "removed in 4.1". Remove it, or change the text to 4.2.
+- #5 `CONTRIBUTING.md:9` still names `.github/workflows/ci.yml`, which does
+  not exist.
+- #6 AGENTS.md Cloud Agent notes: not cherry-picked.
+- #8 Publication buffer fix, #11 cloud UI smoke lane, #15 Alembic point
+  clouds, #18 benchmark: not started.
+- #10 Warp decision: the lock pins Warp 1.18.0 (not 1.17 as §2 says); the
+  decision is not recorded here.
+- #12–#14, #16 Solver wave (MG warm start, perf headroom, crown metric,
+  residual margin): not started. Proposed: move to 4.2.
+- #17 Linux certification: not done; listed as a known limitation in the
+  4.1.0 CHANGELOG.
+- Release steps (Wave D): the full GUI gate with hash match on the 4.1
+  demos, build, install probe and checksums per `docs/RELEASING.md`, then
+  the `v4.1.0` tag and GitHub release.
+
 Scope: all 41 `archive/*` tags, the `release/4.0` worktree (clean), the
 uncommitted cloud-UI work in the main checkout, deferred items recorded
 in the 4.0 docs, and the three local branches started after 4.0.0
