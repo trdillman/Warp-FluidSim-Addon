@@ -1604,7 +1604,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         description=(
             "Cap the marching-cubes dense extraction span on any axis, in surface voxels. "
             "Higher values allow larger active surfaces but can sharply increase VRAM and extraction time; lower values fail surface extraction sooner when the liquid span exceeds the cap. "
-            "No effect with sparse extraction (Warp 1.18 or newer), which has no span cap; this setting is removed in 4.1"))
+            "No effect with sparse extraction (Warp 1.18 or newer), which has no span cap; it still applies on Warp 1.17"))
     surface_update_cadence: EnumProperty(
         name="Update Cadence", items=_items(SurfaceUpdateCadence),
         default="FRAME", update=_request_surface_refresh,
