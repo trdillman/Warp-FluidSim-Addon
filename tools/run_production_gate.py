@@ -167,6 +167,8 @@ MANUAL_BLENDER_PROBES = {
         "focused foreground UI review via launch_profile_safe_addon_review.py; requires a designated domain and profile-safe temporary add-on",
     "tests/acceptance/blender_deck_gizmo_realtime_acceptance.py":
         "needs a real GUI window and --enable-event-simulate; drags every Deck gizmo live",
+    "tests/acceptance/blender_deck_defects_acceptance.py":
+        "needs a real GUI window and --enable-event-simulate; checks the Liquid Deck defect fixes live, including a real modal bake (also grep its log for Traceback)",
     "tests/acceptance/blender_vdb_writer_acceptance.py":
         "lane I spike: pure writer needs no add-on; run headless on demand (prints VDB_WRITER_OK)",
     "tests/acceptance/blender_resolution_divisions_acceptance.py":
