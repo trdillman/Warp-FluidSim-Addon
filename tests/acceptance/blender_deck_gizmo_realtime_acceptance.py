@@ -413,6 +413,23 @@ def drive_colliders(inp, win, v3d, colliders):
               bool(obj.fluidsim.collider_dynamic) != dynamic,
               [dynamic, bool(obj.fluidsim.collider_dynamic)])
 
+        # A press on the toggle that turns into a drag does not flip it.
+        dynamic = bool(obj.fluidsim.collider_dynamic)
+        inp.move(*point)
+        yield 0.3
+        inp.press()
+        yield 0.1
+        for i in range(1, 6):
+            inp.move(point[0] + 12 * i, point[1])
+            yield 0.05
+        inp.move(*point)  # back over the toggle before the release
+        yield 0.1
+        inp.release()
+        yield 0.4
+        check(f"{name}: a drag released over the Dynamic toggle does not flip it",
+              bool(obj.fluidsim.collider_dynamic) == dynamic,
+              [dynamic, bool(obj.fluidsim.collider_dynamic)])
+
 
 def drive_domain(inp, win, v3d, domain):
     from mathutils import Vector
