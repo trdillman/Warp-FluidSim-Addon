@@ -3324,7 +3324,7 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
 
     created = SimpleNamespace(name="FluidSim Domain", selected=False)
     created.select_set = lambda value: setattr(created, "selected", value)
-    monkeypatch.setattr(menus, "create_domain_object", lambda scene: created)
+    monkeypatch.setattr(menus, "create_domain_object", lambda scene, cursor=None: created)
 
     scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=None))
     active_holder = SimpleNamespace(active=None)
@@ -3337,6 +3337,61 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
     assert result == {"FINISHED"}
     assert created.selected is True
     assert active_holder.active is created, "the new domain becomes the active object"
+
+
+def test_add_domain_stands_the_default_box_on_the_3d_cursor(monkeypatch):
+    """Add > Fluid Domain centres the default box on the cursor, base at its Z."""
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    menus = _reload_module("fluidSim_warp_blender51.blender.menus")
+    from fluidSim_warp_blender51.blender.solver_settings import (
+        DEFAULT_DOMAIN_MAX, DEFAULT_DOMAIN_MIN)
+
+    class _Mesh:
+        def from_pydata(self, verts, _edges, _faces):
+            self.verts = verts
+
+        def update(self):
+            pass
+
+    fake_bpy.data = SimpleNamespace(
+        meshes=SimpleNamespace(new=lambda _name: _Mesh()),
+        objects=SimpleNamespace(
+            new=lambda name, data: SimpleNamespace(name=name, data=data, location=(0.0, 0.0, 0.0))),
+    )
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(domain_object=None),
+        collection=SimpleNamespace(objects=SimpleNamespace(link=lambda _obj: None)),
+        cursor=SimpleNamespace(location=(3.0, -1.5, 0.75)),
+    )
+    context = SimpleNamespace(scene=scene, view_layer=SimpleNamespace(objects=None))
+    assert menus.FLUIDSIM_OT_add_domain().execute(context) == {"FINISHED"}
+
+    obj = scene.fluidsim.domain_object
+    world = [tuple(v + o for v, o in zip(vert, obj.location)) for vert in obj.data.verts]
+    lo = tuple(min(c[i] for c in world) for i in range(3))
+    hi = tuple(max(c[i] for c in world) for i in range(3))
+    assert ((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2]) == (3.0, -1.5, 0.75)
+    assert tuple(h - l for h, l in zip(hi, lo)) == tuple(
+        h - l for h, l in zip(DEFAULT_DOMAIN_MAX, DEFAULT_DOMAIN_MIN)), "size stays the default"
+    # Scripted creation without a cursor still spans the canonical fallback box.
+    assert menus.create_domain_object(scene).location == (0.0, 0.0, 0.0)
+
+
+def test_add_domain_is_greyed_while_a_production_bake_runs(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    menus = _reload_module("fluidSim_warp_blender51.blender.menus")
+    from fluidSim_warp_blender51.blender import production_bake
+
+    messages = []
+    monkeypatch.setattr(menus.FLUIDSIM_OT_add_domain, "poll_message_set",
+                        classmethod(lambda _cls, text: messages.append(text)), raising=False)
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace()))
+    monkeypatch.setattr(production_bake, "bake_is_active", lambda _scene: False)
+    monkeypatch.setattr(production_bake, "any_bake_active", lambda: False)
+    assert menus.FLUIDSIM_OT_add_domain.poll(context) is True
+    monkeypatch.setattr(production_bake, "any_bake_active", lambda: True)
+    assert menus.FLUIDSIM_OT_add_domain.poll(context) is False
+    assert messages == ["A Production Bake is running in another scene"]
 
 
 def test_every_domain_designation_presents_a_wire_unrendered_boundary(monkeypatch):
