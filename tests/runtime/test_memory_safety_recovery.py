@@ -307,9 +307,11 @@ def test_safe_settings_routes_to_the_reviewed_options_and_changes_no_capacity(
     result, operator, scene, before = _run_safe_settings(
         addon, monkeypatch, lambda: _plan("trim-particles"))
 
-    assert result == {"CANCELLED"}  # never applied from this entry point
-    assert scene.fluidsim.status == "Capacity options ready — review and confirm one option"
-    assert operator.reports == [(("WARNING",), scene.fluidsim.status)]
+    # Calculating succeeds; no option is applied from this entry point.
+    assert result == {"FINISHED"}
+    assert scene.fluidsim.status == (
+        "1 safe option calculated — review and apply one under Capacity & Safety")
+    assert operator.reports == [(("INFO",), scene.fluidsim.status)]
     changed = {k for k, v in vars(scene.fluidsim).items() if before[k] != v}
     assert changed == {"status"}
 
@@ -318,8 +320,18 @@ def test_safe_settings_reports_when_no_verified_option_exists_or_inspection_fail
         addon, monkeypatch):
     result, operator, scene, _ = _run_safe_settings(addon, monkeypatch, lambda: _plan())
     assert result == {"CANCELLED"}
-    assert scene.fluidsim.status == "No verified capacity-only option is available"
+    assert scene.fluidsim.status == (
+        "No safe option was found: Leaf capacity does not fit the live budget")
     assert operator.reports == [(("ERROR",), scene.fluidsim.status)]
+
+    def fits():
+        return SimpleNamespace(blockers=(), suggestions=())
+
+    result, operator, scene, _ = _run_safe_settings(addon, monkeypatch, fits)
+    assert result == {"FINISHED"}
+    assert scene.fluidsim.status == (
+        "The current settings fit the memory budget; nothing to change")
+    assert operator.reports == [(("INFO",), scene.fluidsim.status)]
 
     def broken():
         raise RuntimeError("probe failed")

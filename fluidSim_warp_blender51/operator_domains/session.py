@@ -293,16 +293,26 @@ class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
             self.report({"ERROR"}, f"Capacity inspection failed: {exc}")
             fs.status = f"Capacity inspection failed: {exc}"
             return {"CANCELLED"}
-        if not tuple(getattr(plan, "suggestions", ())):
-            self.report({"ERROR"}, "No verified capacity-only option is available")
-            fs.status = "No verified capacity-only option is available"
+        suggestions = tuple(getattr(plan, "suggestions", ()))
+        blockers = tuple(getattr(plan, "blockers", ()))
+        if not suggestions and not blockers:
+            fs.status = "The current settings fit the memory budget; nothing to change"
+            self.report({"INFO"}, fs.status)
+            return {"FINISHED"}
+        if not suggestions:
+            reason = getattr(blockers[0], "message", str(blockers[0]))
+            fs.status = f"No safe option was found: {reason}"
+            self.report({"ERROR"}, fs.status)
             return {"CANCELLED"}
-        # Never mutate semantic quality/capacity from a one-click retry. The
-        # existing plan panel and apply_capacity_suggestion dialog own the one
-        # exact-values confirmation and stale-signature revalidation flow.
-        fs.status = "Capacity options ready — review and confirm one option"
-        self.report({"WARNING"}, fs.status)
-        return {"CANCELLED"}
+        # Calculating is the whole job: settings are never changed from this
+        # one click. The plan panel and apply_capacity_suggestion dialog own
+        # the one exact-values confirmation and stale-signature revalidation.
+        count = len(suggestions)
+        fs.status = (
+            f"{count} safe option{'s' if count != 1 else ''} calculated — "
+            "review and apply one under Capacity & Safety")
+        self.report({"INFO"}, fs.status)
+        return {"FINISHED"}
 
 
 class FLUIDSIM_OT_reset(_FLUIDSIM_OT_session_base, bpy.types.Operator):
