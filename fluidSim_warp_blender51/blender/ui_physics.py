@@ -168,7 +168,7 @@ class FLUIDSIM_PT_physics_root(FluidSimPhysicsPanel, bpy.types.Panel):
             # outputs, diagnostics); the domain settings are in this tab.
             text="Open Scene FluidSim Settings",
             icon="PROPERTIES",
-        )
+        ).target = "SCENE"
         if kind == "DOMAIN" or kind in _OUTPUT_KINDS.values():
             install = layout.operator(
                 "fluidsim.install_render_nodes",
@@ -300,6 +300,19 @@ EFFECTS_ON_DOMAIN_PANEL_CLASSES = _make_panel_mirrors(
 )
 
 
+_SURFACE_VIEW_MODES = {"SURFACE", "SURFACE_PARTICLES"}
+_PARTICLE_VIEW_MODES = {"PARTICLES", "SURFACE_PARTICLES"}
+
+
+def _draw_stream_display(layout, fs, material):
+    """Display rows of one whitewater stream, greyed like the Scene tab."""
+    shown = ui_scene._gated(layout, fs.show_whitewater)
+    shown.prop(fs, "whitewater_output_mode")
+    shown.prop(fs, "whitewater_display_fraction")
+    shown.prop(fs, "whitewater_display_scale")
+    ui_scene._gated(layout, fs.whitewater_output_mode in {"SEPARATE", "BOTH"}).prop(fs, material)
+
+
 class _OutputPanel(FluidSimPhysicsPanel):
     accepted_kind = ""
 
@@ -320,11 +333,14 @@ class FLUIDSIM_PT_physics_surface_output(_OutputPanel, bpy.types.Panel):
     def draw(self, context):
         layout = _layout(self)
         fs = context.scene.fluidsim
+        # Same greying rules as the Scene tab's Display and Materials panels.
         layout.prop(fs, "liquid_view_mode")
-        layout.prop(fs, "surface_material")
-        layout.prop(fs, "surface_attribute_mode")
+        shown = fs.liquid_view_mode in _SURFACE_VIEW_MODES
+        ui_scene._gated(layout, shown).prop(fs, "surface_material")
+        body = ui_scene._gated(layout, shown and ui_scene._surface_enabled(context))
+        body.prop(fs, "surface_attribute_mode")
         ui_scene._draw_attribute_group(
-            layout, ui_scene._domain_owner(context), "surface")
+            body, ui_scene._domain_owner(context), "surface")
 
 
 class FLUIDSIM_PT_physics_particles_output(_OutputPanel, bpy.types.Panel):
@@ -337,12 +353,13 @@ class FLUIDSIM_PT_physics_particles_output(_OutputPanel, bpy.types.Panel):
         layout = _layout(self)
         fs = context.scene.fluidsim
         layout.prop(fs, "liquid_view_mode")
-        layout.prop(fs, "particle_display_fraction")
-        layout.prop(fs, "particle_display_scale")
-        layout.prop(fs, "particle_attribute_mode")
-        layout.prop(fs, "particle_material")
+        body = ui_scene._gated(layout, fs.liquid_view_mode in _PARTICLE_VIEW_MODES)
+        body.prop(fs, "particle_display_fraction")
+        body.prop(fs, "particle_display_scale")
+        body.prop(fs, "particle_attribute_mode")
+        body.prop(fs, "particle_material")
         ui_scene._draw_attribute_group(
-            layout, ui_scene._domain_owner(context), "particles")
+            body, ui_scene._domain_owner(context), "particles")
 
 
 class FLUIDSIM_PT_physics_whitewater_output(_OutputPanel, bpy.types.Panel):
@@ -352,13 +369,14 @@ class FLUIDSIM_PT_physics_whitewater_output(_OutputPanel, bpy.types.Panel):
     accepted_kind = "WHITEWATER"
 
     def draw(self, context):
-        layout = _layout(self)
+        layout = ui_scene._gated(_layout(self), ui_scene._whitewater_enabled(context))
         fs = context.scene.fluidsim
         layout.prop(fs, "show_whitewater")
-        layout.prop(fs, "whitewater_output_mode")
-        layout.prop(fs, "whitewater_display_fraction")
-        layout.prop(fs, "whitewater_display_scale")
-        layout.prop(fs, "whitewater_attribute_mode")
+        shown = ui_scene._gated(layout, fs.show_whitewater)
+        shown.prop(fs, "whitewater_output_mode")
+        shown.prop(fs, "whitewater_display_fraction")
+        shown.prop(fs, "whitewater_display_scale")
+        shown.prop(fs, "whitewater_attribute_mode")
         layout.prop(fs, "whitewater_material")
         ui_scene._draw_attribute_group(
             layout, ui_scene._domain_owner(context), "whitewater")
@@ -371,12 +389,9 @@ class FLUIDSIM_PT_physics_foam_output(_OutputPanel, bpy.types.Panel):
     accepted_kind = "FOAM"
 
     def draw(self, context):
-        layout = _layout(self)
+        layout = ui_scene._gated(_layout(self), ui_scene._whitewater_enabled(context))
         fs = context.scene.fluidsim
-        layout.prop(fs, "whitewater_output_mode")
-        layout.prop(fs, "whitewater_display_fraction")
-        layout.prop(fs, "whitewater_display_scale")
-        layout.prop(fs, "foam_material")
+        _draw_stream_display(layout, fs, "foam_material")
         # Output mode, display scale and the material picker are scene-scoped;
         # the ww_* dynamics below are solver settings read from the domain
         # group, so that grid has to edit the domain owner instead.
@@ -399,12 +414,9 @@ class FLUIDSIM_PT_physics_bubbles_output(_OutputPanel, bpy.types.Panel):
     accepted_kind = "BUBBLES"
 
     def draw(self, context):
-        layout = _layout(self)
+        layout = ui_scene._gated(_layout(self), ui_scene._whitewater_enabled(context))
         fs = context.scene.fluidsim
-        layout.prop(fs, "whitewater_output_mode")
-        layout.prop(fs, "whitewater_display_fraction")
-        layout.prop(fs, "whitewater_display_scale")
-        layout.prop(fs, "bubble_material")
+        _draw_stream_display(layout, fs, "bubble_material")
         # Output mode, display scale and the material picker are scene-scoped;
         # the ww_* dynamics below are solver settings read from the domain
         # group, so that grid has to edit the domain owner instead.
@@ -426,12 +438,9 @@ class FLUIDSIM_PT_physics_spray_output(_OutputPanel, bpy.types.Panel):
     accepted_kind = "SPRAY"
 
     def draw(self, context):
-        layout = _layout(self)
+        layout = ui_scene._gated(_layout(self), ui_scene._whitewater_enabled(context))
         fs = context.scene.fluidsim
-        layout.prop(fs, "whitewater_output_mode")
-        layout.prop(fs, "whitewater_display_fraction")
-        layout.prop(fs, "whitewater_display_scale")
-        layout.prop(fs, "spray_material")
+        _draw_stream_display(layout, fs, "spray_material")
         # Output mode, display scale and the material picker are scene-scoped;
         # the ww_* dynamics below are solver settings read from the domain
         # group, so that grid has to edit the domain owner instead.

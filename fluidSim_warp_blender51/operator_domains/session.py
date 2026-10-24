@@ -293,16 +293,26 @@ class FLUIDSIM_OT_apply_safe_settings(bpy.types.Operator):
             self.report({"ERROR"}, f"Capacity inspection failed: {exc}")
             fs.status = f"Capacity inspection failed: {exc}"
             return {"CANCELLED"}
-        if not tuple(getattr(plan, "suggestions", ())):
-            self.report({"ERROR"}, "No verified capacity-only option is available")
-            fs.status = "No verified capacity-only option is available"
+        suggestions = tuple(getattr(plan, "suggestions", ()))
+        blockers = tuple(getattr(plan, "blockers", ()))
+        if not suggestions and not blockers:
+            fs.status = "The current settings fit the memory budget; nothing to change"
+            self.report({"INFO"}, fs.status)
+            return {"FINISHED"}
+        if not suggestions:
+            reason = getattr(blockers[0], "message", str(blockers[0]))
+            fs.status = f"No safe option was found: {reason}"
+            self.report({"ERROR"}, fs.status)
             return {"CANCELLED"}
-        # Never mutate semantic quality/capacity from a one-click retry. The
-        # existing plan panel and apply_capacity_suggestion dialog own the one
-        # exact-values confirmation and stale-signature revalidation flow.
-        fs.status = "Capacity options ready — review and confirm one option"
-        self.report({"WARNING"}, fs.status)
-        return {"CANCELLED"}
+        # Calculating is the whole job: settings are never changed from this
+        # one click. The plan panel and apply_capacity_suggestion dialog own
+        # the one exact-values confirmation and stale-signature revalidation.
+        count = len(suggestions)
+        fs.status = (
+            f"{count} safe option{'s' if count != 1 else ''} calculated — "
+            "review and apply one under Capacity & Safety")
+        self.report({"INFO"}, fs.status)
+        return {"FINISHED"}
 
 
 class FLUIDSIM_OT_reset(_FLUIDSIM_OT_session_base, bpy.types.Operator):
@@ -646,7 +656,23 @@ class FLUIDSIM_OT_restart_simulation(_ApplyChanges, bpy.types.Operator):
     allow_restart: BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, event):
+        # A click asks first when stepped preview frames would be lost; script
+        # and EXEC_DEFAULT callers restart without a dialog, as before.
+        if _preview_progress_at_risk(context.scene):
+            self._confirmation_token = _runtime._pending().change_confirmation_token(
+                context.scene)
+            return context.window_manager.invoke_props_dialog(self)
         return self.execute(context)
+
+
+def _preview_progress_at_risk(scene) -> bool:
+    """Whether this scene owns a solver that has stepped past its start."""
+    pending = _runtime._pending()
+    sess = _runtime._bridge().session()
+    owns_scene = getattr(sess, "owns_scene", None)
+    if not callable(owns_scene) or not owns_scene(scene):
+        return False
+    return not pending._is_disposable_start(sess)
 
 
 class FLUIDSIM_OT_toggle_live(bpy.types.Operator):

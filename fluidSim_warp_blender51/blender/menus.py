@@ -37,12 +37,30 @@ def _default_domain_geometry():
     return verts, list(_DEFAULT_DOMAIN_FACES)
 
 
-def create_domain_object(scene):
+def _offset_to_cursor(cursor):
+    """Object offset that centres the default box on ``cursor`` in X/Y.
+
+    The box base sits at the cursor's height, so the liquid domain rises from
+    wherever the artist placed the 3D cursor; its size stays the default.
+    """
+    from .solver_settings import DEFAULT_DOMAIN_MAX, DEFAULT_DOMAIN_MIN
+
+    lo, hi = DEFAULT_DOMAIN_MIN, DEFAULT_DOMAIN_MAX
+    return (
+        float(cursor[0]) - 0.5 * (lo[0] + hi[0]),
+        float(cursor[1]) - 0.5 * (lo[1] + hi[1]),
+        float(cursor[2]) - lo[2],
+    )
+
+
+def create_domain_object(scene, cursor=None):
     """Create, link and designate a fresh FluidSim domain object.
 
     Always creates a new object and re-designates it, so the Add menu can
-    introduce an additional domain and make it the active one. Returns None
-    only when ``scene.fluidsim`` is absent.
+    introduce an additional domain and make it the active one. With
+    ``cursor`` the default box is moved to stand on that point; without it
+    the box spans the canonical fallback domain. Returns None only when
+    ``scene.fluidsim`` is absent.
     """
     fs = getattr(scene, "fluidsim", None)
     if fs is None:
@@ -52,6 +70,8 @@ def create_domain_object(scene):
     mesh.from_pydata(verts, [], faces)
     mesh.update()
     obj = bpy.data.objects.new("FluidSim Domain", mesh)
+    if cursor is not None:
+        obj.location = _offset_to_cursor(cursor)
     from .setup_wizard import present_as_domain
 
     present_as_domain(obj)
@@ -68,9 +88,18 @@ class FLUIDSIM_OT_add_domain(bpy.types.Operator):
     )
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        # Designating a new domain re-configures the shared solver, which a
+        # running bake is still stepping (owner decision D2).
+        from ..operator_domains.common import _bake_poll
+
+        return _bake_poll(cls, context)
+
     def execute(self, context):
         scene = context.scene
-        obj = create_domain_object(scene)
+        cursor = getattr(getattr(scene, "cursor", None), "location", None)
+        obj = create_domain_object(scene, cursor)
         if obj is None:
             self.report({"ERROR"}, "No FluidSim scene settings to attach a domain to")
             return {"CANCELLED"}
