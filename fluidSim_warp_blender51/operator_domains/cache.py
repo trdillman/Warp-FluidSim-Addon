@@ -370,6 +370,10 @@ class FLUIDSIM_OT_cache_integrity_scan(bpy.types.Operator):
     bl_idname = "fluidsim.cache_integrity_scan"
     bl_label = "Scan Cache Integrity"
 
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_exists_poll(cls, context)
+
     def execute(self, context):
         from ..blender.cache_manager import inspect_cache
 
@@ -390,6 +394,10 @@ class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
     bl_idname = "fluidsim.cache_remove_orphans"
     bl_label = "Remove Cache Orphans"
     bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_mutation_poll(cls, context)
 
     expected_cache_path: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
     expected_orphans_json: StringProperty(default="[]", options={"HIDDEN", "SKIP_SAVE"})
@@ -445,6 +453,10 @@ class FLUIDSIM_OT_cache_free(bpy.types.Operator):
     bl_label = "Free Cache"
     bl_options = {"REGISTER"}
 
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_mutation_poll(cls, context)
+
     expected_cache_path: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
@@ -486,6 +498,10 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
     bl_idname = "fluidsim.cache_move"
     bl_label = "Move Cache"
     bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_mutation_poll(cls, context)
 
     destination: StringProperty(name="Destination", subtype="DIR_PATH")
     expected_source: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
@@ -529,6 +545,10 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
     bl_label = "Rename Cache"
     bl_options = {"REGISTER"}
 
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_mutation_poll(cls, context)
+
     name: StringProperty(name="New Directory Name", default="fluidsim_cache")
     expected_source: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
@@ -566,6 +586,10 @@ class FLUIDSIM_OT_cache_open_folder(bpy.types.Operator):
 
     bl_idname = "fluidsim.cache_open_folder"
     bl_label = "Open Cache Folder"
+
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_exists_poll(cls, context)
 
     def execute(self, context):
         from ..blender.cache_manager import open_cache_folder

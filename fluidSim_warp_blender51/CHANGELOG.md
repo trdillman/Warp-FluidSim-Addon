@@ -37,6 +37,12 @@
 
 ### Fixes
 
+- **Cache tools are greyed out when there is nothing to manage or a bake
+  is writing the cache.** Free, Move, Rename and Remove Orphans were
+  offered with no cache on disk and during a Production Bake, so the
+  cache could be deleted under a running bake. They now say why they are
+  unavailable ("No cache to manage", "Production Bake owns this scene");
+  Scan Integrity and Open Folder need only an existing cache.
 - **Surface tension no longer loses liquid on fine grids.** On voxels
   smaller than 1 cm the pressure solve stopped too early (its tolerance
   did not scale with voxel size), so surface tension squeezed the liquid
