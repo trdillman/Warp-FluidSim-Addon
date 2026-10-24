@@ -1056,6 +1056,18 @@ def revert_pending_values(scene):
     return state.pending_action is None
 
 
+def _still_owns(sess, scene) -> bool:
+    """Whether ``sess`` still owns ``scene``, captured by a debounce timer.
+
+    Undo or a file load can replace the Scene before the timer fires; the edit
+    that scheduled the flush went with it, so the flush is dropped.
+    """
+    try:
+        return bool(sess.owns_scene(scene))
+    except ReferenceError:
+        return False
+
+
 def _schedule_disposable_apply(scene):
     """Debounce a safe start-state transition with the edited scene captured."""
     state = _interaction_state(scene)
@@ -1070,7 +1082,7 @@ def _schedule_disposable_apply(scene):
     def flush_scene_pending():
         state.timer_scheduled = False
         sess = session()
-        if sess.owns_scene(scene) and _is_disposable_start(sess):
+        if _still_owns(sess, scene) and _is_disposable_start(sess):
             try:
                 _apply_pending(scene)
             except Exception as exc:  # noqa: BLE001 - timer boundary
@@ -1095,7 +1107,7 @@ def _schedule_capacity_plan_refresh(scene):
     def flush_capacity_plan():
         state.capacity_plan_timer_scheduled = False
         sess = session()
-        if sess.owns_scene(scene):
+        if _still_owns(sess, scene):
             try:
                 sess.refresh_capacity_plan(scene)
             except Exception as exc:  # noqa: BLE001 - timer boundary
