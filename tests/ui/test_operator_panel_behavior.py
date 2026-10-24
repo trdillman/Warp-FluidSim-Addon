@@ -4679,6 +4679,50 @@ def test_create_controller_completes_in_any_object_mode(monkeypatch, mode):
         assert objects.active is edited
 
 
+_EFFECT_LIST_OPERATORS = (
+    "FLUIDSIM_OT_effect_duplicate",
+    "FLUIDSIM_OT_effect_move",
+    "FLUIDSIM_OT_effect_toggle_mute",
+    "FLUIDSIM_OT_effect_toggle_solo",
+)
+
+
+@pytest.mark.parametrize("name", _EFFECT_LIST_OPERATORS)
+def test_effect_list_buttons_grey_with_a_reason_on_an_empty_stack(monkeypatch, name):
+    """Duplicate/Move/Mute/Solo must not be live buttons that cancel silently."""
+    _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+    cls = getattr(effect_ui, name)
+    empty = SimpleNamespace(scene=SimpleNamespace(
+        fluidsim_effects=SimpleNamespace(items=[], active_index=0)))
+    cls._poll_message = ""
+    assert cls.poll(empty) is False
+    assert cls._poll_message == "Add an effect first"
+    filled = SimpleNamespace(scene=SimpleNamespace(
+        fluidsim_effects=SimpleNamespace(items=[SimpleNamespace()], active_index=0)))
+    assert cls.poll(filled) is True
+
+    reports = []
+    operator = cls()
+    operator.direction = "UP"
+    operator.report = lambda level, message: reports.append((level, message))
+    assert operator.execute(empty) == {"CANCELLED"}
+    assert reports, f"{name} cancelled without telling the artist why"
+
+
+@pytest.mark.parametrize(("direction", "edge"), [("UP", "top"), ("DOWN", "bottom")])
+def test_effect_move_past_the_end_says_why(monkeypatch, direction, edge):
+    _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+    stack = SimpleNamespace(items=[SimpleNamespace()], active_index=0)
+    reports = []
+    operator = effect_ui.FLUIDSIM_OT_effect_move()
+    operator.direction = direction
+    operator.report = lambda level, message: reports.append((level, message))
+    assert operator.execute(SimpleNamespace(scene=SimpleNamespace(fluidsim_effects=stack))) == {"CANCELLED"}
+    assert reports == [({"INFO"}, f"The effect is already at the {edge} of the stack")]
+
+
 def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
     """D9: an opted-in author can trust their own kernel edits for the session so
     the Review & Trust dialog does not re-prompt on every edit.  Session trust is

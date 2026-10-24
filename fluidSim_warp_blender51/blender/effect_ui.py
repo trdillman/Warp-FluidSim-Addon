@@ -43,6 +43,14 @@ def _active_effect(scene):
     return stack.items[index]
 
 
+def _active_effect_poll(cls, context) -> bool:
+    """Grey the effect-list buttons, with a reason, while the stack is empty."""
+    if _active_effect(getattr(context, "scene", None)) is None:
+        cls.poll_message_set("Add an effect first")
+        return False
+    return True
+
+
 def _normalize_orders(stack) -> None:
     for index, item in enumerate(stack.items):
         item.order = index
@@ -378,9 +386,14 @@ class FLUIDSIM_OT_effect_duplicate(bpy.types.Operator):
     bl_description = "Duplicate the active effect as a new entry at the end of the stack"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        return _active_effect_poll(cls, context)
+
     def execute(self, context):
         item = _active_effect(context.scene)
         if item is None:
+            self.report({"WARNING"}, "Add an effect first")
             return {"CANCELLED"}
         instance = effects.effect_instance_from_pg(context.scene, item)
         duplicate = replace(
@@ -402,11 +415,17 @@ class FLUIDSIM_OT_effect_move(bpy.types.Operator):
 
     direction: EnumProperty(items=(("UP", "Up", ""), ("DOWN", "Down", "")), default="UP")
 
+    @classmethod
+    def poll(cls, context):
+        return _active_effect_poll(cls, context)
+
     def execute(self, context):
         stack = context.scene.fluidsim_effects
         index = int(stack.active_index)
         target = index - 1 if self.direction == "UP" else index + 1
         if target < 0 or target >= len(stack.items):
+            edge = "top" if self.direction == "UP" else "bottom"
+            self.report({"INFO"}, f"The effect is already at the {edge} of the stack")
             return {"CANCELLED"}
         stack.items.move(index, target)
         stack.active_index = target
@@ -421,9 +440,14 @@ class FLUIDSIM_OT_effect_toggle_mute(bpy.types.Operator):
     bl_description = "Mute or unmute the active effect without removing it from the stack"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        return _active_effect_poll(cls, context)
+
     def execute(self, context):
         item = _active_effect(context.scene)
         if item is None:
+            self.report({"WARNING"}, "Add an effect first")
             return {"CANCELLED"}
         item.muted = not item.muted
         effects.refresh_stack_state(context.scene)
@@ -436,9 +460,14 @@ class FLUIDSIM_OT_effect_toggle_solo(bpy.types.Operator):
     bl_description = "Solo the active effect so only it evaluates, or clear solo to evaluate the whole stack"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        return _active_effect_poll(cls, context)
+
     def execute(self, context):
         item = _active_effect(context.scene)
         if item is None:
+            self.report({"WARNING"}, "Add an effect first")
             return {"CANCELLED"}
         item.solo = not item.solo
         effects.refresh_stack_state(context.scene)
@@ -530,6 +559,7 @@ class FLUIDSIM_OT_effect_create_controller(bpy.types.Operator):
     def execute(self, context):
         item = _active_effect(context.scene)
         if item is None:
+            self.report({"WARNING"}, "Add an effect first")
             return {"CANCELLED"}
         parameter = next((entry for entry in item.parameters if entry.key == self.parameter_key), None)
         if parameter is None or parameter.kind != ParameterKind.OBJECT.value:
@@ -571,6 +601,7 @@ class FLUIDSIM_OT_effect_select_controller(bpy.types.Operator):
     def execute(self, context):
         item = _active_effect(context.scene)
         if item is None:
+            self.report({"WARNING"}, "Add an effect first")
             return {"CANCELLED"}
         parameter = next((entry for entry in item.parameters if entry.key == self.parameter_key), None)
         controller = parameter.object_value if parameter is not None else None
@@ -669,6 +700,7 @@ class FLUIDSIM_OT_effect_delete_installed(bpy.types.Operator):
     def execute(self, context):
         item = _active_effect(context.scene)
         if item is None:
+            self.report({"WARNING"}, "Add an effect first")
             return {"CANCELLED"}
         try:
             definition = _definition_from_pg(item)
@@ -761,6 +793,7 @@ class FLUIDSIM_OT_effect_rename_installed(bpy.types.Operator):
     def invoke(self, context, _event):
         item = _active_effect(context.scene)
         if item is None:
+            self.report({"WARNING"}, "Add an effect first")
             return {"CANCELLED"}
         try:
             definition = _definition_from_pg(item)
@@ -785,6 +818,7 @@ class FLUIDSIM_OT_effect_rename_installed(bpy.types.Operator):
     def execute(self, context):
         item = _active_effect(context.scene)
         if item is None:
+            self.report({"WARNING"}, "Add an effect first")
             return {"CANCELLED"}
         try:
             definition = _definition_from_pg(item)
@@ -824,6 +858,7 @@ class FLUIDSIM_OT_effect_export_package(bpy.types.Operator):
     def execute(self, context):
         item = _active_effect(context.scene)
         if item is None:
+            self.report({"WARNING"}, "Add an effect first")
             return {"CANCELLED"}
         try:
             definition = effects.exportable_definition(context.scene, item)
