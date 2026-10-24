@@ -5092,6 +5092,50 @@ def test_header_popover_follows_the_activity_and_the_runtime(monkeypatch):
     assert "fluidsim.restart_simulation" in {op["id"] for op in layout.operators}
 
 
+@pytest.mark.parametrize("runtime_ready", [True, False])
+def test_header_popover_dims_simulate_controls_under_the_runtime_error(
+    monkeypatch, runtime_ready
+):
+    """Without CUDA the toggles must not look like they will run: the reason
+    sits directly above them and they are dimmed, yet still editable."""
+    env = _header_env(monkeypatch)
+    seen = {}
+
+    def _transport(layout, *_args):
+        seen["error_before_transport"] = any(
+            "no CUDA" in label["text"] for label in layout.labels)
+
+    def _quality(layout, _scene):
+        seen["quality_layout"] = layout
+
+    def _simulate(layout, _scene, _domain):
+        seen["simulate_layout"] = layout
+        seen["last_label"] = layout.labels[-1]["text"] if layout.labels else ""
+
+    ui_header = env.ui_header
+    monkeypatch.setattr(ui_header, "activity_ui_state", lambda _scene: {
+        "id": "IDLE", "label": "Idle", "icon": "INFO", "owns_scene": False})
+    monkeypatch.setattr(ui_header, "runtime_ui_state", lambda: (
+        runtime_ready, "CUDA ready" if runtime_ready else "no CUDA"))
+    monkeypatch.setattr(ui_header, "draw_pending_apply", lambda *_args: None)
+    monkeypatch.setattr(ui_header, "draw_transport", _transport)
+    monkeypatch.setattr(ui_header, "draw_quality", _quality)
+    monkeypatch.setattr(ui_header, "draw_simulate_controls", _simulate)
+    context, *_ = _stage_context()
+    context.workspace = SimpleNamespace(name="Layout")
+    panel = ui_header.FLUIDSIM_PT_header_popover()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    settings = seen["simulate_layout"]
+    assert seen["quality_layout"] is settings
+    assert getattr(settings, "active", True) is runtime_ready
+    assert settings.enabled is True
+    assert seen["error_before_transport"] is False
+    if not runtime_ready:
+        assert "no CUDA" in seen["last_label"]
+
+
 def test_header_popover_offers_apply_changes_only_when_something_is_pending(monkeypatch):
     _env, layout, *_ = _draw_header_popover(monkeypatch, pending_action="REINIT")
     assert "fluidsim.apply_changes" in {op["id"] for op in layout.operators}
