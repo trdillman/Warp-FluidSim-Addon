@@ -646,7 +646,23 @@ class FLUIDSIM_OT_restart_simulation(_ApplyChanges, bpy.types.Operator):
     allow_restart: BoolProperty(default=True, options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, event):
+        # A click asks first when stepped preview frames would be lost; script
+        # and EXEC_DEFAULT callers restart without a dialog, as before.
+        if _preview_progress_at_risk(context.scene):
+            self._confirmation_token = _runtime._pending().change_confirmation_token(
+                context.scene)
+            return context.window_manager.invoke_props_dialog(self)
         return self.execute(context)
+
+
+def _preview_progress_at_risk(scene) -> bool:
+    """Whether this scene owns a solver that has stepped past its start."""
+    pending = _runtime._pending()
+    sess = _runtime._bridge().session()
+    owns_scene = getattr(sess, "owns_scene", None)
+    if not callable(owns_scene) or not owns_scene(scene):
+        return False
+    return not pending._is_disposable_start(sess)
 
 
 class FLUIDSIM_OT_toggle_live(bpy.types.Operator):
