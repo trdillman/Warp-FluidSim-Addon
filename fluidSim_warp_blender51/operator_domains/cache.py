@@ -62,8 +62,19 @@ class _FLUIDSIM_OT_production_bake_modal:
     def poll(cls, context):
         from ..blender import production_bake
 
+        from ..blender.scene_access import active_domain_object
+
         if production_bake.active_bakes():
             cls.poll_message_set("A production bake is already active")
+            return False
+        # Grey the button for refusals known before the click, rather than
+        # failing after it.
+        scene = getattr(context, "scene", None)
+        if active_domain_object(scene) is None:
+            cls.poll_message_set("Set up a liquid domain first to bake")
+            return False
+        if _runtime._unsaved_relative_cache_path(scene):
+            cls.poll_message_set(_runtime.UNSAVED_RELATIVE_CACHE_MESSAGE)
             return False
         return _runtime._runtime_poll(cls)
 

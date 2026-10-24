@@ -787,3 +787,31 @@ def test_modal_bake_cancel_returns_none_and_releases_the_bake(
         assert len(removed_timers) == 1
     finally:
         production_bake.clear_active_bake(registration_proxy, controller)
+
+
+@pytest.mark.parametrize("operator_name", ("FLUIDSIM_OT_bake_start", "FLUIDSIM_OT_bake_resume"))
+def test_bake_buttons_grey_before_the_click_for_known_refusals(
+    monkeypatch, operator_name
+):
+    fake_bpy, cache_operators = _install_bpy_stub(monkeypatch)
+    from fluidSim_warp_blender51.blender import production_bake
+
+    production_bake._ACTIVE_BAKES.clear()
+    operator = getattr(cache_operators, operator_name)
+    messages = []
+    monkeypatch.setattr(
+        operator, "poll_message_set", classmethod(lambda _cls, text: messages.append(text)))
+    monkeypatch.setattr(cache_operators._runtime, "_runtime_poll", lambda _cls: True)
+    fs = SimpleNamespace(domain_object=None, cache_path="//fluidsim_cache/")
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=fs))
+    fake_bpy.data.filepath = ""
+
+    assert operator.poll(context) is False
+    assert messages[-1] == "Set up a liquid domain first to bake"
+
+    fs.domain_object = object()
+    assert operator.poll(context) is False
+    assert messages[-1] == cache_operators._runtime.UNSAVED_RELATIVE_CACHE_MESSAGE
+
+    fake_bpy.data.filepath = "C:/shots/splash.blend"
+    assert operator.poll(context) is True
