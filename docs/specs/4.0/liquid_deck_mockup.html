@@ -1,485 +1,1107 @@
 <title>Liquid Deck Mockup</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: a fake Blender 3D viewport (canvas, always dark like Blender) carries the Deck layer;
-   a narrow dev-notes rail on the right maps every element to the 4.0 spec. */
+/* Layout: a fake Blender 3D viewport (always dark, like Blender) carries the Deck, the header
+   menus, dialogs and the status bar. The right rail sets the scene state that drives every
+   hidden / greyed decision. Below: the behaviour spec, generated from the same rules. */
 :root{
-  --bg:#f3f4f6; --fg:#15181c; --mute:#5c6572; --rail:#ffffff; --line:#d9dde3;
+  --bg:#f3f4f6; --fg:#15181c; --mute:#5c6572; --rail:#ffffff; --line:#d9dde3; --soft:#eef1f4;
+  --okc:#1f7a44; --warnc:#8a5d00; --errc:#b3261e; --infoc:#0d6b78;
   --vp:#3a3d41; --vp-grid:#4a4e53; --vp-axis-x:#c8484f; --vp-axis-y:#6fae3c;
+  --bl-hdr:#2b2d30; --bl-pop:#1f2124; --bl-line:#141516; --bl-fg:#dde2e8; --bl-sel:#4772b3; --bl-field:#2c2f33;
   --deck:rgba(22,25,30,.72); --deck-line:rgba(255,255,255,.10); --deck-fg:#e8ecf1; --deck-mute:#9aa4b1;
   --accent:#43c6d8; --accent-ink:#06333a;
   --live:#6fd38f; --reset:#f2b84b; --reinit:#f06d6d;
-  --water:#2aa6c4; --water-deep:#0a4e63; --foam:#eef6fa;
+  --water:#2aa6c4; --foam:#eef6fa;
   --font-ui:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
   --font-data:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;
   --r:10px;
 }
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#101216;--fg:#e8ecf1;--mute:#9aa4b1;--rail:#171a1f;--line:#262b33;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#101216;--fg:#e8ecf1;--mute:#9aa4b1;--rail:#171a1f;--line:#262b33;color-scheme:dark}
-html,body{height:100%}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#101216;--fg:#e8ecf1;--mute:#9aa4b1;--rail:#171a1f;--line:#262b33;--soft:#1c2026;--okc:#6fd38f;--warnc:#f2b84b;--errc:#f58a8a;--infoc:#7fdbe7;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#101216;--fg:#e8ecf1;--mute:#9aa4b1;--rail:#171a1f;--line:#262b33;--soft:#1c2026;--okc:#6fd38f;--warnc:#f2b84b;--errc:#f58a8a;--infoc:#7fdbe7;color-scheme:dark}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-ui);font-size:14px;line-height:1.45}
-.app{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto 1fr;height:100%;min-height:640px}
-header{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.01em}
-header .sub{color:var(--mute);font-size:12.5px}
-header .spacer{flex:1}
+code,.mono{font-family:var(--font-data);font-size:.88em}
+.app{display:grid;grid-template-columns:minmax(0,1fr) 330px;grid-template-rows:auto minmax(0,1fr);height:min(100vh,900px);min-height:660px}
+header.top{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header.top h1{font-size:15px;margin:0;font-weight:700}
+header.top .sub{color:var(--mute);font-size:12.5px;flex:1 1 320px;min-width:0}
 .btn{font:inherit;font-weight:600;font-size:12.5px;padding:6px 11px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
 .btn:hover{border-color:var(--accent)}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
-.btn:focus-visible,.deck button:focus-visible,.pal input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.stage{position:relative;min-width:0;overflow:hidden;background:var(--vp)}
-canvas#vp{display:block;width:100%;height:100%;cursor:crosshair}
-.stage .corner{position:absolute;left:12px;top:10px;color:#cfd5dc;font-size:12px;font-family:var(--font-data);opacity:.85;pointer-events:none}
-.stage .corner b{color:#fff;font-weight:500}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- viewport ---------- */
+.stage{position:relative;min-width:0;overflow:hidden;background:var(--vp);color:var(--bl-fg)}
+canvas#vp{position:absolute;inset:0;display:block;cursor:default}
+.bhdr{position:absolute;left:0;right:0;top:0;height:30px;display:flex;align-items:center;gap:2px;padding:0 8px;background:var(--bl-hdr);border-bottom:1px solid var(--bl-line);font-size:12px;z-index:6;overflow-x:auto;white-space:nowrap}
+.bhdr button,.bhdr select{font:inherit;color:var(--bl-fg);background:transparent;border:0;padding:4px 8px;border-radius:4px;cursor:pointer}
+.bhdr select{background:var(--bl-field)}
+.bhdr button:hover{background:#3d4045}
+.bhdr button.on{background:var(--bl-sel);color:#fff}
+.bhdr .gap{flex:1}
+.bhdr .fake{opacity:.6;padding:4px 8px}
+.corner{position:absolute;left:12px;top:38px;font-size:12px;font-family:var(--font-data);opacity:.85;pointer-events:none;z-index:2}
+.corner b{color:#fff;font-weight:500}
+.pop{position:absolute;top:32px;z-index:9;background:var(--bl-pop);border:1px solid var(--bl-line);border-radius:6px;box-shadow:0 12px 30px rgba(0,0,0,.5);min-width:230px;max-width:calc(100% - 24px);padding:6px;font-size:12.5px}
+.pop h4{margin:4px 6px 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#9aa4b1}
+.pop .row{display:flex;gap:8px;align-items:center;padding:5px 8px;border-radius:4px;min-width:0}
+.pop .row.act{cursor:pointer}
+.pop .row.act:hover{background:var(--bl-sel)}
+.pop .row.grey{opacity:.42;cursor:not-allowed}
+.pop .row.grey:hover{background:transparent}
+.pop .err{margin:4px 6px;padding:6px 8px;border-radius:4px;background:rgba(240,109,109,.15);color:#ffb3b3}
+.pop .note{margin:2px 8px 6px;color:#9aa4b1;font-size:11.5px}
+.pop .k{margin-left:auto;color:#9aa4b1;font-family:var(--font-data);font-size:11px}
+.statusbar{position:absolute;left:0;right:0;bottom:0;height:24px;display:flex;align-items:center;gap:8px;padding:0 10px;background:#232427;border-top:1px solid var(--bl-line);font-size:11.5px;z-index:6;white-space:nowrap;overflow:hidden}
+.statusbar .ico{font-weight:700;font-family:var(--font-data)}
+.statusbar .INFO{color:var(--accent)} .statusbar .WARNING{color:var(--reset)} .statusbar .ERROR{color:var(--reinit)}
+.statusbar .msg{overflow:hidden;text-overflow:ellipsis}
+
 /* Deck bar */
-.deck{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);display:flex;align-items:center;gap:14px;padding:8px 12px;border-radius:14px;background:var(--deck);border:1px solid var(--deck-line);color:var(--deck-fg);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);box-shadow:0 10px 30px rgba(0,0,0,.35);max-width:calc(100% - 24px);flex-wrap:wrap;justify-content:center}
-.deck .grp{display:flex;align-items:center;gap:6px}
+.deck{position:absolute;left:0;right:0;margin-inline:auto;width:max-content;bottom:36px;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:14px;background:var(--deck);border:1px solid var(--deck-line);color:var(--deck-fg);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);box-shadow:0 10px 30px rgba(0,0,0,.35);max-width:calc(100% - 24px);flex-wrap:wrap;justify-content:center;z-index:4}
+.deck .grp{display:flex;align-items:center;gap:2px}
 .deck .sep{width:1px;height:26px;background:var(--deck-line)}
-.deck button{font:inherit;color:var(--deck-fg);background:transparent;border:1px solid transparent;border-radius:8px;padding:5px 8px;cursor:pointer;font-weight:600;font-size:12.5px;display:flex;align-items:center;gap:6px}
+.deck button{font:inherit;color:var(--deck-fg);background:transparent;border:1px solid transparent;border-radius:8px;padding:5px 7px;cursor:pointer;font-weight:600;font-size:12px;display:flex;align-items:center;gap:5px;white-space:nowrap}
 .deck button:hover{background:rgba(255,255,255,.08);border-color:var(--deck-line)}
 .deck button.on{background:rgba(67,198,216,.18);border-color:rgba(67,198,216,.5);color:#bff0f7}
-.deck .ro{font-family:var(--font-data);font-size:12px;color:var(--deck-mute);display:flex;align-items:center;gap:10px;font-variant-numeric:tabular-nums}
+.deck button.grey{opacity:.38;cursor:not-allowed}
+.deck .ro{font-family:var(--font-data);font-size:11px;color:var(--deck-mute);display:flex;align-items:center;gap:7px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .deck .ro b{color:var(--deck-fg);font-weight:500}
-.deck canvas.spark{width:84px;height:22px}
-.chip{display:flex;align-items:center;gap:8px;padding:4px 6px 4px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--deck-line)}
-.chip .dot{width:8px;height:8px;border-radius:50%}
+.deck canvas.spark{width:60px;height:20px}
+.chip{display:flex;align-items:center;gap:8px;padding:4px 6px 4px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--deck-line);max-width:100%}
+.chip .dot{width:8px;height:8px;border-radius:50%;flex:none}
 .chip.live{color:var(--live)} .chip.live .dot{background:var(--live)}
 .chip.reset{color:var(--reset)} .chip.reset .dot{background:var(--reset)}
 .chip.reinit{color:var(--reinit)} .chip.reinit .dot{background:var(--reinit)}
 .chip.idle{color:var(--deck-mute)} .chip.idle .dot{background:var(--deck-mute)}
 .chip button{padding:3px 8px;font-size:11.5px;border-radius:999px}
-.chip button.go{background:rgba(242,184,75,.2);border-color:rgba(242,184,75,.5);color:#ffd98a}
-.ring{position:relative;width:28px;height:28px}
+.ring{position:relative;width:26px;height:26px}
 .ring svg{position:absolute;inset:0;transform:rotate(-90deg)}
-.ring span{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--font-data);font-size:9.5px;color:var(--deck-fg)}
+.ring span{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--font-data);font-size:9px}
+
 /* Palette */
-.pal{position:absolute;left:50%;top:14%;transform:translateX(-50%);width:min(520px,calc(100% - 32px));border-radius:14px;background:var(--deck);border:1px solid var(--deck-line);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:0 20px 50px rgba(0,0,0,.45);color:var(--deck-fg);overflow:hidden}
+.pal{position:absolute;left:50%;top:15%;transform:translateX(-50%);width:min(560px,calc(100% - 32px));border-radius:14px;background:var(--deck);border:1px solid var(--deck-line);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:0 20px 50px rgba(0,0,0,.45);color:var(--deck-fg);overflow:hidden;z-index:8}
 .pal input{width:100%;box-sizing:border-box;font:inherit;font-size:15px;padding:12px 14px;background:transparent;border:0;border-bottom:1px solid var(--deck-line);color:var(--deck-fg)}
-.pal ul{list-style:none;margin:0;padding:6px;max-height:300px;overflow:auto}
-.pal li{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px}
-.pal li.sel,.pal li:hover{background:rgba(67,198,216,.16)}
-.pal li .k{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--deck-mute);width:62px;flex:none}
-.pal li .v{margin-left:auto;font-family:var(--font-data);font-size:12px;color:#bff0f7}
-.pal li input.inl{width:84px;font-family:var(--font-data);font-size:12px;padding:2px 6px;border:1px solid var(--deck-line);border-radius:6px;border-bottom:1px solid var(--deck-line);margin-left:auto}
+.pal ul{list-style:none;margin:0;padding:6px}
+.pal li{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;font-size:13px;min-width:0}
+.pal li.sel{background:rgba(67,198,216,.18)}
+.pal li .k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--deck-mute);width:62px;flex:none}
+.pal li .t{font-family:var(--font-data);font-size:11px;color:var(--deck-mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.pal li .v{margin-left:auto;font-family:var(--font-data);font-size:12px;color:#bff0f7;flex:none}
 .pal .hint{padding:6px 12px 10px;font-size:11px;color:var(--deck-mute);border-top:1px solid var(--deck-line)}
-/* Radial wheel */
-.wheel{position:absolute;width:260px;height:260px;transform:translate(-50%,-50%);pointer-events:none}
-.wheel .slot{position:absolute;left:50%;top:50%;width:74px;height:48px;margin:-24px 0 0 -37px;display:grid;place-items:center;text-align:center;font-size:11.5px;font-weight:700;color:var(--deck-fg);background:var(--deck);border:1px solid var(--deck-line);border-radius:12px;pointer-events:auto;cursor:pointer;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);transition:transform .12s ease,background .12s}
+
+/* Wheel */
+.wheel{position:absolute;width:0;height:0;z-index:8}
+.wheel .slot{position:absolute;width:82px;height:46px;margin:-23px 0 0 -41px;display:grid;place-items:center;text-align:center;font-size:11px;font-weight:700;line-height:1.15;color:var(--deck-fg);background:var(--deck);border:1px solid var(--deck-line);border-radius:12px;cursor:pointer;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .wheel .slot:hover{background:rgba(67,198,216,.25);border-color:var(--accent)}
-.wheel .hub{position:absolute;left:50%;top:50%;width:72px;height:72px;margin:-36px 0 0 -36px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;color:#bff0f7;background:var(--deck);border:1px solid rgba(67,198,216,.5);pointer-events:auto;cursor:pointer;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
-/* Toast + tour caption */
-.toast{position:absolute;left:50%;top:14px;transform:translateX(-50%);padding:7px 12px;border-radius:999px;background:var(--deck);border:1px solid var(--deck-line);color:var(--deck-fg);font-size:12.5px;font-weight:600;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px)}
+.wheel .slot.grey{opacity:.32;cursor:not-allowed}
+.wheel .slot.grey:hover{background:var(--deck);border-color:var(--reinit)}
+.wheel .slot.on{color:#bff0f7;border-color:rgba(67,198,216,.5)}
+.wheel .hub{position:absolute;width:60px;height:60px;margin:-30px 0 0 -30px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;color:#bff0f7;background:var(--deck);border:1px solid rgba(67,198,216,.5);cursor:pointer}
+.wheel .wtip{position:absolute;left:-150px;width:300px;top:136px;text-align:center;font-size:11.5px;padding:6px 8px;border-radius:8px;background:var(--deck);border:1px solid var(--deck-line);color:var(--deck-fg)}
+.wheel .wtip .why{color:#ffb3b3}
+
+/* Dialogs + file browser (Blender look) */
+.scrim{position:absolute;inset:0;z-index:10;display:grid;place-items:center;background:rgba(0,0,0,.18)}
+.dlg{background:var(--bl-pop);border:1px solid var(--bl-line);border-radius:8px;box-shadow:0 16px 40px rgba(0,0,0,.55);padding:12px 14px;min-width:280px;max-width:calc(100% - 32px);font-size:12.5px;color:var(--bl-fg)}
+.dlg h3{margin:0 0 8px;font-size:13px}
+.dlg p{margin:4px 0}
+.dlg .path{font-family:var(--font-data);font-size:11.5px;background:var(--bl-field);padding:4px 6px;border-radius:4px;overflow-wrap:anywhere}
+.dlg label{display:flex;gap:8px;align-items:center;padding:3px 0}
+.dlg .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.dlg .acts button{font:inherit;color:var(--bl-fg);background:var(--bl-field);border:1px solid var(--bl-line);border-radius:4px;padding:5px 14px;cursor:pointer}
+.dlg .acts button.ok{background:var(--bl-sel);color:#fff}
+.fb{width:min(620px,calc(100% - 32px));padding:0;overflow:hidden}
+.fb .bar{display:flex;gap:8px;padding:8px 10px;background:var(--bl-hdr);font-family:var(--font-data);font-size:11.5px}
+.fb .files{padding:8px 10px;display:grid;gap:2px;font-family:var(--font-data);font-size:11.5px;color:#aab3bd;min-height:110px}
+.fb .foot{display:flex;gap:8px;padding:8px 10px;border-top:1px solid var(--bl-line);align-items:center}
+.fb .foot input{flex:1;min-width:0;font:inherit;background:var(--bl-field);border:1px solid var(--bl-line);color:var(--bl-fg);padding:4px 6px;border-radius:4px}
+.fb .foot button{font:inherit;color:#fff;background:var(--bl-sel);border:0;border-radius:4px;padding:5px 12px;cursor:pointer}
+.fb .foot button.c{background:var(--bl-field);color:var(--bl-fg)}
+.toast{position:absolute;left:50%;top:40px;transform:translateX(-50%);padding:7px 12px;border-radius:999px;background:var(--deck);border:1px solid var(--deck-line);color:var(--deck-fg);font-size:12.5px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px);z-index:11;text-align:center}
 .toast.show{opacity:1}
-.caption{position:absolute;right:14px;top:14px;max-width:300px;padding:10px 12px;border-radius:var(--r);background:var(--deck);border:1px solid rgba(67,198,216,.45);color:var(--deck-fg);font-size:12.5px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
-.caption b{color:#bff0f7}
-.caption .step{font-family:var(--font-data);font-size:10.5px;color:var(--deck-mute);display:block;margin-bottom:3px}
-/* Rail */
+
+/* ---------- rail ---------- */
 aside{min-width:0;border-left:1px solid var(--line);background:var(--rail);overflow:auto;padding:14px 16px;font-size:13px}
-aside h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:14px 0 8px;font-weight:700}
+aside h2{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:16px 0 8px;font-weight:700}
 aside h2:first-child{margin-top:0}
-aside ol{margin:0;padding-left:18px;display:grid;gap:7px}
-aside li b{font-weight:700}
-aside code{font-family:var(--font-data);font-size:11.5px;background:color-mix(in srgb,var(--fg) 7%,transparent);padding:1px 5px;border-radius:5px}
-.tok{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-family:var(--font-data);font-size:11.5px;align-items:center}
-.tok i{width:14px;height:14px;border-radius:4px;border:1px solid var(--line);display:inline-block}
-kbd{font-family:var(--font-data);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px}
-@media (max-width:860px){.app{grid-template-columns:1fr;grid-template-rows:auto 60vh auto}aside{border-left:0;border-top:1px solid var(--line)}}
+.scen{display:flex;flex-wrap:wrap;gap:6px}
+.scen button{font:inherit;font-size:11.5px;font-weight:600;padding:4px 8px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
+.scen button:hover{border-color:var(--accent)}
+.fgrid{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 10px;align-items:center;font-size:12.5px}
+.fgrid label{color:var(--mute)}
+.fgrid select{font:inherit;font-size:12.5px;padding:3px 4px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);min-width:0;width:100%}
+#log{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+#log li{border-left:3px solid var(--line);padding:2px 0 2px 9px;font-size:12.5px}
+#log li.ERROR{border-color:var(--reinit)} #log li.WARNING{border-color:var(--reset)} #log li.INFO{border-color:var(--accent)}
+#log .via{display:block;color:var(--mute);font-size:11.5px}
+#log .res{display:block}
+
+/* ---------- spec ---------- */
+.spec{padding-block:28px 56px;padding-inline:16px;max-width:1240px;margin:0 auto}
+.spec h2{font-size:20px;margin:0 0 6px;text-wrap:balance}
+.spec .lede{color:var(--mute);max-width:72ch;margin:0 0 16px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 18px;position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);padding-block:8px;z-index:3}
+.tabs button{font:inherit;font-size:12.5px;font-weight:700;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.spec h3{font-size:14px;margin:22px 0 8px}
+.spec p.note{color:var(--mute);font-size:12.5px;max-width:80ch}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r)}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{border-bottom:1px solid var(--line);padding:7px 9px;vertical-align:top;text-align:left}
+th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);background:var(--soft);position:sticky;top:0}
+tr:last-child td{border-bottom:0}
+td.c{text-align:center;white-space:nowrap;font-family:var(--font-data);font-variant-numeric:tabular-nums}
+td.now{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.y{color:var(--okc);font-weight:700}.g{color:var(--errc);font-weight:700}.h{color:var(--mute)}
+.bdg{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.04em;padding:1px 7px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.bdg.ok{color:var(--okc)}.bdg.A{color:var(--warnc)}.bdg.E{color:var(--errc)}.bdg.H{color:var(--mute)}.bdg.n{color:var(--mute);border-style:dashed}
+.sev{font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap}
+.sev.s1{background:color-mix(in srgb,var(--errc) 18%,transparent);color:var(--errc)}
+.sev.s2{background:color-mix(in srgb,var(--warnc) 18%,transparent);color:var(--warnc)}
+.sev.s3{background:var(--soft);color:var(--mute)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--mute);margin:8px 0 10px}
+ol.reasons{font-size:12px;color:var(--mute);columns:2 320px;padding-left:22px}
+@media (max-width:900px){.app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 76vh auto;height:auto}aside{border-left:0;border-top:1px solid var(--line)}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
 <div class="app">
-  <header>
+  <header class="top">
     <h1>Liquid Deck</h1>
-    <span class="sub">Interactive reference mockup for FluidSim Warp 4.0 (plan §1–2, specs <code>SPEC-liquid-deck.md</code>, <code>SPEC-liquid-preview.md</code>). Everything below is simulated in the page.</span>
-    <span class="spacer"></span>
+    <span class="sub">FluidSim Warp 4.x reference mockup. Every control follows the real add-on: what it opens, the exact messages, and when it is hidden or greyed. Set the scene state on the right; the Deck, wheel, palette, header and the spec tables below all update.</span>
     <button class="btn primary" id="tourBtn">Play guided tour</button>
-    <button class="btn" id="notesBtn">Hide dev notes</button>
+    <a class="btn" href="#spec" style="text-decoration:none">Jump to spec</a>
   </header>
 
   <div class="stage" id="stage">
-    <canvas id="vp" width="1200" height="720" aria-label="Simulated Blender 3D viewport with a liquid domain, an emitter gizmo and a collider"></canvas>
-    <div class="corner">User Perspective · <b id="cornerMode">Solid</b> · FluidSim Domain · <b id="cornerCells">80 × 64 × 48</b> cells</div>
-
-    <div class="caption" id="caption" hidden></div>
+    <canvas id="vp" aria-label="Simulated Blender 3D viewport with a liquid domain, an emitter, a collider crate, a plain cube and an empty"></canvas>
+    <div class="bhdr" id="bhdr">
+      <span class="fake">View</span><span class="fake">Select</span>
+      <button id="hAdd" title="Add menu (Shift+A)">Add</button>
+      <span class="fake">Object</span>
+      <span class="gap"></span>
+      <button id="hFluid" title="FluidSim popover (VIEW3D_HT_header)">💧 FluidSim ▾</button>
+      <button id="hDeck" title="Show the Liquid Deck (scene.fluidsim.deck_shown)">▣ Deck</button>
+      <select id="hStage" title="Deck stage (scene.fluidsim.deck_stage)"><option value="SETUP">Setup</option><option value="SIMULATE">Simulate</option><option value="LOOK">Look</option><option value="BAKE">Bake</option></select>
+    </div>
+    <div class="corner" id="corner"></div>
+    <div class="pop" id="addPop" hidden style="left:60px"></div>
+    <div class="pop" id="fluidPop" hidden style="right:110px"></div>
     <div class="toast" id="toast"></div>
-
     <div class="wheel" id="wheel" hidden></div>
-
     <div class="pal" id="pal" hidden role="dialog" aria-label="Command palette">
-      <input id="palIn" placeholder="Type a command, preset, demo or setting…" autocomplete="off">
+      <input id="palIn" autocomplete="off" spellcheck="false">
       <ul id="palList"></ul>
-      <div class="hint">↑↓ choose · Enter run or edit · Esc close · every row is an existing operator or property</div>
+      <div class="hint">↑↓ choose (wraps) · Enter run or edit · Esc close · rows are not clickable · Ctrl+V pastes nothing · nothing is ever greyed</div>
     </div>
-
-    <div class="deck" id="deck" role="toolbar" aria-label="Liquid Deck bar">
-      <div class="grp">
-        <button id="bPlay" title="screen.animation_play">▶ Play</button>
-        <button id="bStep" title="fluidsim.step_frame">⏭ Step</button>
-        <button id="bRestart" title="fluidsim.restart_simulation">↺ Restart</button>
-      </div>
-      <div class="sep"></div>
-      <div class="ro">
-        <span>particles <b id="roP">0</b></span>
-        <span>substeps <b id="roS">4</b></span>
-        <span>ms <b id="roMs">—</b></span>
-        <canvas class="spark" id="spark" width="168" height="44"></canvas>
-      </div>
-      <div class="sep"></div>
-      <div class="chip idle" id="chip"><span class="dot"></span><span id="chipTxt">No pending changes</span></div>
-      <div class="sep"></div>
-      <div class="grp">
-        <button id="bPrev" title="scene.fluidsim.liquid_preview_enabled">◍ Liquid Preview</button>
-        <button id="bPal" title="fluidsim.command_palette">⌘K</button>
-        <button id="bWheel" title="fluidsim.radial_wheel">◎</button>
-        <button id="bBake" title="fluidsim.bake"><span class="ring"><svg viewBox="0 0 28 28"><circle cx="14" cy="14" r="11" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="3"/><circle id="ringArc" cx="14" cy="14" r="11" fill="none" stroke="#43c6d8" stroke-width="3" stroke-dasharray="69.1" stroke-dashoffset="69.1" stroke-linecap="round"/></svg><span id="ringTxt">●</span></span>Bake</button>
-      </div>
-    </div>
+    <div class="deck" id="deck" role="toolbar" aria-label="Liquid Deck bar"></div>
+    <div class="scrim" id="scrim" hidden></div>
+    <div class="statusbar" id="statusbar"><span class="ico INFO" id="sbIco">i</span><span class="msg" id="sbMsg">Ready</span></div>
   </div>
 
-  <aside id="notes">
-    <h2>What this mocks</h2>
-    <ol>
-      <li><b>Deck bar</b> (bottom). Transport, live readout with a ms/frame sparkline, the <b>pending chip</b>, Liquid Preview toggle, palette, wheel, bake ring. Each button names its operator in its tooltip. Spec: Deck bar.</li>
-      <li><b>Emitter gizmo.</b> Drag the arrow head to set <code>emitter_velocity</code> (LIVE class: chip goes green, no reset). Drag the dial ring to set <code>emission_rate</code>.</li>
-      <li><b>Domain handles.</b> Drag the right-face handle to resize the domain. While dragging, the padded grid and cell count preview; on release the chip shows <b>Reset pending</b> with the reason and an Apply button (RESET class).</li>
-      <li><b>Collider.</b> Click the crate to toggle <b>Dynamic</b> (4.0 rigid coupling). A dynamic crate floats and gets pushed.</li>
-      <li><b>Liquid Preview.</b> Toggle in the Deck or with <kbd>L</kbd>: particles become a screen-space surface with absorption, Fresnel rim and foam. Mesh build is skipped; the PointCloud stays published underneath.</li>
-      <li><b>Command palette.</b> <kbd>Ctrl</kbd>+<kbd>K</kbd>. Fuzzy list of operators, presets, demos and settings with inline values; numbers edit in place.</li>
-      <li><b>Radial wheel.</b> <kbd>Alt</kbd>+right-click in the viewport (plain right-click stays Blender's context menu). Six slots per stage; the hub cycles Setup → Simulate → Look → Bake.</li>
-    </ol>
-    <h2>Token sheet (SPEC-liquid-deck § tokens)</h2>
-    <div class="tok">
-      <i style="background:#43c6d8"></i><span>--accent · one accent only</span>
-      <i style="background:rgba(22,25,30,.72)"></i><span>--deck · card fill, 14px blur, 1px 10% line</span>
-      <i style="background:#6fd38f"></i><span>--live · LIVE class, applied immediately</span>
-      <i style="background:#f2b84b"></i><span>--reset · RESET class, Apply/Revert</span>
-      <i style="background:#f06d6d"></i><span>--reinit · REINIT class</span>
-      <i style="background:#2aa6c4"></i><span>--water · preview absorption colour</span>
-    </div>
-    <h2>Rules the real build must keep</h2>
-    <ol>
-      <li>Deck holds no state; every control writes the panel's property or calls its operator (parity test).</li>
-      <li>Modal only owns events over Deck hit regions; elsewhere <code>PASS_THROUGH</code>.</li>
-      <li>Colours derive from the active Blender theme at register time (this page hard-codes the dark theme look).</li>
-      <li>Liquid Preview reads the already-published position array; no second readback.</li>
-      <li>Deck OFF leaves every existing UI test byte-identical.</li>
-    </ol>
+  <aside id="rail">
+    <h2>Scene state presets</h2>
+    <div class="scen" id="scen"></div>
+    <h2>Scene state</h2>
+    <div class="fgrid" id="fgrid"></div>
+    <h2>What just happened</h2>
+    <ol id="log"></ol>
   </aside>
 </div>
+
+<main class="spec" id="spec">
+  <h2>Behaviour spec</h2>
+  <p class="lede">Written from the add-on source (deck/, operator_domains/, ui_*.py). Quoted text is the exact message. The <b>Now</b> column and the badges follow the scene state set above.</p>
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+  <section id="tabBody"></section>
+</main>
 
 <script>
 (() => {
 'use strict';
 const $ = s => document.querySelector(s);
-const vp = $('#vp'), ctx = vp.getContext('2d');
-const stage = $('#stage');
-let W = 1200, H = 720, DPR = 1;
-function resize(){ const r = stage.getBoundingClientRect(); DPR = Math.min(2, window.devicePixelRatio||1); W = Math.max(320, r.width); H = Math.max(320, r.height); vp.width = W*DPR; vp.height = H*DPR; vp.style.width = W+'px'; vp.style.height = H+'px'; }
-window.addEventListener('resize', resize); resize();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const q = s => `“${s}”`;
 
-/* ---------- scene state (the "scene.fluidsim" twin) ---------- */
-const S = {
-  domain: {w: 5.0, h: 4.0, d: 3.0}, divisions: 80,
-  emitter: {x: -1.6, y: 2.6, z: 0, vx: 2.6, vy: -0.4, rate: 12000},
-  collider: {x: 1.2, y: 0.9, z: 0, s: 0.55, dynamic: false, vy: 0, ay: 0, ang: 0},
-  playing: true, preview: false, stage: 0, substeps: 4,
-  pending: null, // {cls:'LIVE'|'RESET', label}
-  bake: {on:false, p:0},
+/* =====================================================================
+   1. Scene state — the inputs every poll / draw decision reads
+   ===================================================================== */
+const DEFAULT = {domain:true, runtime:'ready', owner:'here', activity:'LIVE_PREVIEW', cache:'none',
+  pending:'none', pendCount:0, held:false, deck:'ON', deckShown:true, active:'emitter', body:'STATIC',
+  axis:true, srcMode:'MULTIPLIER', surface:true, whitewater:false, showWW:true, overlay:true,
+  viscosity:false, st:false, lp:false, ui:'BASIC', saved:true, stage:'SETUP', quality:'PREVIEW'};
+let X = {...DEFAULT};
+const FIELDS = [
+  ['domain','Domain',[[true,'Assigned'],[false,'None in scene']]],
+  ['runtime','Warp / CUDA',[['ready','Ready'],['nocuda','No CUDA GPU'],['nowarp','Warp not installed']]],
+  ['owner','Solver session',[['none','Not initialised'],['here','Owned by this scene'],['other','Owned by another scene']]],
+  ['activity','Activity',[['IDLE','Idle'],['LIVE_PREVIEW','Live preview (playing)'],['CACHE_PLAYBACK','Cache playback'],['PRODUCTION_BAKE','Production Bake here'],['BAKE_OTHER','Bake in another scene']]],
+  ['cache','Cache on disk',[['none','None'],['partial','Partial (resumable)'],['complete','Complete'],['legacy','Legacy / invalid']]],
+  ['pending','Pending edits',[['none','None'],['RESET','Reset tier'],['REINIT','Reinitialize tier']]],
+  ['deck','Deck mode (prefs)',[['ON','On'],['AUTO','Auto (3.x file opens hidden)'],['OFF','Off']]],
+  ['deckShown','Deck shown (scene)',[[true,'Yes'],[false,'No']]],
+  ['active','Active object',[['none','Nothing selected'],['mesh','Mesh, no role'],['empty','Empty (not a mesh)'],['domain','Domain'],['emitter','Emitter'],['collider','Collider']]],
+  ['body','Collider body type',[['STATIC','Static'],['ANIMATED','Animated'],['DYNAMIC','Dynamic']]],
+  ['axis','Domain transform',[[true,'Axis-aligned'],[false,'Rotated or parented']]],
+  ['srcMode','Emitter source',[['MULTIPLIER','Fill multiplier'],['LEGACY','Legacy rate'],['INHERIT','Inherit']]],
+  ['surface','Surface mesh',[[true,'On'],[false,'Off']]],
+  ['whitewater','Whitewater',[[true,'On'],[false,'Off']]],
+  ['viscosity','Viscosity',[[true,'On'],[false,'Off']]],
+  ['ui','UI mode',[['BASIC','Basic'],['ADVANCED','Advanced']]],
+  ['saved','.blend file',[[true,'Saved'],[false,'Unsaved, relative cache path']]],
+];
+const SCENARIOS = [
+  ['New file, no domain',{domain:false,owner:'none',activity:'IDLE',active:'mesh',saved:false}],
+  ['Live preview',{}],
+  ['Edits pending',{activity:'IDLE',pending:'RESET',pendCount:2}],
+  ['Baking',{activity:'PRODUCTION_BAKE',cache:'partial'}],
+  ['Baked, idle',{activity:'IDLE',owner:'none',cache:'complete'}],
+  ['Cache playback',{activity:'CACHE_PLAYBACK',owner:'none',cache:'complete'}],
+  ['No CUDA',{runtime:'nocuda',owner:'none',activity:'IDLE'}],
+  ['Other scene owns solver',{owner:'other',activity:'IDLE'}],
+  ['Old 3.x file (Auto)',{deck:'AUTO',deckShown:false,activity:'IDLE'}],
+  ['Domain selected',{active:'domain',activity:'IDLE'}],
+  ['Dynamic collider',{active:'collider',body:'DYNAMIC',activity:'IDLE'}],
+];
+
+/* =====================================================================
+   2. Availability engine — twins of the add-on polls
+   ===================================================================== */
+const RT = {nocuda:'No CUDA GPU is available to Warp (runtime message)', nowarp:'Warp is not installed (runtime message)'};
+const bakeR = x => x.activity==='PRODUCTION_BAKE' ? 'Production Bake owns this scene'
+                 : x.activity==='BAKE_OTHER' ? 'A Production Bake is running in another scene' : '';
+const rtR = x => x.runtime==='ready' ? '' : RT[x.runtime];
+const mutR = x => bakeR(x) || rtR(x);                                     // _mutation_poll
+const sessR = x => mutR(x) || (x.owner==='none' ? 'Initialize the solver first' : ''); // session base: passes if ANY scene owns
+const pgR = x => x.domain ? '' : 'Assign a FluidSim domain first (Setup > Domain or Set Up Scene)';
+const anyBake = x => x.activity==='PRODUCTION_BAKE' || x.activity==='BAKE_OTHER';
+const bakeStartR = x => anyBake(x) ? 'A production bake is already active' : rtR(x);
+const playing = x => x.activity==='LIVE_PREVIEW' || x.activity==='CACHE_PLAYBACK';
+const deckVisible = x => x.deck!=='OFF' && x.deckShown;
+const meshSel = x => ['mesh','domain','emitter','collider'].includes(x.active);
+const stepShown = x => x.owner==='here' && !['CACHE_PLAYBACK','PRODUCTION_BAKE'].includes(x.activity);
+const first = x => x.activity==='PRODUCTION_BAKE' ? 'CANCEL_BAKE' : playing(x) ? 'PAUSE' : 'PLAY';
+const bakeAction = x => ({none:'START', legacy:'RESTART', partial:'RESUME', complete:'RESTART'})[x.cache];
+const S = (show, why='') => ({show, ok:!why, why});
+
+/* Deck controls. status(x) -> {show, ok, why}; run() is the follow-through. */
+const C = {
+  PLAY:{label:'Play', icon:'▶', id:'screen.animation_play', tip:'Play the animation', status:x=>S(first(x)==='PLAY'), run:()=>runPlay('Deck › Play')},
+  PAUSE:{label:'Pause', icon:'❚❚', id:'fluidsim.preview_pause', tip:'Pause the live preview', on:true, status:x=>S(first(x)==='PAUSE'), run:()=>runPause('Deck › Pause')},
+  CANCEL_BAKE:{label:'Cancel Bake', icon:'■', id:'fluidsim.bake_cancel', tip:'Cancel the running Production Bake', status:x=>S(first(x)==='CANCEL_BAKE'), run:()=>runCancelBake('Deck › Cancel Bake')},
+  STEP:{label:'Step', icon:'⏭', id:'fluidsim.step', tip:'Advance the simulation one frame', status:x=>S(stepShown(x), sessR(x)), run:()=>runStep('Deck › Step')},
+  RESTART:{label:'Restart', icon:'↺', id:'fluidsim.restart_simulation', tip:'Restart the simulation from the first frame', status:x=>S(stepShown(x), mutR(x)), run:()=>runRestart('Deck › Restart')},
+  APPLY:{label:'Apply', icon:'✓', id:'fluidsim.apply_changes', tip:'Apply the pending changes with a reset or re-initialize', status:x=>S(x.pending!=='none', mutR(x)), run:()=>runApply('Deck chip › Apply')},
+  REVERT:{label:'Revert', icon:'↶', id:'fluidsim.revert_pending', tip:'Revert the pending changes to the applied values', status:x=>S(x.pending!=='none', x.pending==='none'?'No pending settings to revert':''), run:()=>runRevert('Deck chip › Revert')},
+  LP:{label:'Liquid Preview', icon:'◍', id:'scene.fluidsim.liquid_preview_enabled', tip:'Toggle the Liquid Preview look in the 3D View', status:()=>S(true), run:()=>runLP('Deck › Liquid Preview')},
+  SEARCH:{label:'Search', icon:'⌕', id:'fluidsim.command_palette', tip:'Search every FluidSim command, preset, demo and setting (Ctrl+K)', status:()=>S(true), run:()=>openPal(null,'Deck › Search')},
+  WHEEL:{label:'Wheel', icon:'◎', id:'fluidsim.radial_wheel', tip:'Open the wheel of actions for the current stage (Alt+Right-click)', status:()=>S(true), run:()=>openWheel(null,null,'Deck › Wheel')},
+  BAKE:{label:'Bake', icon:'●', id:'fluidsim.bake_start', tip:'Start a Production Bake of the frame range', status:x=>S(true, bakeStartR(x)), run:()=>runBake('Deck › Bake')},
 };
-const stages = ['Setup','Simulate','Look','Bake'];
-function cells(){ const h = S.domain.w / S.divisions; return [S.divisions, Math.round(S.domain.h/h), Math.round(S.domain.d/h)]; }
-function cellsTxt(){ const c = cells(); return `${c[0]} × ${c[1]} × ${c[2]}`; }
-function cellSize(){ return (S.domain.w / S.divisions); }
 
-/* ---------- camera: tiny 3D projection ---------- */
-const cam = {yaw: -0.55, pitch: 0.42, dist: 11, fov: 1.0};
-function project(x, y, z){
-  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-  let X = x*cy - z*sy, Z = x*sy + z*cy;
-  let Y = (y-1.4)*cp - Z*sp; Z = (y-1.4)*sp + Z*cp + cam.dist;
-  const f = (H*0.9)/cam.fov/Z;
-  return [W/2 + X*f, H*0.56 - Y*f, Z, f];
-}
+/* The 24 real wheel slots (controls.STAGE_SLOTS). ft = follow-through text for the spec. */
+const SLOTS = {
+  SETUP:[
+    {label:'Set Up Scene', id:'fluidsim.setup_scene', tip:'Create a liquid domain and emitter in this scene', status:x=>S(true, bakeR(x)||(meshSel(x)?'':'Select at least one mesh object')), run:()=>runSetup('Wheel › Set Up Scene', false),
+     opens:'Props dialog (Quick Liquid / Container / Viscous)', ft:'Fits a padded domain around the selection, tags it, journaled undo. The tooltip is wrong: it does not create an emitter from nothing; it needs a selected mesh.'},
+    {label:'Emitter', id:'fluidsim.tag_liquid_emitter', tip:'Make the selected object a liquid emitter', status:x=>S(true, x.active==='none'?'Select at least one object to tag':''), run:()=>runTag('Wheel › Emitter','emitter'),
+     opens:'Instant (EXEC)', ft:'Converts the selection in place. No placement step.'},
+    {label:'Collider', id:'fluidsim.tag_collider', tip:'Make the selected object a collider', status:x=>S(true, meshSel(x)?'':'Select at least one mesh object for a collider'), run:()=>runTag('Wheel › Collider','collider'),
+     opens:'Instant', ft:'Converts the selection in place.'},
+    {label:'Domain', id:'fluidsim.use_active_as_domain', tip:'Use the active object as the liquid domain', status:x=>S(true, ({none:'No active object', empty:'The active object is not a mesh', domain:'The active object is already the domain', emitter:'The active object already has a FluidSim role', collider:'The active object already has a FluidSim role'})[x.active]||''), run:()=>runUseDomain('Wheel › Domain'),
+     opens:'Instant', ft:'Designates the mesh as the domain → REINIT tier. No bake gate. (Greyed-reason texts here are paraphrased.)'},
+    {label:'Preset', id:'fluidsim.command_palette (kinds=preset)', tip:'Choose a preset and apply it to this scene', status:()=>S(true), run:()=>openPal('preset','Wheel › Preset'),
+     opens:'Palette filtered to presets', ft:q('Choose a preset…')+' prompt; Enter applies (see Palette › Preset).'},
+    {label:'Demo', id:'fluidsim.command_palette (kinds=demo)', tip:'Choose a demo and load it into a new scene', status:()=>S(true), run:()=>openPal('demo','Wheel › Demo'),
+     opens:'Palette filtered to demos', ft:q('Choose a demo…')+' prompt; Enter loads into a New Scene.'},
+  ],
+  SIMULATE:[
+    {label:'Play', id:'screen.animation_play', tip:'Play the animation', status:()=>S(true), run:()=>playing(X)?runPause('Wheel › Play (toggle)'):runPlay('Wheel › Play'), on:x=>playing(x),
+     opens:'Instant toggle', ft:'Is a toggle: pauses when playing. Active during a bake and without Warp.'},
+    {label:'Step', id:'fluidsim.step', tip:'Advance the simulation one frame', status:x=>S(true, sessR(x)), run:()=>runStep('Wheel › Step'),
+     opens:'Instant', ft:'Not gated on Cache playback or on another scene owning the solver (the Deck bar hides Step in both).'},
+    {label:'Restart', id:'fluidsim.restart_simulation', tip:'Restart the simulation from the first frame', status:x=>S(true, mutR(x)), run:()=>runRestart('Wheel › Restart'),
+     opens:'Instant, no confirm', ft:'Clears preview progress without asking.'},
+    {label:'Apply', id:'fluidsim.apply_changes', tip:'Apply the pending changes with a reset or re-initialize', status:x=>S(true, mutR(x)), run:()=>runApply('Wheel › Apply'),
+     opens:'Props dialog only if a restart is needed', ft:'Active with nothing pending and still reports '+q('Changes applied')+'.'},
+    {label:'Viscosity', id:'viscosity_enabled', setting:'viscosity', tier:'LIVE', tip:'Turn viscosity on or off', status:x=>S(true, pgR(x)), run:()=>runToggle('Wheel › Viscosity','viscosity','viscosity_enabled','LIVE'), on:x=>x.viscosity,
+     opens:'Toggle', ft:'LIVE tier: chip flashes '+q('LIVE · viscosity_enabled')+'.'},
+    {label:'Surface Tension', id:'surface_tension_enabled', setting:'st', tier:'RESET', tip:'Turn surface tension on or off', status:x=>S(true, pgR(x)), run:()=>runToggle('Wheel › Surface Tension','st','surface_tension_enabled','RESET'), on:x=>x.st,
+     opens:'Toggle', ft:'RESET tier: chip '+q('1 change(s) staged for reset')+'.'},
+  ],
+  LOOK:[
+    {label:'Liquid Preview', id:'liquid_preview_enabled', tip:'Toggle the Liquid Preview look in the 3D View', status:()=>S(true), run:()=>runLP('Wheel › Liquid Preview'), on:x=>x.lp,
+     opens:'Toggle', ft:'Same as the bar button.'},
+    {label:'Surface', id:'surface_enabled', tip:'Build the liquid surface mesh', status:x=>S(true, pgR(x)), run:()=>runToggle('Wheel › Surface','surface','surface_enabled','SURFACE'), on:x=>x.surface,
+     opens:'Toggle', ft:'SURFACE tier: republishes outputs; chip flashes LIVE.'},
+    {label:'Whitewater', id:'whitewater_enabled', tip:'Simulate foam, bubbles and spray', status:x=>S(true, pgR(x)), run:()=>runToggle('Wheel › Whitewater','whitewater','whitewater_enabled','WHITEWATER'), on:x=>x.whitewater,
+     opens:'Toggle', ft:'WHITEWATER tier.'},
+    {label:'Show Whitewater', id:'show_whitewater', tip:'Show the whitewater particles in the viewport', status:x=>S(true, pgR(x)), run:()=>runToggle('Wheel › Show Whitewater','showWW','show_whitewater','PRESENTATION'), on:x=>x.showWW,
+     opens:'Toggle', ft:'Active even when Whitewater is off (Properties dims it).'},
+    {label:'Materials', id:'fluidsim.install_render_nodes', tip:'Install the liquid render materials and nodes', status:()=>S(true), run:()=>runMaterials('Wheel › Materials'),
+     opens:'Instant', ft:'No poll. Creates output shell objects even without a domain or bake.'},
+    {label:'Overlay', id:'show_overlay', tip:'Show the simulation stats overlay', status:()=>S(true), run:()=>runToggle('Wheel › Overlay','overlay','show_overlay','PRESENTATION'), on:x=>x.overlay,
+     opens:'Toggle', ft:'Stats overlay only; Deck gizmo labels ignore it.'},
+  ],
+  BAKE:[
+    {label:'Bake', id:'fluidsim.bake_start', tip:'Start a Production Bake of the frame range', status:x=>S(true, bakeStartR(x)), run:()=>runBake('Wheel › Bake'),
+     opens:'Modal (timer, Esc cancels)', ft:'Same as the bar Bake button.'},
+    {label:'Resume', id:'fluidsim.bake_resume', tip:'Resume the Production Bake from its last checkpoint', status:x=>S(true, bakeStartR(x)), run:()=>runResume('Wheel › Resume'),
+     opens:'Modal', ft:'rebake=False. Fails after the click when there is nothing to resume.'},
+    {label:'Play Cache', id:'fluidsim.cache_preview_start', tip:'Play the baked cache on the timeline', status:x=>S(true, bakeR(x)), run:()=>runPlayCache('Wheel › Play Cache'),
+     opens:'Instant', ft:'Not gated on a cache existing.'},
+    {label:'Alembic', id:'fluidsim.export_alembic', tip:'Export the baked liquid as Alembic', status:()=>S(true), run:()=>runExport('Wheel › Alembic','Alembic'),
+     opens:'Plan → file browser', ft:'Refused (ExportRefused) before the browser if there is no usable cache.'},
+    {label:'VDB', id:'fluidsim.export_vdb', tip:'Export the baked liquid as OpenVDB', status:()=>S(true), run:()=>runExport('Wheel › VDB','VDB'),
+     opens:'Directory browser', ft:'Same refusal rule.'},
+    {label:'Free Cache', id:'fluidsim.cache_free', tip:'Delete the baked cache files', status:()=>S(true), run:()=>runFree('Wheel › Free Cache'),
+     opens:'Props dialog '+q('Free Entire Cache?')+' (width 560, shows path)', ft:'NO poll: offered with no cache and during a running bake.'},
+  ],
+};
 
-/* ---------- particles: a cheap, honest-looking splash ---------- */
-const P = []; const MAXP = 2600;
-function emit(n){
-  const e = S.emitter;
-  for(let i=0;i<n && P.length<MAXP;i++){
-    P.push({x:e.x+(Math.random()-.5)*.25, y:e.y+(Math.random()-.5)*.25, z:e.z+(Math.random()-.5)*.5, vx:e.vx+(Math.random()-.5)*.6, vy:e.vy+(Math.random()-.5)*.6, vz:(Math.random()-.5)*.6, age:0});
-  }
-}
-function stepSim(dt){
-  const hw = S.domain.w/2, hd = S.domain.d/2, c = S.collider;
-  if(S.playing) emit(Math.round(S.emitter.rate/1500));
-  let fy = 0, cnt = 0;
-  for(const p of P){
-    p.vy -= 9.8*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.z += p.vz*dt; p.age += dt;
-    if(p.y < 0){ p.y = 0; p.vy *= -0.18; p.vx *= .92; p.vz *= .92; }
-    if(p.x < -hw){ p.x=-hw; p.vx*=-.4 } if(p.x > hw){ p.x=hw; p.vx*=-.4 }
-    if(p.z < -hd){ p.z=-hd; p.vz*=-.4 } if(p.z > hd){ p.z=hd; p.vz*=-.4 }
-    // crate collision (axis aligned box)
-    if(Math.abs(p.x-c.x)<c.s && Math.abs(p.z-c.z)<c.s && p.y<c.y+c.s && p.y>c.y-c.s){
-      const dx = p.x-c.x, dz = p.z-c.z;
-      if(Math.abs(dx)>Math.abs(dz)){ p.x = c.x+Math.sign(dx)*c.s; p.vx*=-.3; } else { p.z = c.z+Math.sign(dz)*c.s; p.vz*=-.3; }
-      fy += Math.max(0,-p.vy); cnt++;
-    }
-  }
-  // rigid coupling (mock): buoyancy from submerged depth + impulse from hits
-  if(c.dynamic){
-    const depth = Math.max(0, Math.min(1, (1.0 - (c.y - c.s))/ (2*c.s))); // water level ≈ 1.0 m
-    c.ay = -9.8 + 9.8*2.2*depth + fy*0.02 - c.vy*1.5;
-    c.vy += c.ay*dt; c.y += c.vy*dt; if(c.y < c.s){ c.y=c.s; c.vy*=-.2 }
-    c.ang = Math.sin(performance.now()/900)*0.08*depth;
-  }
-  // recycle oldest
+/* Gizmos (controls.GIZMO_CONTROLS + domain face handles) */
+const G = {
+  vel:{label:'Velocity arrow', target:'initial_velocity', show:x=>x.active==='emitter'},
+  fill:{label:'Fill dial', target:'source_sampling_multiplier / emit_rate', show:x=>x.active==='emitter' && x.srcMode!=='INHERIT'},
+  fric:{label:'Friction dial', target:'collider_friction', show:x=>x.active==='collider'},
+  dyn:{label:'Dynamic toggle', target:'collider_dynamic', show:x=>x.active==='collider'},
+  dom:{label:'Domain face handles ×6', target:'location / scale', show:x=>x.active==='domain' && x.domain && x.axis},
+};
+
+/* =====================================================================
+   3. Viewport scene + particle mock
+   ===================================================================== */
+const vp = $('#vp'), ctx = vp.getContext('2d'), stage = $('#stage');
+let W = 900, H = 600, DPR = 1, FONT_D = 'monospace', FONT_U = 'sans-serif';
+function resize(){ const r = stage.getBoundingClientRect(); DPR = Math.min(2, devicePixelRatio||1); W = Math.max(300, r.width); H = Math.max(300, r.height);
+  vp.width = W*DPR; vp.height = H*DPR; vp.style.width = W+'px'; vp.style.height = H+'px';
+  const cs = getComputedStyle(document.documentElement); FONT_D = cs.getPropertyValue('--font-data'); FONT_U = cs.getPropertyValue('--font-ui'); }
+addEventListener('resize', resize); resize();
+
+const M = { dom:{w:5, h:4, d:3}, divisions:80, snap:null,
+  em:{x:-1.6, y:2.6, z:0, vx:2.6, vy:-0.4, vz:0, fill:1.0, rate:8},
+  cr:{x:1.2, y:0.9, z:0, s:0.55, vy:0, fric:0.3},
+  cube:{x:0.2, y:0.3, z:1.15, s:0.3}, emp:{x:2.0, y:3.3, z:-1.0},
+  bakeP:0, frame:1, flash:null, flashT:0 };
+const cam = {yaw:-0.55, pitch:0.42, dist:11, fov:1.0};
+function project(x,y,z){ const cy=Math.cos(cam.yaw), sy=Math.sin(cam.yaw), cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
+  let X1=x*cy-z*sy, Z=x*sy+z*cy; let Y=(y-1.4)*cp-Z*sp; Z=(y-1.4)*sp+Z*cp+cam.dist; const f=(H*0.9)/cam.fov/Z; return [W/2+X1*f, H*0.55-Y*f, Z, f]; }
+const cells = () => { const h=M.dom.w/M.divisions; return [M.divisions, Math.round(M.dom.h/h), Math.round(M.dom.d/h)]; };
+const voxel = () => M.dom.w/M.divisions;
+const pad8 = n => Math.ceil(n/8)*8;
+
+const P = []; const MAXP = 2400;
+function emit(n){ const e=M.em; for(let i=0;i<n && P.length<MAXP;i++) P.push({x:e.x+(Math.random()-.5)*.25, y:e.y+(Math.random()-.5)*.25, z:e.z+(Math.random()-.5)*.5, vx:e.vx+(Math.random()-.5)*.6, vy:e.vy+(Math.random()-.5)*.6, vz:e.vz+(Math.random()-.5)*.6, age:0}); }
+function simStep(dt){
+  const hw=M.dom.w/2, hd=M.dom.d/2, c=M.cr; let fy=0;
+  if(X.domain) emit(Math.round(M.em.fill*7));
+  for(const p of P){ p.vy-=9.8*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.z+=p.vz*dt; p.age+=dt;
+    if(p.y<0){p.y=0;p.vy*=-0.18;p.vx*=.92;p.vz*=.92;}
+    if(p.x<-hw){p.x=-hw;p.vx*=-.4} if(p.x>hw){p.x=hw;p.vx*=-.4} if(p.z<-hd){p.z=-hd;p.vz*=-.4} if(p.z>hd){p.z=hd;p.vz*=-.4}
+    if(Math.abs(p.x-c.x)<c.s && Math.abs(p.z-c.z)<c.s && p.y<c.y+c.s && p.y>c.y-c.s){ const dx=p.x-c.x, dz=p.z-c.z;
+      if(Math.abs(dx)>Math.abs(dz)){p.x=c.x+Math.sign(dx)*c.s;p.vx*=-(1-c.fric)*.4;} else {p.z=c.z+Math.sign(dz)*c.s;p.vz*=-(1-c.fric)*.4;} fy+=Math.max(0,-p.vy); } }
+  if(X.body==='DYNAMIC'){ const depth=Math.max(0,Math.min(1,(1.0-(c.y-c.s))/(2*c.s))); c.vy+=(-9.8+9.8*2.2*depth+fy*0.02-c.vy*1.5)*dt; c.y+=c.vy*dt; if(c.y<c.s){c.y=c.s;c.vy*=-.2} }
   while(P.length>MAXP-40) P.shift();
   for(let i=P.length-1;i>=0;i--) if(P[i].age>7) P.splice(i,1);
 }
+function clearSim(){ P.length=0; M.cr.y=0.9; M.cr.vy=0; M.frame=1; }
 
-/* ---------- drawing ---------- */
 function line(a,b,col,w=1){ ctx.strokeStyle=col; ctx.lineWidth=w; ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke(); }
-function drawGrid(){
+function box(x0,y0,z0,x1,y1,z1,col,w,dash){ const c=[[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1],[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]].map(v=>project(...v));
+  ctx.setLineDash(dash||[]); for(const [a,b] of [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]]) line(c[a],c[b],col,w); ctx.setLineDash([]); return c; }
+function label(txt,x,y,col='#e8ecf1',align='left'){ ctx.font=`11px ${FONT_D}`; ctx.textAlign=align; ctx.fillStyle='rgba(15,17,20,.7)'; const w=ctx.measureText(txt).width; const bx=align==='center'?x-w/2-5:x-5; ctx.fillRect(bx,y-12,w+10,17); ctx.fillStyle=col; ctx.fillText(txt,x,y); }
+function selOutline(on){ return on ? '#ffa733' : null; }
+let handles = {};
+function drawScene(){
+  handles = {};
   const g = getComputedStyle(document.documentElement);
-  const gridCol = g.getPropertyValue('--vp-grid').trim();
-  for(let i=-8;i<=8;i++){
-    line(project(i,0,-8), project(i,0,8), i===0?g.getPropertyValue('--vp-axis-y').trim():gridCol, i===0?1.4:0.7);
-    line(project(-8,0,i), project(8,0,i), i===0?g.getPropertyValue('--vp-axis-x').trim():gridCol, i===0?1.4:0.7);
+  const gridCol=g.getPropertyValue('--vp-grid').trim();
+  for(let i=-8;i<=8;i++){ line(project(i,0,-8),project(i,0,8), i===0?g.getPropertyValue('--vp-axis-y').trim():gridCol, i===0?1.4:.7); line(project(-8,0,i),project(8,0,i), i===0?g.getPropertyValue('--vp-axis-x').trim():gridCol, i===0?1.4:.7); }
+  // domain
+  const d=M.dom, hw=d.w/2, hd=d.d/2, dSel=X.active==='domain';
+  if(X.domain){
+    box(-hw,0,-hd,hw,d.h,hd, dSel?'#ffa733':'#e9a23b', dSel?1.8:1.2);
+    if(G.dom.show(X)){
+      const dragging = drag && drag.kind.startsWith('dom');
+      if(dragging){ const c=cells(), h=voxel(); box(-pad8(c[0])*h/2,0,-pad8(c[2])*h/2,pad8(c[0])*h/2,pad8(c[1])*h,pad8(c[2])*h/2,'rgba(255,217,138,.55)',1,[4,4]);
+        const t=project(0,d.h+0.35,0); label(`${c[0]} × ${c[1]} × ${c[2]} cells · grid ${pad8(c[0])} × ${pad8(c[1])} × ${pad8(c[2])} · ${voxel().toPrecision(4)} m · ${M.divisions} divisions`, t[0], t[1], '#ffd98a','center'); }
+      for(const [k,pt] of [['domX',[hw,d.h/2,0]],['domNX',[-hw,d.h/2,0]],['domY',[0,d.h,0]],['domZ',[0,d.h/2,hd]]]){
+        const p=project(...pt); handles[k]={x:p[0],y:p[1],r:9}; ctx.fillStyle=(drag&&drag.kind===k)?'#ffd98a':'#e9a23b'; ctx.strokeStyle='#15181c'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.rect(p[0]-6,p[1]-6,12,12); ctx.fill(); ctx.stroke(); }
+    } else if(dSel && !X.axis){ const t=project(0,d.h+0.3,0); label('Face handles hidden: domain is rotated or parented', t[0], t[1], '#9aa4b1','center'); }
+    const dl=project(-hw,d.h,-hd); handles.domPick={box:[project(-hw,0,-hd),project(hw,d.h,hd)]}; label('Domain', dl[0]+4, dl[1]-6, '#e9a23b');
   }
+  drawParticles();
+  // plain cube (no role)
+  const cu=M.cube; box(cu.x-cu.s,cu.y-cu.s,cu.z-cu.s,cu.x+cu.s,cu.y+cu.s,cu.z+cu.s, X.active==='mesh'?'#ffa733':'#b9bec6', X.active==='mesh'?1.8:1.1);
+  const ct=project(cu.x,cu.y+cu.s+0.15,cu.z); handles.cube={x:ct[0],y:ct[1]+14,r:24}; label('Cube · no role', ct[0], ct[1]-2, '#b9bec6','center');
+  // empty
+  const e0=M.emp, ep=project(e0.x,e0.y,e0.z); const es=X.active==='empty'?'#ffa733':'#c8cdd4';
+  line(project(e0.x-.3,e0.y,e0.z),project(e0.x+.3,e0.y,e0.z),es,1.2); line(project(e0.x,e0.y-.3,e0.z),project(e0.x,e0.y+.3,e0.z),es,1.2); line(project(e0.x,e0.y,e0.z-.3),project(e0.x,e0.y,e0.z+.3),es,1.2);
+  handles.empty={x:ep[0],y:ep[1],r:18}; label('Empty', ep[0]+12, ep[1]-8, '#c8cdd4');
+  // collider crate
+  const c=M.cr, s=c.s, cSel=X.active==='collider', col=X.body==='DYNAMIC'?'#43c6d8':X.body==='ANIMATED'?'#c49cf2':'#8b93a0';
+  const k=box(c.x-s,c.y-s,c.z-s,c.x+s,c.y+s,c.z+s, cSel?'#ffa733':col, cSel?2:1.5);
+  ctx.fillStyle='rgba(139,147,160,.12)'; ctx.beginPath(); ctx.moveTo(k[4][0],k[4][1]); for(const i of [5,6,7]) ctx.lineTo(k[i][0],k[i][1]); ctx.closePath(); ctx.fill();
+  const cc=project(c.x,c.y,c.z); handles.crate={x:cc[0],y:cc[1],r:30};
+  const ctop=project(c.x,c.y+s+0.25,c.z); label(`Collider · ${X.body[0]+X.body.slice(1).toLowerCase()}`, ctop[0], ctop[1], col,'center');
+  if(G.fric.show(X)){ const R=24, a=-Math.PI/2; ctx.lineWidth=4; ctx.strokeStyle='rgba(255,255,255,.18)'; ctx.beginPath(); ctx.arc(cc[0],cc[1],R,0,6.283); ctx.stroke();
+    ctx.strokeStyle=(drag&&drag.kind==='fric')?'#fff':'#43c6d8'; ctx.beginPath(); ctx.arc(cc[0],cc[1],R,a,a+M.cr.fric*6.283); ctx.stroke(); handles.fric={cx:cc[0],cy:cc[1],r:R};
+    label(`Friction ${M.cr.fric.toFixed(2)}`, cc[0]+R+6, cc[1]+4); }
+  if(G.dyn.show(X)){ const px=ctop[0], py=ctop[1]+16; const on=X.body==='DYNAMIC'; ctx.fillStyle=on?'rgba(67,198,216,.85)':'rgba(255,255,255,.14)'; ctx.beginPath(); ctx.roundRect(px-44,py-9,88,18,9); ctx.fill();
+    ctx.font=`600 11px ${FONT_U}`; ctx.textAlign='center'; ctx.fillStyle=on?'#06333a':'#e8ecf1'; ctx.fillText(on?'Dynamic on':'Dynamic off', px, py+4); handles.dyn={x:px,y:py,w:88,h:18}; }
+  // emitter
+  const em=M.em, o=project(em.x,em.y,em.z), eSel=X.active==='emitter';
+  ctx.strokeStyle=eSel?'#ffa733':'#bff0f7'; ctx.lineWidth=eSel?1.8:1.2; ctx.beginPath();
+  for(let i=0;i<=24;i++){ const a=i/24*6.283, p=project(em.x, em.y+Math.cos(a)*.3, em.z+Math.sin(a)*.3); i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]); } ctx.stroke();
+  handles.emitter={x:o[0],y:o[1],r:22}; label('Emitter', o[0]-20, o[1]-30, '#bff0f7');
+  if(G.vel.show(X)){ const tip=project(em.x+em.vx*0.25, em.y+em.vy*0.25, em.z+em.vz*0.25), colv=(drag&&drag.kind==='vel')?'#fff':'#43c6d8';
+    line(o,tip,colv,2.2); const ang=Math.atan2(tip[1]-o[1],tip[0]-o[0]); ctx.fillStyle=colv; ctx.beginPath(); ctx.moveTo(tip[0],tip[1]); ctx.lineTo(tip[0]-11*Math.cos(ang-.5),tip[1]-11*Math.sin(ang-.5)); ctx.lineTo(tip[0]-11*Math.cos(ang+.5),tip[1]-11*Math.sin(ang+.5)); ctx.closePath(); ctx.fill();
+    handles.vel={x:tip[0],y:tip[1],r:12}; label(`v ${em.vx.toFixed(2)}, ${em.vy.toFixed(2)}, ${em.vz.toFixed(2)} m/s`, tip[0]+12, tip[1]-6); }
+  if(G.fill.show(X)){ const R=34, legacy=X.srcMode==='LEGACY', v=legacy?M.em.rate:M.em.fill, max=legacy?32:8, a=-Math.PI/2;
+    ctx.lineWidth=4; ctx.strokeStyle='rgba(255,255,255,.18)'; ctx.beginPath(); ctx.arc(o[0],o[1],R,0,6.283); ctx.stroke();
+    ctx.strokeStyle=(drag&&drag.kind==='fill')?'#fff':'#43c6d8'; ctx.beginPath(); ctx.arc(o[0],o[1],R,a,a+(v/max)*6.283); ctx.stroke(); handles.fill={cx:o[0],cy:o[1],r:R};
+    label(`Fill ${v.toFixed(2)}`, o[0]+R+6, o[1]+16); }
 }
-function box(x0,y0,z0,x1,y1,z1,col,w,dash){
-  const c=[[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1],[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]].map(v=>project(...v));
-  const E=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
-  ctx.setLineDash(dash||[]); for(const [a,b] of E) line(c[a],c[b],col,w); ctx.setLineDash([]); return c;
-}
-let handles = {}; // screen-space hit targets
-function drawDomain(dragging){
-  const d=S.domain, hw=d.w/2, hd=d.d/2;
-  box(-hw,0,-hd,hw,d.h,hd,dragging?'#ffd98a':'#e9a23b',1.3);
-  if(dragging){ // padded grid preview: leaf-aligned (8 cells per leaf)
-    const h=cellSize(), c=cells(), pw=Math.ceil(c[0]/8)*8*h, ph=Math.ceil(c[1]/8)*8*h, pd=Math.ceil(c[2]/8)*8*h;
-    box(-pw/2,0,-pd/2,pw/2,ph,pd/2,'rgba(255,217,138,.55)',1,[4,4]);
-    const t=project(hw,d.h+0.25,0); ctx.font=`12px ${getComputedStyle(document.body).getPropertyValue('--font-data')}`; ctx.fillStyle='#ffd98a'; ctx.textAlign='center';
-    ctx.fillText(`${cellsTxt()} cells · ${cellSize().toFixed(4)} m · padded ${Math.ceil(c[0]/8)*8}×${Math.ceil(c[1]/8)*8}×${Math.ceil(c[2]/8)*8}`, t[0], t[1]);
-  }
-  // face handle on +X
-  const hp = project(hw, d.h/2, 0);
-  handles.domX = {x:hp[0], y:hp[1], r:9};
-  ctx.fillStyle = dragging?'#ffd98a':'#e9a23b'; ctx.strokeStyle='#15181c'; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.rect(hp[0]-7,hp[1]-7,14,14); ctx.fill(); ctx.stroke();
-}
-function drawCollider(){
-  const c=S.collider, s=c.s; const col = c.dynamic?'#43c6d8':'#8b93a0';
-  const k = box(c.x-s,c.y-s,c.z-s,c.x+s,c.y+s,c.z+s,col,1.6);
-  // shade a face
-  ctx.fillStyle = c.dynamic?'rgba(67,198,216,.14)':'rgba(139,147,160,.12)';
-  ctx.beginPath(); ctx.moveTo(k[4][0],k[4][1]); ctx.lineTo(k[5][0],k[5][1]); ctx.lineTo(k[6][0],k[6][1]); ctx.lineTo(k[7][0],k[7][1]); ctx.closePath(); ctx.fill();
-  const t = project(c.x, c.y+s+0.3, c.z); handles.crate = {x:t[0], y:t[1]+20, r:26};
-  ctx.font=`600 11px ${getComputedStyle(document.body).getPropertyValue('--font-ui')}`; ctx.textAlign='center';
-  ctx.fillStyle=col; ctx.fillText(c.dynamic?'Collider · Dynamic ⟲':'Collider · Static', t[0], t[1]);
-}
-function drawEmitter(active){
-  const e=S.emitter; const o=project(e.x,e.y,e.z); const tip=project(e.x+e.vx*0.5, e.y+e.vy*0.5, e.z);
-  // shape outline (disc)
-  ctx.strokeStyle='#bff0f7'; ctx.lineWidth=1.2; ctx.beginPath();
-  for(let i=0;i<=24;i++){ const a=i/24*Math.PI*2; const p=project(e.x, e.y+Math.cos(a)*.3, e.z+Math.sin(a)*.3); i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]); } ctx.stroke();
-  // velocity arrow
-  const col = active==='vel'?'#ffffff':'#43c6d8';
-  line(o,tip,col,2.2);
-  const ang=Math.atan2(tip[1]-o[1],tip[0]-o[0]);
-  ctx.fillStyle=col; ctx.beginPath(); ctx.moveTo(tip[0],tip[1]); ctx.lineTo(tip[0]-11*Math.cos(ang-.5),tip[1]-11*Math.sin(ang-.5)); ctx.lineTo(tip[0]-11*Math.cos(ang+.5),tip[1]-11*Math.sin(ang+.5)); ctx.closePath(); ctx.fill();
-  handles.vel = {x:tip[0], y:tip[1], r:12};
-  // rate dial
-  const R=28; ctx.strokeStyle='rgba(255,255,255,.18)'; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(o[0],o[1],R,0,Math.PI*2); ctx.stroke();
-  const frac=Math.min(1,e.rate/40000); ctx.strokeStyle=active==='rate'?'#ffffff':'#43c6d8'; ctx.beginPath(); ctx.arc(o[0],o[1],R,-Math.PI/2,-Math.PI/2+frac*Math.PI*2); ctx.stroke();
-  handles.rate = {cx:o[0], cy:o[1], r:R};
-  ctx.font=`11px ${getComputedStyle(document.body).getPropertyValue('--font-data')}`; ctx.fillStyle='#e8ecf1'; ctx.textAlign='left';
-  ctx.fillText(`v ${Math.hypot(e.vx,e.vy).toFixed(2)} m/s`, tip[0]+10, tip[1]-4);
-  ctx.fillText(`${(e.rate/1000).toFixed(1)}k /s`, o[0]+R+6, o[1]+4);
-}
-const off = document.createElement('canvas'); const octx = off.getContext('2d');
+const off=document.createElement('canvas'), octx=off.getContext('2d');
 function drawParticles(){
-  const pts = P.map(p=>{ const q=project(p.x,p.y,p.z); return [q[0],q[1],q[3],p]; });
-  if(!S.preview){
-    ctx.fillStyle='#8fd3e6';
-    for(const [x,y,f] of pts){ ctx.beginPath(); ctx.arc(x,y,Math.max(1,0.045*f),0,6.283); ctx.fill(); }
-    return;
-  }
-  // Liquid Preview (mock of SSFR): splat depth-ish blobs, threshold, shade with rim + absorption + foam
-  const sc=0.5; off.width=Math.max(2,W*sc); off.height=Math.max(2,H*sc);
-  octx.clearRect(0,0,off.width,off.height);
-  octx.globalCompositeOperation='lighter';
-  for(const [x,y,f,p] of pts){ const r=Math.max(2,0.19*f*sc); const g=octx.createRadialGradient(x*sc,y*sc,0,x*sc,y*sc,r); g.addColorStop(0,'rgba(255,255,255,.55)'); g.addColorStop(1,'rgba(255,255,255,0)'); octx.fillStyle=g; octx.beginPath(); octx.arc(x*sc,y*sc,r,0,6.283); octx.fill(); }
-  octx.globalCompositeOperation='source-over';
-  const img=octx.getImageData(0,0,off.width,off.height), d=img.data, w=off.width;
-  for(let i=0;i<d.length;i+=4){
-    const t=d[i+3]/255; // "thickness"
-    if(t<0.22){ d[i+3]=0; continue; }
-    // normal from thickness gradient (screen-space), rim light where thin
-    const l = i>=4? d[i-4+3]/255 : t, r = d[i+4+3]/255, u = i>=w*4? d[i-w*4+3]/255 : t, dn = d[i+w*4+3]/255;
-    const nx=(l-r), ny=(u-dn); const rim=Math.min(1, Math.hypot(nx,ny)*6);
-    const ab=Math.min(1,(t-0.22)*1.6); // Beer–Lambert-ish absorption
-    const foam = t>0.95?1:0;
-    d[i]  = Math.round( (42 + 180*rim + 30*(1-ab)) * (1-foam) + 238*foam );
-    d[i+1]= Math.round( (166 + 70*rim - 60*ab) * (1-foam) + 246*foam );
-    d[i+2]= Math.round( (196 + 50*rim - 80*ab) * (1-foam) + 250*foam );
-    d[i+3]= Math.round(255*(0.55+0.4*ab));
-  }
-  octx.putImageData(img,0,0);
-  ctx.imageSmoothingEnabled=true; ctx.drawImage(off,0,0,W,H);
+  const pts=P.map(p=>{ const q1=project(p.x,p.y,p.z); return [q1[0],q1[1],q1[3]]; });
+  if(!X.lp){ ctx.fillStyle='#8fd3e6'; for(const [x,y,f] of pts){ ctx.beginPath(); ctx.arc(x,y,Math.max(1,0.04*f),0,6.283); ctx.fill(); } return; }
+  const sc=0.5; off.width=Math.max(2,W*sc|0); off.height=Math.max(2,H*sc|0); octx.clearRect(0,0,off.width,off.height); octx.globalCompositeOperation='lighter';
+  for(const [x,y,f] of pts){ const r=Math.max(2,0.19*f*sc), gr=octx.createRadialGradient(x*sc,y*sc,0,x*sc,y*sc,r); gr.addColorStop(0,'rgba(255,255,255,.55)'); gr.addColorStop(1,'rgba(255,255,255,0)'); octx.fillStyle=gr; octx.beginPath(); octx.arc(x*sc,y*sc,r,0,6.283); octx.fill(); }
+  octx.globalCompositeOperation='source-over'; const img=octx.getImageData(0,0,off.width,off.height), dd=img.data, w=off.width;
+  for(let i=0;i<dd.length;i+=4){ const t=dd[i+3]/255; if(t<0.22){dd[i+3]=0;continue;} const l=i>=4?dd[i-1]/255:t, r=(dd[i+7]||0)/255, u=i>=w*4?dd[i-w*4+3]/255:t, dn=(dd[i+w*4+3]||0)/255;
+    const rim=Math.min(1,Math.hypot(l-r,u-dn)*6), ab=Math.min(1,(t-0.22)*1.6), foam=(X.whitewater&&X.showWW&&t>0.95)?1:0;
+    dd[i]=(42+180*rim+30*(1-ab))*(1-foam)+238*foam; dd[i+1]=(166+70*rim-60*ab)*(1-foam)+246*foam; dd[i+2]=(196+50*rim-80*ab)*(1-foam)+250*foam; dd[i+3]=255*(0.55+0.4*ab); }
+  octx.putImageData(img,0,0); ctx.drawImage(off,0,0,W,H);
 }
 
-let drag = null; // {kind, start}
-let last = performance.now(), msHist = [];
+let drag=null, last=performance.now(); const msHist=[];
 function frame(now){
-  const dt = Math.min(0.033, (now-last)/1000); last = now;
-  const t0 = performance.now();
-  stepSim(dt);
-  ctx.setTransform(DPR,0,0,DPR,0,0); ctx.clearRect(0,0,W,H);
-  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--vp'); ctx.fillRect(0,0,W,H);
-  drawGrid(); drawDomain(drag&&drag.kind==='domX'); drawParticles(); drawCollider(); drawEmitter(drag&&drag.kind);
-  const ms = performance.now()-t0 + (S.playing? 6 + S.substeps*1.9 + P.length/400 : 0);
-  msHist.push(ms); if(msHist.length>60) msHist.shift();
-  $('#roP').textContent = (P.length*230).toLocaleString();
-  $('#roS').textContent = S.substeps;
-  $('#roMs').textContent = ms.toFixed(1);
-  drawSpark();
-  if(S.bake.on){ S.bake.p=Math.min(1,S.bake.p+dt/9); $('#ringArc').setAttribute('stroke-dashoffset', (69.1*(1-S.bake.p)).toFixed(1)); $('#ringTxt').textContent=Math.round(S.bake.p*100); if(S.bake.p>=1){ S.bake.on=false; toast('Bake finished · 120 frames · cache v3.1'); $('#ringTxt').textContent='✓'; } }
+  const dt=Math.min(0.033,(now-last)/1000); last=now;
+  if(X.activity==='LIVE_PREVIEW' && X.runtime==='ready' && X.domain){ simStep(dt); M.frame++; }
+  else if(X.activity==='CACHE_PLAYBACK' && X.cache!=='none'){ simStep(dt); M.frame++; }
+  ctx.setTransform(DPR,0,0,DPR,0,0); ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--vp'); ctx.fillRect(0,0,W,H);
+  drawScene();
+  if(X.activity==='LIVE_PREVIEW' && X.runtime==='ready'){ msHist.push(8+3*1.9+P.length/400+Math.random()*2); if(msHist.length>48) msHist.shift(); }
+  const ro=$('#roP'); if(ro){ ro.textContent=(P.length*230).toLocaleString(); $('#roMs').textContent=msHist.length?msHist[msHist.length-1].toFixed(1):'—'; drawSpark(); }
+  if(X.activity==='PRODUCTION_BAKE'){ M.bakeP=Math.min(1,M.bakeP+dt/10); const arc=$('#ringArc'); if(arc){ arc.setAttribute('stroke-dashoffset',(62.8*(1-M.bakeP)).toFixed(1)); $('#ringTxt').textContent=Math.round(M.bakeP*100); }
+    if(M.bakeP>=1){ X.activity='IDLE'; X.cache='complete'; report('INFO','Bake finished (frames 1–120)'); logAct('Bake modal','timer reached the end frame','Cache complete; Bake now greyed → Resume/Restart rules apply','INFO'); applyHeld(); refresh(); } }
+  if(M.flash && now>M.flashT){ M.flash=null; renderDeck(); }
+  $('#corner').innerHTML=`User Perspective · <b>${X.lp?'Liquid Preview':'Solid'}</b> · frame <b>${M.frame}</b> · ${X.domain?`<b>${cells().join(' × ')}</b> cells`:'no domain'}`;
   requestAnimationFrame(frame);
 }
-function drawSpark(){ const c=$('#spark'), x=c.getContext('2d'); x.clearRect(0,0,c.width,c.height); const n=msHist.length; if(n<2) return; const max=Math.max(30,...msHist); x.beginPath(); msHist.forEach((v,i)=>{ const px=i/(59)*c.width, py=c.height-4-(v/max)*(c.height-8); i?x.lineTo(px,py):x.moveTo(px,py); }); x.strokeStyle='#43c6d8'; x.lineWidth=2; x.stroke(); x.lineTo(c.width*(n-1)/59,c.height); x.lineTo(0,c.height); x.closePath(); x.fillStyle='rgba(67,198,216,.18)'; x.fill(); const lx=c.width*(n-1)/59, ly=c.height-4-(msHist[n-1]/max)*(c.height-8); x.fillStyle='#fff'; x.beginPath(); x.arc(lx,ly,3,0,6.283); x.fill(); }
-requestAnimationFrame(frame);
+function drawSpark(){ const c=$('#spark'); if(!c) return; const x=c.getContext('2d'); x.clearRect(0,0,c.width,c.height); const n=msHist.length; if(n<2) return; const max=Math.max(30,...msHist);
+  x.beginPath(); msHist.forEach((v,i)=>{ const px=i/47*c.width, py=c.height-4-(v/max)*(c.height-8); i?x.lineTo(px,py):x.moveTo(px,py); }); x.strokeStyle='#43c6d8'; x.lineWidth=2; x.stroke(); }
 
-/* ---------- pending chip (twin of pending_settings presentation) ---------- */
-function setPending(cls,label){
-  const chip=$('#chip'), txt=$('#chipTxt');
-  chip.className='chip '+(cls||'idle').toLowerCase();
-  chip.querySelectorAll('button').forEach(b=>b.remove());
-  if(!cls){ txt.textContent='No pending changes'; S.pending=null; return; }
-  S.pending={cls,label};
-  if(cls==='LIVE'){ txt.textContent=`Applied live · ${label}`; setTimeout(()=>{ if(S.pending&&S.pending.cls==='LIVE') setPending(null); },1800); return; }
-  txt.textContent=`${cls==='RESET'?'Reset':'Re-initialize'} pending · ${label}`;
-  const apply=document.createElement('button'); apply.className='go'; apply.textContent=cls==='RESET'?'Apply (reset)':'Apply (re-init)';
-  apply.title='fluidsim.apply_pending_settings';
-  apply.onclick=()=>{ P.length=0; S.collider.y=0.9; S.collider.vy=0; toast(`Applied · solver reset · ${cellsTxt()} cells`); setPending(null); $('#cornerCells').textContent=cellsTxt(); };
-  const rev=document.createElement('button'); rev.textContent='Revert'; rev.title='fluidsim.revert_pending_settings';
-  rev.onclick=()=>{ S.domain.w=S._snapW||S.domain.w; toast('Reverted'); setPending(null); };
-  chip.append(apply,rev);
+/* =====================================================================
+   4. Feedback: status-bar reports, toasts, the action log
+   ===================================================================== */
+let toastT; function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2600); }
+function report(type,msg){ $('#sbIco').className='ico '+type; $('#sbIco').textContent=type==='ERROR'?'✕':type==='WARNING'?'!':'i'; $('#sbMsg').textContent=msg; if(type!=='INFO') toast(msg); }
+function logAct(trigger, via, result, type='INFO'){ const li=document.createElement('li'); li.className=type;
+  li.innerHTML=`<b>${esc(trigger)}</b><span class="via">→ ${esc(via)}</span><span class="res">${esc(result)}</span>`; const lg=$('#log'); lg.prepend(li); while(lg.children.length>14) lg.lastChild.remove(); }
+function flash(field){ M.flash=`LIVE · ${field}`; M.flashT=performance.now()+2000; renderDeck(); }
+function greyed(label, why, where){ report('WARNING', `${label}: ${why}`); logAct(where, 'greyed control clicked', `Warning “${label}: ${why}” — nothing runs`, 'WARNING'); }
+
+/* tier edits: what the pending chip does after a write */
+function tierEdit(tier, field, where){
+  if(anyBake(X) && X.activity==='PRODUCTION_BAKE'){ X.held=true; logAct(where, `write ${field} (${tier} tier)`, 'Held: “A Production Bake is running; changes apply when it ends”', 'WARNING'); refresh(); return; }
+  if(tier==='LIVE' || tier==='SYNC' || tier==='SURFACE' || tier==='WHITEWATER'){ flash(field); logAct(where, `write ${field} (${tier} tier)`, `Applied immediately; chip flashes “LIVE · ${field}” for 2 s`); return; }
+  if(tier==='PRESENTATION'){ logAct(where, `write ${field} (display only)`, 'Viewport redraw only; no chip change'); return; }
+  if(X.owner!=='here'){ logAct(where, `write ${field} (${tier} tier)`, 'No applied signature yet → nothing pending; the next Play/Initialize uses it'); return; }
+  X.pending = (tier==='REINIT' || X.pending==='REINIT') ? 'REINIT' : 'RESET'; X.pendCount++;
+  logAct(where, `write ${field} (${tier} tier)`, X.pending==='REINIT' ? `Chip: “${X.pendCount} change(s) staged to reinitialize the solver”` : `Chip: “${X.pendCount} change(s) staged for reset”`);
+  refresh();
 }
-let toastT; function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2200); }
+function applyHeld(){ if(X.held){ X.held=false; if(X.owner==='here'){ X.pending='RESET'; X.pendCount=Math.max(1,X.pendCount); } } }
 
-/* ---------- viewport input: gizmos ---------- */
-function pos(ev){ const r=vp.getBoundingClientRect(); const e=ev.touches?ev.touches[0]:ev; return [e.clientX-r.left, e.clientY-r.top]; }
-function hit(ev){
-  const [x,y]=pos(ev);
-  if(handles.vel && Math.hypot(x-handles.vel.x,y-handles.vel.y)<handles.vel.r+4) return 'vel';
-  if(handles.rate && Math.abs(Math.hypot(x-handles.rate.cx,y-handles.rate.cy)-handles.rate.r)<7) return 'rate';
-  if(handles.domX && Math.hypot(x-handles.domX.x,y-handles.domX.y)<handles.domX.r+5) return 'domX';
-  if(handles.crate && Math.hypot(x-handles.crate.x,y-handles.crate.y)<handles.crate.r) return 'crate';
+/* =====================================================================
+   5. Follow-through implementations
+   ===================================================================== */
+function runPlay(where){
+  if(X.owner==='other'){ report('WARNING','Another scene owns the solver; release it from that scene first'); logAct(where,'screen.animation_play (timeline plays)','Status: “Another scene owns the solver; release it from that scene first” — no simulation here','WARNING'); return; }
+  if(rtR(X)){ report('ERROR', rtR(X)); logAct(where,'screen.animation_play (Blender poll only — not greyed)','Timeline plays but the solver cannot start: '+rtR(X),'ERROR'); return; }
+  if(!X.domain){ logAct(where,'screen.animation_play','Timeline plays; there is no domain so nothing simulates','WARNING'); report('WARNING','Timeline playing — no FluidSim domain'); return; }
+  X.activity='LIVE_PREVIEW'; X.owner='here';
+  if(X.pending!=='none'){ report('WARNING','Edits pending: rewind to the start frame or Apply Changes to use them'); logAct(where,'screen.animation_play','Plays with the OLD settings. Status: “Edits pending: rewind to the start frame or Apply Changes to use them”','WARNING'); }
+  else { report('INFO','Playing'); logAct(where,'screen.animation_play (arms live play)','Status: “Playing”; Play becomes Pause, Step/Restart appear'); }
+  refresh();
+}
+function runPause(where){ X.activity='IDLE'; report('INFO','Paused - press Play to resume'); logAct(where,'fluidsim.preview_pause (no poll)','“Paused - press Play to resume”'); refresh(); }
+function runCancelBake(where){ X.activity='IDLE'; X.cache='partial'; report('INFO','Production Bake cancelled'); logAct(where,'fluidsim.bake_cancel — instant, no confirm','Cancels EVERY running bake (all scenes). Cache left partial → Resume available','WARNING'); applyHeld(); refresh(); }
+function runStep(where){
+  const why=sessR(X); if(why){ report('ERROR',why); logAct(where,'fluidsim.step','Refused: '+why,'ERROR'); return; }
+  if(X.owner==='other'){ logAct(where,'fluidsim.step (EXEC, frames=1)','Poll passes because ANOTHER scene has a session; this scene initialises on the spot','WARNING'); X.owner='here'; }
+  const was=X.activity; for(let i=0;i<4;i++) simStep(1/96); M.frame++; X.activity=was;
+  report('INFO','Stepped 1 frame'); logAct(where,'fluidsim.step (EXEC, frames=1) — instant','Particles advance one frame; the Deck frame readout and sparkline do NOT change. Errors would read “Solver initialization failed: …” / “Step failed: …”');
+}
+function runRestart(where){ const why=mutR(X); if(why){ report('ERROR',why); logAct(where,'fluidsim.restart_simulation','Refused: '+why,'ERROR'); return; }
+  clearSim(); report('INFO','Simulation restarted'); logAct(where,'fluidsim.restart_simulation — instant, NO confirm','Preview progress cleared, back to the first frame','WARNING'); refresh(); }
+function runApply(where){
+  const why=mutR(X); if(why){ report('ERROR',why); logAct(where,'fluidsim.apply_changes','Refused: '+why,'ERROR'); return; }
+  if(X.activity==='CACHE_PLAYBACK'){ report('ERROR','Cache Preview is selected; switch to Live Preview before applying simulation changes'); logAct(where,'fluidsim.apply_changes (poll passed)','Fails at execute: “Cache Preview is selected; switch to Live Preview before applying simulation changes”','ERROR'); return; }
+  if(X.pending==='none'){ report('INFO','Changes applied'); logAct(where,'fluidsim.apply_changes','Nothing was pending — still reports “Changes applied”','WARNING'); return; }
+  dialog({title:'Apply Changes', lines:['Restart simulation from frame 1?','Current preview progress will be cleared.'], ok:'OK'}, ()=>{
+    X.pending='none'; X.pendCount=0; M.snap=null; clearSim(); report('INFO','Changes applied');
+    logAct(where,'fluidsim.apply_changes → props dialog “Restart simulation from frame 1?”','OK → solver '+(X.activity==='LIVE_PREVIEW'?'restarts and keeps playing (“Playing preview”)':'reset (“Changes applied”)')); refresh(); },
+    ()=>logAct(where,'props dialog','Cancelled — nothing changed. A stale dialog would say “Scene or settings changed; review the restart again”'));
+}
+function runRevert(where){ if(X.pending==='none'){ greyed('Revert','No pending settings to revert',where); return; }
+  if(M.snap){ Object.assign(M.dom,M.snap.dom); M.divisions=M.snap.div; M.snap=null; }
+  X.pending='none'; X.pendCount=0; report('INFO','Pending values reverted'); logAct(where,'fluidsim.revert_pending (undoable; allowed during a bake)','“Pending values reverted”'); refresh(); }
+function runLP(where){ X.lp=!X.lp; flash('liquid_preview_enabled');
+  logAct(where,'direct write scene.fluidsim.liquid_preview_enabled (no undo)', X.lp ? (P.length? 'Screen-space surface on; mesh build skipped' : 'On — but the panel warning “Liquid Preview is on but no particles are published yet; play the simulation in a particle view” is never shown from the Deck') : 'Back to points', P.length||!X.lp?'INFO':'WARNING'); refresh(); }
+function runBake(where){
+  const why=bakeStartR(X); if(why){ greyed('Bake',why,where); return; }
+  if(!X.saved){ const m='Save the .blend file first, or set an absolute Cache Path: an unsaved file resolves // against Blender\'s working directory and move when the file is saved'; report('ERROR',m); logAct(where,'fluidsim.bake_start (poll passed)','Fails after the click: '+m,'ERROR'); return; }
+  if(X.cache!=='none'){ const m='Production bake could not start: cache data already exists; use Resume or explicit Restart'; report('ERROR',m); logAct(where,'fluidsim.bake_start (restart_existing=False)','Fails: “…cache data already exists; use Resume or explicit Restart”. The Deck has no Restart-bake; Resume is on the wheel (Bake stage)','ERROR'); return; }
+  if(!X.domain){ const m='Production bake could not start: no FluidSim domain'; report('ERROR',m); logAct(where,'fluidsim.bake_start','Fails: “Production bake could not start: {exc}” — no domain guard before the click','ERROR'); return; }
+  startBakeModal(where,'fluidsim.bake_start → modal operator (0.05 s timer)');
+}
+function startBakeModal(where, via){ X.activity='PRODUCTION_BAKE'; X.owner='here'; M.bakeP=0; report('INFO','Production Bake running — Esc cancels');
+  logAct(where, via, 'Modal runs on a timer; Esc cancels; right-click passes through. Bake button greys (“A production bake is already active”) yet the ring keeps drawing on it'); refresh(); }
+function runResume(where){ const why=bakeStartR(X); if(why){ greyed('Resume',why,where); return; }
+  if(X.cache!=='partial'){ const m='Production bake could not resume: '+(X.cache==='none'?'no cache to resume':X.cache==='complete'?'the cache is already complete':'the cache is legacy or invalid'); report('ERROR',m); logAct(where,'fluidsim.bake_resume (rebake=False)','Fails after the click: '+m,'ERROR'); return; }
+  startBakeModal(where,'fluidsim.bake_resume (rebake=False) → modal'); M.bakeP=0.45; }
+function runPlayCache(where){ const why=bakeR(X); if(why){ greyed('Play Cache',why,where); return; }
+  if(X.cache==='none'){ report('WARNING','No baked frames to play'); logAct(where,'fluidsim.cache_preview_start (not gated on a cache)','Switches to Cache playback with nothing to show','WARNING'); X.activity='CACHE_PLAYBACK'; refresh(); return; }
+  X.activity='CACHE_PLAYBACK'; report('INFO','Cache playback'); logAct(where,'fluidsim.cache_preview_start','Timeline plays the baked cache. Step/Restart leave the Deck bar; Apply now fails at execute'); refresh(); }
+function runExport(where, kind){
+  if(X.cache==='none'||X.cache==='legacy'){ const m=`ExportRefused: no usable baked cache for ${kind}`; report('ERROR',m); logAct(where,`fluidsim.export_${kind.toLowerCase()} — plan first`,'Refused before the browser opens: '+m,'ERROR'); return; }
+  fileBrowser(kind==='VDB'?{title:'Export OpenVDB',btn:'Export VDB',name:'',dir:true}:{title:'Export Alembic',btn:'Export Alembic',name:'liquid.abc'}, path=>{ report('INFO',`Exported ${kind} → ${path}`); logAct(where,`fluidsim.export_${kind.toLowerCase()} → ${kind==='VDB'?'directory':'file'} browser`,'Writes the export; scene unchanged'); });
+}
+function runFree(where){
+  dialog({title:'Free Entire Cache?', width:560, lines:['This deletes every baked frame in:','<span class="path">//cache_fluidsim/</span>', X.activity==='PRODUCTION_BAKE'?'<b style="color:#ffb3b3">A bake is writing here right now — this dialog is still offered (no poll).</b>':'', X.cache==='none'?'There is no cache; OK does nothing.':''], ok:'Free Cache'},
+    ()=>{ const wasBake=X.activity==='PRODUCTION_BAKE'; X.cache='none'; report('INFO','Cache freed'); logAct(where,'fluidsim.cache_free → props dialog (NO poll)', wasBake?'Deleted the cache UNDER a running bake — no guard':'Cache deleted', wasBake?'ERROR':'INFO'); refresh(); },
+    ()=>logAct(where,'props dialog “Free Entire Cache?”','Cancelled'));
+}
+function runSetup(where, andPlay){
+  const why=bakeR(X)||(meshSel(X)?'':'Select at least one mesh object'); if(why){ greyed('Set Up Scene',why,where); return; }
+  dialog({title:andPlay?'Set Up & Play':'Set Up Scene', lines:['<label><input type="radio" name="sm" checked> Quick Liquid</label>','<label><input type="radio" name="sm"> Container</label>','<label><input type="radio" name="sm"> Viscous</label>','<span style="color:#9aa4b1">Also: Add Collider / Inflow / Outflow</span>'], ok:'OK'},
+    ()=>{ X.domain=true; X.active='emitter'; X.pending='none'; X.pendCount=0; X.owner='none'; clearSim(); report('INFO','Scene set up');
+      logAct(where,'fluidsim.setup_scene → props dialog','Fits a padded domain around the selected mesh, tags roles, journaled (one undo step)'); if(andPlay) runPlay(where+' (then Play)'); refresh(); },
+    ()=>logAct(where,'props dialog','Cancelled'));
+}
+function runTag(where, role){ const s=SLOTS.SETUP[role==='emitter'?1:2], st=s.status(X); if(!st.ok){ greyed(s.label,st.why,where); return; }
+  if(X.active==='domain'){ X.domain=false; }
+  X.active=role; report('INFO',`Tagged as ${role}`); logAct(where,`${s.id} — instant`,`The selected object is converted in place to a ${role}; no placement, no gizmo appears until it is active`); refresh(); }
+function runUseDomain(where){ const st=SLOTS.SETUP[3].status(X); if(!st.ok){ greyed('Domain',st.why,where); return; }
+  X.domain=true; X.active='domain'; M.dom={w:5,h:4,d:3}; report('INFO','Domain assigned'); logAct(where,'fluidsim.use_active_as_domain — instant (no bake gate)','The cube becomes the domain'); tierEdit('REINIT','domain_object',where); refresh(); }
+function runMaterials(where){ report('INFO','Render nodes installed'); logAct(where,'fluidsim.install_render_nodes — instant, no poll', X.domain?'Materials + output shells created/repaired':'Creates output shells even though there is no domain', X.domain?'INFO':'WARNING'); }
+function runToggle(where, key, field, tier){ if(!X.domain && key!=='overlay'){ greyed(field, pgR(X), where); return; } X[key]=!X[key]; tierEdit(tier, field, where); refresh(); }
+function runAddDomain(where){ X.domain=true; X.active='domain'; M.dom={w:4,h:4,d:4}; report('INFO','Added Fluid Domain');
+  logAct(where,'fluidsim.add_domain — instant, REGISTER/UNDO, NO poll','New box at (-2,-2,0)…(2,2,4) — ignores the 3D cursor; becomes the active, designated domain'+(X.activity==='PRODUCTION_BAKE'?' — and it ran DURING a bake':''), X.activity==='PRODUCTION_BAKE'?'ERROR':'INFO'); tierEdit('REINIT','domain_object',where); refresh(); }
+function runLoadDemo(where, name){ if(bakeR(X)){ report('ERROR',bakeR(X)); logAct(where,'fluidsim.load_demo','Refused: '+bakeR(X),'ERROR'); return; }
+  if(name==='capillary_droplet'){ const m=`Demo blend file ${name}.blend not found on disk`; report('ERROR',m); logAct(where,'fluidsim.load_demo','Row was listed although the file is missing: “Demo blend file … not found on disk”','ERROR'); return; }
+  X={...DEFAULT, activity:'IDLE', owner:'none', deck:X.deck, stage:X.stage}; clearSim(); report('INFO',`Loaded demo ${name} in a new scene`); logAct(where,'fluidsim.load_demo','Opens the demo in a NEW scene (current scene kept)'); refresh(); }
+
+/* =====================================================================
+   6. Deck bar render
+   ===================================================================== */
+function btnHTML(key){ const c=C[key], s=c.status(X); if(!s.show) return '';
+  const on=(key==='LP'&&X.lp)||(key==='PAUSE'); const tip=s.ok?`${c.tip} (${c.id})`:`Unavailable: ${s.why}`;
+  const inner = key==='BAKE' ? `<span class="ring"><svg viewBox="0 0 26 26"><circle cx="13" cy="13" r="10" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="3"/><circle id="ringArc" cx="13" cy="13" r="10" fill="none" stroke="#43c6d8" stroke-width="3" stroke-dasharray="62.8" stroke-dashoffset="${X.activity==='PRODUCTION_BAKE'?(62.8*(1-M.bakeP)).toFixed(1):62.8}" stroke-linecap="round"/></svg><span id="ringTxt">${X.activity==='PRODUCTION_BAKE'?Math.round(M.bakeP*100):'●'}</span></span>Bake` : `${c.icon} ${c.label}`;
+  return `<button data-c="${key}" class="${on?'on':''} ${s.ok?'':'grey'}" title="${esc(tip)}">${inner}</button>`; }
+function renderDeck(){
+  const d=$('#deck'); d.hidden=!deckVisible(X); if(d.hidden) return;
+  let chipCls='idle', chipTxt='No pending changes', acts='';
+  if(M.flash){ chipCls='live'; chipTxt=M.flash; }
+  else if(X.held){ chipCls='reset'; chipTxt='A Production Bake is running; changes apply when it ends'; }
+  else if(X.pending==='RESET'){ chipCls='reset'; chipTxt=`${X.pendCount} change(s) staged for reset`; }
+  else if(X.pending==='REINIT'){ chipCls='reinit'; chipTxt=`${X.pendCount} change(s) staged to reinitialize the solver`; }
+  if(X.pending!=='none') acts=btnHTML('APPLY')+btnHTML('REVERT');
+  d.innerHTML = `<div class="grp">${btnHTML('PLAY')}${btnHTML('PAUSE')}${btnHTML('CANCEL_BAKE')}${btnHTML('STEP')}${btnHTML('RESTART')}</div><div class="sep"></div>
+    <div class="ro" title="Live stats"><span>particles <b id="roP">0</b></span><span>ms <b id="roMs">—</b></span><canvas class="spark" id="spark" width="168" height="44" title="Step time"></canvas></div><div class="sep"></div>
+    <div class="chip ${chipCls}"><span class="dot"></span><span>${esc(chipTxt)}</span>${acts}</div><div class="sep"></div>
+    <div class="grp">${btnHTML('LP')}${btnHTML('SEARCH')}${btnHTML('WHEEL')}${btnHTML('BAKE')}</div>`;
+}
+$('#deck').addEventListener('click', ev=>{ const b=ev.target.closest('button[data-c]'); if(!b) return; const key=b.dataset.c, c=C[key], s=c.status(X);
+  if(!s.ok){ greyed(c.label, s.why, 'Deck › '+c.label); return; } c.run(); });
+
+/* =====================================================================
+   7. Header: Add menu, FluidSim popover, Deck toggle, stage enum
+   ===================================================================== */
+function closePops(){ $('#addPop').hidden=true; $('#fluidPop').hidden=true; $('#hAdd').classList.remove('on'); $('#hFluid').classList.remove('on'); }
+$('#hAdd').onclick=ev=>{ ev.stopPropagation(); const p=$('#addPop'), open=p.hidden; closePops(); if(!open) return; p.hidden=false; $('#hAdd').classList.add('on');
+  p.innerHTML=`<h4>Add</h4><div class="row grey">▦ Mesh <span class="k">▸</span></div><div class="row grey">✦ Light <span class="k">▸</span></div><div class="row grey">⊹ Empty <span class="k">▸</span></div><div class="row act" id="addDom">💧 Fluid Domain (FluidSim)</div><div class="note">The add-on's only Add-menu entry. No interactive placement.</div>`;
+  $('#addDom').onclick=()=>{ closePops(); runAddDomain('Add › Fluid Domain (FluidSim)'); }; };
+function popRow(label, status, run, extra=''){ return {label, status, run, extra}; }
+function fluidRows(){
+  const R=[];
+  R.push({head:`Activity: ${({IDLE:'Idle',LIVE_PREVIEW:'Live Preview',CACHE_PLAYBACK:'Cache Playback',PRODUCTION_BAKE:'Production Bake',BAKE_OTHER:'Idle (another scene bakes)'})[X.activity]}`});
+  if(rtR(X)) R.push({err:rtR(X)}, popRow('Re-detect GPU', S(true), ()=>{ logAct('Header › Re-detect GPU','fluidsim.refresh_runtime_probe — instant','Re-probes Warp/CUDA; state unchanged in this mock'); }));
+  if(!X.domain){ const why=bakeR(X)||(meshSel(X)?'':'Select at least one mesh object');
+    R.push(popRow('Set Up & Play…', S(true,why), ()=>runSetup('Header › Set Up & Play…',true)), popRow('Set Up Only…', S(true,why), ()=>runSetup('Header › Set Up Only…',false)));
+  } else {
+    const t=first(X); R.push(popRow(t==='CANCEL_BAKE'?'Cancel Production Bake':t==='PAUSE'?'Pause':'Play', S(true), ()=>({CANCEL_BAKE:runCancelBake,PAUSE:runPause,PLAY:runPlay})[t]('Header › transport')));
+    if(X.owner==='here') R.push(popRow('Restart', S(true, mutR(X)), ()=>runRestart('Header › Restart')));
+    if(X.pending!=='none') R.push(popRow('Apply Changes', S(true, mutR(X)), ()=>runApply('Header › Apply Changes')));
+    R.push({note:`Quality: ${X.quality} · Viscosity ${X.viscosity?'on':'off'} · Surface Tension ${X.st?'on':'off'} — editable here even without CUDA`});
+    R.push(popRow(`Viscosity: ${X.viscosity?'On':'Off'}`, S(true), ()=>runToggle('Header › Viscosity','viscosity','viscosity_enabled','LIVE')));
+  }
+  R.push(popRow('FluidSim Workspace', S(true), ()=>logAct('Header › FluidSim Workspace','fluidsim.open_workspace','Switches to (or duplicates) the “FluidSim” workspace; the button hides once you are in it')));
+  return R;
+}
+function renderFluidPop(){ const p=$('#fluidPop'); if(p.hidden) return; const R=fluidRows();
+  p.innerHTML='<h4>FluidSim</h4>'+R.map((r,i)=> r.head?`<div class="note">${esc(r.head)}</div>`: r.err?`<div class="err">${esc(r.err)}</div>`: r.note?`<div class="note">${esc(r.note)}</div>`:
+    `<div class="row ${r.status.ok?'act':'grey'}" data-i="${i}" title="${esc(r.status.ok?'':'Unavailable: '+r.status.why)}">${esc(r.label)}</div>`).join('');
+  p.querySelectorAll('[data-i]').forEach(el=>el.onclick=()=>{ const r=R[+el.dataset.i]; if(!r.status.ok){ greyed(r.label,r.status.why,'Header › '+r.label); return; } closePops(); r.run(); }); }
+$('#hFluid').onclick=ev=>{ ev.stopPropagation(); const p=$('#fluidPop'), open=p.hidden; closePops(); if(!open) return; p.hidden=false; $('#hFluid').classList.add('on'); renderFluidPop(); };
+$('#hDeck').onclick=()=>{ X.deckShown=!X.deckShown; logAct('Header › Deck toggle','scene.fluidsim.deck_shown',X.deckShown?'Deck bar, palette and wheel available':'Deck hidden; Ctrl+K and Alt+RMB pass through to Blender'); refresh(); };
+$('#hStage').onchange=e=>{ X.stage=e.target.value; logAct('Header › stage','scene.fluidsim.deck_stage',`Wheel now opens on ${e.target.value}`); refresh(); };
+document.addEventListener('mousedown', ev=>{ if(!ev.target.closest('.pop') && !ev.target.closest('#hAdd') && !ev.target.closest('#hFluid')) closePops(); });
+
+/* =====================================================================
+   8. Dialogs + file browser
+   ===================================================================== */
+let dlgCancel=null;
+function dialog(o, onOk, onCancel){ const s=$('#scrim'); s.hidden=false; dlgCancel=()=>{ s.hidden=true; dlgCancel=null; onCancel&&onCancel(); };
+  s.innerHTML=`<div class="dlg" role="dialog" style="${o.width?`width:min(${o.width}px,calc(100% - 32px))`:''}"><h3>${esc(o.title)}</h3>${o.lines.filter(Boolean).map(l=>`<p>${l}</p>`).join('')}<div class="acts"><button class="c">Cancel</button><button class="ok">${esc(o.ok||'OK')}</button></div></div>`;
+  s.querySelector('.c').onclick=()=>dlgCancel(); s.querySelector('.ok').onclick=()=>{ s.hidden=true; dlgCancel=null; onOk(); }; s.querySelector('.ok').focus(); }
+function fileBrowser(o, onOk){ const s=$('#scrim'); s.hidden=false; dlgCancel=()=>{ s.hidden=true; dlgCancel=null; logAct(o.title,'Blender file browser','Cancelled'); };
+  s.innerHTML=`<div class="dlg fb" role="dialog"><div class="bar">📁 //exports/ <span style="margin-left:auto">${esc(o.title)}</span></div><div class="files"><div>📁 ..</div><div>📁 cache_fluidsim</div><div>📄 scene.blend</div></div>
+  <div class="foot">${o.dir?'<span style="color:#9aa4b1">Directory</span>':''}<input value="${esc(o.name)}" aria-label="File name"><button class="c">Cancel</button><button class="ok">${esc(o.btn)}</button></div></div>`;
+  s.querySelector('.c').onclick=()=>dlgCancel(); s.querySelector('.ok').onclick=()=>{ const v=s.querySelector('input').value; s.hidden=true; dlgCancel=null; onOk('//exports/'+v); }; }
+
+/* =====================================================================
+   9. Command palette (deck/palette.py twin)
+   ===================================================================== */
+const DEMOS=['dam_break','paddle_stir','crown_splash','chromatic_vortex','buoyancy_ladder','water_wheel','viscosity_race','deep_plunge','capillary_droplet'];
+function buildIndex(){
+  const R=[];
+  const op=(label,target,ctrl)=>R.push({kind:'operator',label,target,ctrl});
+  op('Set Up Scene','fluidsim.setup_scene',SLOTS.SETUP[0]); op('Step','fluidsim.step',C.STEP); op('Restart Simulation','fluidsim.restart_simulation',C.RESTART);
+  op('Apply Changes','fluidsim.apply_changes',SLOTS.SIMULATE[3]); op('Revert Pending Values','fluidsim.revert_pending',C.REVERT);
+  op('Start Production Bake','fluidsim.bake_start',C.BAKE); op('Resume Production Bake','fluidsim.bake_resume',SLOTS.BAKE[1]);
+  op('Cancel Production Bake','fluidsim.bake_cancel',{status:x=>S(true, x.activity==='PRODUCTION_BAKE'?'':'No production bake is active'), run:()=>runCancelBake('Palette › Cancel Production Bake')});
+  op('Play Cache','fluidsim.cache_preview_start',SLOTS.BAKE[2]); op('Free Entire Cache','fluidsim.cache_free',SLOTS.BAKE[5]);
+  op('Export Alembic','fluidsim.export_alembic',SLOTS.BAKE[3]); op('Export VDB','fluidsim.export_vdb',SLOTS.BAKE[4]);
+  op('Install Render Nodes','fluidsim.install_render_nodes',SLOTS.LOOK[4]); op('Tag Liquid Emitter','fluidsim.tag_liquid_emitter',SLOTS.SETUP[1]);
+  op('Tag Collider','fluidsim.tag_collider',SLOTS.SETUP[2]); op('Use Active as Domain','fluidsim.use_active_as_domain',SLOTS.SETUP[3]);
+  op('Add Fluid Domain','fluidsim.add_domain',{status:()=>S(true), run:()=>runAddDomain('Palette › Add Fluid Domain')});
+  op('Initialize Solver','fluidsim.initialize',{status:x=>S(true, mutR(x)), run:()=>{ X.owner='here'; logAct('Palette › Initialize Solver','fluidsim.initialize','Session created for this scene'); refresh(); }});
+  op('Release Solver','fluidsim.release',{status:x=>S(true, x.owner==='here'?bakeR(x):'Initialize the solver first'), run:()=>{ X.owner='none'; X.activity='IDLE'; logAct('Palette › Release Solver','fluidsim.release','Session released'); refresh(); }});
+  op('Toggle Liquid Preview','fluidsim.toggle_liquid_preview',C.LP); op('Re-detect GPU','fluidsim.refresh_runtime_probe',{status:()=>S(true), run:()=>logAct('Palette › Re-detect GPU','fluidsim.refresh_runtime_probe','Re-probed')});
+  op('Apply Pending Reset (internal)','fluidsim.apply_pending_reset',{status:x=>S(true, mutR(x)), run:()=>runApply('Palette › internal operator')});
+  const set=(label,target,type,get,write,tier,needsDomain=true)=>{ if(needsDomain && !X.domain) return; R.push({kind:'setting',label,target,type,get,write,tier}); };
+  set('Viscosity','viscosity_enabled','bool',()=>X.viscosity,v=>X.viscosity=v,'LIVE'); set('Surface Tension','surface_tension_enabled','bool',()=>X.st,v=>X.st=v,'RESET');
+  set('Surface','surface_enabled','bool',()=>X.surface,v=>X.surface=v,'SURFACE'); set('Whitewater','whitewater_enabled','bool',()=>X.whitewater,v=>X.whitewater=v,'WHITEWATER');
+  set('Liquid Preview','liquid_preview_enabled','bool',()=>X.lp,v=>X.lp=v,'LIVE',false);
+  set('Resolution Divisions','resolution_divisions','int',()=>M.divisions,v=>{ M.snap=M.snap||{dom:{...M.dom},div:M.divisions}; M.divisions=Math.max(8,Math.round(v)); },'REINIT');
+  set('FLIP Ratio','flip_ratio','float',()=>0.95,()=>{},'LIVE'); set('Particles per Voxel','particles_per_voxel','float',()=>8,()=>{},'RESET');
+  set('Quality','quality','enum',()=>X.quality,null,'',false); set('Pressure Preconditioner','pressure_preconditioner','enum',()=>'MULTIGRID',null,'');
+  for(const [l,id] of [['Water','builtin:water'],['Viscous Honey','builtin:honey'],['Big Splash','builtin:splash']]) R.push({kind:'preset',label:l,target:id});
+  for(const d of DEMOS) R.push({kind:'demo',label:d.replace(/_/g,' '),target:d});
+  return R;
+}
+function score(qs, t){ qs=qs.toLowerCase(); t=t.toLowerCase(); if(!qs) return 0; let s=0, from=0, prev=-2;
+  for(const ch of qs){ const i=t.indexOf(ch,from); if(i<0) return null; s+=1; if(i===prev+1) s+=5; if(i===0||/[\s_.:\-]/.test(t[i-1])) s+=3; s-=0.1*(i-from); prev=i; from=i+1; } return s; }
+let IDX=[], palRows=[], palSel=0, palKinds=null, palEdit=null, palFrom='';
+function openPal(kinds, where){ if(!deckVisible(X)){ report('INFO','Ctrl+K passes through to Blender (Deck hidden)'); return; } closeWheel();
+  IDX=buildIndex(); palKinds=kinds; palEdit=null; palSel=0; palFrom=where||'Ctrl+K'; const pi=$('#palIn'); pi.readOnly=false; pi.value='';
+  pi.placeholder = kinds==='preset'?'Choose a preset…':kinds==='demo'?'Choose a demo…':'Type a command, preset, demo or setting…';
+  $('#pal').hidden=false; renderPal(); pi.focus();
+  logAct(where||'Ctrl+K','fluidsim.command_palette (custom modal)',`Index built once now: ${IDX.length} rows in this mock (~100 operators in the add-on, INTERNAL ones included)${!X.domain?'; domain settings dropped (no domain)':''}`); }
+function closePal(){ $('#pal').hidden=true; palEdit=null; }
+function fmtVal(r){ const v=r.get(); return r.type==='bool'?(v?'on':'off'):r.type==='enum'?v:Number(v).toPrecision(4).replace(/\.?0+$/,''); }
+function renderPal(){
+  const pi=$('#palIn'), ul=$('#palList');
+  if(palEdit){ pi.value=`${palEdit.row.label} = ${palEdit.text}_`; }
+  else { const qs=pi.value.trim(); palRows=IDX.filter(r=>!palKinds||r.kind===palKinds).map(r=>({r,s:Math.max(score(qs,r.label)??-1e9, score(qs,r.target)??-1e9)})).filter(o=>o.s>-1e9).sort((a,b)=>b.s-a.s).slice(0,10).map(o=>o.r);
+    if(palSel>=palRows.length) palSel=0; }
+  ul.innerHTML=palRows.map((r,i)=>`<li class="${i===palSel?'sel':''}"><span class="k">${r.kind}</span><span>${esc(r.label)}</span><span class="t">${esc(r.target)}</span>${r.kind==='setting'?`<span class="v">${esc(fmtVal(r))}</span>`:''}</li>`).join('') || '<li><span class="t">No matches</span></li>';
+}
+function runPalRow(r){
+  const where=`Palette › ${r.label}`;
+  if(r.kind==='operator'){ closePal(); const s=r.ctrl.status(X); if(!s.ok){ report('WARNING',s.why); logAct(where,`${r.target} INVOKE_DEFAULT (row was not greyed)`,`Refused: “${s.why}” — palette already closed`,'WARNING'); return; } r.ctrl.run(); return; }
+  if(r.kind==='demo'){ closePal(); runLoadDemo(where, r.target); return; }
+  if(r.kind==='preset'){ closePal();
+    if(!X.domain){ report('ERROR','Designate a FluidSim domain object first'); logAct(where,'writes product_preset, then fluidsim.apply_product_preset','Refused: “Designate a FluidSim domain object…”','ERROR'); return; }
+    if(bakeR(X)){ report('ERROR',bakeR(X)); logAct(where,'writes product_preset FIRST, then apply','Apply refused (“'+bakeR(X)+'”) but the preset field was already changed','ERROR'); return; }
+    report('INFO',`Preset ${r.label} applied`); logAct(where,'product_preset + fluidsim.apply_product_preset','Settings written'); tierEdit('RESET','product_preset',where); return; }
+  if(r.type==='bool'){ r.write(!r.get()); closePal(); flash(r.target); logAct(where,`direct write ${r.target} (no bake gate)`, `Toggled; chip shows “LIVE · ${r.target}”${['LIVE','SURFACE','WHITEWATER'].includes(r.tier)?'':' even though this is a '+r.tier+'-tier field (mislabel)'}`, ['LIVE','SURFACE','WHITEWATER'].includes(r.tier)?'INFO':'WARNING');
+    if(!['LIVE','SURFACE','WHITEWATER'].includes(r.tier)) tierEdit(r.tier,r.target,where); refresh(); return; }
+  if(r.type==='enum'){ closePal(); logAct(where,'fluidsim.open_scene_properties','Jumps to the Properties editor; with none open: “No Properties editor is open…”'); return; }
+  palEdit={row:r, text:fmtVal(r)}; $('#palIn').readOnly=true; renderPal(); logAct(where,'inline edit','Starts from the .4g-rounded value; typed digits APPEND to it (Backspace first)','WARNING');
+}
+$('#palIn').addEventListener('input', ()=>{ palSel=0; renderPal(); });
+$('#palIn').addEventListener('paste', ev=>{ ev.preventDefault(); toast('Ctrl+V pastes nothing in the real palette'); });
+$('#palIn').addEventListener('keydown', ev=>{
+  if(ev.key==='Escape'){ ev.preventDefault(); closePal(); return; }
+  if(palEdit){ ev.preventDefault();
+    if(ev.key==='Enter'){ const r=palEdit.row, v=parseFloat(palEdit.text); closePal(); if(isNaN(v)){ report('ERROR','Not a number'); return; } r.write(v); report('INFO',`${r.label} = ${v}`); logAct(`Palette › ${r.label}`,`direct write ${r.target} = ${v} (no bake gate)`,'Written');
+      if(r.tier==='REINIT'||r.tier==='RESET') tierEdit(r.tier,r.target,`Palette › ${r.label}`); else flash(r.target); refresh(); return; }
+    if(ev.key==='Backspace'){ palEdit.text=palEdit.text.slice(0,-1); renderPal(); return; }
+    if(/^[0-9.\-]$/.test(ev.key)){ palEdit.text+=ev.key; renderPal(); } return; }
+  if(ev.key==='ArrowDown'){ ev.preventDefault(); palSel=(palSel+1)%Math.max(1,palRows.length); renderPal(); }
+  else if(ev.key==='ArrowUp'){ ev.preventDefault(); palSel=(palSel-1+palRows.length)%Math.max(1,palRows.length); renderPal(); }
+  else if(ev.key==='Enter'){ ev.preventDefault(); const r=palRows[palSel]; if(r) runPalRow(r); }
+});
+$('#pal').addEventListener('mousedown', ev=>{ if(ev.target.closest('li')){ ev.preventDefault(); toast('Rows are not clickable in the real palette — use ↑↓ and Enter'); } });
+
+/* =====================================================================
+   10. Radial wheel (deck/wheel.py twin)
+   ===================================================================== */
+let wheelAt=null;
+function openWheel(x,y,where){ if(!deckVisible(X)){ report('INFO','Alt+Right-click passes through to Blender (Deck hidden)'); return; } closePal();
+  wheelAt=[x??W/2, y??H/2-30]; renderWheel(); if(where) logAct(where,'fluidsim.radial_wheel (custom modal)',`Six ${X.stage} slots; mouse and keys are swallowed until Esc or a slot runs`); }
+function closeWheel(){ $('#wheel').hidden=true; wheelAt=null; }
+function renderWheel(tipHTML){ if(!wheelAt) return; const w=$('#wheel'); w.hidden=false; const [x,y]=wheelAt; w.style.left=Math.max(140,Math.min(W-140,x))+'px'; w.style.top=Math.max(150,Math.min(H-190,y))+'px';
+  const slots=SLOTS[X.stage]; w.innerHTML='';
+  slots.forEach((s,i)=>{ const a=-Math.PI/2+i*Math.PI/3, st=s.status(X), el=document.createElement('div'); el.className='slot'+(st.ok?'':' grey')+(s.on&&s.on(X)?' on':'');
+    el.style.left=(Math.cos(a)*92)+'px'; el.style.top=(Math.sin(a)*92)+'px'; el.textContent=s.label;
+    el.onmouseenter=()=>setWheelTip(s,st); el.onclick=ev=>{ ev.stopPropagation(); const st2=s.status(X); if(!st2.ok){ setWheelTip(s,st2); greyed(s.label,st2.why,`Wheel › ${s.label}`); return; } closeWheel(); s.run(); };
+    w.append(el); });
+  const hub=document.createElement('div'); hub.className='hub'; hub.textContent=({SETUP:'Setup',SIMULATE:'Simulate',LOOK:'Look',BAKE:'Bake'})[X.stage]; hub.title='Click: next stage (writes scene.fluidsim.deck_stage)';
+  hub.onclick=ev=>{ ev.stopPropagation(); const order=['SETUP','SIMULATE','LOOK','BAKE']; X.stage=order[(order.indexOf(X.stage)+1)%4]; $('#hStage').value=X.stage; renderWheel(); }; w.append(hub);
+  const tip=document.createElement('div'); tip.className='wtip'; tip.id='wtip'; tip.innerHTML=tipHTML||'Hover a slot · click to run · Esc closes'; w.append(tip); }
+function setWheelTip(s,st){ const t=$('#wtip'); if(t) t.innerHTML=`<b>${esc(s.label)}</b> — ${esc(s.tip)}${st.ok?'':`<br><span class="why">Unavailable: ${esc(st.why)}</span>`}`; }
+
+/* =====================================================================
+   11. Viewport input: selection + gizmo drags
+   ===================================================================== */
+function pos(ev){ const r=vp.getBoundingClientRect(); return [ev.clientX-r.left, ev.clientY-r.top]; }
+function hit(x,y){
+  const h=handles, near=(o,pad=4)=>o&&Math.hypot(x-o.x,y-o.y)<o.r+pad;
+  if(G.vel.show(X)&&near(h.vel)) return 'vel';
+  if(G.dyn.show(X)&&h.dyn&&Math.abs(x-h.dyn.x)<h.dyn.w/2&&Math.abs(y-h.dyn.y)<h.dyn.h/2) return 'dyn';
+  if(G.fill.show(X)&&h.fill&&Math.abs(Math.hypot(x-h.fill.cx,y-h.fill.cy)-h.fill.r)<7) return 'fill';
+  if(G.fric.show(X)&&h.fric&&Math.abs(Math.hypot(x-h.fric.cx,y-h.fric.cy)-h.fric.r)<7) return 'fric';
+  if(G.dom.show(X)) for(const k of ['domX','domNX','domY','domZ']) if(near(h[k],5)) return k;
   return null;
 }
-vp.addEventListener('mousemove', ev=>{ if(drag) return onDrag(ev); vp.style.cursor = hit(ev)?'grab':'crosshair'; });
-vp.addEventListener('mousedown', ev=>{ if(ev.button!==0) return; const k=hit(ev); if(k==='crate'){ S.collider.dynamic=!S.collider.dynamic; toast(S.collider.dynamic?'Collider → Dynamic (floats, gets pushed) · RESET pending':'Collider → Static'); if(S.collider.dynamic) setPending('RESET','collider_dynamic'); return; } if(!k) return; drag={kind:k,start:pos(ev),e:{...S.emitter},w:S.domain.w}; S._snapW=S.domain.w; vp.style.cursor='grabbing'; });
-window.addEventListener('mouseup', ()=>{ if(!drag) return; const k=drag.kind; drag=null; vp.style.cursor='crosshair';
-  if(k==='domX') setPending('RESET',`domain size → ${cellsTxt()}`);
-  if(k==='vel') setPending('LIVE','emitter_velocity'); if(k==='rate') setPending('LIVE','emission_rate'); });
-function onDrag(ev){
-  const [x,y]=pos(ev);
-  if(drag.kind==='vel'){ const o=project(S.emitter.x,S.emitter.y,S.emitter.z); const f=o[3]; // invert screen delta to world (approx: x→x, y→-y)
-    S.emitter.vx = (x-o[0])/f/0.5*Math.cos(cam.yaw)*1.0; S.emitter.vy = -(y-o[1])/f/0.5; S.emitter.vx=Math.max(-6,Math.min(6,S.emitter.vx)); S.emitter.vy=Math.max(-4,Math.min(4,S.emitter.vy)); }
-  if(drag.kind==='rate'){ const a=Math.atan2(y-handles.rate.cy,x-handles.rate.cx)+Math.PI/2; let fr=((a%(Math.PI*2))+Math.PI*2)%(Math.PI*2)/(Math.PI*2); S.emitter.rate=Math.round(400+fr*39600); }
-  if(drag.kind==='domX'){ S.domain.w=Math.max(2,Math.min(9, drag.w + (x-drag.start[0])/55)); $('#cornerCells').textContent=cellsTxt(); }
+function pick(x,y){ const h=handles, near=o=>o&&Math.hypot(x-o.x,y-o.y)<o.r;
+  if(near(h.emitter)) return 'emitter'; if(near(h.crate)) return 'collider'; if(near(h.cube)) return 'mesh'; if(near(h.empty)) return 'empty';
+  if(X.domain&&h.domPick){ const [a,b]=h.domPick.box; const xs=[a[0],b[0]], ys=[a[1],b[1]]; if(x>Math.min(...xs)-40&&x<Math.max(...xs)+40&&y>Math.min(...ys)-10&&y<Math.max(...ys)+10) return 'domain'; }
+  return 'none'; }
+vp.addEventListener('mousemove', ev=>{ const [x,y]=pos(ev); if(drag) return onDrag(x,y,ev); vp.style.cursor=hit(x,y)?'grab':'default'; });
+vp.addEventListener('mousedown', ev=>{ if(ev.button!==0||wheelAt) return; const [x,y]=pos(ev); const k=hit(x,y);
+  if(k==='dyn'){ drag={kind:'dyn'}; return; }
+  if(k){ drag={kind:k, start:[x,y], em:{...M.em}, dom:{...M.dom}, fric:M.cr.fric}; M.snap=M.snap||{dom:{...M.dom},div:M.divisions}; vp.style.cursor='grabbing'; return; }
+  const a=pick(x,y); if(a!==X.active){ X.active=a; logAct('Viewport click','Blender selection',a==='none'?'Deselected — no gizmos':`Active: ${a} → ${({emitter:'velocity arrow + Fill dial',collider:'Friction dial + Dynamic toggle',domain:X.axis?'six face handles':'no handles (rotated/parented)',mesh:'no gizmos (no role)',empty:'no gizmos'})[a]}`); refresh(); } });
+addEventListener('mouseup', ev=>{ if(!drag) return; const k=drag.kind; drag=null; vp.style.cursor='default'; const where='Gizmo › '+k;
+  if(k==='dyn'){ X.body=X.body==='DYNAMIC'?'STATIC':'DYNAMIC'; logAct('Gizmo › Dynamic toggle','write collider_dynamic (no undo)',`“Dynamic ${X.body==='DYNAMIC'?'on':'off'}” — also flips when a drag is released over it`); tierEdit('RESET','collider_dynamic',where); refresh(); return; }
+  if(k==='vel') tierEdit('SYNC','initial_velocity','Gizmo › Velocity arrow');
+  if(k==='fill') tierEdit('RESET', X.srcMode==='LEGACY'?'emit_rate':'source_sampling_multiplier','Gizmo › Fill dial');
+  if(k==='fric') tierEdit('SYNC','collider_friction','Gizmo › Friction dial');
+  if(k.startsWith('dom')){ X.pendCount; tierEdit('REINIT','domain size (location/scale via depsgraph)','Gizmo › Domain face'); }
+});
+function onDrag(x,y,ev){ const k=drag.kind, dx=x-drag.start[0], dy=y-drag.start[1];
+  if(k==='vel'){ const s=ev.shiftKey?0.25:1; M.em.vx=drag.em.vx+dx/40*s; M.em.vy=drag.em.vy-dy/40*s; }
+  if(k==='fill'||k==='fric'){ const c=handles[k]; const a=Math.atan2(y-c.cy,x-c.cx)+Math.PI/2; const fr=((a%6.283)+6.283)%6.283/6.283;
+    if(k==='fric') M.cr.fric=fr; else if(X.srcMode==='LEGACY') M.em.rate=Math.min(32,fr*32); else M.em.fill=fr*8; }
+  if(k==='domX'||k==='domNX'){ M.dom.w=Math.max(0.05,drag.dom.w+(k==='domX'?dx:-dx)/55); }
+  if(k==='domY'){ M.dom.h=Math.max(0.05,drag.dom.h-dy/55); }
+  if(k==='domZ'){ M.dom.d=Math.max(0.05,drag.dom.d+dy/55); }
 }
-vp.addEventListener('contextmenu', ev=>{ if(!ev.altKey) return; ev.preventDefault(); const [x,y]=pos(ev); openWheel(x,y); });
+vp.addEventListener('contextmenu', ev=>{ ev.preventDefault(); if(!ev.altKey){ toast('Plain right-click stays Blender’s context menu (the add-on adds no entries)'); return; } const [x,y]=pos(ev); openWheel(x,y,'Alt+Right-click'); });
 
-/* ---------- deck buttons (each a twin of an operator) ---------- */
-$('#bPlay').onclick=()=>{ S.playing=!S.playing; $('#bPlay').textContent=S.playing?'❚❚ Pause':'▶ Play'; $('#bPlay').classList.toggle('on',S.playing); toast(S.playing?'screen.animation_play':'screen.animation_cancel'); };
-$('#bPlay').classList.add('on'); $('#bPlay').textContent='❚❚ Pause';
-$('#bStep').onclick=()=>{ const was=S.playing; S.playing=true; stepSim(1/24); S.playing=was; toast('fluidsim.step_frame · +1 frame'); };
-$('#bRestart').onclick=()=>{ P.length=0; S.collider.y=0.9; S.collider.vy=0; toast('fluidsim.restart_simulation'); setPending(null); };
-function setPreview(v){ S.preview=v; $('#bPrev').classList.toggle('on',v); $('#cornerMode').textContent=v?'Liquid Preview':'Solid'; toast(v?'Liquid Preview on · screen-space surface, no mesh build':'Liquid Preview off · points'); }
-$('#bPrev').onclick=()=>setPreview(!S.preview);
-$('#bBake').onclick=()=>{ if(S.bake.on) return; S.bake={on:true,p:0}; $('#ringTxt').textContent='0'; toast('fluidsim.bake · frames 1–120 · Esc cancels'); };
-$('#bPal').onclick=()=>openPal(); $('#bWheel').onclick=()=>openWheel(W/2,H/2-40);
-window.addEventListener('keydown', ev=>{
-  if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==='k'){ ev.preventDefault(); openPal(); return; }
-  if(ev.key==='Escape'){ closePal(); closeWheel(); return; }
-  if(ev.target.tagName==='INPUT') return;
-  if(ev.key.toLowerCase()==='l') setPreview(!S.preview);
-  if(ev.key===' '){ ev.preventDefault(); $('#bPlay').click(); }
+addEventListener('keydown', ev=>{
+  if(ev.key==='Escape'){
+    if(dlgCancel){ dlgCancel(); return; }
+    if(drag){ Object.assign(M.em,drag.em||{}); if(drag.dom) Object.assign(M.dom,drag.dom); if(drag.fric!==undefined) M.cr.fric=drag.fric; logAct('Esc during gizmo drag','gizmo cancel','Value restored (domain handles restore only the dragged axis)'); drag=null; return; }
+    if(wheelAt){ closeWheel(); return; }
+    if(!$('#pal').hidden) return;
+    if(X.activity==='PRODUCTION_BAKE'){ X.activity='IDLE'; X.cache='partial'; report('INFO','Production Bake cancelled (Esc)'); logAct('Esc','bake modal','Bake cancelled; cache partial → Resume available. The Deck modal itself never consumes Esc'); applyHeld(); refresh(); }
+    return; }
+  if(ev.target.closest&&ev.target.closest('input,select,textarea')) return;
+  if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==='k'){ ev.preventDefault(); openPal(null,'Ctrl+K'); return; }
+  if(wheelAt) { ev.preventDefault(); return; } // wheel swallows keys
+  if(ev.key.toLowerCase()==='l'){ runLP('L key (keymap: fluidsim.toggle_liquid_preview)'); }
+  if(ev.key===' '){ ev.preventDefault(); playing(X)?runPause('Space'):runPlay('Space'); }
 });
 
-/* ---------- command palette ---------- */
-const commands = [
-  {k:'operator', t:'Play / Pause', run:()=>$('#bPlay').click()},
-  {k:'operator', t:'Restart Simulation', run:()=>$('#bRestart').click()},
-  {k:'operator', t:'Bake 1–120', run:()=>$('#bBake').click()},
-  {k:'operator', t:'Export Surface as Alembic', run:()=>toast('fluidsim.export_alembic (needs a baked cache)')},
-  {k:'operator', t:'Apply Pending Changes', run:()=>{ const b=$('#chip button.go'); b?b.click():toast('Nothing pending'); }},
-  {k:'display', t:'Toggle Liquid Preview', run:()=>setPreview(!S.preview)},
-  {k:'preset', t:'Apply preset · Water', run:()=>{ S.substeps=4; toast('Preset Water applied · LIVE + RESET fields classified'); setPending('RESET','preset Water'); }},
-  {k:'preset', t:'Apply preset · Honey (viscous)', run:()=>{ S.substeps=6; toast('Preset Honey applied'); setPending('RESET','preset Honey'); }},
-  {k:'demo', t:'Load demo · dam_break', run:()=>toast('fluidsim.load_demo dam_break')},
-  {k:'demo', t:'Load demo · crown_splash', run:()=>toast('fluidsim.load_demo crown_splash')},
-  {k:'demo', t:'Load demo · paddle_stir', run:()=>toast('fluidsim.load_demo paddle_stir')},
-  {k:'setting', t:'Resolution Divisions', get:()=>S.divisions, set:v=>{ S.divisions=Math.max(16,Math.min(256,Math.round(v))); $('#cornerCells').textContent=cellsTxt(); setPending('RESET',`resolution_divisions = ${S.divisions}`); }},
-  {k:'setting', t:'Substeps', get:()=>S.substeps, set:v=>{ S.substeps=Math.max(1,Math.min(16,Math.round(v))); setPending('LIVE','substeps'); }},
-  {k:'setting', t:'Emission Rate (/s)', get:()=>S.emitter.rate, set:v=>{ S.emitter.rate=Math.max(0,Math.round(v)); setPending('LIVE','emission_rate'); }},
-  {k:'setting', t:'Pressure Preconditioner', get:()=>'MULTIGRID', set:()=>toast('enum: Jacobi | Multigrid (4.0 default)')},
-  {k:'setting', t:'Collider · Dynamic', get:()=>S.collider.dynamic?'on':'off', set:()=>{ S.collider.dynamic=!S.collider.dynamic; setPending('RESET','collider_dynamic'); }},
+/* =====================================================================
+   12. Rail: scenarios + state form
+   ===================================================================== */
+function renderRail(){
+  const g=$('#fgrid'); g.innerHTML='';
+  for(const [k,lab,opts] of FIELDS){ const l=document.createElement('label'); l.textContent=lab; l.htmlFor='f_'+k; const s=document.createElement('select'); s.id='f_'+k;
+    opts.forEach(([v,t],i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=t; if(v===X[k]) o.selected=true; s.append(o); });
+    s.onchange=()=>{ const v=opts[+s.value][0]; X[k]=v;
+      if(k==='pending'){ X.pendCount=v==='none'?0:Math.max(1,X.pendCount); if(v!=='none') X.owner='here'; }
+      if(k==='deck'&&v==='AUTO') X.deckShown=false; if(k==='deck'&&v==='ON') X.deckShown=true;
+      if(k==='activity'&&v==='PRODUCTION_BAKE'){ M.bakeP=0; if(X.cache==='none') X.cache='partial'; }
+      if(k==='domain'&&!v&&X.active==='domain') X.active='mesh';
+      logAct('State › '+lab,'scene state changed',`${t(opts,v)}`); refresh(); };
+    g.append(l,s); }
+  function t(opts,v){ return opts.find(o=>o[0]===v)[1]; }
+}
+$('#scen').innerHTML=SCENARIOS.map((s,i)=>`<button data-s="${i}">${esc(s[0])}</button>`).join('');
+$('#scen').onclick=ev=>{ const b=ev.target.closest('button'); if(!b) return; const [name,patch]=SCENARIOS[+b.dataset.s]; X={...DEFAULT,...patch}; if(X.activity==='PRODUCTION_BAKE') M.bakeP=0.3; clearSim(); M.flash=null; closePal(); closeWheel();
+  logAct('Preset › '+name,'scene state replaced','Deck, wheel, palette, header and spec badges re-evaluated'); refresh(); };
+
+/* =====================================================================
+   13. Spec tabs — generated from the same rules
+   ===================================================================== */
+const CANON=[['No domain',{domain:false,owner:'none',activity:'IDLE',active:'mesh'}],['Idle, owned',{activity:'IDLE'}],['Live',{}],['Pending',{activity:'IDLE',pending:'RESET',pendCount:2}],
+  ['Cache play',{owner:'none',activity:'CACHE_PLAYBACK',cache:'complete'}],['Bake here',{activity:'PRODUCTION_BAKE',cache:'partial'}],['Bake elsewhere',{owner:'none',activity:'BAKE_OTHER'}],
+  ['Other owns',{owner:'other',activity:'IDLE'}],['No CUDA',{runtime:'nocuda',owner:'none',activity:'IDLE'}],['Deck off',{deck:'OFF'}]];
+let REASONS=[];
+function cell(st, x){ if(!deckVisible(x)) return '<span class="h" title="Deck hidden">off</span>'; if(!st.show) return '<span class="h">—</span>';
+  if(st.ok) return '<span class="y">✓</span>'; let i=REASONS.indexOf(st.why); if(i<0){ REASONS.push(st.why); i=REASONS.length-1; } return `<span class="g" title="${esc(st.why)}">✕${i+1}</span>`; }
+function matrixRows(){ const rows=[];
+  for(const k of ['PLAY','PAUSE','CANCEL_BAKE','STEP','RESTART','APPLY','REVERT','LP','SEARCH','WHEEL','BAKE']) rows.push(['Bar', C[k].label, C[k].id, x=>C[k].status(x)]);
+  for(const stg of Object.keys(SLOTS)) for(const s of SLOTS[stg]) rows.push([`Wheel · ${stg[0]+stg.slice(1).toLowerCase()}`, s.label, s.id, x=>s.status(x)]);
+  for(const k of Object.keys(G)) rows.push(['Gizmo', G[k].label, G[k].target, x=>S(G[k].show(x))]);
+  rows.push(['Palette','Every row','fluidsim.command_palette', x=>S(true)]);
+  return rows; }
+function tabAvailability(){ REASONS=[]; const rows=matrixRows();
+  const head=`<tr><th>Surface</th><th>Control</th><th class="c">Now</th>${CANON.map(c=>`<th class="c">${esc(c[0])}</th>`).join('')}</tr>`;
+  const body=rows.map(([surf,lab,id,f])=>`<tr><td>${esc(surf)}</td><td><b>${esc(lab)}</b><br><code>${esc(id)}</code></td><td class="c now">${cell(f(X),X)}</td>${CANON.map(c=>{ const x={...DEFAULT,active:'emitter',...c[1]}; return `<td class="c">${cell(f(x),x)}</td>`; }).join('')}</tr>`).join('');
+  return `<h3>Availability matrix — Deck bar, wheel (all 24 slots), gizmos, palette</h3>
+  <div class="legend"><span><span class="y">✓</span> available</span><span><span class="g">✕n</span> drawn but greyed (reason n below; hover for text)</span><span><span class="h">—</span> not drawn</span><span><span class="h">off</span> whole Deck hidden</span></div>
+  <p class="note">Gizmo columns assume the relevant object is active (emitter for most columns). Domain handles need the domain active, axis-aligned, unparented and positively scaled. The palette never greys a row: refusals appear only after Enter.</p>
+  <div class="tw"><table>${head}${body}</table></div><h3>Greyed reasons</h3><ol class="reasons">${REASONS.map(r=>`<li>${esc(q(r))}</li>`).join('')}</ol>
+  <h3>Deck visibility</h3><div class="tw"><table><tr><th>Deck mode (prefs)</th><th>Scene deck_shown</th><th>Result</th></tr>
+  <tr><td>On (default)</td><td>True (default)</td><td>Bar, palette (Ctrl+K), wheel (Alt+RMB), gizmos, header toggle</td></tr>
+  <tr><td>On / Auto</td><td>False</td><td>Bar, palette and wheel hidden; header Deck toggle shows them again; keys pass through</td></tr>
+  <tr><td>Auto</td><td>—</td><td>3.x files load hidden (deck_shown False), new files shown</td></tr>
+  <tr><td>Off</td><td>any</td><td>Bar, palette, wheel and the header toggle are gone; Ctrl+K / Alt+RMB pass through to Blender</td></tr></table></div>
+  <p class="note">The Deck also draws in scenes without FluidSim, ignores the Overlays toggle, and has no modal for roughly the first second after a file loads.</p>`; }
+
+const FT_BAR=[
+ ['Play','screen.animation_play','Instant (Blender timeline)','Arms live play. '+q('Playing')+'; with edits pending '+q('Edits pending: rewind to the start frame or Apply Changes to use them')+'; another scene owns the solver '+q('Another scene owns the solver; release it from that scene first')+'.','Shown when not playing and not baking here. Never greyed (Blender poll only).'],
+ ['Pause','fluidsim.preview_pause','Instant',q('Paused - press Play to resume')+'. No poll; always highlighted.','Replaces Play while playing.'],
+ ['Cancel Bake','fluidsim.bake_cancel','Instant, no confirm','Cancels every running Production Bake, in every scene.','Replaces Play/Pause while this scene bakes.'],
+ ['Step','fluidsim.step (EXEC, frames=1)','Instant','One frame. The Deck frame readout and sparkline do not change. Errors '+q('Solver initialization failed: …')+', '+q('Step failed: …')+'.','Hidden unless this scene owns the solver and not in Cache playback / Bake. Greyed by runtime, bake, '+q('Initialize the solver first')+'.'],
+ ['Restart','fluidsim.restart_simulation','Instant, no confirm','Clears preview progress, back to the first frame.','Same visibility as Step; greyed by bake / runtime.'],
+ ['Pending chip','—','Text','States: '+q('No pending changes')+' · '+q('{n} change(s) staged for reset')+' · '+q('{n} change(s) staged to reinitialize the solver')+' · 2 s flash '+q('LIVE · {raw field name}')+' · during a bake '+q('A Production Bake is running; changes apply when it ends')+'.','Apply / Revert appear only when something is pending. Pending needs an applied signature (a session that ran).'],
+ ['Apply','fluidsim.apply_changes','Props dialog when a restart is needed',q('Restart simulation from frame {frame_start}?')+' / '+q('Current preview progress will be cleared.')+' → '+q('Changes applied')+' or '+q('Playing preview')+'. Stale: '+q('Scene or settings changed; review the restart again')+'. In Cache playback it fails: '+q('Cache Preview is selected; switch to Live Preview before applying simulation changes')+'.','Greyed during a bake and without runtime.'],
+ ['Revert','fluidsim.revert_pending','Instant, undoable',q('Pending values reverted')+'. Works during a bake.','Greyed: '+q('No pending settings to revert')+'.'],
+ ['Liquid Preview','scene.fluidsim.liquid_preview_enabled','Toggle (direct write, no undo)','Flashes '+q('LIVE · liquid_preview_enabled')+'. Never shows the panel warning '+q('Liquid Preview is on but no particles are published yet; play the simulation in a particle view')+'. Also on the L key.','Always available.'],
+ ['Search','fluidsim.command_palette','Deck palette (custom modal)','See the Palette tab.','Always, while the Deck is shown.'],
+ ['Wheel','fluidsim.radial_wheel','Deck wheel (custom modal)','See the Wheel tab.','Always, while the Deck is shown.'],
+ ['Bake','fluidsim.bake_start (restart_existing=False)','Modal on a 0.05 s timer; Esc cancels; right-click passes through','Fails after the click on: an unsaved file with a relative cache path ('+q('Save the .blend file first, or set an absolute Cache Path…')+'); any existing cache ('+q('…cache data already exists; use Resume or explicit Restart')+'); anything else '+q('Production bake could not start: {exc}')+'. The progress ring keeps drawing on the now-greyed button.','Greyed: '+q('A production bake is already active')+' or the runtime message.'],
+ ['Any control','—','—','Tooltip '+q('{why} ({idname})')+'; greyed tooltip '+q('Unavailable: {reason}')+'; clicking a greyed control warns '+q('{label}: {reason}')+' and runs nothing.','Readout tooltip '+q('Live stats')+'; sparkline '+q('Step time')+' (48 samples).'],
 ];
-let palSel=0, palRows=[];
-function fuzzy(q,t){ q=q.toLowerCase(); t=t.toLowerCase(); let i=0; for(const ch of t){ if(ch===q[i]) i++; if(i===q.length) return true; } return q.length===0; }
-function renderPal(){
-  const q=$('#palIn').value.trim(); palRows=commands.filter(c=>fuzzy(q,c.t)||fuzzy(q,c.k)); palSel=Math.min(palSel,Math.max(0,palRows.length-1));
-  const ul=$('#palList'); ul.innerHTML='';
-  palRows.forEach((c,i)=>{ const li=document.createElement('li'); if(i===palSel) li.classList.add('sel');
-    li.innerHTML=`<span class="k">${c.k}</span><span>${c.t}</span>`;
-    if(c.get!==undefined){ const v=c.get(); if(typeof v==='number'){ const inp=document.createElement('input'); inp.className='inl'; inp.value=v; inp.id='inl'+i; inp.onclick=e=>e.stopPropagation(); inp.onkeydown=e=>{ if(e.key==='Enter'){ c.set(parseFloat(inp.value)); toast(`${c.t} = ${c.get()}`); closePal(); } e.stopPropagation(); }; li.append(inp); } else { const s=document.createElement('span'); s.className='v'; s.textContent=v; li.append(s); } }
-    li.onclick=()=>runRow(i); ul.append(li); });
-}
-function runRow(i){ const c=palRows[i]; if(!c) return; if(c.run){ c.run(); closePal(); } else if(c.set){ const inp=$('#inl'+i); if(inp){ inp.focus(); inp.select(); } else { c.set(); closePal(); } } }
-function openPal(){ $('#pal').hidden=false; $('#palIn').value=''; palSel=0; renderPal(); $('#palIn').focus(); }
-function closePal(){ $('#pal').hidden=true; }
-$('#palIn').addEventListener('input', ()=>{ palSel=0; renderPal(); });
-$('#palIn').addEventListener('keydown', ev=>{ if(ev.key==='ArrowDown'){ palSel=Math.min(palRows.length-1,palSel+1); renderPal(); ev.preventDefault(); } else if(ev.key==='ArrowUp'){ palSel=Math.max(0,palSel-1); renderPal(); ev.preventDefault(); } else if(ev.key==='Enter'){ runRow(palSel); } });
+const FT_GIZ=[
+ ['Velocity arrow','emitter · initial_velocity','Drag the tip','1 m of drag = 4 m/s. Label '+q('v x, y, z m/s')+'. SYNC tier → LIVE flash. Esc restores. Shift scales the whole delta so the value jumps; Ctrl does nothing.','Active object is an emitter.'],
+ ['Fill dial','emitter · source_sampling_multiplier (0–8) or legacy emit_rate (0–32)','Drag around the ring; 300 px = full range','Label '+q('Fill {:.2f}')+'. RESET tier → '+q('1 change(s) staged for reset')+'.','Hidden when source mode is Inherit. Legacy rate is clamped to 32 (bug).'],
+ ['Friction dial','collider · collider_friction (0–1)','Drag around the ring','Label '+q('Friction {:.2f}')+'. SYNC tier → LIVE flash.','Active object is a collider.'],
+ ['Dynamic toggle','collider · collider_dynamic','Click','Label '+q('Dynamic on')+' / '+q('Dynamic off')+'. RESET tier. Also flips when a drag is released over it.','Collider whose object has the property.'],
+ ['Domain face handles ×6','domain · location / scale','Drag a face; the opposite face stays fixed; min size 0.05 m','Label '+q('{nx} × {ny} × {nz} cells · grid {px} × {py} × {pz} · {voxel} m · {div} divisions')+'. REINIT via the depsgraph (no LIVE flash). Esc restores only the dragged axis. Uses location/scale, not matrix_world.','Domain active, axis-aligned, unparented, positively scaled.'],
+ ['All gizmos','—','—','No bake or playback gate (edits during a bake are held). No undo step. Labels draw even with Overlays off.','—'],
+];
+const FT_PAL=[
+ ['Operator row','INVOKE_DEFAULT, no arguments','Whatever the operator opens (dialog, browser, modal)','A failing poll is reported after Enter; the palette still closes.'],
+ ['Demo row','fluidsim.load_demo','Opens the demo in a New Scene','All 9 demos are listed even when the file is missing → '+q('Demo blend file … not found on disk')+'. Blocked during a bake.'],
+ ['Preset row (source:id)','writes product_preset, then fluidsim.apply_product_preset','Instant','No domain: '+q('Designate a FluidSim domain object…')+'. During a bake the apply is refused but product_preset was already written.'],
+ ['Bool setting','direct property write','Toggles and closes','Chip flashes '+q('LIVE · {field}')+' even for Reset/Reinit-tier fields. No bake gate.'],
+ ['Int / float setting','direct property write','Inline edit in the search line: '+q('{label} = {text}_'),'Starts from a .4g-rounded value; typing appends (Backspace first). No bake gate.'],
+ ['Enum / other setting','fluidsim.open_scene_properties','Jumps to the Properties editor','No editor open: '+q('No Properties editor is open…')+'.'],
+];
+function tabFollow(){
+  const t=(h,rows)=>`<div class="tw"><table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${rows.map(r=>`<tr>${r.map((c,i)=>`<td>${i===0?`<b>${esc(c)}</b>`:i===1?`<code>${esc(c)}</code>`:c}</td>`).join('')}</tr>`).join('')}</table></div>`;
+  const wheel=[]; for(const stg of Object.keys(SLOTS)) for(const s of SLOTS[stg]) wheel.push([`${stg[0]+stg.slice(1).toLowerCase()} · ${s.label}`, s.id, s.opens, s.ft]);
+  return `<h3>Deck bar</h3>${t(['Control','Calls','What appears','Exact result','When shown / greyed'],FT_BAR)}
+  <h3>Viewport gizmos</h3>${t(['Gizmo','Writes','Interaction','Result','Shown when'],FT_GIZ)}
+  <h3>Command palette (Ctrl+K)</h3><p class="note">Index is built once when the palette opens: ~100 <code>fluidsim.*</code> operators (INTERNAL ones included; not the palette, wheel or deck modal), settings except Presentation/Adapter tiers (domain settings dropped when there is no domain), presets as <code>source:id</code>, 9 demos. Fuzzy score: +1 per matched character, +5 adjacent, +3 at a word start, −0.1 per skipped character. 10 rows max, no scrolling, ↑↓ wrap. Clicks inside the card are swallowed; Ctrl+V pastes nothing; rows are never greyed.</p>${t(['Row kind','Calls','What appears','Result / refusals'],FT_PAL)}
+  <h3>Radial wheel (Alt+Right-click)</h3><p class="note">Six slots on a ring of radius 92 px around a 30 px hub; greyed slots draw at alpha 0.12 (nearly invisible) with tip ${q('Unavailable: {reason}')}. The hub cycles Setup → Simulate → Look → Bake (writes <code>deck_stage</code>). Release-to-select works only when opened by the key and not clamped to the edge. Mouse and keys are swallowed until Esc. Clicking a greyed slot keeps the wheel open and says why. Toggle slots without a domain: ${q('Assign a FluidSim domain first (Setup > Domain or Set Up Scene)')}.</p>${t(['Slot','Calls','What appears','Result / notes'],wheel)}
+  <h3>Add and placement</h3><p class="note">Nothing in the add-on places an object interactively. <code>fluidsim.add_domain</code> drops a fixed box (−2,−2,0)…(2,2,4) and ignores the 3D cursor; role tags convert the selection in place; the effect controller empty goes to the active object; effect empties go to (0,0,1). F3 search finds only Add › Fluid Domain (FluidSim).</p>`; }
 
-/* ---------- radial wheel ---------- */
-const slotsByStage = {
-  0:['Set Up & Preview','Add Emitter','Add Collider','Resize Domain','Presets','Load Demo'],
-  1:['Play / Pause','Step','Restart','Apply Pending','Substeps','Viscosity'],
-  2:['Liquid Preview','Surface Mesh','Whitewater','Color Mixing','Materials','Overlays'],
-  3:['Bake','Resume Bake','Cache Playback','Export Alembic','Export VDB','Free Cache'],
-};
-function openWheel(x,y){
-  const w=$('#wheel'); w.hidden=false; w.style.left=x+'px'; w.style.top=y+'px'; w.innerHTML='';
-  slotsByStage[S.stage].forEach((t,i)=>{ const a=-Math.PI/2+i*Math.PI/3; const s=document.createElement('div'); s.className='slot'; s.textContent=t; s.style.transform=`translate(${Math.cos(a)*96}px,${Math.sin(a)*96}px)`; s.onclick=()=>{ closeWheel(); wheelAction(t); }; w.append(s); });
-  const hub=document.createElement('div'); hub.className='hub'; hub.textContent=stages[S.stage]; hub.title='Click: next stage'; hub.onclick=ev=>{ ev.stopPropagation(); S.stage=(S.stage+1)%4; openWheel(x,y); }; w.append(hub);
-}
-function closeWheel(){ $('#wheel').hidden=true; }
-function wheelAction(t){ const map={'Play / Pause':()=>$('#bPlay').click(),'Step':()=>$('#bStep').click(),'Restart':()=>$('#bRestart').click(),'Liquid Preview':()=>setPreview(!S.preview),'Bake':()=>$('#bBake').click(),'Apply Pending':()=>{ const b=$('#chip button.go'); b?b.click():toast('Nothing pending'); }}; (map[t]||(()=>toast(`${stages[S.stage]} › ${t} (operator twin)`)))(); }
-stage.addEventListener('mousedown', ev=>{ if(!$('#wheel').hidden && !ev.target.closest('.wheel')) closeWheel(); });
+const B={ok:'shown',A:'dimmed',E:'greyed',H:'hidden'};
+const badge=f=>{ if(!f) return '<span class="bdg n">not modelled</span>'; const v=f(X); return `<span class="bdg ${v}">${B[v]}</span>`; };
+const canStep=x=>x.owner==='here'&&x.runtime==='ready'&&!['CACHE_PLAYBACK','PRODUCTION_BAKE'].includes(x.activity);
+const opE=(why)=>why?'E':'ok';
+const PROPS=[
+ ['Scene › Lifecycle',[
+  ['Step One Frame','fluidsim.step','Instant',x=>canStep(x)?'ok':'E','Greyed unless runtime ready, this scene owns the solver, not Cache playback / Bake.'],
+  ['Step Multiple Frames…','fluidsim.step','Props dialog (frame count)',x=>canStep(x)?'ok':'E','Same.'],
+  ['Initialize Solver','fluidsim.initialize','Instant',x=>(x.owner!=='here'&&x.activity==='IDLE')?(x.runtime==='ready'?'ok':'E'):'H','Shown only when not owned and Idle; greyed without runtime.'],
+  ['Release Solver','fluidsim.release','Instant',x=>x.owner==='here'&&x.activity!=='PRODUCTION_BAKE'?'ok':'H','Shown when owned and not baking.'],
+  ['Reset Simulation','fluidsim.reset','Instant',x=>['CACHE_PLAYBACK','PRODUCTION_BAKE'].includes(x.activity)?'H':opE(mutR(x)),'Hidden during Cache playback / Bake.'],
+  ['Live Timeline Recovery','max_frame_catchup','Field',()=>'ok','Always.']]],
+ ['Scene › Status & Runtime',[
+  ['Re-detect GPU','fluidsim.refresh_runtime_probe','Instant (re-probe)',()=>'ok','Always.'],
+  ['Repair Outputs','fluidsim.install_render_nodes','Instant',null,'Only in the error box, for output-related errors.'],
+  ['Clear Error','fluidsim.clear_error','Instant',null,'Only with an error.']]],
+ ['Scene › Pending Settings',[
+  ['Apply Changes','fluidsim.apply_changes','Props dialog if Reset/Reinit',x=>x.pending==='none'?'H':opE(mutR(x)),'Panel hidden when nothing is pending.'],
+  ['Revert Pending Values','fluidsim.revert_pending','Instant, undoable',x=>x.pending==='none'?'H':'ok','Panel hidden when nothing is pending.']]],
+ ['Scene › Setup',[
+  ['UI Mode · Quality','ui_mode · quality','Enums',()=>'ok','Quality silently scales substeps, iterations, voxel and ppv; the solver value shows beside each field.'],
+  ['Set Up & Play… · Set Up Only…','fluidsim.setup_scene','Props dialog',x=>(meshSel(x)&&!bakeR(x))?'ok':'E','Greyed without a selected mesh.']]],
+ ['Scene › Product Presets',[
+  ['Apply Selected Preset','fluidsim.apply_product_preset','Instant',null,'Greyed until a preset is chosen.'],
+  ['Save Current Settings as Preset…','fluidsim.save_product_preset','Props dialog (name)',()=>'ok','']]],
+ ['Scene › Domain & Particles',[
+  ['Grid / voxel rows','voxel_size …','Fields',x=>x.domain?'ok':'H','Silently skipped without a domain (no message).'],
+  ['Narrow band','narrow_band …','Field',()=>'E','Always greyed; its voxels row hidden.']]],
+ ['Scene › Capacity & Safety',[
+  ['Calculate Safe Options','fluidsim.apply_safe_settings','Instant',()=>'ok','Clickable but always returns CANCELLED.'],
+  ['Review & Apply This Option…','fluidsim.apply_capacity_suggestion','Props dialog',null,'Only with a suggestion; Show Alternatives hidden with one.'],
+  ['Failure policy','capacity_failure_policy','Enum',null,'Dimmed unless auto-grow is on.']]],
+ ['Scene › Simulation',[
+  ['FLIP ratio','flip_ratio','Field',null,'Dimmed unless Transfer = FLIP.'],
+  ['Gravity','gravity','Field',null,'Dimmed while Use Scene Gravity is on.'],
+  ['Pressure preconditioner · tolerance · learned guess','pressure_*','Fields',null,'Dimmed unless the PCG solver is used.'],
+  ['Viscosity children','viscosity …','Fields',x=>x.viscosity?'ok':'A','Dimmed unless Viscosity is on; constant dimmed when “from particles”.'],
+  ['Surface tension · colour mixing · relax · limits · forces','…','Fields',x=>x.st?'ok':'A','Each dimmed by its own toggle (shown for Surface Tension).']]],
+ ['Scene › Surface / Whitewater',[
+  ['Surface children','surface_*','Fields',x=>x.surface?'ok':'A','Dimmed unless Surface is on.'],
+  ['Filter strengths','surface_filter_*','Fields',null,'Dimmed when iterations = 0 (the code comment says “never greyed”).'],
+  ['Whitewater children','whitewater_*','Fields',x=>x.whitewater?'ok':'A','Dimmed when Whitewater is off.']]],
+ ['Scene › Outputs',[
+  ['Display rows','view_mode …','Fields',null,'Dimmed by view mode and toggles.'],
+  ['Repair Outputs · Force Render-Node Update…','fluidsim.install_render_nodes','Instant · confirm',()=>'ok','No poll.'],
+  ['Attribute rows','export_attributes …','Fields',null,'Dimmed unless Export Attributes is on.']]],
+ ['Scene › Cache & Bake',[
+  ['Cache path · compress · checkpoint interval · custom range','cache_path …','Fields',()=>'ok','Always drawn (custom range dimmed when off).'],
+  ['“No domain” label','—','Text',x=>x.domain?'H':'ok','Without a domain the panel stops here.'],
+  ['Start Production Bake','fluidsim.bake_start','Modal',x=>!x.domain||x.activity==='PRODUCTION_BAKE'||bakeAction(x)!=='START'?'H':opE(bakeStartR(x)),'production_bake_action = START (no cache).'],
+  ['Resume Verified Bake','fluidsim.bake_resume','Modal',x=>!x.domain||x.activity==='PRODUCTION_BAKE'||bakeAction(x)!=='RESUME'?'H':opE(bakeStartR(x)),'RESUME when the last frame < end.'],
+  ['Restart Production Bake…','fluidsim.bake_start (restart_existing)','Confirm '+q('Replace Existing Production Cache?')+' → modal',x=>!x.domain||x.activity==='PRODUCTION_BAKE'||bakeAction(x)!=='RESTART'?'H':opE(bakeStartR(x)),'RESTART for a complete cache (destructive) or legacy/invalid cache.'],
+  ['Re-bake from Frame N…','fluidsim.bake_resume (rebake)','Confirm '+q('Re-bake From Frame N?')+' → modal',x=>!x.domain||x.cache==='none'||x.activity==='PRODUCTION_BAKE'?'H':opE(bakeStartR(x)),'Fails if the cache path changed after the dialog.'],
+  ['Cancel Bake','fluidsim.bake_cancel','Instant',x=>x.activity==='PRODUCTION_BAKE'?'ok':'H','Only while baking.'],
+  ['Play Cache','fluidsim.cache_preview_start','Instant',x=>x.domain?'ok':'H',''],
+  ['Copy Headless Bake Command','fluidsim.copy_bake_command','Clipboard',x=>x.domain?'ok':'H','Always (sidebar: Advanced only).'],
+  ['Manage: Scan Integrity · Inspect & Remove Orphans… · Move Cache… · Rename Cache… · Open Cache Folder · Free Entire Cache…','fluidsim.cache_*','Instant / dialogs',x=>x.cache==='none'?'H':'ok','Hidden without a cache folder. None has a poll — all usable during a bake.']]],
+ ['Scene › Diagnostics',[
+  ['Run Validation Suite','fluidsim.run_validation','Instant',()=>'ok',''],
+  ['Telemetry','—','Readout',x=>(x.owner==='here'||x.activity==='CACHE_PLAYBACK')?'ok':'H','Owned or Cache playback only; profiling_sync hidden when profiling is off.'],
+  ['Run Benchmark…','fluidsim.run_benchmark','Props dialog',()=>'ok',''],
+  ['Write Diagnostic Report… · Export Current Frame…','fluidsim.write_report · export_frame','File browser',()=>'ok','']]],
+ ['Physics tab (by object kind)',[
+  ['Open Scene FluidSim Settings','fluidsim.open_scene_properties','Switches tab',()=>'ok','On the domain it opens Physics again — a no-op.'],
+  ['Create/Repair Outputs · Remove Domain Assignment','fluidsim.install_render_nodes · clear_domain_assignment','Instant',x=>x.active==='domain'?'ok':'H','Domain only.'],
+  ['Use Active Object as Domain','fluidsim.use_active_as_domain','Instant (REINIT)',x=>x.active==='mesh'?'ok':'H','Unassigned mesh.'],
+  ['Remove FluidSim Role','fluidsim.clear_object_role','Instant',x=>['emitter','collider'].includes(x.active)?'ok':'H','Tagged inputs.'],
+  ['Remove Selected FluidSim Output…','fluidsim.remove_selected_output','Confirm',null,'On output objects.'],
+  ['Output-object settings','—','Fields',null,'Never gated, although the Scene tab dims the same properties. Warp Code is not mirrored.']]],
+ ['Object tab (hides, never dims)',[
+  ['Tag buttons','fluidsim.tag_* (emitter, collider, sink, force, field)','Instant (convert in place)',x=>['mesh','empty'].includes(x.active)?'ok':'H','Hidden once the object has that role.'],
+  ['Clear Roles','fluidsim.clear_object_role','Instant',x=>['emitter','collider'].includes(x.active)?'ok':'H','Hidden unless tagged.'],
+  ['Fill multiplier · emit rate','source_sampling_multiplier · emit_rate','Field',x=>x.active!=='emitter'||x.srcMode==='INHERIT'?'H':'ok','Hidden by source mode.'],
+  ['Inject Active Object Now','fluidsim.inject_particles','Instant',null,'POINTS source mode only.'],
+  ['Transfer velocity','collider_transfer_velocity','Field',x=>x.active==='collider'&&x.body==='ANIMATED'?'ok':'H','Hidden for Static and Dynamic.'],
+  ['Density · drag · initial velocity · lock axes','collider_*','Fields',x=>x.active==='collider'&&x.body==='DYNAMIC'?'ok':'H','Dynamic only.'],
+  ['Force strength','force_strength','Field',null,'Hidden when the force is Off.']]],
+ ['Effects (Object + Scene)',[
+  ['Add Effect','fluidsim.effect_add','Search popup',null,'New Custom only with authoring enabled.'],
+  ['Remove','fluidsim.effect_remove','Instant',null,'Has a poll.'],
+  ['Duplicate · Move · Mute · Solo','fluidsim.effect_duplicate · effect_move · effect_toggle_mute · effect_toggle_solo','Instant',null,'No poll; cancel silently when nothing applies.'],
+  ['Review & Trust · Revoke · Refresh','fluidsim.effect_trust · effect_untrust · effect_refresh_status','Dialog with checkbox · instant',null,''],
+  ['Test Draft · Compile & Apply · Revert · Preview One Frame','fluidsim.effect_test_draft · effect_apply_stack · effect_revert_draft · effect_preview_one_frame','Instant',null,'No polls.'],
+  ['Import · Compare · Export package','fluidsim.effect_import_package · effect_compare_update · effect_export_package','File browser',null,''],
+  ['Rename · Remove installed','fluidsim.effect_rename_installed · effect_delete_installed','Dialog · confirm',null,''],
+  ['Warp Code: Convert · kernels · Go to Error Line','fluidsim.effect_convert_to_custom · effect_kernel_remove · effect_go_to_error','Instant · Text Editor',null,'Scene tab only. Convert hidden for custom effects; acknowledgement greyed in safe mode; remove-kernel hidden with one kernel; Go to Error only with an error.']]],
+];
+const SIDEBAR=[
+ ['Status (always on top)',[
+  ['Cancel Production Bake / Pause / Play','fluidsim.bake_cancel · preview_pause · screen.animation_play','Instant',()=>'ok','No poll; Play never greyed.'],
+  ['Restart','fluidsim.restart_simulation','Instant',x=>x.owner==='here'?opE(mutR(x)):'H','Owned only.'],
+  ['Apply Changes','fluidsim.apply_changes','Dialog if restart needed',x=>x.pending==='none'?'H':opE(mutR(x)),'Hidden when nothing is pending.']]],
+ ['Demo gallery (closed by default)',[
+  ['Demo buttons','fluidsim.load_demo','New Scene',x=>bakeR(x)?'E':'ok','Missing file: greyed '+q('(file missing)')+'; blocked during a bake.']]],
+ ['1 · Setup',[
+  ['“Start here” box','fluidsim.setup_scene','Props dialog',x=>x.domain?'H':'ok','Only without a domain.'],
+  ['Preset Apply','fluidsim.apply_product_preset','Instant',null,'Greyed without a preset.'],
+  ['Advanced setup rows','—','Fields',x=>x.ui==='ADVANCED'?'ok':'H','Advanced mode only.'],
+  ['Active Collider','collider_*','Fields',x=>x.active==='collider'?'ok':'H','']]],
+ ['2 · Simulate',[
+  ['Panel body','—','—',x=>x.activity==='CACHE_PLAYBACK'?'E':'ok','Greyed (body.enabled False) in playback-only.'],
+  ['Viscosity constant (and FLIP ratio, ST coefficient, gravity)','viscosity …','Field',x=>x.viscosity?'ok':'H','Hidden here when its toggle is off; Properties dims instead.'],
+  ['All Simulation Settings…','fluidsim.open_scene_properties','Jumps to Properties',x=>x.activity==='CACHE_PLAYBACK'?'E':'ok','Greyed in playback-only.']]],
+ ['3 · Look',[
+  ['Surface rows','surface_*','Fields',x=>x.surface?'ok':'H','Hidden, not dimmed, when off.'],
+  ['Whitewater rows','whitewater_*','Fields',x=>x.whitewater?'ok':'H','Same.']]],
+ ['4 · Bake & Export',[
+  ['Bake actions','fluidsim.bake_start · bake_resume','Modal',x=>x.activity==='CACHE_PLAYBACK'?'H':opE(bakeStartR(x)),'Playback-only shows a refusal line instead.'],
+  ['Play Cache','fluidsim.cache_preview_start','Instant',()=>'ok',''],
+  ['Copy Headless Bake Command','fluidsim.copy_bake_command','Clipboard',x=>x.ui==='ADVANCED'?'ok':'H','Advanced only.'],
+  ['Export Current Frame · Alembic · USD','fluidsim.export_frame · export_alembic · export_usd','File browser',()=>'ok','Refused (ExportRefused) when there is no usable cache.'],
+  ['Export VDB','fluidsim.export_vdb','Directory browser',()=>'ok',''],
+  ['Storage (closed) · Manage','fluidsim.cache_*','Dialogs',x=>x.cache==='none'?'H':'ok','Manage only with a cache; no polls.']]],
+];
+const HEADER=[
+ ['3D View header (VIEW3D_HT_header)',[
+  ['FluidSim popover','—','Popover',()=>'ok','Poll: the scene has FluidSim settings.'],
+  ['· Activity line · runtime error + Re-detect GPU','fluidsim.refresh_runtime_probe','Text · instant',x=>rtR(x)?'ok':'H','Error box only when the runtime is not ready.'],
+  ['· Set Up & Play… · Set Up Only…','fluidsim.setup_scene','Props dialog',x=>x.domain?'H':((meshSel(x)&&!bakeR(x))?'ok':'E'),'Only without a domain; greyed without a selected mesh.'],
+  ['· Transport · Restart · Apply Changes','bake_cancel · preview_pause · animation_play · restart_simulation · apply_changes','Instant · dialog',x=>x.domain?'ok':'H','Apply only when pending; Restart only when owned.'],
+  ['· Quality · simulate toggles','quality · viscosity_enabled …','Fields',x=>x.domain?'ok':'H','Editable without CUDA (mismatch with Deck/Properties).'],
+  ['· FluidSim Workspace','fluidsim.open_workspace','Switches / duplicates the workspace',()=>'ok','Hidden once you are in it.'],
+  ['Deck toggle','scene.fluidsim.deck_shown','Toggle',x=>x.deck==='OFF'?'H':'ok','Hidden when Deck mode is Off.'],
+  ['Stage selector','scene.fluidsim.deck_stage','Enum',x=>deckVisible(x)?'ok':'H','Shown while the Deck is shown.']]],
+ ['Add menu (VIEW3D_MT_add, Shift+A)',[
+  ['Fluid Domain (FluidSim)','fluidsim.add_domain','Instant, REGISTER/UNDO',()=>'ok','No poll — also works during a bake. Fixed box (−2,−2,0)…(2,2,4); ignores the 3D cursor; becomes the active designated domain (REINIT).']]],
+ ['Not present',[
+  ['Right-click context menu · Topbar · File › Export','—','—',()=>'H','The add-on registers only the two hooks above. Exports live in the sidebar Bake & Export stage and the wheel.']]],
+];
+function panelTable(groups){ return groups.map(([g,rows])=>`<h3>${esc(g)}</h3><div class="tw"><table><tr><th>Row</th><th>Calls / property</th><th>What appears</th><th>Now</th><th>Rule</th></tr>${rows.map(r=>`<tr><td><b>${esc(r[0])}</b></td><td><code>${esc(r[1])}</code></td><td>${r[2]}</td><td>${badge(r[3])}</td><td>${esc(r[4])}</td></tr>`).join('')}</table></div>`).join(''); }
+const legend='<div class="legend"><span><span class="bdg ok">shown</span> usable</span><span><span class="bdg A">dimmed</span> layout.active False — still editable</span><span><span class="bdg E">greyed</span> enabled False or poll fails</span><span><span class="bdg H">hidden</span> not drawn</span><span><span class="bdg n">not modelled</span> depends on state this page does not simulate</span></div>';
 
-/* ---------- dev notes toggle ---------- */
-$('#notesBtn').onclick=()=>{ const n=$('#notes'); n.hidden=!n.hidden; document.querySelector('.app').style.gridTemplateColumns=n.hidden?'1fr':''; $('#notesBtn').textContent=n.hidden?'Show dev notes':'Hide dev notes'; resize(); };
+const MISMATCH=[
+ ['Dependent settings when their toggle is off','Properties dims them (still editable)','Sidebar hides them','Users lose the row in one place and see it greyed in the other.'],
+ ['Alembic / USD / VDB export','Sidebar Bake & Export + wheel','Not offered in Properties','Properties-only users can’t find export.'],
+ ['Copy Headless Bake Command','Properties: always','Sidebar: Advanced only',''],
+ ['Simulate toggles without CUDA','Header popover: editable','Deck/Properties operators greyed','The popover suggests the sim will run.'],
+ ['Step','Deck bar: hidden in Cache playback / other owner','Wheel: shown and clickable','Same operator, two rules.'],
+ ['Apply','Bar/sidebar: only when pending','Wheel: always active, “Changes applied” on nothing',''],
+ ['Play','Bar: never greyed but checks owner','Wheel: blind toggle, works during a bake',''],
+ ['Add Fluid Domain vs Load Demo','add_domain: no poll, runs mid-bake','load_demo: blocked during a bake',''],
+ ['Open Scene FluidSim Settings','From inputs: opens Scene settings','From the domain: reopens Physics (no-op)',''],
+ ['Output-object Physics panels','Never gated','Scene tab dims the same properties',''],
+ ['Palette vs wheel','Palette never greys; refuses after Enter and closes','Wheel greys and stays open with the reason',''],
+];
+const DEFECTS=[
+ [1,'Cache can be deleted under a running bake','Free Cache (wheel + Properties) and every cache_* manage operator have no poll. Free Entire Cache… is offered with no cache and during a Production Bake.','Add _bake_poll + “cache exists” poll to cache_free/move/rename/remove_orphans; grey the wheel slot.'],
+ [1,'Cancel Bake cancels every scene’s bake','fluidsim.bake_cancel from the Deck stops all running bakes, no confirm.','Cancel only the bake owned by this scene, or confirm when others run.'],
+ [1,'Restart has no confirm','Deck, wheel and sidebar Restart clear preview progress instantly.','Reuse the Apply dialog (“Restart simulation from frame N?”) when progress exists.'],
+ [2,'Bake fails after the click instead of greying','No guard for an unsaved file with a relative cache path, an existing cache, or no domain; the Deck offers no Restart-bake.','Extend bake_start poll with these reasons; show Resume/Restart on the bar per production_bake_action.'],
+ [2,'Palette never greys and closes on refusal','Operator rows run their poll only after Enter; the message appears after the palette is gone.','Grey rows with the poll reason; keep the palette open on refusal.'],
+ [2,'Palette inline edit rounds and appends','Starts from a .4g-rounded value and typed digits append to it.','Select-all on entry; show the exact value.'],
+ [2,'Preset written before its apply is refused','During a bake product_preset changes but apply fails.','Check the apply poll before writing.'],
+ [2,'Wheel gating weaker than the bar','Play is a blind toggle (also mid-bake); Apply active with nothing pending; Step offered in Cache playback / other owner; Materials has no poll.','Reuse transport_controls() and the bar polls for wheel slots.'],
+ [2,'Pending chip mislabels and uses raw names','Palette writes flash “LIVE · field” even for Reset/Reinit fields; the flash shows raw property names.','Classify by tier; use the UI label.'],
+ [2,'No undo for Deck writes and gizmo drags','Liquid Preview, palette writes and all gizmos skip undo.','Push an undo step on release / write.'],
+ [2,'No interactive placement anywhere','Add Fluid Domain ignores the 3D cursor; tags convert in place.','Interactive box placement (like Blender’s Add Cube tool) at the cursor.'],
+ [3,'Gizmo modifiers','Shift scales the total delta so the value jumps; Ctrl does nothing; legacy emit_rate clamps at 32; Dynamic toggle flips on drag-release; domain handles use location instead of matrix_world.','Shift = precision from the press point; Ctrl = snap; clamp to the property soft max.'],
+ [3,'Gizmos have no bake gate','Edits are held during a bake but the handles stay live.','Draw handles disabled during a bake.'],
+ [3,'Bake ring draws on a greyed button','During a bake the Bake button is greyed but still shows progress.','Swap Bake for a progress chip with Cancel while baking.'],
+ [3,'Tooltips show idnames; Set Up Scene tooltip wrong','“{why} ({idname})”; Set Up Scene says it creates an emitter but needs a selected mesh.','Plain-language tooltips; fix the Set Up text.'],
+ [3,'Step updates no readout','The Deck frame readout and sparkline ignore Step.','Push a sample on step.'],
+ [3,'Liquid Preview bypasses its warning','The Deck toggle never shows “Liquid Preview is on but no particles are published yet…”.','Report the same warning from the Deck.'],
+ [3,'Deck visibility edges','Draws in non-FluidSim scenes, ignores Overlays, swallows an LMB release over the bar, no modal for ~1 s after load.','Gate on scene.fluidsim + overlay.show_overlays.'],
+ [3,'Properties oddities','Calculate Safe Options always CANCELLED; Open Settings is a no-op on the domain; effect list buttons cancel silently; output panels ungated.','Fix individually.'],
+];
+function tabMismatch(){ return `<h3>Same control, different rule</h3><div class="tw"><table><tr><th>What</th><th>Surface A</th><th>Surface B</th><th>Effect</th></tr>${MISMATCH.map(r=>`<tr><td><b>${esc(r[0])}</b></td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td></tr>`).join('')}</table></div>
+  <h3>Clickable, then fails</h3><p class="note">Cache management during a bake · Calculate Safe Options · exports with no cache (ExportRefused) · session operators when another scene owns the solver · effect list buttons · Restart Bake / Re-bake when the cache path changed after the dialog · Bake with an unsaved file · Open Settings on the domain · Apply in Cache playback · Resume with nothing to resume.</p>`; }
+function tabDefects(){ return `<div class="tw"><table><tr><th>Risk</th><th>Defect</th><th>Detail</th><th>Proposed fix</th></tr>${DEFECTS.map(r=>`<tr><td><span class="sev s${r[0]}">${['','High','Medium','Low'][r[0]]}</span></td><td><b>${esc(r[1])}</b></td><td>${esc(r[2])}</td><td>${esc(r[3])}</td></tr>`).join('')}</table></div>`; }
 
-/* ---------- guided tour: scripted user interaction ---------- */
-const tour = [
-  {t:'Liquid Deck bar', b:'The bar lives in the viewport. Transport, live readout, pending chip, preview, palette, wheel, bake. Every button is a twin of an existing operator (hover for its id).', act:()=>{}},
-  {t:'Drag the emitter velocity gizmo', b:'A LIVE-class property: the chip turns green, "Applied live", nothing resets.', act:()=>{ S.emitter.vx=3.8; S.emitter.vy=0.6; setPending('LIVE','emitter_velocity'); }},
-  {t:'Turn the rate dial', b:'Also LIVE. The dial writes emission_rate; the readout follows on the next frame.', act:()=>{ S.emitter.rate=26000; setPending('LIVE','emission_rate'); }},
-  {t:'Resize the domain', b:'Dragging the face handle previews the padded grid and cell count; releasing makes a RESET-class edit. The chip shows the reason and Apply (reset) / Revert.', act:()=>{ S._snapW=S.domain.w; S.domain.w=6.4; $('#cornerCells').textContent=cellsTxt(); setPending('RESET',`domain size → ${cellsTxt()}`); }},
-  {t:'Apply the reset', b:'Same operator the panel calls (apply_pending_settings). The solver re-admits and the readout restarts.', act:()=>{ const b=$('#chip button.go'); b&&b.click(); }},
-  {t:'Liquid Preview', b:'Press L or the Deck toggle. Particles become a screen-space surface: depth sprites → narrow-range filter → normals → thickness absorption → Fresnel. No mesh build during preview.', act:()=>setPreview(true)},
-  {t:'Make the crate Dynamic', b:'4.0 two-way coupling: the collider floats and is pushed by the liquid. Its pose is keyframed on the object so it renders and exports without a solver.', act:()=>{ S.collider.dynamic=true; setPending('RESET','collider_dynamic'); setTimeout(()=>{ const b=$('#chip button.go'); b&&b.click(); },900); }},
-  {t:'Command palette', b:'Ctrl+K. Operators, presets, demos and settings in one search; numeric settings edit inline and classify like the panel would.', act:()=>{ openPal(); $('#palIn').value='res'; renderPal(); }},
-  {t:'Radial wheel', b:'Alt+right-click. Six slots per stage; the hub cycles Setup → Simulate → Look → Bake.', act:()=>{ closePal(); openWheel(W*0.5,H*0.45); }},
-  {t:'Bake', b:'The ring is the bake progress; Esc cancels (decision D3). Edits during a bake are held and applied after.', act:()=>{ closeWheel(); $('#bBake').click(); }},
-  {t:'End of tour', b:'Everything here is a reference, not the implementation. The real Deck is gpu-module drawing + gizmos + one modal operator, with panels kept as the parity surface.', act:()=>{}},
+const TABS=[['follow','Follow-through',tabFollow],['avail','Availability',tabAvailability],['props','Properties panels',()=>legend+panelTable(PROPS)],['side','Sidebar stages',()=>legend+panelTable(SIDEBAR)],['header','Header & Add menu',()=>legend+panelTable(HEADER)],['mismatch','Mismatches',tabMismatch],['defects','Defects',tabDefects]];
+let tab='follow';
+$('#tabs').innerHTML=TABS.map(t=>`<button role="tab" data-t="${t[0]}">${t[1]}</button>`).join('');
+$('#tabs').onclick=ev=>{ const b=ev.target.closest('button'); if(!b) return; tab=b.dataset.t; try{ localStorage.setItem('deckTab',tab); }catch(e){} renderSpec(); };
+try{ const t=localStorage.getItem('deckTab'); if(t&&TABS.some(x=>x[0]===t)) tab=t; }catch(e){}
+if(TABS.some(x=>x[0]===location.hash.slice(1))) tab=location.hash.slice(1);
+function renderSpec(){ $('#tabs').querySelectorAll('button').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.t===tab))); $('#tabBody').innerHTML=TABS.find(t=>t[0]===tab)[2](); }
+
+/* =====================================================================
+   14. Refresh + tour
+   ===================================================================== */
+function refresh(){ renderDeck(); renderRail(); $('#hDeck').hidden=X.deck==='OFF'; $('#hDeck').classList.toggle('on',X.deckShown); $('#hStage').hidden=!deckVisible(X); $('#hStage').value=X.stage;
+  if(!deckVisible(X)){ closePal(); closeWheel(); } else if(wheelAt) renderWheel(); renderFluidPop(); renderSpec(); }
+
+const TOUR=[
+ ['Live preview is playing','The bar shows Pause (fluidsim.preview_pause), Step and Restart because this scene owns the solver.',()=>{ X={...DEFAULT}; refresh(); }],
+ ['Drag the velocity arrow','SYNC tier: the chip flashes “LIVE · initial_velocity” for 2 s; nothing resets.',()=>{ M.em.vx=3.6; tierEdit('SYNC','initial_velocity','Tour › Velocity arrow'); }],
+ ['Turn the Fill dial','RESET tier: “1 change(s) staged for reset”, with Apply and Revert.',()=>{ M.em.fill=3; tierEdit('RESET','source_sampling_multiplier','Tour › Fill dial'); }],
+ ['Apply','A props dialog asks “Restart simulation from frame 1?”. Click OK.',()=>runApply('Tour › Apply')],
+ ['Start a bake','The bake is a modal operator. Play becomes Cancel Bake; Step and Restart leave the bar. Bake is greyed: “A production bake is already active”.',()=>{ $('#scrim').hidden=true; dlgCancel=null; X.pending='none'; X.pendCount=0; X.saved=true; X.cache='none'; runBake('Tour › Bake'); }],
+ ['Open the wheel on Bake','Free Cache is NOT greyed during a bake: it has no poll.',()=>{ X.stage='BAKE'; openWheel(W*0.5,H*0.45,'Tour › Wheel'); }],
+ ['Edit during the bake','Edits are held: “A Production Bake is running; changes apply when it ends”.',()=>{ closeWheel(); tierEdit('RESET','surface_tension_enabled','Tour › edit mid-bake'); }],
+ ['No CUDA','Step, Restart and Bake grey out with the runtime message; Play stays clickable.',()=>{ X={...DEFAULT,runtime:'nocuda',owner:'here',activity:'IDLE'}; refresh(); }],
+ ['Palette','Ctrl+K lists everything, never greyed. Try Enter on “Step”.',()=>{ openPal(null,'Tour › Ctrl+K'); $('#palIn').value='step'; renderPal(); }],
 ];
 let tourI=-1, tourT=null;
-function showCaption(i){ const c=$('#caption'); if(i<0||i>=tour.length){ c.hidden=true; return; } c.hidden=false; c.innerHTML=`<span class="step">tour ${i+1}/${tour.length}</span><b>${tour[i].t}</b><br>${tour[i].b}`; }
-function runTour(){ tourI++; if(tourI>=tour.length){ tourI=-1; showCaption(-1); $('#tourBtn').textContent='Play guided tour'; return; } showCaption(tourI); tour[tourI].act(); tourT=setTimeout(runTour, 4200); }
-$('#tourBtn').onclick=()=>{ if(tourT){ clearTimeout(tourT); tourT=null; tourI=-1; showCaption(-1); closePal(); closeWheel(); $('#tourBtn').textContent='Play guided tour'; return; } $('#tourBtn').textContent='Stop tour'; tourI=-1; runTour(); };
+function tourStep(){ tourI++; if(tourI>=TOUR.length){ tourEnd(); return; } const [t,b,a]=TOUR[tourI]; a(); toast(`${tourI+1}/${TOUR.length} · ${t}`); logAct(`Tour ${tourI+1}/${TOUR.length}: ${t}`,'guided tour',b); tourT=setTimeout(tourStep,4600); }
+function tourEnd(){ clearTimeout(tourT); tourT=null; tourI=-1; $('#tourBtn').textContent='Play guided tour'; }
+$('#tourBtn').onclick=()=>{ if(tourT){ tourEnd(); return; } $('#tourBtn').textContent='Stop tour'; tourStep(); };
+
+refresh(); requestAnimationFrame(frame);
+logAct('Page loaded','scene state = Live preview','Set the scene state on the right, then click the Deck, header, wheel (Alt+Right-click) or palette (Ctrl+K)');
 })();
 </script>
