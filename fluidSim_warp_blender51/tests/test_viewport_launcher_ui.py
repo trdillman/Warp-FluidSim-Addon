@@ -130,11 +130,14 @@ def test_header_popover_shares_the_stage_drawings_and_the_add_on_registers_it():
     for shared in (
         "draw_transport(layout, context, state, runtime_ready)",
         "draw_pending_apply(layout, scene)",
-        "draw_quality(layout, scene)",
-        "draw_simulate_controls(layout, scene, domain)",
+        "draw_quality(settings, scene)",
+        "draw_simulate_controls(settings, scene, domain)",
         "draw_guided_setup_buttons(box)",
     ):
         assert shared in popover, shared
+    # Quality and the simulate toggles sit in one column dimmed while the
+    # runtime is not ready (still editable).
+    assert "settings.active = runtime_ready" in popover
     assert ".prop(" not in popover
     assert "VIEW3D_HT_header" in header
     assert "header.append(draw_header_button)" in header
