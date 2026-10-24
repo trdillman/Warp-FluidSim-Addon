@@ -1037,39 +1037,42 @@ const MISMATCH=[
  ['Dependent settings when their toggle is off','Properties dims them (still editable)','Sidebar hides them','Users lose the row in one place and see it greyed in the other.'],
  ['Alembic / USD / VDB export','Sidebar Bake & Export + wheel','Not offered in Properties','Properties-only users can’t find export.'],
  ['Copy Headless Bake Command','Properties: always','Sidebar: Advanced only',''],
- ['Simulate toggles without CUDA','Header popover: editable','Deck/Properties operators greyed','The popover suggests the sim will run.'],
- ['Step','Deck bar: hidden in Cache playback / other owner','Wheel: shown and clickable','Same operator, two rules.'],
- ['Apply','Bar/sidebar: only when pending','Wheel: always active, “Changes applied” on nothing',''],
- ['Play','Bar: never greyed but checks owner','Wheel: blind toggle, works during a bake',''],
- ['Add Fluid Domain vs Load Demo','add_domain: no poll, runs mid-bake','load_demo: blocked during a bake',''],
- ['Open Scene FluidSim Settings','From inputs: opens Scene settings','From the domain: reopens Physics (no-op)',''],
- ['Output-object Physics panels','Never gated','Scene tab dims the same properties',''],
- ['Palette vs wheel','Palette never greys; refuses after Enter and closes','Wheel greys and stays open with the reason',''],
+ ['Simulate toggles without CUDA','Header popover: editable','Deck/Properties operators greyed','Fixed on fix/deck-defects: the popover now dims them under the runtime error (still editable).'],
+ ['Step','Deck bar: hidden in Cache playback / other owner','Wheel: shown and clickable','Fixed on fix/deck-defects: the wheel greys Step with the reason.'],
+ ['Apply','Bar/sidebar: only when pending','Wheel: always active, “Changes applied” on nothing','Fixed on fix/deck-defects: greyed when nothing is pending.'],
+ ['Play','Bar: never greyed but checks owner','Wheel: blind toggle, works during a bake','Fixed on fix/deck-defects: the wheel follows the bar’s transport.'],
+ ['Add Fluid Domain vs Load Demo','add_domain: no poll, runs mid-bake','load_demo: blocked during a bake','Fixed on fix/deck-defects: both greyed during a bake.'],
+ ['Open Scene FluidSim Settings','From inputs: opens Scene settings','From the domain: reopens Physics (no-op)','Fixed on fix/deck-defects: the domain opens the Scene tab.'],
+ ['Output-object Physics panels','Never gated','Scene tab dims the same properties','Fixed on fix/deck-defects: same dimming rules.'],
+ ['Palette vs wheel','Palette never greys; refuses after Enter and closes','Wheel greys and stays open with the reason','Fixed on fix/deck-defects: the palette greys rows and stays open.'],
 ];
+/* 5th column = status on branch fix/deck-defects (2026-10-24): F fixed · P partly · O open. */
 const DEFECTS=[
- [1,'Cache can be deleted under a running bake','Free Cache (wheel + Properties) and every cache_* manage operator have no poll. Free Entire Cache… is offered with no cache and during a Production Bake.','Add _bake_poll + “cache exists” poll to cache_free/move/rename/remove_orphans; grey the wheel slot.'],
- [1,'Cancel Bake cancels every scene’s bake','fluidsim.bake_cancel from the Deck stops all running bakes, no confirm.','Cancel only the bake owned by this scene, or confirm when others run.'],
- [1,'Restart has no confirm','Deck, wheel and sidebar Restart clear preview progress instantly.','Reuse the Apply dialog (“Restart simulation from frame N?”) when progress exists.'],
- [2,'Bake fails after the click instead of greying','No guard for an unsaved file with a relative cache path, an existing cache, or no domain; the Deck offers no Restart-bake.','Extend bake_start poll with these reasons; show Resume/Restart on the bar per production_bake_action.'],
- [2,'Palette never greys and closes on refusal','Operator rows run their poll only after Enter; the message appears after the palette is gone.','Grey rows with the poll reason; keep the palette open on refusal.'],
- [2,'Palette inline edit rounds and appends','Starts from a .4g-rounded value and typed digits append to it.','Select-all on entry; show the exact value.'],
- [2,'Preset written before its apply is refused','During a bake product_preset changes but apply fails.','Check the apply poll before writing.'],
- [2,'Wheel gating weaker than the bar','Play is a blind toggle (also mid-bake); Apply active with nothing pending; Step offered in Cache playback / other owner; Materials has no poll.','Reuse transport_controls() and the bar polls for wheel slots.'],
- [2,'Pending chip mislabels and uses raw names','Palette writes flash “LIVE · field” even for Reset/Reinit fields; the flash shows raw property names.','Classify by tier; use the UI label.'],
- [2,'No undo for Deck writes and gizmo drags','Liquid Preview, palette writes and all gizmos skip undo.','Push an undo step on release / write.'],
- [2,'No interactive placement anywhere','Add Fluid Domain ignores the 3D cursor; tags convert in place.','Interactive box placement (like Blender’s Add Cube tool) at the cursor.'],
- [3,'Gizmo modifiers','Shift scales the total delta so the value jumps; Ctrl does nothing; legacy emit_rate clamps at 32; Dynamic toggle flips on drag-release; domain handles use location instead of matrix_world.','Shift = precision from the press point; Ctrl = snap; clamp to the property soft max.'],
- [3,'Gizmos have no bake gate','Edits are held during a bake but the handles stay live.','Draw handles disabled during a bake.'],
- [3,'Bake ring draws on a greyed button','During a bake the Bake button is greyed but still shows progress.','Swap Bake for a progress chip with Cancel while baking.'],
- [3,'Tooltips show idnames; Set Up Scene tooltip wrong','“{why} ({idname})”; Set Up Scene says it creates an emitter but needs a selected mesh.','Plain-language tooltips; fix the Set Up text.'],
- [3,'Step updates no readout','The Deck frame readout and sparkline ignore Step.','Push a sample on step.'],
- [3,'Liquid Preview bypasses its warning','The Deck toggle never shows “Liquid Preview is on but no particles are published yet…”.','Report the same warning from the Deck.'],
- [3,'Deck visibility edges','Draws in non-FluidSim scenes, ignores Overlays, swallows an LMB release over the bar, no modal for ~1 s after load.','Gate on scene.fluidsim + overlay.show_overlays.'],
- [3,'Properties oddities','Calculate Safe Options always CANCELLED; Open Settings is a no-op on the domain; effect list buttons cancel silently; output panels ungated.','Fix individually.'],
+ [1,'Cache can be deleted under a running bake','Free Cache (wheel + Properties) and every cache_* manage operator have no poll. Free Entire Cache… is offered with no cache and during a Production Bake.','Add _bake_poll + “cache exists” poll to cache_free/move/rename/remove_orphans; grey the wheel slot.',['O','Being fixed in a separate session.']],
+ [1,'Cancel Bake cancels every scene’s bake','fluidsim.bake_cancel from the Deck stops all running bakes, no confirm.','Cancel only the bake owned by this scene, or confirm when others run.',['F','Cancels only this scene’s bake; names the other scene otherwise.']],
+ [1,'Restart has no confirm','Deck, wheel and sidebar Restart clear preview progress instantly.','Reuse the Apply dialog (“Restart simulation from frame N?”) when progress exists.',['F','Confirms when there is preview progress to lose.']],
+ [2,'Bake fails after the click instead of greying','No guard for an unsaved file with a relative cache path, an existing cache, or no domain; the Deck offers no Restart-bake.','Extend bake_start poll with these reasons; show Resume/Restart on the bar per production_bake_action.',['F','Greyed with a reason; the bar shows Resume or Restart Bake… (asks first).']],
+ [2,'Palette never greys and closes on refusal','Operator rows run their poll only after Enter; the message appears after the palette is gone.','Grey rows with the poll reason; keep the palette open on refusal.',['F','']],
+ [2,'Palette inline edit rounds and appends','Starts from a .4g-rounded value and typed digits append to it.','Select-all on entry; show the exact value.',['F','']],
+ [2,'Preset written before its apply is refused','During a bake product_preset changes but apply fails.','Check the apply poll before writing.',['F','']],
+ [2,'Wheel gating weaker than the bar','Play is a blind toggle (also mid-bake); Apply active with nothing pending; Step offered in Cache playback / other owner; Materials has no poll.','Reuse transport_controls() and the bar polls for wheel slots.',['F','']],
+ [2,'Pending chip mislabels and uses raw names','Palette writes flash “LIVE · field” even for Reset/Reinit fields; the flash shows raw property names.','Classify by tier; use the UI label.',['F','Reset/Reinit edits say when they apply; no flash during a bake.']],
+ [2,'No undo for Deck writes and gizmo drags','Liquid Preview, palette writes and all gizmos skip undo.','Push an undo step on release / write.',['F','']],
+ [2,'No interactive placement anywhere','Add Fluid Domain ignores the 3D cursor; tags convert in place.','Interactive box placement (like Blender’s Add Cube tool) at the cursor.',['P','Add Fluid Domain now lands on the 3D cursor and is greyed during a bake. Drag-to-size placement is a new feature, not built.']],
+ [3,'Gizmo modifiers','Shift scales the total delta so the value jumps; Ctrl does nothing; legacy emit_rate clamps at 32; Dynamic toggle flips on drag-release; domain handles use location instead of matrix_world.','Shift = precision from the press point; Ctrl = snap; clamp to the property soft max.',['F','Clamps to the hard limit; domain handles hidden while a constraint is on.']],
+ [3,'Gizmos have no bake gate','Edits are held during a bake but the handles stay live.','Draw handles disabled during a bake.',['F','']],
+ [3,'Bake ring draws on a greyed button','During a bake the Bake button is greyed but still shows progress.','Swap Bake for a progress chip with Cancel while baking.',['F','']],
+ [3,'Tooltips show idnames; Set Up Scene tooltip wrong','“{why} ({idname})”; Set Up Scene says it creates an emitter but needs a selected mesh.','Plain-language tooltips; fix the Set Up text.',['F','']],
+ [3,'Step updates no readout','The Deck frame readout and sparkline ignore Step.','Push a sample on step.',['F','']],
+ [3,'Liquid Preview bypasses its warning','The Deck toggle never shows “Liquid Preview is on but no particles are published yet…”.','Report the same warning from the Deck.',['F','']],
+ [3,'Deck visibility edges','Draws in non-FluidSim scenes, ignores Overlays, swallows an LMB release over the bar, no modal for ~1 s after load.','Gate on scene.fluidsim + overlay.show_overlays.',['P','Overlays, LMB release and the load gap fixed. Still draws in non-FluidSim scenes by design; the header toggle hides it.']],
+ [3,'Properties oddities','Calculate Safe Options always CANCELLED; Open Settings is a no-op on the domain; effect list buttons cancel silently; output panels ungated.','Fix individually.',['F','All four fixed; the header popover also dims simulate settings when the runtime is not ready.']],
 ];
+const STATUS={F:['ok','Fixed'],P:['A','Partly'],O:['E','Open']};
+function statusCell(s){ return `<span class="bdg ${STATUS[s[0]][0]}">${STATUS[s[0]][1]}</span>${s[1]?' '+esc(s[1]):''}`; }
 function tabMismatch(){ return `<h3>Same control, different rule</h3><div class="tw"><table><tr><th>What</th><th>Surface A</th><th>Surface B</th><th>Effect</th></tr>${MISMATCH.map(r=>`<tr><td><b>${esc(r[0])}</b></td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td></tr>`).join('')}</table></div>
   <h3>Clickable, then fails</h3><p class="note">Cache management during a bake · Calculate Safe Options · exports with no cache (ExportRefused) · session operators when another scene owns the solver · effect list buttons · Restart Bake / Re-bake when the cache path changed after the dialog · Bake with an unsaved file · Open Settings on the domain · Apply in Cache playback · Resume with nothing to resume.</p>`; }
-function tabDefects(){ return `<div class="tw"><table><tr><th>Risk</th><th>Defect</th><th>Detail</th><th>Proposed fix</th></tr>${DEFECTS.map(r=>`<tr><td><span class="sev s${r[0]}">${['','High','Medium','Low'][r[0]]}</span></td><td><b>${esc(r[1])}</b></td><td>${esc(r[2])}</td><td>${esc(r[3])}</td></tr>`).join('')}</table></div>`; }
+function tabDefects(){ return `<div class="tw"><table><tr><th>Risk</th><th>Defect</th><th>Detail</th><th>Proposed fix</th><th>Status</th></tr>${DEFECTS.map(r=>`<tr><td><span class="sev s${r[0]}">${['','High','Medium','Low'][r[0]]}</span></td><td><b>${esc(r[1])}</b></td><td>${esc(r[2])}</td><td>${esc(r[3])}</td><td>${statusCell(r[4])}</td></tr>`).join('')}</table></div>`; }
 
 const TABS=[['follow','Follow-through',tabFollow],['avail','Availability',tabAvailability],['props','Properties panels',()=>legend+panelTable(PROPS)],['side','Sidebar stages',()=>legend+panelTable(SIDEBAR)],['header','Header & Add menu',()=>legend+panelTable(HEADER)],['mismatch','Mismatches',tabMismatch],['defects','Defects',tabDefects]];
 let tab='follow';
