@@ -163,7 +163,7 @@ def test_emitter_arrow_drag_sets_the_velocity_property_like_the_panel(env, monke
     assert gizmo_pending["action"] == panel_pending["action"] == "NONE"
     assert gizmo_pending["reasons"] == panel_pending["reasons"]
     chip = _chip(env, scene)
-    assert chip.kind == "LIVE" and "initial_velocity" in chip.text
+    assert chip.kind == "LIVE" and "initial velocity" in chip.text.lower()
 
 
 def test_emitter_arrow_cancel_restores_the_value(env):

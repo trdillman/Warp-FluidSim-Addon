@@ -120,9 +120,12 @@ def test_optional_controls_are_exactly_the_targets_other_lanes_deliver(deck):
     assert optional == {"collider_dynamic"}
 
 
-def test_every_deck_button_tooltip_names_its_target(deck):
+def test_every_deck_button_tooltip_is_plain_language(deck):
+    # Tooltips explain the button; they do not show the operator idname or raw property name.
     for control in deck.controls.all_controls():
-        assert control.target in control.tooltip, control
+        assert control.tooltip, control
+        assert control.target not in control.tooltip, control
+        assert "fluidsim." not in control.tooltip, control
 
 
 def test_deck_controls_use_the_real_names_not_the_spec_placeholders(deck):

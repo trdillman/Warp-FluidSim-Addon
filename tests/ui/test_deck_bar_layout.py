@@ -40,7 +40,7 @@ def test_wide_bar_shows_full_labels_and_the_mockup_tools(deck):
         assert width >= deck.bar.CHAR * len(item.label), item.label
 
 
-def test_every_hoverable_part_has_a_tip_and_controls_name_their_operator(deck):
+def test_every_hoverable_part_has_a_plain_language_tip(deck):
     layout = _layout(deck)
     roles = {item.role for item in layout.hits()}
     assert {"button", "readout", "sparkline", "chip"} <= roles
@@ -48,7 +48,8 @@ def test_every_hoverable_part_has_a_tip_and_controls_name_their_operator(deck):
         title, body = item.tip
         assert title and body
         if item.control is not None:
-            assert item.control.target in body
+            assert item.control.target not in body
+            assert "fluidsim." not in body
 
 
 def test_idle_chip_is_shown_and_pending_chip_adds_apply_and_revert(deck):
