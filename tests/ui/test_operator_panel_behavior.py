@@ -3765,11 +3765,13 @@ def test_attribute_toggles_are_drawn_on_the_domain_group(monkeypatch):
                if not (kind == "whitewater" and key == "type")}
         for kind, names in OUTPUT_TOGGLE_NAMES.items()
     }
-    domain_group = SimpleNamespace(export_attributes=True, **{
-        name: False for names in toggles.values() for name in names})
+    domain_group = SimpleNamespace(
+        export_attributes=True, surface_enabled=True, whitewater_enabled=True, **{
+            name: False for names in toggles.values() for name in names})
     scene_group = SimpleNamespace(
         ui_mode="ADVANCED",
         liquid_view_mode="SURFACE_PARTICLES",
+        show_whitewater=True,
         domain_object=SimpleNamespace(fluidsim_domain=domain_group),
     )
     context = SimpleNamespace(scene=SimpleNamespace(fluidsim=scene_group))
@@ -3789,6 +3791,81 @@ def test_attribute_toggles_are_drawn_on_the_domain_group(monkeypatch):
             drawn = {call["name"] for call in panel.layout.prop_calls
                      if call["data"] is domain_group}
             assert drawn == toggles[kind], cls.__name__
+
+
+class _GreyLayout:
+    """Layout fake that records whether each prop was drawn greyed (`active`)."""
+
+    def __init__(self, parent=None):
+        self.parent = parent
+        self.active = True
+        self.states = parent.states if parent is not None else {}
+
+    def _effective(self):
+        return self.active and (self.parent is None or self.parent._effective())
+
+    def prop(self, data, name, **_kwargs):
+        self.states[name] = self._effective()
+
+    def label(self, **_kwargs):
+        return None
+
+    def operator(self, *_args, **_kwargs):
+        return SimpleNamespace()
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return lambda *_args, **_kwargs: _GreyLayout(self)
+
+
+def _physics_output_context(**scene_values):
+    domain = SimpleNamespace(
+        export_attributes=True, surface_enabled=True, whitewater_enabled=True,
+        ww_foam_advection=1.0, ww_bubble_drag=1.0, ww_spray_drag=1.0)
+    for key in ("surface_enabled", "whitewater_enabled"):
+        if key in scene_values:
+            setattr(domain, key, scene_values.pop(key))
+    values = dict(
+        ui_mode="ADVANCED", liquid_view_mode="SURFACE_PARTICLES",
+        show_whitewater=True, whitewater_output_mode="BOTH",
+        domain_object=SimpleNamespace(fluidsim_domain=domain))
+    values.update(scene_values)
+    return SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace(**values)))
+
+
+@pytest.mark.parametrize(("panel", "scene", "expected"), [
+    ("surface", {"liquid_view_mode": "PARTICLES"},
+     {"liquid_view_mode": True, "surface_material": False, "surface_attribute_mode": False}),
+    ("surface", {"surface_enabled": False},
+     {"surface_material": True, "surface_attribute_mode": False}),
+    ("surface", {}, {"surface_material": True, "surface_attribute_mode": True}),
+    ("particles", {"liquid_view_mode": "SURFACE"},
+     {"liquid_view_mode": True, "particle_display_fraction": False, "particle_material": False}),
+    ("particles", {}, {"particle_display_fraction": True, "particle_material": True}),
+    ("whitewater", {"whitewater_enabled": False},
+     {"show_whitewater": False, "whitewater_material": False}),
+    ("whitewater", {"show_whitewater": False},
+     {"show_whitewater": True, "whitewater_output_mode": False, "whitewater_material": True}),
+    ("foam", {"whitewater_output_mode": "COMBINED"},
+     {"whitewater_output_mode": True, "foam_material": False, "ww_foam_advection": True}),
+    ("foam", {"whitewater_enabled": False},
+     {"foam_material": False, "ww_foam_advection": False}),
+    ("bubbles", {"show_whitewater": False},
+     {"whitewater_display_fraction": False, "bubble_material": True, "ww_bubble_drag": True}),
+    ("spray", {"whitewater_enabled": False}, {"spray_material": False, "ww_spray_drag": False}),
+])
+def test_physics_output_panels_grey_like_the_scene_tab(monkeypatch, panel, scene, expected):
+    """Output-object panels in Physics follow the Scene tab's greying rules."""
+    _install_bpy_stub(monkeypatch)
+    _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+    cls = getattr(ui_physics, f"FLUIDSIM_PT_physics_{panel}_output")
+    instance = cls()
+    instance.layout = _GreyLayout()
+    instance.draw(_physics_output_context(**scene))
+    drawn = instance.layout.states
+    assert {name: drawn.get(name) for name in expected} == expected
 
 
 def test_setup_scene_invoke_opens_mode_dialog(monkeypatch):
