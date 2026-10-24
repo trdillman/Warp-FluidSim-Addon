@@ -168,7 +168,7 @@ class FLUIDSIM_PT_physics_root(FluidSimPhysicsPanel, bpy.types.Panel):
             # outputs, diagnostics); the domain settings are in this tab.
             text="Open Scene FluidSim Settings",
             icon="PROPERTIES",
-        )
+        ).target = "SCENE"
         if kind == "DOMAIN" or kind in _OUTPUT_KINDS.values():
             install = layout.operator(
                 "fluidsim.install_render_nodes",

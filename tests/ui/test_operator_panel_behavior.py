@@ -5218,3 +5218,38 @@ def test_quality_note_does_not_share_horizontal_space_with_editable_value(monkey
     assert ui_common.draw_property(layout, SimpleNamespace(max_substeps=4), "max_substeps")
     assert leaves(layout) == {"PROP", "LABEL"}
     check_flow(layout)
+
+
+def test_domain_physics_button_opens_the_scene_tab_not_physics_again(monkeypatch):
+    """On the domain, "Open Scene FluidSim Settings" must leave the Physics tab."""
+    _install_bpy_stub(monkeypatch)
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+
+    class _RecordingLayout(_Layout):
+        def operator(self, operator_id, **kwargs):
+            super().operator(operator_id, **kwargs)
+            props = SimpleNamespace()
+            self._root.operators[-1]["props"] = props
+            return props
+
+    monkeypatch.setattr(ui_physics, "physics_object_kind", lambda _context: "DOMAIN")
+    monkeypatch.setattr(ui_physics.file_compat, "draw_pre_bridge_warning", lambda *_a: None)
+    domain = SimpleNamespace(name="FluidSim Domain")
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=domain))
+    panel = ui_physics.FLUIDSIM_PT_physics_root()
+    panel.layout = _RecordingLayout()
+    panel.draw(SimpleNamespace(scene=scene, object=domain, active_object=domain))
+    button = _operator(panel.layout, "fluidsim.open_scene_properties")
+    assert button["text"] == "Open Scene FluidSim Settings"
+    assert button["props"].target == "SCENE"
+
+    area = SimpleNamespace(type="PROPERTIES", spaces=SimpleNamespace(
+        active=SimpleNamespace(context="PHYSICS")))
+    context = SimpleNamespace(scene=scene, active_object=domain,
+                              screen=SimpleNamespace(areas=[area]))
+    reports = []
+    op = SimpleNamespace(target="SCENE", report=lambda level, text: reports.append(text))
+    assert panels.FLUIDSIM_OT_open_scene_properties.execute(op, context) == {"FINISHED"}
+    assert area.spaces.active.context == "SCENE"
+    assert reports == ["FluidSim controls are in Scene Properties"]
