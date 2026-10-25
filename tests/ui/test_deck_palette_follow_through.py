@@ -68,7 +68,19 @@ def deck(monkeypatch):
     deck.undo_pushes = []
     bpy.ops.ed = SimpleNamespace(undo_push=lambda message="": deck.undo_pushes.append(message))
     deck.palette.bar._FLASHES.clear()
-    monkeypatch.setattr(deck.palette, "_bake_hold_message", lambda: "", raising=False)
+    from fluidSim_warp_blender51.blender import pending_settings
+
+    # A solver that owns the scene and has already simulated: nothing auto-applies.
+    deck.solver = SimpleNamespace(owns=True, disposable=False)
+    deck.pending = pending_settings
+    monkeypatch.setattr(pending_settings, "_bake_refusal", lambda: "")
+    monkeypatch.setattr(pending_settings, "session", lambda: SimpleNamespace(
+        owns_scene=lambda _scene: deck.solver.owns))
+    monkeypatch.setattr(pending_settings, "_is_disposable_start",
+                        lambda _sess: deck.solver.disposable)
+    monkeypatch.setattr(pending_settings, "pending_presentation", lambda _scene: {
+        "action": "RESET_PENDING", "summary": "1 change(s) staged for reset",
+        "reason_detail": "will apply after reset"})
     return deck
 
 
@@ -259,7 +271,7 @@ def test_exact_value_text_round_trips_a_blender_float():
     assert palette.exact_value_text(96, "INT") == "96"
 
 
-# Defects 4 and 5: write feedback follows the field's tier, and is undoable -----------
+# Defects 4 and 5: write feedback comes from Pending Settings, and is undoable --------
 
 def test_live_tier_write_flashes_live_and_pushes_undo(deck):
     scene = _scene()
@@ -277,13 +289,35 @@ def test_reset_and_reinitialize_tier_writes_are_staged_not_live(deck, name):
     entry = _setting(deck, scene, name)
     message = deck.palette.commit_inline(scene, entry, "80")
     assert not deck.palette.bar._FLASHES
-    assert message and "LIVE" not in message
+    assert message == "1 change(s) staged for reset; will apply after reset"
     assert len(deck.undo_pushes) == 1
+
+
+@pytest.mark.parametrize("name", ["surface_tension_enabled", "resolution_divisions"])
+def test_reset_tier_write_at_a_disposable_start_applies_at_once(deck, name):
+    deck.solver.disposable = True
+    scene = _scene()
+    assert deck.palette.commit_inline(scene, _setting(deck, scene, name), "80") == ""
+    assert deck.palette.bar._FLASHES
+
+
+def test_live_tier_write_without_an_owning_solver_is_not_live(deck):
+    deck.solver.owns = False
+    scene = _scene()
+    viscosity = _setting(deck, scene, "viscosity_enabled")
+    message = deck.palette.commit_inline(scene, viscosity, "")
+    assert not deck.palette.bar._FLASHES
+    assert message == f"{viscosity.label} is set; it takes effect on the next run"
+
+
+def test_output_tier_write_applies_without_a_solver(deck):
+    deck.solver.owns = False
+    assert deck.pending.edit_outcome(_scene(), "show_particles") == (True, "")
 
 
 def test_write_during_a_production_bake_is_held_not_live(deck, monkeypatch):
     hold = "A Production Bake is running; changes apply when it ends"
-    monkeypatch.setattr(deck.palette, "_bake_hold_message", lambda: hold, raising=False)
+    monkeypatch.setattr(deck.pending, "_bake_refusal", lambda: hold)
     scene = _scene()
     viscosity = _setting(deck, scene, "viscosity_enabled")
     assert deck.palette.commit_inline(scene, viscosity, "") == hold

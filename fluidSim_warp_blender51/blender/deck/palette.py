@@ -287,46 +287,25 @@ def row_status(context, entry: Entry, missing_demos=frozenset()) -> tuple[bool, 
 
 # Inline edit ----------------------------------------------------------------------
 
-def _bake_hold_message() -> str:
-    """The Pending Settings bake-hold message while any Production Bake runs, else ``""``."""
-    try:
-        from .. import pending_settings, production_bake
+def _edit_outcome(scene, entry: Entry) -> tuple[bool, str]:
+    """Pending Settings' ``(applied now, message)`` for a palette write."""
+    from ..pending_settings import edit_outcome
 
-        return pending_settings._BAKE_HOLD_MESSAGE if production_bake.any_bake_active() else ""
-    except Exception:  # noqa: BLE001 - no bake module means no bake
-        return ""
-
-
-# Tiers whose edits reach the running simulation or its outputs straight away.
-_IMMEDIATE_TIERS = frozenset({"LIVE", "SYNC", "OUTPUT", "SURFACE", "WHITEWATER"})
+    return edit_outcome(scene, entry.target, entry.label)
 
 
 def _write_feedback(scene, entry: Entry) -> str:
-    """Say what a palette write did, by the field's Pending Settings tier.
+    """Say what a palette write did, as Pending Settings decides it.
 
-    Only fields that apply straight away flash the LIVE chip. A Reset or
-    Reinitialize field is staged: the pending chip shows it when a solver is
-    running, and the message says when it applies. During a Production Bake every
-    edit is held, as it is from the panels.
+    Pending Settings owns lifecycle presentation, so the palette only renders
+    its answer: an edit that applied straight away flashes the LIVE chip; any
+    other edit (held by a Production Bake, staged, or waiting for a run) is
+    reported with Pending Settings' message.
     """
-    from ..pending_settings import SETTING_TRANSITION_REGISTRY, pending_presentation
-
-    hold = _bake_hold_message()
-    if hold:
-        return hold
-    tier = getattr(SETTING_TRANSITION_REGISTRY.get(entry.target), "value", "")
-    if tier in _IMMEDIATE_TIERS:
+    applied, message = _edit_outcome(scene, entry)
+    if applied:
         bar.note_deck_write(scene, entry.target)
-        return ""
-    if tier in {"RESET", "REINITIALIZE"}:
-        try:
-            summary = str(pending_presentation(scene).get("summary", ""))
-        except Exception:  # noqa: BLE001 - the message falls back to the tier's wording
-            summary = ""
-        when = ("after reset" if tier == "RESET"
-                else "when the solver is reinitialized")
-        return summary or f"{entry.label} is staged and will apply {when}"
-    return f"{entry.label} is set; it takes effect on the next run"
+    return message
 
 
 def _push_undo(message: str) -> None:
