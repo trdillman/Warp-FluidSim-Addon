@@ -14,15 +14,17 @@ from types import SimpleNamespace
 
 import bpy
 
-# The Scene tab registers scene-owned panels only; every domain control is a
-# Physics tab mirror (see PHYSICS_MIRROR_SOURCES below).
+# Scene-tab root panels: panel id -> (bl_order, closed). Every Properties panel
+# starts expanded so All Simulation Settings shows every setting. Domain
+# controls are drawn on the Scene tab and again as Physics tab mirrors (see
+# PHYSICS_MIRROR_SOURCES below).
 EXPECTED_SCENE_ROOTS = {
-    "FLUIDSIM_PT_scene_lifecycle": (1, True),
+    "FLUIDSIM_PT_scene_lifecycle": (1, False),
     "FLUIDSIM_PT_scene_control": (2, False),
     "FLUIDSIM_PT_scene_setup": (10, False),
-    "FLUIDSIM_PT_custom_effects": (50, True),
+    "FLUIDSIM_PT_custom_effects": (50, False),
     "FLUIDSIM_PT_scene_outputs": (80, False),
-    "FLUIDSIM_PT_scene_diagnostics": (100, True),
+    "FLUIDSIM_PT_scene_diagnostics": (100, False),
 }
 # Source panel ids (the Scene-tab draw functions) mirrored into Physics
 # Properties, per mirror group. A mirror id is
@@ -362,8 +364,9 @@ def _assert_metadata() -> dict[str, dict[str, object]]:
         records[panel_id] = metadata
     for panel_id in EXPECTED_EFFECT_CHILDREN:
         metadata = _panel_metadata(panel_id)
-        if metadata["parent"] != "FLUIDSIM_PT_custom_effects" or not metadata["closed"]:
-            raise AssertionError(f"{panel_id} is not a closed Custom Effects child: {metadata}")
+        if metadata["parent"] != "FLUIDSIM_PT_custom_effects" or metadata["closed"]:
+            raise AssertionError(
+                f"{panel_id} is not an expanded Custom Effects child: {metadata}")
         records[panel_id] = metadata
     viewport = _panel_metadata("FLUIDSIM_PT_viewport_status")
     if (viewport["space"], viewport["region"]) != ("VIEW_3D", "UI"):
@@ -376,18 +379,24 @@ def _assert_metadata() -> dict[str, dict[str, object]]:
             raise AssertionError(f"deleted panel is still registered: {removed}")
     for group, source_ids in PHYSICS_MIRROR_SOURCES.items():
         for source_id in source_ids:
-            if hasattr(bpy.types, source_id):
+            source = _panel_metadata(source_id)
+            if (source["space"], source["region"], source["context"]) != (
+                "PROPERTIES",
+                "WINDOW",
+                "scene",
+            ) or source["closed"]:
                 raise AssertionError(
-                    f"Scene Properties still registers the domain panel {source_id}")
+                    f"{source_id} is not an expanded Scene Properties panel: {source}")
+            records[source_id] = source
             mirror_id = _mirror_id(group, source_id)
             mirror = _panel_metadata(mirror_id)
             if (mirror["space"], mirror["region"], mirror["context"]) != (
                 "PROPERTIES",
                 "WINDOW",
                 "physics",
-            ):
+            ) or mirror["closed"]:
                 raise AssertionError(
-                    f"{mirror_id} is not a Physics Properties panel: {mirror}")
+                    f"{mirror_id} is not an expanded Physics Properties panel: {mirror}")
             records[mirror_id] = mirror
     for panel_id, (order, parent, closed) in EXPECTED_STAGE_PANELS.items():
         stage = _panel_metadata(panel_id)
