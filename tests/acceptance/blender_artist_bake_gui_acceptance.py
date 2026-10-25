@@ -350,7 +350,7 @@ def _tick():
                 for path in STATE["cache_path"].rglob("*")
                 if path.is_file()
             )
-            result = bpy.ops.fluidsim.bake_cancel("EXEC_DEFAULT")
+            result = bpy.ops.fluidsim.bake_cancel("EXEC_DEFAULT", all_scenes=True)
             _check("cancel requested from scene B", result == {"FINISHED"}, result)
             _check("cancel RNA was written to scene A", scene_a.fluidsim.bake_status == "CANCELLING")
             _check("cancel did not mutate scene B", _scene_b_snapshot(scene_b) == STATE["scene_b_before"])

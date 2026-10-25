@@ -309,6 +309,15 @@ class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):
     bl_idname = "fluidsim.bake_cancel"
     bl_label = "Cancel Production Bake"
 
+    # Off by default: the button cancels only the bake this scene owns, so a
+    # click in one scene never stops a bake started in another.
+    all_scenes: BoolProperty(
+        name="All Scenes",
+        default=False,
+        options={"SKIP_SAVE"},
+        description="Cancel the running Production Bake even when another scene owns it",
+    )
+
     @classmethod
     def poll(cls, _context):
         from ..blender import production_bake
@@ -318,10 +327,27 @@ class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):
             return False
         return True
 
-    def execute(self, _context):
+    def execute(self, context):
         from ..blender import production_bake
 
-        for scene, controller in production_bake.active_bakes():
+        running = production_bake.active_bakes()
+        if not bool(getattr(self, "all_scenes", False)):
+            key = scene_identity(getattr(context, "scene", None))
+            owned = tuple(
+                (scene, controller) for scene, controller in running
+                if scene_identity(scene) == key)
+            if not owned:
+                names = ", ".join(
+                    f"'{getattr(scene, 'name', '')}'" for scene, _ in running
+                    if getattr(scene, "name", ""))
+                where = f" in scene {names}" if names else " in another scene"
+                self.report(
+                    {"WARNING"},
+                    f"The Production Bake is running{where}; switch to that "
+                    "scene to cancel it")
+                return {"CANCELLED"}
+            running = owned
+        for scene, controller in running:
             controller.request_cancel()
             _update_bake_rna(scene, controller)
         return {"FINISHED"}

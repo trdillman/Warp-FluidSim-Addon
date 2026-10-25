@@ -533,12 +533,18 @@ def test_modal_bake_remains_bound_to_initiating_scene_after_context_switch(
     assert operator.modal(context, SimpleNamespace(type="TIMER", value="NOTHING")) == {
         "RUNNING_MODAL"
     }
-    assert cache_operators.FLUIDSIM_OT_bake_cancel().execute(context) == {"FINISHED"}
+    # Cancel Bake in scene B does not stop scene A's bake by default ...
+    controller = _ModalController.instances[-1]
+    assert cache_operators.FLUIDSIM_OT_bake_cancel().execute(context) == {"CANCELLED"}
+    assert controller.cancel_requests == 0
+    # ... only the explicit all-scenes option reaches across scenes.
+    cancel_all = cache_operators.FLUIDSIM_OT_bake_cancel()
+    cancel_all.all_scenes = True
+    assert cancel_all.execute(context) == {"FINISHED"}
     result = operator.modal(
         context, SimpleNamespace(type="TIMER", value="NOTHING")
     )
 
-    controller = _ModalController.instances[-1]
     assert result == {"CANCELLED"}
     assert controller.tick_scenes == [scene_a, scene_a]
     assert scene_a.fluidsim.bake_status == production_bake.BakeStatus.CANCELLED.value
