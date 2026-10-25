@@ -30,8 +30,13 @@ def main():
             "domain mixing toggle is not registered")
     require(hasattr(domain_settings, "species_mixing_rate"),
             "domain mixing strength is not registered")
-    require(not hasattr(bpy.types, "FLUIDSIM_PT_sim_color_mixing"),
-            "Scene Properties still registers the domain color-mixing panel")
+    # The controls appear on both the Scene tab (so "All Simulation Settings"
+    # lands on them) and the domain's Physics tab mirror.
+    scene_panel = getattr(bpy.types, "FLUIDSIM_PT_sim_color_mixing", None)
+    require(scene_panel is not None
+            and scene_panel.bl_space_type == "PROPERTIES"
+            and scene_panel.bl_context == "scene",
+            "color-mixing panel is not registered in Scene Properties")
     require(hasattr(bpy.types, "FLUIDSIM_PT_physics_domain_sim_color_mixing"),
             "current Physics Properties domain mirror is not registered")
     require(hasattr(bpy.types, "FLUIDSIM_PT_physics_input_object_source"),
