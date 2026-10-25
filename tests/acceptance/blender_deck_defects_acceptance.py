@@ -8,6 +8,7 @@ Phase 1 runs in the unsaved startup file:
 
 - Bake is greyed, with the reason, when there is no domain and when the cache
   path is relative in an unsaved file;
+- the cache tools are greyed with "No cache to manage" when there is no cache;
 - Add > Fluid Domain lands on the 3D cursor;
 - the effect-list buttons are greyed with "Add an effect first";
 - turning on Liquid Preview with no particles warns;
@@ -25,7 +26,7 @@ Phase 2 opens demos/dam_break.blend (never saved) and checks, in the live UI:
 - the palette (Ctrl+K), wheel (Alt+Right-click) and header popover open from
   real input and draw without errors;
 - a real modal Production Bake: the Bake slot shows progress, gizmo and palette
-  edits are held, Add Domain is greyed, a Cancel from another scene leaves the
+  edits are held, Add Domain and the cache tools are greyed, a Cancel from another scene leaves the
   bake running, a Cancel from this scene stops it, and the slot then offers
   Resume or Restart.
 
@@ -171,6 +172,10 @@ def phase_startup(ui):
     ok, why = poll(ui, "fluidsim.bake_start")
     check("Bake greyed for a relative cache in an unsaved file",
           not ok and bool(why), why)
+    for idname in ("fluidsim.cache_free", "fluidsim.cache_integrity_scan",
+                   "fluidsim.cache_open_folder"):
+        ok, why = poll(ui, idname)
+        check(f"{idname} greyed with no cache", not ok and why == "No cache to manage", why)
 
     for idname in ("fluidsim.effect_duplicate", "fluidsim.effect_move",
                    "fluidsim.effect_toggle_mute", "fluidsim.effect_toggle_solo"):
@@ -428,6 +433,8 @@ def phase_bake(ui):
     domain.surface_enabled = False
     other = bpy.data.scenes.new("Deck Defects Other Scene")
 
+    ok, why = poll(ui, "fluidsim.cache_free")
+    check("Free Cache greyed before the first bake", not ok and why == "No cache to manage", why)
     check("Bake slot offers Bake before baking", controls.bake_control(scene) is controls.BAKE,
           controls.bake_control(scene).label)
     with ui.ctx():
@@ -450,6 +457,10 @@ def phase_bake(ui):
         check("gizmo edits held during the bake", gizmos.bake_holds_edits(bpy.context))
     ok, why = poll(ui, "fluidsim.add_domain")
     check("Add Fluid Domain greyed during the bake", not ok and bool(why), why)
+    for idname in ("fluidsim.cache_free", "fluidsim.cache_move", "fluidsim.cache_rename",
+                   "fluidsim.cache_remove_orphans"):
+        ok, why = poll(ui, idname)
+        check(f"{idname} greyed during the bake", not ok and "Production Bake" in why, why)
     entry = next((e for e in palette.setting_entries(scene)
                   if e.editable and e.value_type == "BOOLEAN" and e.target == "show_whitewater"),
                  None)
@@ -487,6 +498,10 @@ def phase_bake(ui):
     check("Bake slot offers Resume or Restart after a cancelled bake",
           slot in (controls.BAKE_RESUME, controls.BAKE_RESTART), slot.label)
     ui.screenshot("bake_cancelled_bar")
+    for idname in ("fluidsim.cache_free", "fluidsim.cache_integrity_scan",
+                   "fluidsim.cache_open_folder"):
+        ok, why = poll(ui, idname)
+        check(f"{idname} available once the bake has written a cache", ok, why)
     bpy.data.scenes.remove(other)
 
 

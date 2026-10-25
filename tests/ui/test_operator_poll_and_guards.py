@@ -220,6 +220,12 @@ def test_scene_domain_panel_draw_does_not_inspect_broken_domain_geometry(monkeyp
         def grid_flow(self, **_kwargs):
             return self
 
+        def column(self, **_kwargs):
+            return self
+
+        def label(self, **_kwargs):
+            pass
+
         def prop(self, _data, name, **_kwargs):
             self.properties.append(name)
 
