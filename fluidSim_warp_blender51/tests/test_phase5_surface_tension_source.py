@@ -236,9 +236,10 @@ def test_phase5_blender_validator_tracks_native_properties_panel_identity():
     source = (TOOLS_RELEASE / "validate_phase5_blender.py").read_text(
         encoding="utf-8"
     )
-    # The Scene tab registers no domain panels, so the validator must require the
-    # Scene id to be absent and the Physics mirror to be the registered home.
-    assert '"FLUIDSIM_PT_sim_surface_tension", None) is not None' in source
+    # The panel is registered on both the Scene tab and the Physics mirror, so
+    # the validator must require each id with its own Properties context.
+    assert '"FLUIDSIM_PT_sim_surface_tension", None)' in source
+    assert 'scene_panel.bl_context != "scene"' in source
     assert '"FLUIDSIM_PT_physics_domain_sim_surface_tension"' in source
     assert '"FLUIDSIM_PT_surface_tension"' not in source
     assert 'bl_space_type != "PROPERTIES"' in source
