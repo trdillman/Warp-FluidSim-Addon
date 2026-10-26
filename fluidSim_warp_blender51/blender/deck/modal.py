@@ -142,7 +142,9 @@ class FLUIDSIM_OT_deck_modal(bpy.types.Operator):
             self.press_on_bar = over
             if not over:
                 return {"PASS_THROUGH"}
-            if item is not None and item.control is not None and event.value == "PRESS":
+            # A second click inside the double-click time arrives as DOUBLE_CLICK.
+            if (item is not None and item.control is not None
+                    and event.value in {"PRESS", "DOUBLE_CLICK"}):
                 ready, reason = controls.control_status(bpy.context, item.control)
                 if ready:
                     controls.run_control(bpy.context, item.control, report=self.report)

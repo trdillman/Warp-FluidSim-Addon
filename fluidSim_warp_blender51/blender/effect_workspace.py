@@ -551,6 +551,13 @@ class FLUIDSIM_OT_effect_test_sandbox(bpy.types.Operator):
             return {"CANCELLED"}
         effects.rebuild_definition_json(context.scene, item)
         instance = effects.effect_instance_from_pg(context.scene, item)
+        # Compiling imports the generated module and the test launches it, so
+        # this runs effect code exactly like Test Draft and needs the same trust.
+        apply_session_trust(context.scene)
+        reason = effects.untrusted_source_reason(context.scene, instance)
+        if reason:
+            self.report({"ERROR"}, reason)
+            return {"CANCELLED"}
         from ..sim.effects.compiler import compile_effect
         from ..sim.effects.sandbox import sandbox_test
         from ..preferences import configured_device

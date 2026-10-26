@@ -163,7 +163,25 @@ def k_viscosity_smooth(
         w_out[tid] = w_in[tid] + t * (sw / nw_ - w_in[tid])
 
 
-# Implicit path: (I + c*D - c*L) x = u  with c = dt*nu/h^2 per voxel
+# Implicit path: (I + c*D - c*L) x = u  with c = dt*nu/h^2 per link
+
+
+@wp.func
+def _link_coefficient(
+    viscosity_field: wp.array(dtype=float),
+    a: wp.int32,
+    b: wp.int32,
+    dt: float,
+    voxel_size: float,
+) -> float:
+    """dt*nu/h^2 for the link a-b, using the mean viscosity of both cells.
+
+    Both rows of a link must use the same coefficient or the operator is not
+    symmetric and PCG is invalid wherever viscosity varies in space.  For a
+    uniform field 0.5*(nu+nu) == nu exactly, so the coefficient is unchanged.
+    """
+    nu = 0.5 * (viscosity_field[a] + viscosity_field[b])
+    return nu * dt / (voxel_size * voxel_size)
 
 
 @wp.kernel
@@ -233,13 +251,12 @@ def k_viscosity_compute_inverse_diagonal(
         inv_diag[tid] = 0.0
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
-    c = viscosity_field[tid] * dt[0] / (voxel_size * voxel_size)
     diag = float(1.0)
     for axis in range(3):
         for step in range(-1, 2, 2):
             f = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             if f >= 0 and weight[f] > 0.0 and (voxel_type[f] & VOXEL_COLLISION) == 0:
-                diag += c
+                diag += _link_coefficient(viscosity_field, tid, f, dt[0], voxel_size)
     inv_diag[tid] = 1.0 / diag
 
 
@@ -266,13 +283,12 @@ def k_viscosity_apply_matrix(
         ax[tid] = 0.0
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
-    c = viscosity_field[tid] * dt[0] / (voxel_size * voxel_size)
     acc = x[tid]
     for axis in range(3):
         for step in range(-1, 2, 2):
             f = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, step)
             if f >= 0 and weight[f] > 0.0 and (voxel_type[f] & VOXEL_COLLISION) == 0:
-                acc += c * (x[tid] - x[f])
+                acc += _link_coefficient(viscosity_field, tid, f, dt[0], voxel_size) * (x[tid] - x[f])
     ax[tid] = acc
 
 

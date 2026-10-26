@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import fnmatch
 import hashlib
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ import uuid
 from ..io.cache import (
     CACHE_FORMAT_VERSION,
     LEGACY_CACHE_MESSAGE,
+    LEGACY_FRAME_GLOB,
     detect_cache_format,
 )
 from ..io.cache_schema import (
@@ -93,6 +95,44 @@ def _require_managed_cache_directory(path: Path | str) -> Path:
     base = Path(path).expanduser().resolve()
     if not is_managed_cache_directory(base):
         raise ValueError(f"not a recognized FluidSim cache directory: {base}")
+    return base
+
+
+# Top-level entries FluidSim writes in a cache folder (all formats), plus the
+# files operating systems drop into any folder.
+_CACHE_ENTRY_NAMES = frozenset({
+    "fluidsim_cache.json", "fluidsim_sequence.json", "frames", "checkpoints",
+    "logs", "thumbs.db", "desktop.ini", ".ds_store",
+})
+
+
+def foreign_cache_entries(path: Path | str) -> tuple[str, ...]:
+    """Top-level entries in a cache folder that FluidSim did not write."""
+    foreign = []
+    for entry in Path(path).iterdir():
+        name = entry.name.lower()
+        if name in _CACHE_ENTRY_NAMES or name.endswith(".tmp"):
+            continue
+        if fnmatch.fnmatch(name, LEGACY_FRAME_GLOB):
+            continue
+        foreign.append(entry.name)
+    return tuple(sorted(foreign))
+
+
+def _require_whole_cache_directory(path: Path | str) -> Path:
+    """Refuse to delete or move a folder that also holds other data.
+
+    Free and Move act on the whole folder, so a Cache Path pointing at a
+    shared folder (``//`` is the .blend's own folder) must not take the
+    .blend and everything beside it along.
+    """
+    base = _require_managed_cache_directory(path)
+    foreign = foreign_cache_entries(base)
+    if foreign:
+        shown = ", ".join(foreign[:5]) + (" ..." if len(foreign) > 5 else "")
+        raise ValueError(
+            f"{base} also holds files FluidSim did not write ({shown}); "
+            "set Cache Path to a folder of its own before freeing or moving it")
     return base
 
 
@@ -272,7 +312,7 @@ def free_cache(path: Path | str) -> Path | None:
     path = assert_cache_path_mutable(path)
     if not path.exists():
         return None
-    path = _require_managed_cache_directory(path)
+    path = _require_whole_cache_directory(path)
     trash = path.with_name(f".{path.name}.fluidsim-trash-{uuid.uuid4().hex}")
     os.replace(path, trash)
     try:
@@ -310,7 +350,7 @@ def move_cache(source: Path | str, destination: Path | str) -> Path:
     destination = assert_cache_path_mutable(destination)
     if not source.is_dir():
         raise FileNotFoundError(f"cache source does not exist: {source}")
-    source = _require_managed_cache_directory(source)
+    source = _require_whole_cache_directory(source)
     if destination.exists():
         raise FileExistsError(f"cache destination already exists: {destination}")
     # Freeing the source after publishing would delete a destination nested
@@ -344,7 +384,7 @@ def validate_leaf_name(name: str) -> str:
 
 def rename_cache(path: Path | str, name: str) -> Path:
     path = assert_cache_path_mutable(path)
-    path = _require_managed_cache_directory(path)
+    path = _require_whole_cache_directory(path)
     name = validate_leaf_name(name)
     destination = path.with_name(name)
     assert_cache_path_mutable(destination)

@@ -250,7 +250,9 @@ def generate_kernel_source(instance: EffectInstanceV2, kernel_index: int) -> Gen
     lines = _base_template(instance, kernel_index, provisional_name)
     user_line_start = len("\n".join(lines).splitlines()) + 1
     body = textwrap.dedent(kernel.source).strip("\n") or "pass"
-    user_lines = body.splitlines() or ["pass"]
+    # Split exactly as Python's tokenizer does (str.splitlines() also breaks on
+    # U+2028 and friends, which would surface text hidden inside a comment).
+    user_lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n") or ["pass"]
     lines.extend("    " + line if line.strip() else "" for line in user_lines)
     provisional = "\n".join(lines) + "\n"
     digest = hashlib.sha256(provisional.encode("utf-8")).hexdigest()

@@ -328,3 +328,56 @@ def test_restart_allows_new_empty_or_recognized_cache_directories(tmp_path):
 
     for path in (missing, empty, cache):
         assert require_restartable_cache_directory(path, RESTART_ENTRIES) == path.resolve()
+
+
+# Review finding, 2026-10-26: Free/Move removed the whole cache folder once it
+# held a manifest or frame files, never checking for anything else, so a Cache
+# Path of "//" (the .blend's own folder) freed the .blend with it.
+def test_free_refuses_a_cache_folder_holding_foreign_files(tmp_path):
+    folder = tmp_path / "project"
+    _make_cache(folder)
+    (folder / "scene.blend").write_bytes(b"BLENDER")
+    (folder / "textures").mkdir()
+    (folder / "textures" / "wood.png").write_bytes(b"png")
+    before = _tree(folder)
+
+    with pytest.raises(ValueError, match="scene.blend"):
+        free_cache(folder)
+
+    assert _tree(folder) == before
+
+
+def test_move_refuses_a_cache_folder_holding_foreign_files(tmp_path):
+    folder = tmp_path / "project"
+    _make_cache(folder)
+    (folder / "scene.blend").write_bytes(b"BLENDER")
+    before = _tree(folder)
+
+    with pytest.raises(ValueError, match="scene.blend"):
+        move_cache(folder, tmp_path / "moved")
+
+    assert _tree(folder) == before
+    assert not (tmp_path / "moved").exists()
+
+
+def test_free_still_removes_a_cache_with_logs_temps_and_os_files(tmp_path):
+    folder = tmp_path / "cache"
+    _make_cache(folder)
+    (folder / "logs").mkdir()
+    (folder / "logs" / "bake.log").write_text("ok", encoding="utf-8")
+    (folder / "fluidsim_cache.json.tmp").write_text("{}", encoding="utf-8")
+    (folder / "Thumbs.db").write_bytes(b"")
+
+    assert free_cache(folder) is None
+    assert not folder.exists()
+
+
+def test_rename_refuses_a_cache_folder_holding_foreign_files(tmp_path):
+    folder = tmp_path / "project"
+    _make_cache(folder)
+    (folder / "scene.blend").write_bytes(b"BLENDER")
+
+    with pytest.raises(ValueError, match="scene.blend"):
+        rename_cache(folder, "renamed")
+
+    assert (folder / "scene.blend").is_file()

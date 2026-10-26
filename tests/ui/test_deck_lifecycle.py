@@ -283,6 +283,20 @@ def test_file_load_brings_the_event_layer_timer_forward(monkeypatch):
     REGISTRY.unregister_all()
 
 
+def test_a_quick_second_click_runs_the_control_again(monkeypatch):
+    # Review finding, 2026-10-26: Blender delivers a second click inside the
+    # double-click time as value DOUBLE_CLICK; the bar acted only on PRESS and
+    # swallowed it, so a fast second click on a button did nothing.
+    _modal, operator, context, ran = _routing(monkeypatch)
+    assert operator.modal(context, _event("LEFTMOUSE", 120, 20)) == {"RUNNING_MODAL"}
+    assert operator.modal(
+        context, _event("LEFTMOUSE", 120, 20, value="DOUBLE_CLICK")) == {"RUNNING_MODAL"}
+    assert len(ran) == 2
+    # The release of either click runs nothing.
+    assert operator.modal(context, _event("LEFTMOUSE", 120, 20, value="RELEASE")) == {"RUNNING_MODAL"}
+    assert len(ran) == 2
+
+
 def test_a_refused_bar_click_runs_nothing_and_says_why(monkeypatch):
     _modal, operator, context, ran = _routing(monkeypatch)
     operator.status["value"] = (False, "A Production Bake is running")
