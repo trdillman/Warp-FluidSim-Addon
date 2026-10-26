@@ -79,7 +79,7 @@ class DeckRegistry:
         handlers = getattr(_bpy().app.handlers, list_name)
         if fn not in handlers:
             handlers.append(fn)
-        self._app_handlers.append((list_name, fn))
+            self._app_handlers.append((list_name, fn))
 
     def add_timer(self, key, fn, first_interval=0.0, persistent=True):
         """Register a timer under ``key``; persistent by default, so it survives file loads."""

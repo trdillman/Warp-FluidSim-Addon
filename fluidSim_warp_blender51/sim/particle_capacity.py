@@ -6,8 +6,7 @@ from dataclasses import dataclass
 import math
 
 from .memory_safety import (
-    PARTICLE_BYTES,
-    WHITEWATER_EMISSION_BYTES_PER_LIQUID,
+    particle_storage_bytes,
     safe_memory_budget,
 )
 
@@ -72,21 +71,23 @@ def plan_particle_growth(
     gpu_free_bytes: int,
     hard_limit: int = MAX_AUTO_PARTICLES,
     extra_particle_bytes: int = 0,
+    fixed_allocation_bytes: int = 0,
 ) -> ParticleGrowthPlan:
     """Guard an atomic grow-copy-swap against the live free-memory budget.
 
     The old and new particle pools coexist until copying succeeds, so the peak
     guard charges the complete target pool rather than only the capacity delta.
+    ``fixed_allocation_bytes`` charges replacement storage whose size does not
+    vary with the particle target, such as the voxel-sized bin scratch.
     ``PARTICLE_BYTES`` includes conservative particle and bin storage; the
-    whitewater candidate flag/offset workspace grows in the same transaction.
+    whitewater candidate flag/offset/type workspace grows in the same transaction.
     """
     current = max(1, int(current))
     required = max(0, int(required))
     target = growth_target(current, required, hard_limit=hard_limit)
     budget = int(safe_memory_budget(gpu_total_bytes, gpu_free_bytes))
-    peak = int(target * (
-        PARTICLE_BYTES + WHITEWATER_EMISSION_BYTES_PER_LIQUID
-        + max(0, int(extra_particle_bytes))))
+    peak = (particle_storage_bytes(target, extra_particle_bytes=extra_particle_bytes)
+            + max(0, int(fixed_allocation_bytes)))
     if required <= current:
         return ParticleGrowthPlan(
             current, required, current, 0, budget, True, "already sufficient")

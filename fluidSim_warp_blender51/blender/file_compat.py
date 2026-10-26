@@ -457,21 +457,22 @@ _COMPAT_HANDLERS = (
 
 
 def register_handlers():
-    unregister_handlers()
+    from ..unregister_guard import handler_registration
+
     handlers = getattr(getattr(bpy, "app", None), "handlers", None)
-    for name, callback in _COMPAT_HANDLERS:
-        callbacks = getattr(handlers, name, None)
-        if callbacks is not None:
-            callbacks.append(callback)
-    try:
-        # The file that is already open; sources migrate it on their own.
-        migrate_domain_resolution()
-        # Only a file read from disk: a domain made in this session is new.
-        if getattr(getattr(bpy, "data", None), "filepath", ""):
-            migrate_domain_preconditioner()
-        migrate_removed_particle_color_mode()
-    except (AttributeError, RuntimeError):  # bpy.data is restricted during enable
-        pass
+    with handler_registration(
+        (getattr(handlers, name, None), callback)
+        for name, callback in _COMPAT_HANDLERS
+    ):
+        try:
+            # The file that is already open; sources migrate it on their own.
+            migrate_domain_resolution()
+            # Only a file read from disk: a domain made in this session is new.
+            if getattr(getattr(bpy, "data", None), "filepath", ""):
+                migrate_domain_preconditioner()
+            migrate_removed_particle_color_mode()
+        except (AttributeError, RuntimeError):  # bpy.data is restricted during enable
+            pass
 
 
 def unregister_handlers():

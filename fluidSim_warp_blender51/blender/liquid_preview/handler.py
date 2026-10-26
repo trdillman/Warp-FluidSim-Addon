@@ -187,13 +187,29 @@ def _unregister_keymap():
 
 def register():
     global _FAILURE
+    from ...unregister_guard import handler_registration
+
     _require_bpy()
+    previous_failure = _FAILURE
+    previous_handle = _DRAW_HANDLE
+    keymap_start = len(_KEYMAP_ITEMS)
     _FAILURE = None
-    _register_keymap()
-    load_post = bpy.app.handlers.load_post
-    if _on_load_post not in load_post:
-        load_post.append(_on_load_post)
-    sync_registration()
+    try:
+        _register_keymap()
+        with handler_registration(((bpy.app.handlers.load_post, _on_load_post),)):
+            sync_registration()
+    except Exception as exc:
+        if previous_handle is None and _DRAW_HANDLE is not None:
+            _remove_draw_handler()
+        while len(_KEYMAP_ITEMS) > keymap_start:
+            keymap, item = _KEYMAP_ITEMS.pop()
+            try:
+                keymap.keymap_items.remove(item)
+            except Exception as undo_exc:
+                exc.add_note(f"FluidSim preview keymap rollback: {undo_exc!r}")
+                print(f"FluidSim: could not roll back preview keymap: {undo_exc!r}")
+        _FAILURE = previous_failure
+        raise
 
 
 def unregister():

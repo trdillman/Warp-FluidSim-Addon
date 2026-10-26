@@ -771,15 +771,60 @@ def test_dynamic_mesh_source_and_collider_share_one_upload(monkeypatch):
 
     depsgraph = SimpleNamespace(updates=[SimpleNamespace(
         id=SimpleNamespace(original=collider))])
-    sync_generation = sess.scene_inputs.begin_sync()
-    sources = sess.scene_inputs.gather_sources(
-        scene, depsgraph=depsgraph, sync_generation=sync_generation)
-    colliders = sess.scene_inputs.gather_colliders(
-        scene, depsgraph=depsgraph, sync_generation=sync_generation)
+    evaluation = sess.scene_inputs.evaluate(
+        scene, depsgraph, device="cuda:0")
+    sources, colliders = evaluation.descriptors, evaluation.colliders
 
     assert len(sources) == len(colliders) == 1
     assert collider.to_mesh_count == 1
     assert sources[0].mesh is colliders[0].mesh
+
+    # Removing one lane must retain the sibling's shared mesh; removing both
+    # prunes it after the complete evaluation, without a caller-held token.
+    scene.objects.remove(owner)
+    sibling = sess.scene_inputs.evaluate(scene, depsgraph, device="cuda:0")
+    assert sibling.descriptors == ()
+    assert sibling.colliders[0].mesh is colliders[0].mesh
+    scene.objects.clear()
+    sess.scene_inputs.evaluate(scene, depsgraph, device="cuda:0")
+    assert sess.scene_inputs._evaluated_mesh_cache == {}
+
+
+def test_session_refusal_preserves_sources_but_installs_other_evaluated_lanes(monkeypatch):
+    scene_bridge, _colliders, _fake_warp = _install_scene_bridge_stubs(monkeypatch)
+    sess = scene_bridge.Session()
+    scene = SimpleNamespace(objects=(), fluidsim=SimpleNamespace(status=""))
+    installed = {"sources": "admitted"}
+    sess.owns_scene = lambda _scene: True
+    sess.set_error = lambda *_args: None
+    sess.solver = SimpleNamespace(
+        device="cpu", settings=object(),
+        set_source_batch=lambda *values: installed.update(sources=values),
+        set_colliders=lambda value: installed.update(colliders=value),
+        set_force_fields=lambda value: installed.update(forces=value),
+        set_height_source=lambda value: installed.update(height=value))
+    monkeypatch.setattr(scene_bridge, "narrow_band_refusal", lambda *_: "refused")
+    monkeypatch.setattr(scene_bridge, "rigid_refusal", lambda *_: "")
+    requests = []
+    def evaluate(_scene, _depsgraph, **kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(
+            descriptors=("source",), source_plans=("plan",),
+            colliders=("collider",), force_fields=("force",), height_source="height")
+    sess.scene_inputs = SimpleNamespace(evaluate=evaluate)
+    sess.sync_scene(scene, object(), capture_first_mesh=False)
+    assert requests == [{"device": "cpu", "include_sources": False,
+                         "capture_first_mesh": False}]
+    assert installed == {"sources": "admitted", "colliders": ("collider",),
+                         "forces": ("force",), "height": "height"}
+    assert sess.sync_refusal == "refused"
+    monkeypatch.setattr(scene_bridge, "narrow_band_refusal", lambda *_: "")
+    sess.current_error = lambda _scene: "refused"
+    sess.clear_error = lambda _scene: None
+    sess.sync_scene(scene, object())
+    assert requests[-1]["include_sources"] is True
+    assert installed["sources"] == (("source",), ("plan",))
+    assert sess.sync_refusal == ""
 
 
 def test_first_frame_mesh_snapshot_is_immutable_until_clear(monkeypatch):

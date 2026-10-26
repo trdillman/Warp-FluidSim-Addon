@@ -650,3 +650,72 @@ def test_handles_draw_dimmed_during_a_production_bake(env, baking):
     baking.here = baking.anywhere = False
     assert gizmos.show_held(group, SimpleNamespace(scene=None), handles) is False
     assert [(h.alpha, h.alpha_highlight) for h in handles] == [(0.8, 1.0)] * 2
+
+
+@pytest.mark.parametrize("kind", ["velocity", "dial"])
+@pytest.mark.parametrize("active", ["other", "none"])
+@pytest.mark.parametrize("cancel", [False, True])
+def test_drag_updates_and_cancel_remain_bound_to_captured_object(env, kind, active, cancel):
+    scene, emitter = _emitter_scene(env.pending, initial_velocity=(1.0, 0.0, 0.0))
+    _other_scene, other = _emitter_scene(env.pending)
+    scene.objects.append(other)
+    context = _context(scene, emitter)
+    if kind == "velocity":
+        gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_velocity()
+        prop, start = "initial_velocity", (1.0, 0.0, 0.0)
+    else:
+        gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+        gizmo.binding = "rate"
+        prop, start = "source_sampling_multiplier", 1.0
+    untouched = getattr(other.fluidsim, prop)
+    gizmo.invoke(context, _event(0.0))
+    context.active_object = None if active == "none" else other
+    assert gizmo.modal(context, _event(80.0), set()) == {"RUNNING_MODAL"}
+    assert getattr(emitter.fluidsim, prop) != pytest.approx(start)
+    gizmo.exit(context, cancel)
+    if cancel:
+        assert getattr(emitter.fluidsim, prop) == pytest.approx(start)
+    assert getattr(other.fluidsim, prop) == untouched
+    assert not other.fluidsim.writes
+
+
+@pytest.mark.parametrize("kind", ["velocity", "dial"])
+def test_drag_cancels_without_writes_after_captured_object_is_deleted(env, kind):
+    scene, emitter = _emitter_scene(env.pending)
+    _other_scene, other = _emitter_scene(env.pending)
+    scene.objects.append(other)
+    context = _context(scene, emitter)
+    if kind == "velocity":
+        gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_velocity()
+    else:
+        gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+        gizmo.binding = "rate"
+    gizmo.invoke(context, _event(0.0))
+    scene.objects.remove(emitter)
+    context.active_object = other
+    assert gizmo.modal(context, _event(80.0), set()) == {"CANCELLED"}
+    gizmo.exit(context, True)
+    assert not emitter.fluidsim.writes
+    assert not other.fluidsim.writes
+
+
+@pytest.mark.parametrize("active", ["other", "none"])
+def test_domain_modal_update_keeps_the_captured_target(env, active):
+    scene, domain, context, gizmo = _drag_domain(env)
+    other = SimpleNamespace(scale=[1.0, 1.0, 1.0], location=[0.0, 0.0, 0.0])
+    scene.objects.append(other)
+    context.active_object = None if active == "none" else other
+    assert gizmo.modal(context, _event(200.0), set()) == {"RUNNING_MODAL"}
+    assert domain.scale != [1.0, 1.0, 1.0]
+    assert other.scale == [1.0, 1.0, 1.0]
+    assert other.location == [0.0, 0.0, 0.0]
+    gizmo.exit(context, True)
+    assert domain.scale == [1.0, 1.0, 1.0]
+    assert domain.location == [0.0, 0.0, 0.0]
+
+
+def test_deleted_domain_cancels_and_clears_preview(env):
+    scene, domain, context, gizmo = _drag_domain(env)
+    scene.objects.remove(domain)
+    assert gizmo.modal(context, _event(200.0), set()) == {"CANCELLED"}
+    assert env.deck.gizmos.active_domain_preview() is None

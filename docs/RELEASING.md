@@ -231,3 +231,10 @@ Warp's native libraries in process.
   together; a test keeps them equal. A Warp change can alter results, so
   expect the demo report hash to change, and record the new reference in
   the release notes.
+
+## Cloud UI smoke testing
+
+See [isolated cloud Blender UI testing](CLOUD_BLENDER_UI.md) and the
+[2026-10-15 integration provenance](CLOUD_BLENDER_UI_INTEGRATION_20261015.md).
+The retained Linux Blender 5.2.2 evidence is for PR30 commit `295c4cdf`,
+not a qualification of this checkout or a production acceptance pass.

@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -102,9 +103,8 @@ def _value(settings: Any, name: str, default: Any) -> Any:
 
 
 def _settings_dict(settings: Any) -> dict[str, Any]:
-    # Every setting ``estimate_solver_bytes`` reads must be carried here, or a
-    # suggestion is costed with that setting's default instead of the scene's
-    # (APIC affine buffers and narrow-band arrays were dropped this way).
+    # Deliberate signature projection: preserve existing scene identities.
+    # Candidate costing carries the complete settings through _CandidateSettings.
     defaults = {
         "sample_type": 1,
         "narrow_band_enabled": False,
@@ -135,6 +135,43 @@ def _settings_dict(settings: Any) -> dict[str, Any]:
     }
     return {name: _value(settings, name, default)
             for name, default in defaults.items()}
+
+
+class _CandidateSettings(dict):
+    """Detached settings with editable candidate values and faithful fallback.
+
+    Keep arbitrary estimator inputs on their original host record rather than
+    enumerating dataclass fields, slots, class attributes, or property getters.
+    Only planner defaults/edits need dictionary entries; unknown reads delegate
+    to the snapshot. Candidate copies retain that snapshot and never edit it.
+    """
+
+    def __init__(self, settings: Any):
+        self._authored = deepcopy(
+            dict(settings) if isinstance(settings, Mapping) else settings)
+        super().__init__(_settings_dict(self._authored))
+        # Quality belongs to candidate bounds/resolution, not the old runtime.
+        self["resolved_quality"] = None
+
+    def __missing__(self, name):
+        missing = object()
+        value = _value(self._authored, name, missing)
+        if value is missing:
+            raise KeyError(name)
+        # Class-level mutable defaults also need to remain authored-owned.
+        return deepcopy(value)
+
+    def get(self, name, default=None):
+        try:
+            return self[name]
+        except KeyError:
+            return default
+
+    def copy(self):
+        candidate = dict.__new__(type(self))
+        candidate._authored = self._authored
+        dict.update(candidate, self)
+        return candidate
 
 
 def _quality(value: Any) -> DemandQuality:
@@ -577,7 +614,7 @@ def _capacity_only_suggestion(
     }
     changes = {name: value for name, value in required.items()
                if value != base.get(name)}
-    candidate = dict(base)
+    candidate = base.copy()
     candidate.update(required)
     estimate = _estimate_candidate_bytes(candidate, plan)
     if not changes or estimate > plan.budget_bytes:
@@ -613,7 +650,7 @@ def _tightened_domain_candidate(
         for axis in range(3))
     if domain_min == authored_min and domain_max == authored_max:
         return None
-    candidate = dict(base)
+    candidate = base.copy()
     candidate.update({
         "domain_min": domain_min,
         "domain_max": domain_max,
@@ -673,7 +710,7 @@ def _coarser_resolution_suggestion(
         base: Mapping[str, Any],
 ) -> CapacitySuggestion | None:
     """Find the first bounded coarser-resolution candidate within budget."""
-    candidate = dict(base)
+    candidate = base.copy()
     original_h = max(1.0e-4, float(candidate.get("voxel_size") or 0.1))
     longest = _longest_axis(candidate)
     base_divisions = divisions_for_voxel_size(original_h, longest)
@@ -720,7 +757,7 @@ def _balanced_suggestion(
 ) -> CapacitySuggestion | None:
     if tightened is None:
         return None
-    balanced = dict(tightened)
+    balanced = tightened.copy()
     original_h = max(1.0e-4, float(base.get("voxel_size") or 0.1))
     snapped = _snap_voxel_coarser(original_h * 1.10, _longest_axis(balanced))
     if snapped < original_h * (1.0 - 1.0e-9):
@@ -771,7 +808,7 @@ def suggest_configurations(
             or plan.particle_demand.quality is DemandQuality.UNKNOWN):
         # No automatic parameter edit can make an unbounded source truthful.
         return ()
-    base = _settings_dict(settings)
+    base = _CandidateSettings(settings)
     tightened = _tightened_domain_candidate(plan, base)
     return _rank_suggestions((
         _capacity_only_suggestion(plan, base),

@@ -1,6 +1,11 @@
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import numpy as np
+import pytest
+
+from fluidSim_warp_blender51.sim import capacity_planner
+from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
 
 from fluidSim_warp_blender51.sim.capacity_planner import (
     CapacityVerdict,
@@ -12,6 +17,7 @@ from fluidSim_warp_blender51.sim.capacity_planner import (
 from fluidSim_warp_blender51.sim.memory_safety import estimate_solver_bytes
 from fluidSim_warp_blender51.sim.quality_contract import (
     MIN_RESOLUTION_DIVISIONS,
+    resolve_quality,
     voxel_size_for_divisions,
 )
 
@@ -207,7 +213,12 @@ def test_suggestion_estimates_cost_apic_and_narrow_band_like_the_applied_setting
     # allocate after the option is applied, including the APIC affine buffers
     # and the narrow-band arrays; otherwise the approved option is refused.
     for extra in ({"sample_type": 2}, {"narrow_band_enabled": True},
-                  {"sample_type": 2, "narrow_band_enabled": True}):
+                  {"sample_type": 2, "narrow_band_enabled": True},
+                  {"particles_attribute_color": True},
+                  {"surface_attribute_viscosity": True},
+                  {"sample_type": 2, "narrow_band_enabled": True,
+                   "particles_attribute_color": True,
+                   "surface_attribute_viscosity": True}):
         authored = settings(
             domain_min=(-2.0, -2.0, 0.0), domain_max=(2.0, 2.0, 4.0),
             voxel_size=0.02, max_particles=1_000_000, leaf_capacity=8192,
@@ -228,6 +239,116 @@ def test_suggestion_estimates_cost_apic_and_narrow_band_like_the_applied_setting
                 + plan.additional_transaction_bytes)
             assert item.estimated_bytes == after_apply, (extra, item.key)
             assert after_apply <= item.budget_bytes, (extra, item.key)
+
+
+@dataclass(frozen=True, slots=True)
+class _FrozenEstimatorSettings:
+    authored: dict
+    future_storage_bytes: int = 12345
+
+    def __getattr__(self, name):
+        try:
+            return object.__getattribute__(self, "authored")[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+@pytest.mark.parametrize("representation", ["mapping", "solver", "frozen", "class"])
+def test_suggestions_preserve_new_estimator_inputs_without_planner_schema_changes(
+        monkeypatch, representation):
+    values = settings(max_particles=1, future_storage_bytes=12345)
+    if representation == "mapping":
+        authored = MappingProxyType(values)
+    elif representation == "solver":
+        authored = SolverSettings(**{k: v for k, v in values.items()
+                                     if k != "future_storage_bytes"})
+        authored.future_storage_bytes = 12345
+    elif representation == "frozen":
+        authored = _FrozenEstimatorSettings(values)
+    else:
+        authored = type("ClassSettings", (), values)()
+    seen = []
+
+    def future_estimate(candidate):
+        future_bytes = capacity_planner._value(candidate, "future_storage_bytes", 0)
+        seen.append(future_bytes)
+        return estimate_solver_bytes(candidate) + future_bytes
+
+    monkeypatch.setattr(capacity_planner, "estimate_solver_bytes", future_estimate)
+    plan = plan_initialization(authored, (), (2,), (), resources())
+    seen.clear()
+    suggestions = suggest_configurations(plan, authored)
+
+    assert suggestions
+    assert seen and set(seen) == {12345}
+    for item in suggestions:
+        applied = dict(values, **item.changes)
+        assert item.estimated_bytes == (
+            estimate_solver_bytes(applied) + 12345
+            + applied["leaf_capacity"] * 512 * 4)
+    assert capacity_planner._value(authored, "max_particles", None) == 1
+    assert capacity_planner._value(authored, "future_storage_bytes", None) == 12345
+
+
+def test_candidate_quality_is_resolved_from_edits_without_mutating_solver_settings(
+        monkeypatch):
+    authored = SolverSettings(**settings(
+        domain_max=(32.0, 32.0, 32.0), voxel_size=0.2,
+        max_particles=1, leaf_capacity=64))
+    original_quality = resolve_quality(
+        authored, (authored.domain_min, authored.domain_max))
+    authored.resolved_quality = original_quality
+    plan = plan_initialization(
+        authored, (Footprint("center", 2, DemandQuality.EXACT,
+                             ((10, 10, 10),)),), (), (), resources())
+    seen = []
+
+    def estimate_with_quality(candidate):
+        assert candidate.get("resolved_quality") is None
+        quality = resolve_quality(
+            candidate, (candidate["domain_min"], candidate["domain_max"]))
+        seen.append((candidate["domain_min"], candidate["domain_max"],
+                     candidate["voxel_size"], quality))
+        return estimate_solver_bytes(candidate)
+
+    monkeypatch.setattr(capacity_planner, "estimate_solver_bytes", estimate_with_quality)
+    suggestions = suggest_configurations(plan, authored)
+
+    assert {item.key for item in suggestions} == {
+        "preserve_simulation", "tighten_empty_margins", "coarser_resolution", "balanced"}
+    assert seen
+    for lo, hi, voxel, quality in seen:
+        assert quality.domain_min == lo
+        assert quality.domain_max == hi
+        assert quality.voxel_size == voxel
+    assert authored.resolved_quality is original_quality
+    assert authored.domain_max == (32.0, 32.0, 32.0)
+    assert authored.voxel_size == 0.2
+    assert authored.max_particles == 1
+    assert authored.leaf_capacity == 64
+
+
+def test_candidate_estimator_mutation_does_not_reach_authored_values(monkeypatch):
+    authored = settings(max_particles=1, future_storage={"sizes": [4, 8]})
+    plan = plan_initialization(authored, (), (2,), (), resources())
+
+    def estimate_with_private_scratch(candidate):
+        candidate["future_storage"]["sizes"].append(16)
+        return estimate_solver_bytes(candidate)
+
+    monkeypatch.setattr(capacity_planner, "estimate_solver_bytes", estimate_with_private_scratch)
+    assert suggest_configurations(plan, authored)
+    assert authored["future_storage"] == {"sizes": [4, 8]}
+
+
+def test_scene_signature_retains_existing_projection_and_default_identity():
+    original = plan_initialization(settings(), (), (), (), resources())
+    with_new_input = plan_initialization(
+        settings(future_storage_bytes=12345), (), (), (), resources())
+
+    assert original.scene_signature == (
+        "ed8c900dc9126f73bbd091557e78041bd6ac8caa0f658da722f0073d1a8b78a2")
+    assert with_new_input.scene_signature == original.scene_signature
 
 
 def _reference_expanded(dims, radius, coords):

@@ -167,10 +167,10 @@ def _staged(device_for_meshes):
     collider = SimpleNamespace(mesh=entry["mesh"])
     source = SimpleNamespace(mesh=entry["mesh"])
     # Admission's own registration call while staging builds nothing.
-    assert inputs.materialize_device_meshes((source,), (collider,), "cpu") == 1
+    assert inputs.materialize_device_meshes(
+        (source,), (collider,), "cpu", staged=True) == 1
     assert isinstance(collider.mesh, si.StagedMesh)
     # Replacement configuration ends staging, then materializes.
-    inputs.stage_meshes = False
     inputs.materialize_device_meshes((source,), (collider,), device_for_meshes)
     return inputs, entry, source, collider
 
@@ -210,10 +210,9 @@ def test_admission_stages_and_configuration_unstages(monkeypatch):
                         lambda *_a, **_k: SimpleNamespace(success=True, issues=()))
     seen = {}
 
-    class Inputs:
-        stage_meshes = True
-
-        def materialize_device_meshes(self, _descriptors, _colliders, device):
+    class Inputs(si.SceneInputs):
+        def materialize_device_meshes(self, descriptors, colliders, device):
+            super().materialize_device_meshes(descriptors, colliders, device)
             seen["stage_meshes"] = self.stage_meshes
             seen["device"] = device
 
@@ -224,8 +223,8 @@ def test_admission_stages_and_configuration_unstages(monkeypatch):
     snapshot = SimpleNamespace(
         scene_inputs=Inputs(), descriptors=(), colliders=(), extra_plans=(),
         force_fields=(), height_source=None, effects=(), configured_device="cpu")
+    snapshot.scene_inputs.stage_meshes = True
     admission.SimulationAdmission._configure_candidate(
         None, candidate, snapshot, SimpleNamespace())
     assert seen == {"stage_meshes": False, "device": "cpu"}
-    source = open(admission.__file__, encoding="utf-8").read()
-    assert "inputs.stage_meshes = True" in source
+    assert snapshot.scene_inputs.stage_meshes is False

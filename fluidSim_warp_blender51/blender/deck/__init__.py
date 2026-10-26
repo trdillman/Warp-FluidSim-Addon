@@ -112,6 +112,10 @@ def register():
     from . import bar, gizmos, modal, palette, wheel
     from .registry import REGISTRY
 
+    # The registry owns whole-step teardown. Reject re-entry before touching its
+    # existing resources, so a failed second enable cannot tear down the first.
+    if any(REGISTRY.counts().values()):
+        raise RuntimeError("FluidSim Liquid Deck is already registered")
     try:
         for cls in palette.CLASSES + wheel.CLASSES + modal.CLASSES + gizmos.CLASSES:
             REGISTRY.register_class(cls)

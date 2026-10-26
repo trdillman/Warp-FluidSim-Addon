@@ -596,7 +596,7 @@ def test_solver_reset_invalidates_frame_zero_host_snapshot():
     solver.grid = SimpleNamespace(
         active_voxel_count=0, begin_topology=lambda: None,
         finalize_topology=lambda: None)
-    solver.surface = SimpleNamespace(reset=lambda: None)
+    solver.surface = SimpleNamespace(reset=lambda: None, invalidate_particle_state=lambda: None)
 
     solver.host_frame().positions
     solver.reset()

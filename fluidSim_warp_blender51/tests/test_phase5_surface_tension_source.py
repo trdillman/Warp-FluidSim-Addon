@@ -153,19 +153,28 @@ def test_local_release_gate_and_package_include_phase5_gates():
     assert "water_surface_tension.json" in smoke
 
 
+def _method(source: str, name: str) -> str:
+    method = source[source.index(f"def {name}("):]
+    end = method.find("\n    def ", 1)
+    return method if end < 0 else method[:end]
+
+
 def test_surface_tension_invalidates_pre_advection_sdf_before_whitewater():
+    # The physical SDF is keyed on the liquid revision, which advection bumps,
+    # so an SDF built before advection is never reused by whitewater.
     solver_source = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
     surface_source = (ROOT / "sim" / "surface.py").read_text(encoding="utf-8")
-    assert "self.surface.invalidate_solver_sdf()" in solver_source
-    assert "def invalidate_solver_sdf" in surface_source
+    assert "self.mark_liquid_state_changed()" in _method(solver_source, "_g2p_advect")
+    assert "liquid_state_revision" in _method(surface_source, "solver_sdf_build_key")
 
 
 def test_source_emission_invalidates_same_key_surface_sdf_before_capillary_force():
-    source = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
-    emission = source.index("if emitted:")
-    force = source.index('with self._phase("p2g"):', emission)
-    block = source[emission:force]
-    assert "self.surface.invalidate_solver_sdf()" in block
+    solver = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
+    execution = (ROOT / "sim" / "source_execution.py").read_text(encoding="utf-8")
+    assert "invalidate_particle_surface=self.mark_liquid_state_changed" in solver
+    # Emission records the mutation before its kernels can write particles.
+    marked = execution.index("owner.invalidate_particle_surface()")
+    assert marked < execution.index("self._emission_state.zero_()", marked)
 
 
 def test_direct_particle_injection_invalidates_surface_and_render_products():
@@ -173,11 +182,10 @@ def test_direct_particle_injection_invalidates_surface_and_render_products():
     solver = (ROOT / "sim" / "solver.py").read_text(encoding="utf-8")
     surface = (ROOT / "sim" / "surface.py").read_text(encoding="utf-8")
     assert "self.runtime.invalidate_particle_surface()" in execution
-    assert "self.surface.invalidate_particle_state()" in solver
-    assert "def invalidate_particle_state" in surface
-    method = surface[surface.index("def invalidate_particle_state") :]
-    method_end = method.find("\n    def ", 1)
-    body = method if method_end < 0 else method[:method_end]
+    marker = _method(solver, "mark_liquid_state_changed")
+    assert "liquid_state_revision" in marker
+    assert "surface.invalidate_particle_state()" in marker
+    body = _method(surface, "invalidate_particle_state")
     assert "self.built_key = None" in body
     assert "self.solver_sdf_key = None" in body
     assert "self.invalidate()" in body

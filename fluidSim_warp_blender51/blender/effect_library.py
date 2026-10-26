@@ -19,6 +19,13 @@ from ..sim.effects.package import read_effect_package, write_effect_package
 from ..sim.effects.schema import EffectDefinitionV2
 
 
+INSTALL_CONFLICT_ITEMS = (
+    ("cancel", "Cancel on Conflict", "Leave an existing effect identity unchanged"),
+    ("keep_both", "Keep Both", "Install a copy with a new effect identity"),
+    ("replace", "Replace Installed", "Replace this user identity and remove its old versions"),
+)
+
+
 @dataclass(frozen=True)
 class InstalledEffectPackage:
     path: Path
@@ -87,7 +94,16 @@ def library_diagnostics() -> tuple[LibraryDiagnostic, ...]:
 
 
 def install_package(path: str | Path, *, conflict: str = "cancel"):
-    definition = replace(read_effect_package(path), built_in=False)
+    return install_definition(read_effect_package(path), conflict=conflict)
+
+
+def install_definition(definition: EffectDefinitionV2, *, conflict: str = "cancel"):
+    """Install either an imported package or an authored definition, without granting trust.
+
+    Identity conflicts include every installed version. Arbitrary package export
+    deliberately bypasses this policy through ``export_definition``.
+    """
+    definition = replace(definition, built_in=False)
     if conflict not in {"cancel", "keep_both", "replace"}:
         raise ValueError(f"unknown conflict policy {conflict!r}")
 

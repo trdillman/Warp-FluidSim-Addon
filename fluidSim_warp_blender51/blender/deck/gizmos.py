@@ -278,7 +278,7 @@ class FLUIDSIM_GT_deck_velocity(bpy.types.Gizmo):
     def modal(self, context, event, tweak):
         obj = _started_object(context, getattr(self, "target", None))
         if obj is None:
-            return {"RUNNING_MODAL"}
+            return {"CANCELLED"}
         now = mouse_to_world(context, _mouse(event), _object_origin(obj))
         value = self.drag.value(now, "PRECISE" in tweak)
         if "SNAP" in tweak:
@@ -332,7 +332,7 @@ class FLUIDSIM_GT_deck_dial(bpy.types.Gizmo):
     def modal(self, context, event, tweak):
         obj = _started_object(context, getattr(self, "target", None))
         if obj is None or getattr(self, "prop", None) is None:
-            return {"RUNNING_MODAL"}
+            return {"CANCELLED"}
         low, high, _span = self.range
         (value,) = self.drag.value((float(event.mouse_region_x),), "PRECISE" in tweak)
         if "SNAP" in tweak:
@@ -546,8 +546,9 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
 
     def modal(self, context, event, tweak):
         global _ACTIVE_PREVIEW
-        if getattr(self, "target", None) is None:
-            return {"RUNNING_MODAL"}
+        if _started_object(context, getattr(self, "target", None)) is None:
+            _ACTIVE_PREVIEW = None  # the domain was deleted mid-drag
+            return {"CANCELLED"}
         axis = self.axis
         low, high = self.local
         now = mouse_to_world(context, _mouse(event), self._face_centre(self.start_bounds))

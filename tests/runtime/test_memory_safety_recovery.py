@@ -22,8 +22,14 @@ from fluidSim_warp_blender51.sim.memory_safety import (
 
 def test_memory_estimate_includes_compact_pcg_and_whitewater_free_list():
     assert SIM_BYTES_PER_VOXEL == 356
-    assert WHITEWATER_BYTES == 76
-    assert WHITEWATER_EMISSION_BYTES_PER_LIQUID == 8
+    # Bind the compatibility export to the allocation owner, whose executable
+    # constructor/replacement payload is checked in test_allocation_accounting.
+    from fluidSim_warp_blender51.sim.whitewater_storage_layout import (
+        CANDIDATE_BYTES_PER_LIQUID,
+        WHITEWATER_BYTES_PER_PARTICLE,
+    )
+    assert WHITEWATER_EMISSION_BYTES_PER_LIQUID == CANDIDATE_BYTES_PER_LIQUID
+    assert WHITEWATER_BYTES == WHITEWATER_BYTES_PER_PARTICLE
 
 
 def _risky_settings():

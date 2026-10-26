@@ -418,6 +418,11 @@ def _assert_metadata() -> dict[str, dict[str, object]]:
         raise AssertionError(
             f"contextual Physics root metadata is incorrect: {physics_root}")
     records["FLUIDSIM_PT_physics_root"] = physics_root
+    # Every native Properties surface starts expanded; sidebar shelves keep
+    # their separate defaults above. Include mirrored and Object panels here.
+    for panel_id, metadata in records.items():
+        if metadata["space"] == "PROPERTIES" and metadata["closed"]:
+            raise AssertionError(f"{panel_id} must start expanded: {metadata}")
     if not hasattr(bpy.types, "FLUIDSIM_OT_open_scene_properties"):
         raise AssertionError("FLUIDSIM_OT_open_scene_properties is not registered")
     for legacy in (

@@ -190,11 +190,12 @@ def _header_type():
 
 
 def register():
-    for cls in CLASSES:
-        bpy.utils.register_class(cls)
-    header = _header_type()
-    if header is not None:
-        header.append(draw_header_button)
+    from ..unregister_guard import class_registration
+
+    with class_registration(CLASSES):
+        header = _header_type()
+        if header is not None:
+            header.append(draw_header_button)
 
 
 def unregister():

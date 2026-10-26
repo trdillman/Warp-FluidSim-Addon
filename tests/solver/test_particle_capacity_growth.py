@@ -35,7 +35,8 @@ def test_growth_guard_charges_full_atomic_replacement_pool():
 
     assert plan.allowed is True
     assert plan.target >= 2_000_000
-    assert plan.peak_allocation_bytes == plan.target * 136
+    from fluidSim_warp_blender51.sim.memory_safety import particle_storage_bytes
+    assert plan.peak_allocation_bytes == particle_storage_bytes(plan.target)
     assert plan.budget_bytes == int(8 * unit * 0.90)
 
 

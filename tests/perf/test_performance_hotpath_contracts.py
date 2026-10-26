@@ -258,6 +258,8 @@ def test_skipped_surface_publish_preserves_existing_mesh(monkeypatch):
         surface_visible=True, publish_surface=False,
         particles_visible=False, whitewater_visible=False,
         whitewater_output_mode="COMBINED",
+        particle_radius=0.025,
+        whitewater_radius=0.015,
     )
 
     output_publication.publish_payload(scene, payload)
