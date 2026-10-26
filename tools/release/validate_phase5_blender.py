@@ -127,11 +127,14 @@ def validate(module_name: str, work_dir: Path, expected_warp_root: Path) -> dict
         required = tension.required_capillary_substeps(frame_dt, stable_dt)
         if not math.isfinite(stable_dt) or stable_dt <= 0.0 or required < 1:
             raise AssertionError("capillary preview returned invalid values")
-        # The Scene tab registers no domain panels; the surface-tension controls
-        # live in the Physics tab mirror of the Simulation Physics group.
-        if getattr(bpy.types, "FLUIDSIM_PT_sim_surface_tension", None) is not None:
+        # The surface-tension controls appear on both the Scene tab (so "All
+        # Simulation Settings" lands on them) and the domain's Physics tab mirror.
+        scene_panel = getattr(bpy.types, "FLUIDSIM_PT_sim_surface_tension", None)
+        if scene_panel is None:
+            raise AssertionError("surface-tension panel is not registered in Scene Properties")
+        if scene_panel.bl_space_type != "PROPERTIES" or scene_panel.bl_context != "scene":
             raise AssertionError(
-                "surface-tension panel is still registered in Scene Properties"
+                "surface-tension Scene panel is not a Scene Properties panel"
             )
         panel = getattr(bpy.types, "FLUIDSIM_PT_physics_domain_sim_surface_tension", None)
         if panel is None:

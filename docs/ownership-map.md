@@ -97,7 +97,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `cache_enabled` | AUTHORED_NEXT_RUN | - | - | scene | - | scene | 0 | INTERNAL |
 | `cache_path` | AUTHORED_NEXT_RUN | scene | scene | scene | scene | scene | 1 | OK |
 | `cache_compress` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 2 | OK |
-| `cache_playback_enabled` | ADAPTER | - | scene | scene | - | scene | 11 | PUBLISHED |
+| `cache_playback_enabled` | ADAPTER | - | scene | scene | - | scene | 12 | PUBLISHED |
 | `cache_use_custom_range` | AUTHORED_NEXT_RUN | scene | scene | - | scene | scene | 3 | OK |
 | `cache_frame_start` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
 | `cache_frame_end` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |

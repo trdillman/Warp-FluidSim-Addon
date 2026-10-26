@@ -783,3 +783,25 @@ def test_a_sync_edit_adding_a_scalar_field_source_is_refused(monkeypatch):
     field.fluidsim.field_operation = "PRESSURE"
     bridge.pending.request_scene_update(scene, bridge.pending.SceneUpdate.SYNC)
     assert synced == [True]
+
+def test_debounced_flushes_skip_a_scene_removed_by_undo(monkeypatch):
+    # Undo (or loading a file) replaces the Scene the debounce timers captured;
+    # touching it then raises ReferenceError. The timers drop the stale flush.
+    bridge = _bridge(monkeypatch)
+    scene = _scene()
+    timer_callbacks = []
+    bridge.bpy.app.timers = SimpleNamespace(register=lambda callback, **_kwargs: (
+        timer_callbacks.append(callback)))
+    bridge.pending._schedule_disposable_apply(scene)
+    bridge.pending._schedule_capacity_plan_refresh(scene)
+    assert len(timer_callbacks) == 2
+
+    def removed(_scene):
+        raise ReferenceError("StructRNA of type Scene has been removed")
+
+    monkeypatch.setattr(bridge.session(), "owns_scene", removed)
+    for callback in timer_callbacks:
+        assert callback() is None
+    state = bridge.pending._interaction_state(scene)
+    assert not state.timer_scheduled
+    assert not state.capacity_plan_timer_scheduled

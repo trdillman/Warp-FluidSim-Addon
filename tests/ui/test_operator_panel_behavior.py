@@ -3324,7 +3324,7 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
 
     created = SimpleNamespace(name="FluidSim Domain", selected=False)
     created.select_set = lambda value: setattr(created, "selected", value)
-    monkeypatch.setattr(menus, "create_domain_object", lambda scene: created)
+    monkeypatch.setattr(menus, "create_domain_object", lambda scene, cursor=None: created)
 
     scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=None))
     active_holder = SimpleNamespace(active=None)
@@ -3337,6 +3337,61 @@ def test_add_domain_operator_creates_and_designates_a_new_active_domain(monkeypa
     assert result == {"FINISHED"}
     assert created.selected is True
     assert active_holder.active is created, "the new domain becomes the active object"
+
+
+def test_add_domain_stands_the_default_box_on_the_3d_cursor(monkeypatch):
+    """Add > Fluid Domain centres the default box on the cursor, base at its Z."""
+    fake_bpy = _install_bpy_stub(monkeypatch)
+    menus = _reload_module("fluidSim_warp_blender51.blender.menus")
+    from fluidSim_warp_blender51.blender.solver_settings import (
+        DEFAULT_DOMAIN_MAX, DEFAULT_DOMAIN_MIN)
+
+    class _Mesh:
+        def from_pydata(self, verts, _edges, _faces):
+            self.verts = verts
+
+        def update(self):
+            pass
+
+    fake_bpy.data = SimpleNamespace(
+        meshes=SimpleNamespace(new=lambda _name: _Mesh()),
+        objects=SimpleNamespace(
+            new=lambda name, data: SimpleNamespace(name=name, data=data, location=(0.0, 0.0, 0.0))),
+    )
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(domain_object=None),
+        collection=SimpleNamespace(objects=SimpleNamespace(link=lambda _obj: None)),
+        cursor=SimpleNamespace(location=(3.0, -1.5, 0.75)),
+    )
+    context = SimpleNamespace(scene=scene, view_layer=SimpleNamespace(objects=None))
+    assert menus.FLUIDSIM_OT_add_domain().execute(context) == {"FINISHED"}
+
+    obj = scene.fluidsim.domain_object
+    world = [tuple(v + o for v, o in zip(vert, obj.location)) for vert in obj.data.verts]
+    lo = tuple(min(c[i] for c in world) for i in range(3))
+    hi = tuple(max(c[i] for c in world) for i in range(3))
+    assert ((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2]) == (3.0, -1.5, 0.75)
+    assert tuple(h - l for h, l in zip(hi, lo)) == tuple(
+        h - l for h, l in zip(DEFAULT_DOMAIN_MAX, DEFAULT_DOMAIN_MIN)), "size stays the default"
+    # Scripted creation without a cursor still spans the canonical fallback box.
+    assert menus.create_domain_object(scene).location == (0.0, 0.0, 0.0)
+
+
+def test_add_domain_is_greyed_while_a_production_bake_runs(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    menus = _reload_module("fluidSim_warp_blender51.blender.menus")
+    from fluidSim_warp_blender51.blender import production_bake
+
+    messages = []
+    monkeypatch.setattr(menus.FLUIDSIM_OT_add_domain, "poll_message_set",
+                        classmethod(lambda _cls, text: messages.append(text)), raising=False)
+    context = SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace()))
+    monkeypatch.setattr(production_bake, "bake_is_active", lambda _scene: False)
+    monkeypatch.setattr(production_bake, "any_bake_active", lambda: False)
+    assert menus.FLUIDSIM_OT_add_domain.poll(context) is True
+    monkeypatch.setattr(production_bake, "any_bake_active", lambda: True)
+    assert menus.FLUIDSIM_OT_add_domain.poll(context) is False
+    assert messages == ["A Production Bake is running in another scene"]
 
 
 def test_every_domain_designation_presents_a_wire_unrendered_boundary(monkeypatch):
@@ -3710,11 +3765,13 @@ def test_attribute_toggles_are_drawn_on_the_domain_group(monkeypatch):
                if not (kind == "whitewater" and key == "type")}
         for kind, names in OUTPUT_TOGGLE_NAMES.items()
     }
-    domain_group = SimpleNamespace(export_attributes=True, **{
-        name: False for names in toggles.values() for name in names})
+    domain_group = SimpleNamespace(
+        export_attributes=True, surface_enabled=True, whitewater_enabled=True, **{
+            name: False for names in toggles.values() for name in names})
     scene_group = SimpleNamespace(
         ui_mode="ADVANCED",
         liquid_view_mode="SURFACE_PARTICLES",
+        show_whitewater=True,
         domain_object=SimpleNamespace(fluidsim_domain=domain_group),
     )
     context = SimpleNamespace(scene=SimpleNamespace(fluidsim=scene_group))
@@ -3734,6 +3791,81 @@ def test_attribute_toggles_are_drawn_on_the_domain_group(monkeypatch):
             drawn = {call["name"] for call in panel.layout.prop_calls
                      if call["data"] is domain_group}
             assert drawn == toggles[kind], cls.__name__
+
+
+class _GreyLayout:
+    """Layout fake that records whether each prop was drawn greyed (`active`)."""
+
+    def __init__(self, parent=None):
+        self.parent = parent
+        self.active = True
+        self.states = parent.states if parent is not None else {}
+
+    def _effective(self):
+        return self.active and (self.parent is None or self.parent._effective())
+
+    def prop(self, data, name, **_kwargs):
+        self.states[name] = self._effective()
+
+    def label(self, **_kwargs):
+        return None
+
+    def operator(self, *_args, **_kwargs):
+        return SimpleNamespace()
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return lambda *_args, **_kwargs: _GreyLayout(self)
+
+
+def _physics_output_context(**scene_values):
+    domain = SimpleNamespace(
+        export_attributes=True, surface_enabled=True, whitewater_enabled=True,
+        ww_foam_advection=1.0, ww_bubble_drag=1.0, ww_spray_drag=1.0)
+    for key in ("surface_enabled", "whitewater_enabled"):
+        if key in scene_values:
+            setattr(domain, key, scene_values.pop(key))
+    values = dict(
+        ui_mode="ADVANCED", liquid_view_mode="SURFACE_PARTICLES",
+        show_whitewater=True, whitewater_output_mode="BOTH",
+        domain_object=SimpleNamespace(fluidsim_domain=domain))
+    values.update(scene_values)
+    return SimpleNamespace(scene=SimpleNamespace(fluidsim=SimpleNamespace(**values)))
+
+
+@pytest.mark.parametrize(("panel", "scene", "expected"), [
+    ("surface", {"liquid_view_mode": "PARTICLES"},
+     {"liquid_view_mode": True, "surface_material": False, "surface_attribute_mode": False}),
+    ("surface", {"surface_enabled": False},
+     {"surface_material": True, "surface_attribute_mode": False}),
+    ("surface", {}, {"surface_material": True, "surface_attribute_mode": True}),
+    ("particles", {"liquid_view_mode": "SURFACE"},
+     {"liquid_view_mode": True, "particle_display_fraction": False, "particle_material": False}),
+    ("particles", {}, {"particle_display_fraction": True, "particle_material": True}),
+    ("whitewater", {"whitewater_enabled": False},
+     {"show_whitewater": False, "whitewater_material": False}),
+    ("whitewater", {"show_whitewater": False},
+     {"show_whitewater": True, "whitewater_output_mode": False, "whitewater_material": True}),
+    ("foam", {"whitewater_output_mode": "COMBINED"},
+     {"whitewater_output_mode": True, "foam_material": False, "ww_foam_advection": True}),
+    ("foam", {"whitewater_enabled": False},
+     {"foam_material": False, "ww_foam_advection": False}),
+    ("bubbles", {"show_whitewater": False},
+     {"whitewater_display_fraction": False, "bubble_material": True, "ww_bubble_drag": True}),
+    ("spray", {"whitewater_enabled": False}, {"spray_material": False, "ww_spray_drag": False}),
+])
+def test_physics_output_panels_grey_like_the_scene_tab(monkeypatch, panel, scene, expected):
+    """Output-object panels in Physics follow the Scene tab's greying rules."""
+    _install_bpy_stub(monkeypatch)
+    _reload_module("fluidSim_warp_blender51.blender.ui_scene")
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+    cls = getattr(ui_physics, f"FLUIDSIM_PT_physics_{panel}_output")
+    instance = cls()
+    instance.layout = _GreyLayout()
+    instance.draw(_physics_output_context(**scene))
+    drawn = instance.layout.states
+    assert {name: drawn.get(name) for name in expected} == expected
 
 
 def test_setup_scene_invoke_opens_mode_dialog(monkeypatch):
@@ -4624,6 +4756,50 @@ def test_create_controller_completes_in_any_object_mode(monkeypatch, mode):
         assert objects.active is edited
 
 
+_EFFECT_LIST_OPERATORS = (
+    "FLUIDSIM_OT_effect_duplicate",
+    "FLUIDSIM_OT_effect_move",
+    "FLUIDSIM_OT_effect_toggle_mute",
+    "FLUIDSIM_OT_effect_toggle_solo",
+)
+
+
+@pytest.mark.parametrize("name", _EFFECT_LIST_OPERATORS)
+def test_effect_list_buttons_grey_with_a_reason_on_an_empty_stack(monkeypatch, name):
+    """Duplicate/Move/Mute/Solo must not be live buttons that cancel silently."""
+    _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+    cls = getattr(effect_ui, name)
+    empty = SimpleNamespace(scene=SimpleNamespace(
+        fluidsim_effects=SimpleNamespace(items=[], active_index=0)))
+    cls._poll_message = ""
+    assert cls.poll(empty) is False
+    assert cls._poll_message == "Add an effect first"
+    filled = SimpleNamespace(scene=SimpleNamespace(
+        fluidsim_effects=SimpleNamespace(items=[SimpleNamespace()], active_index=0)))
+    assert cls.poll(filled) is True
+
+    reports = []
+    operator = cls()
+    operator.direction = "UP"
+    operator.report = lambda level, message: reports.append((level, message))
+    assert operator.execute(empty) == {"CANCELLED"}
+    assert reports, f"{name} cancelled without telling the artist why"
+
+
+@pytest.mark.parametrize(("direction", "edge"), [("UP", "top"), ("DOWN", "bottom")])
+def test_effect_move_past_the_end_says_why(monkeypatch, direction, edge):
+    _install_bpy_stub(monkeypatch)
+    effect_ui = _reload_module("fluidSim_warp_blender51.blender.effect_ui")
+    stack = SimpleNamespace(items=[SimpleNamespace()], active_index=0)
+    reports = []
+    operator = effect_ui.FLUIDSIM_OT_effect_move()
+    operator.direction = direction
+    operator.report = lambda level, message: reports.append((level, message))
+    assert operator.execute(SimpleNamespace(scene=SimpleNamespace(fluidsim_effects=stack))) == {"CANCELLED"}
+    assert reports == [({"INFO"}, f"The effect is already at the {edge} of the stack")]
+
+
 def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
     """D9: an opted-in author can trust their own kernel edits for the session so
     the Review & Trust dialog does not re-prompt on every edit.  Session trust is
@@ -4916,6 +5092,50 @@ def test_header_popover_follows_the_activity_and_the_runtime(monkeypatch):
     assert "fluidsim.restart_simulation" in {op["id"] for op in layout.operators}
 
 
+@pytest.mark.parametrize("runtime_ready", [True, False])
+def test_header_popover_dims_simulate_controls_under_the_runtime_error(
+    monkeypatch, runtime_ready
+):
+    """Without CUDA the toggles must not look like they will run: the reason
+    sits directly above them and they are dimmed, yet still editable."""
+    env = _header_env(monkeypatch)
+    seen = {}
+
+    def _transport(layout, *_args):
+        seen["error_before_transport"] = any(
+            "no CUDA" in label["text"] for label in layout.labels)
+
+    def _quality(layout, _scene):
+        seen["quality_layout"] = layout
+
+    def _simulate(layout, _scene, _domain):
+        seen["simulate_layout"] = layout
+        seen["last_label"] = layout.labels[-1]["text"] if layout.labels else ""
+
+    ui_header = env.ui_header
+    monkeypatch.setattr(ui_header, "activity_ui_state", lambda _scene: {
+        "id": "IDLE", "label": "Idle", "icon": "INFO", "owns_scene": False})
+    monkeypatch.setattr(ui_header, "runtime_ui_state", lambda: (
+        runtime_ready, "CUDA ready" if runtime_ready else "no CUDA"))
+    monkeypatch.setattr(ui_header, "draw_pending_apply", lambda *_args: None)
+    monkeypatch.setattr(ui_header, "draw_transport", _transport)
+    monkeypatch.setattr(ui_header, "draw_quality", _quality)
+    monkeypatch.setattr(ui_header, "draw_simulate_controls", _simulate)
+    context, *_ = _stage_context()
+    context.workspace = SimpleNamespace(name="Layout")
+    panel = ui_header.FLUIDSIM_PT_header_popover()
+    panel.layout = _Layout()
+    panel.draw(context)
+
+    settings = seen["simulate_layout"]
+    assert seen["quality_layout"] is settings
+    assert getattr(settings, "active", True) is runtime_ready
+    assert settings.enabled is True
+    assert seen["error_before_transport"] is False
+    if not runtime_ready:
+        assert "no CUDA" in seen["last_label"]
+
+
 def test_header_popover_offers_apply_changes_only_when_something_is_pending(monkeypatch):
     _env, layout, *_ = _draw_header_popover(monkeypatch, pending_action="REINIT")
     assert "fluidsim.apply_changes" in {op["id"] for op in layout.operators}
@@ -5163,3 +5383,38 @@ def test_quality_note_does_not_share_horizontal_space_with_editable_value(monkey
     assert ui_common.draw_property(layout, SimpleNamespace(max_substeps=4), "max_substeps")
     assert leaves(layout) == {"PROP", "LABEL"}
     check_flow(layout)
+
+
+def test_domain_physics_button_opens_the_scene_tab_not_physics_again(monkeypatch):
+    """On the domain, "Open Scene FluidSim Settings" must leave the Physics tab."""
+    _install_bpy_stub(monkeypatch)
+    ui_physics = _reload_module("fluidSim_warp_blender51.blender.ui_physics")
+    panels = _reload_module("fluidSim_warp_blender51.panels")
+
+    class _RecordingLayout(_Layout):
+        def operator(self, operator_id, **kwargs):
+            super().operator(operator_id, **kwargs)
+            props = SimpleNamespace()
+            self._root.operators[-1]["props"] = props
+            return props
+
+    monkeypatch.setattr(ui_physics, "physics_object_kind", lambda _context: "DOMAIN")
+    monkeypatch.setattr(ui_physics.file_compat, "draw_pre_bridge_warning", lambda *_a: None)
+    domain = SimpleNamespace(name="FluidSim Domain")
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(domain_object=domain))
+    panel = ui_physics.FLUIDSIM_PT_physics_root()
+    panel.layout = _RecordingLayout()
+    panel.draw(SimpleNamespace(scene=scene, object=domain, active_object=domain))
+    button = _operator(panel.layout, "fluidsim.open_scene_properties")
+    assert button["text"] == "Open Scene FluidSim Settings"
+    assert button["props"].target == "SCENE"
+
+    area = SimpleNamespace(type="PROPERTIES", spaces=SimpleNamespace(
+        active=SimpleNamespace(context="PHYSICS")))
+    context = SimpleNamespace(scene=scene, active_object=domain,
+                              screen=SimpleNamespace(areas=[area]))
+    reports = []
+    op = SimpleNamespace(target="SCENE", report=lambda level, text: reports.append(text))
+    assert panels.FLUIDSIM_OT_open_scene_properties.execute(op, context) == {"FINISHED"}
+    assert area.spaces.active.context == "SCENE"
+    assert reports == ["FluidSim controls are in Scene Properties"]

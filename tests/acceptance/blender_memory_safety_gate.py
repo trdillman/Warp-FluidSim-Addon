@@ -62,7 +62,7 @@ def main():
         "leaf_capacity": int(settings.leaf_capacity),
     }
     result = bpy.ops.fluidsim.apply_safe_settings()
-    assert result == {"CANCELLED"}, result
+    assert result == {"FINISHED"}, result
     assert not scene_bridge.session().active
     assert authored_before == {
         "voxel_size": float(settings.voxel_size),

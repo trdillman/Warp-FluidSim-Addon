@@ -88,6 +88,9 @@ class DeckRegistry:
         timers.register(fn, first_interval=first_interval, persistent=persistent)
         self._timers[key] = fn
 
+    def has_timer(self, key) -> bool:
+        return key in self._timers
+
     def remove_timer(self, key) -> bool:
         fn = self._timers.pop(key, None)
         if fn is None:

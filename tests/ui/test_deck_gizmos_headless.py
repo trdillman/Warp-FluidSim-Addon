@@ -163,7 +163,7 @@ def test_emitter_arrow_drag_sets_the_velocity_property_like_the_panel(env, monke
     assert gizmo_pending["action"] == panel_pending["action"] == "NONE"
     assert gizmo_pending["reasons"] == panel_pending["reasons"]
     chip = _chip(env, scene)
-    assert chip.kind == "LIVE" and "initial_velocity" in chip.text
+    assert chip.kind == "LIVE" and "initial velocity" in chip.text.lower()
 
 
 def test_emitter_arrow_cancel_restores_the_value(env):
@@ -383,3 +383,270 @@ def test_face_resize_math_keeps_the_opposite_face_fixed(env):
     # A drag past the opposite face stops at the minimum size instead of inverting.
     scale, _shift = resize(-2.5, 2.5, 1.0, side=1, delta=-50.0)
     assert scale > 0.0
+
+
+# Undo, precision, snapping, ranges, toggle clicks, matrix_world and the bake gate ----
+
+def _record_undo(env):
+    pushes = []
+    env.bpy.ops.ed = SimpleNamespace(undo_push=lambda message: pushes.append(message))
+    return pushes
+
+
+def _velocity_drag(env, scene, emitter):
+    context = _context(scene, emitter)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_velocity()
+    gizmo.invoke(context, _event(0.0))
+    return context, gizmo
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_a_committed_drag_pushes_one_undo_step_and_a_cancelled_one_none(env, cancel):
+    pushes = _record_undo(env)
+    scene, emitter = _emitter_scene(env.pending)
+    context, gizmo = _velocity_drag(env, scene, emitter)
+    for x in (10.0, 20.0, 30.0):
+        gizmo.modal(context, _event(x), set())
+    gizmo.exit(context, cancel)
+
+    dial = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "rate"
+    dial.invoke(context, _event(0.0))
+    dial.modal(context, _event(40.0), set())
+    dial.exit(context, cancel)
+
+    scene_d, domain = _domain()
+    context_d = _context(scene_d, domain)
+    face = env.deck.gizmos.FLUIDSIM_GT_deck_face()
+    face.axis, face.side = 0, 1
+    face.invoke(context_d, _event(0.0))
+    face.modal(context_d, _event(50.0), set())
+    face.exit(context_d, cancel)
+    assert len(pushes) == (0 if cancel else 3)
+
+
+def test_a_toggle_click_pushes_one_undo_step(env):
+    pushes = _record_undo(env)
+    scene, collider = _emitter_scene(env.pending, role="COLLIDER")
+    context = _context(scene, collider)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_toggle()
+    gizmo.invoke(context, _event(0.0))
+    gizmo.exit(context, False)
+    assert len(pushes) == 1
+
+
+def test_undo_push_tolerates_a_refusing_operator(env):
+    def refuse(message):
+        raise RuntimeError("context is incorrect")
+    env.bpy.ops.ed = SimpleNamespace(undo_push=refuse)
+    scene, emitter = _emitter_scene(env.pending)
+    context, gizmo = _velocity_drag(env, scene, emitter)
+    gizmo.modal(context, _event(40.0), set())
+    gizmo.exit(context, False)
+    assert emitter.fluidsim.initial_velocity[0] == pytest.approx(0.4 / env.deck.gizmos.ARROW_SCALE)
+
+
+def test_shift_mid_drag_slows_from_where_it_was_pressed_without_a_jump(env):
+    gizmos = env.deck.gizmos
+    scene, emitter = _emitter_scene(env.pending)
+    context, gizmo = _velocity_drag(env, scene, emitter)
+    gizmo.modal(context, _event(50.0), set())
+    before = emitter.fluidsim.initial_velocity[0]
+    gizmo.modal(context, _event(60.0), {"PRECISE"})
+    precise = emitter.fluidsim.initial_velocity[0]
+    step = 0.1 / gizmos.ARROW_SCALE  # 10 px = 0.1 m of pointer travel
+    assert precise == pytest.approx(before + step * gizmos.PRECISE_FACTOR)
+    # Releasing Shift continues at full speed from there, again without a jump.
+    gizmo.modal(context, _event(70.0), set())
+    assert emitter.fluidsim.initial_velocity[0] == pytest.approx(precise + step)
+
+
+def test_shift_mid_drag_on_a_dial_does_not_jump(env):
+    gizmos = env.deck.gizmos
+    scene, emitter = _emitter_scene(env.pending)
+    context = _context(scene, emitter)
+    dial = gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "rate"
+    dial.invoke(context, _event(0.0))
+    dial.modal(context, _event(60.0), set())
+    before = emitter.fluidsim.source_sampling_multiplier
+    dial.modal(context, _event(90.0), {"PRECISE"})
+    per_pixel = 8.0 / gizmos.DIAL_PIXELS
+    assert emitter.fluidsim.source_sampling_multiplier == pytest.approx(
+        before + 30.0 * per_pixel * gizmos.PRECISE_FACTOR)
+
+
+def test_ctrl_snaps_velocity_fill_and_friction(env):
+    gizmos = env.deck.gizmos
+    scene, emitter = _emitter_scene(env.pending)
+    context, gizmo = _velocity_drag(env, scene, emitter)
+    gizmo.modal(context, _event(9.0, 4.0), {"SNAP"})  # 0.36, 0, 0.16 m/s
+    assert emitter.fluidsim.initial_velocity == pytest.approx((0.5, 0.0, 0.0))
+
+    dial = gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "rate"
+    dial.invoke(context, _event(0.0))
+    dial.modal(context, _event(13.0), {"SNAP"})  # 1 + 0.347
+    assert emitter.fluidsim.source_sampling_multiplier == pytest.approx(1.25)
+
+    object.__setattr__(emitter.fluidsim, "collider_friction", 0.0)
+    friction = gizmos.FLUIDSIM_GT_deck_dial()
+    friction.binding = "friction"
+    friction.invoke(context, _event(0.0))
+    friction.modal(context, _event(20.0), {"SNAP"})  # 0.0667
+    assert emitter.fluidsim.collider_friction == pytest.approx(0.05)
+
+
+def test_ctrl_snaps_the_dragged_domain_size_to_a_tenth_of_a_metre(env):
+    scene, domain = _domain()
+    context = _context(scene, domain)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_face()
+    gizmo.axis, gizmo.side = 0, 1
+    gizmo.invoke(context, _event(0.0))
+    gizmo.modal(context, _event(137.0), {"SNAP"})  # 5 m + 1.37 m -> 6.4 m
+    assert domain.scale[0] * 5.0 == pytest.approx(6.4)
+    assert domain.location[0] - 2.5 * domain.scale[0] == pytest.approx(-2.5)  # -X face fixed
+
+
+class _Rna:
+    def __init__(self, **ranges):
+        self.properties = {name: SimpleNamespace(hard_min=r[0], hard_max=r[1], soft_min=r[2],
+                                                 soft_max=r[3]) for name, r in ranges.items()}
+
+
+@pytest.mark.parametrize("with_rna", [False, True])
+def test_legacy_rate_dial_clamps_to_the_property_range_not_32(env, with_rna):
+    from fluidSim_warp_blender51.sim import constants
+
+    scene, emitter = _emitter_scene(env.pending, source_sampling_mode="LEGACY_ABSOLUTE",
+                                    emit_rate=30.0)
+    hard = float(constants.MAX_PARTICLES_PER_VOXEL)
+    if with_rna:
+        object.__setattr__(emitter.fluidsim, "bl_rna",
+                           _Rna(emit_rate=(0.0, hard, 0.0, 32.0)))
+    context = _context(scene, emitter)
+    dial = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "rate"
+    dial.invoke(context, _event(0.0))
+    dial.modal(context, _event(30.0), set())  # 30 px of a 0-32 sweep: +3.2
+    assert emitter.fluidsim.emit_rate == pytest.approx(33.2)
+    dial.modal(context, _event(10_000.0), set())
+    assert emitter.fluidsim.emit_rate == pytest.approx(hard)
+
+
+def test_dial_reads_a_narrower_rna_range(env):
+    scene, emitter = _emitter_scene(env.pending)
+    object.__setattr__(emitter.fluidsim, "bl_rna",
+                       _Rna(source_sampling_multiplier=(0.0, 4.0, 0.0, 4.0)))
+    context = _context(scene, emitter)
+    dial = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "rate"
+    dial.invoke(context, _event(0.0))
+    dial.modal(context, _event(10_000.0), set())
+    assert emitter.fluidsim.source_sampling_multiplier == pytest.approx(4.0)
+
+
+def test_a_drag_released_over_the_toggle_does_not_flip_it(env):
+    scene, collider = _emitter_scene(env.pending, role="COLLIDER")
+    context = _context(scene, collider)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_toggle()
+    gizmo.invoke(context, _event(0.0))
+    gizmo.modal(context, _event(40.0), set())
+    gizmo.modal(context, _event(0.0), set())  # back over the toggle
+    gizmo.exit(context, False)
+    assert collider.fluidsim.collider_dynamic is False
+    # A click with a pixel of jitter still flips it.
+    gizmo.invoke(context, _event(0.0))
+    gizmo.modal(context, _event(1.0, 1.0), set())
+    gizmo.exit(context, False)
+    assert collider.fluidsim.collider_dynamic is True
+
+
+def _delta_domain():
+    """Domain whose matrix_world differs from location/scale: delta location +2 m X,
+    delta scale x2 on X, so the world box is X -3..7 m."""
+    scene, domain = _domain()
+    domain.matrix_world = [[2.0, 0.0, 0.0, 2.0], [0.0, 1.0, 0.0, 0.0],
+                           [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+    domain.parent, domain.constraints = None, []
+    return scene, domain
+
+
+def test_domain_face_drag_follows_matrix_world(env):
+    gizmos = env.deck.gizmos
+    scene, domain = _delta_domain()
+    context = _context(scene, domain)
+    gizmo = gizmos.FLUIDSIM_GT_deck_face()
+    gizmo.axis, gizmo.side = 0, 1
+    gizmo.invoke(context, _event(0.0))
+    assert gizmos.active_domain_preview().bounds[0][0] == pytest.approx(-3.0)
+    assert gizmos.active_domain_preview().bounds[1][0] == pytest.approx(7.0)
+    gizmo.modal(context, _event(140.0), set())  # +1.4 m on the +X face: 10 m -> 11.4 m
+    lo, hi = gizmos.active_domain_preview().bounds
+    assert (lo[0], hi[0]) == pytest.approx((-3.0, 8.4))
+    # Written so matrix_world (delta scale x2, delta location +2) gives that box.
+    assert domain.scale[0] == pytest.approx(1.14)
+    world_scale = 2.0 * domain.scale[0]
+    world_x = 2.0 + domain.location[0]
+    assert (world_x - 2.5 * world_scale, world_x + 2.5 * world_scale) == pytest.approx(
+        (-3.0, 8.4))
+
+
+def test_domain_handles_are_not_offered_for_a_constrained_domain(env):
+    gizmos = env.deck.gizmos
+    _scene, domain = _delta_domain()
+    assert gizmos._axis_aligned(domain)
+    domain.constraints = [SimpleNamespace(enabled=True)]
+    assert not gizmos._axis_aligned(domain)
+    domain.constraints = [SimpleNamespace(enabled=False)]
+    assert gizmos._axis_aligned(domain)
+
+
+@pytest.fixture
+def baking(env, monkeypatch):
+    from fluidSim_warp_blender51.blender import production_bake
+
+    state = SimpleNamespace(here=True, anywhere=True)
+    monkeypatch.setattr(production_bake, "bake_is_active", lambda _scene: state.here)
+    monkeypatch.setattr(production_bake, "any_bake_active", lambda: state.anywhere)
+    return state
+
+
+@pytest.mark.parametrize("where", ["here", "other_scene"])
+def test_no_gizmo_starts_a_drag_during_a_production_bake(env, baking, where):
+    baking.here = where == "here"
+    pushes = _record_undo(env)
+    gizmos = env.deck.gizmos
+    scene, emitter = _emitter_scene(env.pending, role="COLLIDER", collider_friction=0.0,
+                                    initial_velocity=(1.0, 0.0, 0.0))
+    context = _context(scene, emitter)
+    velocity = gizmos.FLUIDSIM_GT_deck_velocity()
+    dial = gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "friction"
+    toggle = gizmos.FLUIDSIM_GT_deck_toggle()
+    scene_d, domain = _domain()
+    face = gizmos.FLUIDSIM_GT_deck_face()
+    face.axis, face.side = 0, 1
+    for gizmo, ctx in ((velocity, context), (dial, context), (toggle, context),
+                       (face, _context(scene_d, domain))):
+        assert gizmo.invoke(ctx, _event(0.0)) == {"CANCELLED"}
+        gizmo.modal(ctx, _event(100.0), set())
+        gizmo.exit(ctx, False)
+    assert emitter.fluidsim.initial_velocity == (1.0, 0.0, 0.0)
+    assert emitter.fluidsim.collider_friction == 0.0
+    assert emitter.fluidsim.collider_dynamic is False
+    assert domain.scale == [1.0, 1.0, 1.0] and domain.location == [0.0, 0.0, 0.0]
+    assert gizmos.active_domain_preview() is None
+    assert pushes == []
+
+
+def test_handles_draw_dimmed_during_a_production_bake(env, baking):
+    gizmos = env.deck.gizmos
+    group = SimpleNamespace()
+    handles = [SimpleNamespace(alpha=0.8, alpha_highlight=1.0) for _ in range(2)]
+    assert gizmos.show_held(group, SimpleNamespace(scene=None), handles) is True
+    assert [h.alpha for h in handles] == pytest.approx([0.8 * gizmos.DIM_ALPHA] * 2)
+    assert [h.alpha_highlight for h in handles] == [h.alpha for h in handles]
+    baking.here = baking.anywhere = False
+    assert gizmos.show_held(group, SimpleNamespace(scene=None), handles) is False
+    assert [(h.alpha, h.alpha_highlight) for h in handles] == [(0.8, 1.0)] * 2

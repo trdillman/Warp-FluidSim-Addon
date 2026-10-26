@@ -13,7 +13,13 @@ Enter runs an operator, toggles a boolean, or opens an inline numeric field for
 an int/float that commits through the property itself (so its ``update=`` and
 the Pending Settings classification run exactly as for a panel edit). Enum,
 string and vector settings are read-only here and jump to the panel
-(``fluidsim.open_scene_properties``). The palette keeps no settings state. Keys it
+(``fluidsim.open_scene_properties``). Rows that cannot run now (a failing operator
+poll, a preset apply that would be refused, a demo whose file is missing) draw
+dimmed with the reason; Enter on one, or an operator that refuses after Enter,
+says why and keeps the palette open. A setting write pushes one undo step and
+flashes the LIVE chip only for fields that apply straight away; Reset and
+Reinitialize fields report that they are staged, and during a Production Bake
+the edit is held. The palette keeps no settings state. Keys it
 does not use pass through to Blender only as Ctrl/Cmd shortcuts (Ctrl+Z, Ctrl+Shift+Z);
 other keys, Delete included, stay with the palette.
 """
@@ -21,6 +27,7 @@ other keys, Delete included, stay with the palette.
 from __future__ import annotations
 
 import math
+import struct
 from dataclasses import dataclass
 
 import bpy
@@ -94,6 +101,25 @@ def _value_type(group, name, value):
     except TypeError:
         return "POINTER"
     return "VECTOR"
+
+
+def exact_value_text(value, value_type: str) -> str:
+    """The shortest text that reads back as ``value`` (a Blender float is 32-bit).
+
+    The inline editor starts from this, so pressing Enter without typing keeps
+    the value instead of writing the rounded one the row shows.
+    """
+    if value_type == "INT":
+        return str(int(value))
+    number = float(value)
+    if not math.isfinite(number):
+        return str(number)
+    target = struct.pack("<f", number)
+    for digits in range(6, 18):
+        text = f"{number:.{digits}g}"
+        if struct.pack("<f", float(text)) == target:
+            return text
+    return repr(number)
 
 
 def format_value(value, value_type: str) -> str:
@@ -208,14 +234,99 @@ def search(query: str, entries) -> list[Entry]:
     return [entry for _score, _order, entry in sorted(scored, key=lambda t: t[:2])]
 
 
+# Availability -------------------------------------------------------------------
+
+APPLY_PRESET_OPERATOR = "fluidsim.apply_product_preset"
+LOAD_DEMO_OPERATOR = "fluidsim.load_demo"
+MISSING_DEMO_REASON = "(file missing)"
+_NO_DOMAIN_REASON = "Designate a FluidSim domain object before applying a preset"
+
+
+def _operator_status(context, idname: str, label: str = "") -> tuple[bool, str]:
+    return controls.control_status(
+        context, controls.Control("operator", idname, "", label or idname, "", ""))
+
+
+def missing_demo_ids() -> frozenset:
+    """Catalogue demos whose .blend is not on disk (the sidebar gallery's check)."""
+    from ..demo_gallery import DEMO_CATALOG, available_demo_ids
+
+    return frozenset(DEMO_CATALOG) - frozenset(available_demo_ids())
+
+
+def _has_domain(scene) -> bool:
+    try:
+        from ..scene_access import active_domain_settings
+
+        return active_domain_settings(scene) is not None
+    except Exception:  # noqa: BLE001 - unknown is not a refusal; the operator decides
+        return True
+
+
+def row_status(context, entry: Entry, missing_demos=frozenset()) -> tuple[bool, str]:
+    """``(can run now, why not)`` for one palette row, as the wheel greys its slots.
+
+    Operator rows use their operator's ``poll`` and its message; a preset row
+    uses the apply operator's; a demo row is also unavailable when its .blend is
+    missing. Setting rows are always available: their writes go through the
+    property, so the Pending Settings bake hold applies to them.
+    """
+    if entry.kind == "operator":
+        return _operator_status(context, entry.target, entry.label)
+    if entry.kind == "demo":
+        if entry.target in missing_demos:
+            return False, MISSING_DEMO_REASON
+        return _operator_status(context, LOAD_DEMO_OPERATOR)
+    if entry.kind == "preset":
+        ok, reason = _operator_status(context, APPLY_PRESET_OPERATOR)
+        if ok and not _has_domain(getattr(context, "scene", None)):
+            return False, _NO_DOMAIN_REASON
+        return ok, reason
+    return True, ""
+
+
 # Inline edit ----------------------------------------------------------------------
 
-def commit_inline(scene, entry: Entry, text: str) -> None:
-    """Write an inline edit through the setting's own property.
+def _edit_outcome(scene, entry: Entry) -> tuple[bool, str]:
+    """Pending Settings' ``(applied now, message)`` for a palette write."""
+    from ..pending_settings import edit_outcome
+
+    return edit_outcome(scene, entry.target, entry.label)
+
+
+def _write_feedback(scene, entry: Entry) -> str:
+    """Say what a palette write did, as Pending Settings decides it.
+
+    Pending Settings owns lifecycle presentation, so the palette only renders
+    its answer: an edit that applied straight away flashes the LIVE chip; any
+    other edit (held by a Production Bake, staged, or waiting for a run) is
+    reported with Pending Settings' message.
+    """
+    applied, message = _edit_outcome(scene, entry)
+    if applied:
+        bar.note_deck_write(scene, entry.target)
+    return message
+
+
+def _push_undo(message: str) -> None:
+    """One undo step for a palette write; a modal operator gets none of its own."""
+    ed = getattr(getattr(bpy, "ops", None), "ed", None)
+    push = getattr(ed, "undo_push", None)
+    if push is None:
+        return
+    try:
+        push(message=message)
+    except Exception as exc:  # noqa: BLE001 - a missed undo step must not lose the edit
+        print(f"FluidSim Liquid Deck: palette could not push an undo step: {exc!r}")
+
+
+def commit_inline(scene, entry: Entry, text: str) -> str:
+    """Write an inline edit through the setting's own property; return what to tell the user.
 
     A boolean toggles; an int or float is parsed from ``text``. Anything else, or
     text that is not a finite number, raises ``ValueError`` and writes nothing.
-    Blender clamps to the property's range and runs its ``update=`` callback.
+    Blender clamps to the property's range and runs its ``update=`` callback, so
+    Pending Settings classifies and holds the edit exactly as for a panel edit.
     """
     if entry.kind != "setting" or not entry.editable:
         raise ValueError(f"{entry.target} is read-only in the palette; edit it in the panel")
@@ -235,7 +346,8 @@ def commit_inline(scene, entry: Entry, text: str) -> None:
             raise ValueError(f"{text!r} is not a finite number")
         value = int(round(number)) if entry.value_type == "INT" else number
     setattr(group, entry.target, value)
-    bar.note_deck_write(scene, entry.target)
+    _push_undo(f"Set {entry.label}")
+    return _write_feedback(scene, entry)
 
 
 # Operator ------------------------------------------------------------------------
@@ -259,6 +371,15 @@ def _card_rect(region, scale):
     return x0, y1 - height, x0 + width, y1, row
 
 
+def _fit(text: str, size: float, width: float) -> str:
+    """``text`` cut with an ellipsis to fit ``width`` pixels."""
+    if width <= 0 or _draw.text_width(text, size) <= width:
+        return text
+    while text and _draw.text_width(text + "…", size) > width:
+        text = text[:-1]
+    return text + "…"
+
+
 def _draw_palette(operator):
     context = bpy.context
     try:
@@ -271,23 +392,38 @@ def _draw_palette(operator):
         radius = tokens.RADIUS_SCALE[2] * scale
         _draw.rounded_rect(x0, y0, x1, y1, radius, tokens.rgba(palette.surface, tokens.CARD_ALPHA))
         prompt = operator.edit_text if operator.editing else operator.query
+        if operator.editing and getattr(operator, "edit_selected", False):
+            # The whole value is selected: the first typed character replaces it.
+            head = f"{operator.editing.label} = "
+            left = x0 + 12 * scale + _draw.text_width(head, size)
+            _draw.rounded_rect(left - 2 * scale, y1 - row - 4 * scale,
+                               left + _draw.text_width(prompt, size) + 2 * scale,
+                               y1 - row + size, tokens.RADIUS_SCALE[0] * scale,
+                               tokens.rgba(palette.accent, 0.35))
         caption = (f"{operator.editing.label} = {prompt}_" if operator.editing
                    else (prompt + "_" if prompt else KIND_PROMPTS.get(operator.kind_filter,
                                                                       "Search FluidSim…")))
         _draw.text(x0 + 12 * scale, y1 - row, caption, size,
                    tokens.rgba(palette.text if prompt or operator.editing else palette.text_dim))
+        missing = getattr(operator, "missing_demos", frozenset())
+        value_x = x0 + (x1 - x0) * 0.58
         for index, entry in enumerate(operator.results[:VISIBLE_ROWS]):
             top = y1 - row * (index + 2) - 6 * scale
+            ready, reason = row_status(context, entry, missing)
             if index == operator.selected:
                 _draw.rounded_rect(x0 + 6 * scale, top - 5 * scale, x1 - 6 * scale,
                                    top + row - 7 * scale, tokens.RADIUS_SCALE[0] * scale,
-                                   tokens.rgba(palette.accent, 0.25))
-            _draw.text(x0 + 12 * scale, top, entry.label, size, tokens.rgba(palette.text))
-            if entry.value:
-                _draw.text(x0 + (x1 - x0) * 0.58, top, entry.value, size,
-                           tokens.rgba(palette.accent))
+                                   tokens.rgba(palette.accent, 0.25 if ready else 0.12))
+            _draw.text(x0 + 12 * scale, top, entry.label, size,
+                       tokens.rgba(palette.text if ready else palette.text_dim))
             kind = entry.kind
-            _draw.text(x1 - _draw.text_width(kind, size * 0.9) - 12 * scale, top, kind,
+            kind_width = _draw.text_width(kind, size * 0.9)
+            if not ready:
+                _draw.text(value_x, top, _fit(reason, size, x1 - kind_width - 24 * scale - value_x),
+                           size, tokens.rgba(palette.text_dim))
+            elif entry.value:
+                _draw.text(value_x, top, entry.value, size, tokens.rgba(palette.accent))
+            _draw.text(x1 - kind_width - 12 * scale, top, kind,
                        size * 0.9, tokens.rgba(palette.text_dim))
     except Exception as exc:  # noqa: BLE001 - a draw callback must never raise
         print(f"FluidSim Liquid Deck: palette draw failed: {exc!r}")
@@ -325,6 +461,13 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
         self.selected = 0
         self.editing = None
         self.edit_text = ""
+        self.edit_start = ""
+        self.edit_selected = False
+        try:
+            self.missing_demos = missing_demo_ids()
+        except Exception as exc:  # noqa: BLE001 - loading still reports a missing file
+            print(f"FluidSim Liquid Deck: palette could not check the demo files: {exc!r}")
+            self.missing_demos = frozenset()
         self.region = context.region
         # Replacing the handler retires a palette still open in another window.
         self.handle = REGISTRY.add_draw_handler("palette", bpy.types.SpaceView3D,
@@ -349,26 +492,53 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
         self.selected = 0
 
     def _call(self, idname, **properties):
+        """Run ``idname``; ``None`` (keep the palette open) when it refused with a reason."""
         result, message = controls.call_operator(idname, **properties)
         if message:
             self.report({"WARNING"}, message)
+            if "CANCELLED" in result:
+                return None
         return result
 
+    def _commit(self, context, entry, text):
+        message = commit_inline(context.scene, entry, text)
+        if message:
+            self.report({"INFO"}, message)
+
+    def _start_edit(self, context, entry):
+        from ..pending_settings import declaring_group
+
+        group = declaring_group(context.scene, entry.target)
+        value = getattr(group, entry.target, None) if group is not None else None
+        self.editing = entry
+        self.edit_text = (exact_value_text(value, entry.value_type) if value is not None
+                          else entry.value)
+        self.edit_start = self.edit_text
+        self.edit_selected = True
+
     def _run(self, context, entry):
+        """Act on a row; ``None`` keeps the palette open (refused, or editing)."""
+        ready, reason = row_status(context, entry, self.missing_demos)
+        if not ready:
+            self.report({"WARNING"}, f"{entry.label}: {reason}")
+            return None
         if entry.kind == "operator":
             return self._call(entry.target)
         if entry.kind == "demo":
-            return self._call("fluidsim.load_demo", demo_id=entry.target)
+            return self._call(LOAD_DEMO_OPERATOR, demo_id=entry.target)
         if entry.kind == "preset":
-            context.scene.fluidsim.product_preset = entry.target
-            return self._call("fluidsim.apply_product_preset")
+            try:
+                context.scene.fluidsim.product_preset = entry.target
+            except (TypeError, ValueError) as exc:
+                self.report({"WARNING"}, f"{entry.label}: this preset is no longer available ({exc})")
+                return None
+            return self._call(APPLY_PRESET_OPERATOR)
         if not entry.editable:
             return self._call(entry.jump_operator)
         if entry.value_type == "BOOLEAN":
-            commit_inline(context.scene, entry, "")
+            self._commit(context, entry, "")
             return {"FINISHED"}
-        self.editing = entry
-        self.edit_text = entry.value
+        self._start_edit(context, entry)
         return None
 
     def _outside(self, context, event):
@@ -400,7 +570,8 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
         if event.type in {"RET", "NUMPAD_ENTER"}:
             if self.editing is not None:
                 try:
-                    commit_inline(context.scene, self.editing, self.edit_text)
+                    if self.edit_text != self.edit_start:  # unchanged: nothing to write
+                        self._commit(context, self.editing, self.edit_text)
                 except ValueError as exc:
                     self.report({"WARNING"}, str(exc))
                     return {"RUNNING_MODAL"}
@@ -421,6 +592,8 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
             return {"RUNNING_MODAL"}
         if event.type == "BACK_SPACE":
             if self.editing is not None:
+                # Backspace edits the value rather than clearing the selection.
+                self.edit_selected = False
                 self.edit_text = self.edit_text[:-1]
             else:
                 self.query = self.query[:-1]
@@ -428,6 +601,9 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
             return {"RUNNING_MODAL"}
         if event.unicode and event.unicode.isprintable() and not _is_shortcut(event):
             if self.editing is not None:
+                if self.edit_selected:
+                    self.edit_text = ""
+                    self.edit_selected = False
                 self.edit_text += event.unicode
             else:
                 self.query += event.unicode

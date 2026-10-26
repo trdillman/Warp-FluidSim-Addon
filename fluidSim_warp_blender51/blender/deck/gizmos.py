@@ -19,13 +19,20 @@ Pending Settings classifies the edit exactly as for a panel edit (spec trap 5).
   grid (cell counts, padded grid, cell size, from ``resolve_quality`` as the
   Scene panel's readout computes it) until release. ``resolution_divisions`` is unchanged: resizing changes
   the cell size, not the count. The domain bounds are Reinitialize-class, so the
-  chip shows REINIT. The handles are offered only for an unparented, unrotated
-  domain, where location and scale map one-to-one onto the world box.
+  chip shows REINIT. The handles are offered only for an unparented, unrotated,
+  positively scaled, unconstrained domain. The box is read from ``matrix_world``
+  (so delta transforms count), and a face drag changes location and scale by the
+  world-space offset and size ratio, which ``matrix_world`` follows exactly there.
 
 The gizmos keep only drag bookkeeping (start value, start pointer) between
 ``invoke`` and ``exit``; a cancelled drag restores the start value. Gizmos write
 only to the object the drag started on, and do nothing once that object has left
 the scene (the active object may have changed or gone in the meantime).
+
+Shift slows the drag from the moment it is pressed (no jump), Ctrl snaps to
+:data:`SNAP_STEPS`. A committed drag or click pushes one undo step; a cancelled
+one pushes none. While a Production Bake owns the scene the handles draw dimmed
+and do not start a drag.
 """
 
 from __future__ import annotations
@@ -40,10 +47,34 @@ ARROW_SCALE = 0.25  # metres of arrow per m/s
 DIAL_PIXELS = 300.0  # horizontal drag that sweeps a dial's whole range
 PRECISE_FACTOR = 0.1
 MIN_DOMAIN_SIZE = 0.05  # metres; a face cannot be dragged past this
+CLICK_PIXELS = 3.0  # pointer travel that turns a toggle click into a drag (Blender's default)
+# Fallback ``(hard_min, hard_max, soft_min, soft_max)`` per dial property, used only
+# when the settings expose no RNA (headless doubles); in Blender the dial reads the
+# property's own range (:func:`dial_range`), so these mirror ``properties.py``.
 DIAL_RANGES = {
-    "source_sampling_multiplier": (0.0, 8.0),
-    "emit_rate": (0.0, 32.0),  # the property's soft maximum
-    "collider_friction": (0.0, 1.0),
+    "source_sampling_multiplier": (0.0, 8.0, 0.0, 8.0),
+    "emit_rate": (0.0, 64.0, 0.0, 32.0),
+    "collider_friction": (0.0, 1.0, 0.0, 1.0),
+}
+# Ctrl snaps the value to these steps. Velocity in 0.5 m/s per axis; the Fill
+# Multiplier in quarters; the legacy particles-per-voxel rate in whole particles;
+# friction in 0.05. Domain faces snap the dragged size to 0.1 m: whole voxels
+# would not stay whole, because a resize changes the cell size, not the count.
+SNAP_STEPS = {
+    "initial_velocity": 0.5,
+    "source_sampling_multiplier": 0.25,
+    "emit_rate": 1.0,
+    "collider_friction": 0.05,
+    "domain_size": 0.1,
+}
+DIM_ALPHA = 0.3  # handle opacity while a Production Bake holds edits
+UNDO_MESSAGES = {
+    "initial_velocity": "Liquid Deck: Emitter Velocity",
+    "source_sampling_multiplier": "Liquid Deck: Fill",
+    "emit_rate": "Liquid Deck: Fill",
+    "collider_friction": "Liquid Deck: Friction",
+    "collider_dynamic": "Liquid Deck: Dynamic",
+    "domain": "Liquid Deck: Resize Domain",
 }
 
 _ARROW_LINES = (
@@ -109,6 +140,91 @@ def _write(context, settings, name, value):
         bar.note_deck_write(scene, name)
 
 
+def push_undo(name):
+    """One undo step for a committed gizmo edit.
+
+    Blender's gizmo tweak operator registers no undo, so the gizmo pushes its own.
+    A missing or refusing ``ed.undo_push`` (``--background``, headless doubles)
+    leaves the edit in place without an undo step.
+    """
+    push = getattr(getattr(getattr(bpy, "ops", None), "ed", None), "undo_push", None)
+    if push is None:
+        return
+    try:
+        push(message=UNDO_MESSAGES.get(name, "Liquid Deck"))
+    except RuntimeError:
+        pass
+
+
+def bake_holds_edits(context) -> bool:
+    """Whether a Production Bake owns this scene (or the session, from another scene).
+
+    The same rule as the operators' bake poll: edits made now would only be held.
+    """
+    from .. import production_bake
+
+    scene = getattr(context, "scene", None)
+    if scene is not None and production_bake.bake_is_active(scene):
+        return True
+    return bool(production_bake.any_bake_active())
+
+
+def snap(value, step):
+    return round(float(value) / step) * step
+
+
+class PrecisionDrag:
+    """Pointer -> value, where Shift slows the motion from the point it was pressed.
+
+    ``gain`` is value per unit of pointer travel. Whenever the precision state
+    changes, the drag re-anchors at the last pointer position and the value it
+    produced, so pressing or releasing Shift mid-drag never makes the value jump.
+    Values and pointer positions are tuples of the same length.
+    """
+
+    def __init__(self, start_input, start_value, gain):
+        self.anchor_input = tuple(float(c) for c in start_input)
+        self.anchor_value = tuple(float(c) for c in start_value)
+        self.last_input = self.anchor_input
+        self.gain = float(gain)
+        self.precise = False
+
+    def _at(self, pointer):
+        factor = self.gain * (PRECISE_FACTOR if self.precise else 1.0)
+        return tuple(v + (p - a) * factor
+                     for v, p, a in zip(self.anchor_value, pointer, self.anchor_input,
+                                        strict=True))
+
+    def value(self, pointer, precise):
+        pointer = tuple(float(c) for c in pointer)
+        precise = bool(precise)
+        if precise != self.precise:
+            self.anchor_value = self._at(self.last_input)
+            self.anchor_input = self.last_input
+            self.precise = precise
+        self.last_input = pointer
+        return self._at(pointer)
+
+
+def dial_range(settings, prop):
+    """``(low, high, span)``: clamp to the property's hard range, sweep its soft range.
+
+    Read from the property's RNA so the dial allows what the panel allows; the
+    ``DIAL_RANGES`` fallback serves only settings without RNA.
+    """
+    hard_min, hard_max, soft_min, soft_max = DIAL_RANGES[prop]
+    try:
+        rna = settings.bl_rna.properties[prop]
+        hard_min, hard_max = float(rna.hard_min), float(rna.hard_max)
+        soft_min, soft_max = float(rna.soft_min), float(rna.soft_max)
+    except (AttributeError, KeyError, TypeError):
+        pass
+    span = soft_max - soft_min
+    if span <= 0.0:
+        span = hard_max - hard_min
+    return hard_min, hard_max, span
+
+
 def rate_property(settings):
     """The fill property the Object panel draws for this source, or ``None``."""
     mode = str(getattr(settings, "source_sampling_mode", ""))
@@ -138,7 +254,7 @@ class FLUIDSIM_GT_deck_velocity(bpy.types.Gizmo):
     """Drag the arrow head to set the emitter's initial velocity."""
 
     bl_idname = "FLUIDSIM_GT_deck_velocity"
-    __slots__ = ("shape", "start_world", "start_value", "target")
+    __slots__ = ("shape", "start_value", "target", "drag", "changed")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _ARROW_LINES)
@@ -150,31 +266,43 @@ class FLUIDSIM_GT_deck_velocity(bpy.types.Gizmo):
         self.draw_custom_shape(self.shape, select_id=select_id)
 
     def invoke(self, context, event):
+        self.target, self.changed = None, False
+        if bake_holds_edits(context):
+            return {"CANCELLED"}
         obj = self.target = context.active_object
         self.start_value = tuple(float(c) for c in obj.fluidsim.initial_velocity)
-        self.start_world = mouse_to_world(context, _mouse(event), _object_origin(obj))
+        start_world = mouse_to_world(context, _mouse(event), _object_origin(obj))
+        self.drag = PrecisionDrag(start_world, self.start_value, 1.0 / ARROW_SCALE)
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event, tweak):
-        obj = context.active_object
+        obj = _started_object(context, getattr(self, "target", None))
+        if obj is None:
+            return {"RUNNING_MODAL"}
         now = mouse_to_world(context, _mouse(event), _object_origin(obj))
-        factor = PRECISE_FACTOR if "PRECISE" in tweak else 1.0
-        value = tuple(start + (n - w) * factor / ARROW_SCALE
-                      for start, n, w in zip(self.start_value, now, self.start_world))
+        value = self.drag.value(now, "PRECISE" in tweak)
+        if "SNAP" in tweak:
+            value = tuple(snap(c, SNAP_STEPS["initial_velocity"]) for c in value)
         _write(context, obj.fluidsim, "initial_velocity", value)
+        self.changed = True
         return {"RUNNING_MODAL"}
 
     def exit(self, context, cancel):
-        obj = _started_object(context, getattr(self, "target", None)) if cancel else None
-        if obj is not None:
+        obj = _started_object(context, getattr(self, "target", None))
+        if obj is None or not getattr(self, "changed", False):
+            return
+        if cancel:
             _write(context, obj.fluidsim, "initial_velocity", self.start_value)
+        else:
+            push_undo("initial_velocity")
 
 
 class FLUIDSIM_GT_deck_dial(bpy.types.Gizmo):
     """Drag sideways to turn a dial bound to an object setting (``binding``)."""
 
     bl_idname = "FLUIDSIM_GT_deck_dial"
-    __slots__ = ("shape", "binding", "start_x", "start_value", "prop", "target")
+    __slots__ = ("shape", "binding", "start_value", "prop", "target", "drag", "range",
+                 "changed")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _circle_lines())
@@ -186,35 +314,56 @@ class FLUIDSIM_GT_deck_dial(bpy.types.Gizmo):
         self.draw_custom_shape(self.shape, select_id=select_id)
 
     def invoke(self, context, event):
+        self.target, self.prop, self.changed = None, None, False
+        if bake_holds_edits(context):
+            return {"CANCELLED"}
         self.target = context.active_object
         settings = self.target.fluidsim
         self.prop = dial_property(settings, getattr(self, "binding", ""))
         if self.prop is None:
             return {"CANCELLED"}
         self.start_value = float(getattr(settings, self.prop))
-        self.start_x = float(event.mouse_region_x)
+        self.range = dial_range(settings, self.prop)
+        low, high, span = self.range
+        self.drag = PrecisionDrag((float(event.mouse_region_x),), (self.start_value,),
+                                  span / DIAL_PIXELS)
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event, tweak):
-        low, high = DIAL_RANGES[self.prop]
-        factor = PRECISE_FACTOR if "PRECISE" in tweak else 1.0
-        delta = (float(event.mouse_region_x) - self.start_x) * factor
-        value = min(high, max(low, self.start_value + delta * (high - low) / DIAL_PIXELS))
-        _write(context, context.active_object.fluidsim, self.prop, value)
+        obj = _started_object(context, getattr(self, "target", None))
+        if obj is None or getattr(self, "prop", None) is None:
+            return {"RUNNING_MODAL"}
+        low, high, _span = self.range
+        (value,) = self.drag.value((float(event.mouse_region_x),), "PRECISE" in tweak)
+        if "SNAP" in tweak:
+            value = snap(value, SNAP_STEPS[self.prop])
+        _write(context, obj.fluidsim, self.prop, min(high, max(low, value)))
+        self.changed = True
         return {"RUNNING_MODAL"}
 
     def exit(self, context, cancel):
-        if cancel and getattr(self, "prop", None) is not None:
-            obj = _started_object(context, getattr(self, "target", None))
-            if obj is not None:
-                _write(context, obj.fluidsim, self.prop, self.start_value)
+        if getattr(self, "prop", None) is None or not getattr(self, "changed", False):
+            return
+        obj = _started_object(context, getattr(self, "target", None))
+        if obj is None:
+            return
+        if cancel:
+            _write(context, obj.fluidsim, self.prop, self.start_value)
+        else:
+            push_undo(self.prop)
 
 
 class FLUIDSIM_GT_deck_toggle(bpy.types.Gizmo):
-    """Click to flip the collider's Dynamic (rigid coupling) setting."""
+    """Click to flip the collider's Dynamic (rigid coupling) setting.
+
+    Only a click flips it: the press starts on the toggle (Blender invokes the
+    gizmo under the pointer) and the release must come before the pointer has
+    travelled :data:`CLICK_PIXELS`, i.e. still on the toggle. A press that turns
+    into a drag never flips it, wherever it is released.
+    """
 
     bl_idname = "FLUIDSIM_GT_deck_toggle"
-    __slots__ = ("shape", "target")
+    __slots__ = ("shape", "target", "press", "dragged")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _SQUARE_LINES)
@@ -226,37 +375,53 @@ class FLUIDSIM_GT_deck_toggle(bpy.types.Gizmo):
         self.draw_custom_shape(self.shape, select_id=select_id)
 
     def invoke(self, context, event):
+        self.target, self.dragged = None, False
+        if bake_holds_edits(context):
+            return {"CANCELLED"}
         self.target = context.active_object
+        self.press = _mouse(event)
         return {"RUNNING_MODAL"}
 
     def modal(self, context, event, tweak):
+        x, y = _mouse(event)
+        px, py = getattr(self, "press", (x, y))
+        if max(abs(x - px), abs(y - py)) > CLICK_PIXELS:
+            self.dragged = True
         return {"RUNNING_MODAL"}
 
     def exit(self, context, cancel):
-        obj = None if cancel else _started_object(context, getattr(self, "target", None))
+        if cancel or getattr(self, "dragged", False):
+            return
+        obj = _started_object(context, getattr(self, "target", None))
         if obj is None:
             return
         settings = obj.fluidsim
         prop = dynamic_property(settings)
         if prop is not None:
             _write(context, settings, prop, not bool(getattr(settings, prop)))
+            push_undo(prop)
 
 
 # Domain resize ------------------------------------------------------------------
 
-def face_resize(low, high, scale, side, delta):
+def face_resize(low, high, scale, side, delta, snap_step=None):
     """``(new_scale, location_shift)`` for growing one face outward by ``delta`` metres.
 
-    ``low``/``high`` are the object's local bounds on the axis, ``side`` is +1 for
-    the positive face and -1 for the negative one. The opposite face stays put,
-    and the size never drops below :data:`MIN_DOMAIN_SIZE`.
+    ``low``/``high`` are the object's local bounds on the axis, ``scale`` its
+    world scale on the axis, ``side`` is +1 for the positive face and -1 for the
+    negative one. The opposite face stays put, and the size never drops below
+    :data:`MIN_DOMAIN_SIZE`. ``snap_step`` (Ctrl) rounds the new size to that many
+    metres.
     """
     extent = float(high) - float(low)
     scale = float(scale)
     size = abs(extent * scale)
     if extent <= 0.0 or size <= 0.0:
         return scale, 0.0
-    new_size = max(MIN_DOMAIN_SIZE, size + float(delta))
+    new_size = size + float(delta)
+    if snap_step:
+        new_size = snap(new_size, snap_step)
+    new_size = max(MIN_DOMAIN_SIZE, new_size)
     new_scale = scale * new_size / size
     anchor = low if side > 0 else high
     return new_scale, anchor * (scale - new_scale)
@@ -266,6 +431,19 @@ def local_bounds(obj):
     corners = [tuple(float(c) for c in corner) for corner in obj.bound_box]
     return (tuple(min(c[i] for c in corners) for i in range(3)),
             tuple(max(c[i] for c in corners) for i in range(3)))
+
+
+def world_axes(obj):
+    """``(translation, per-axis world scale)`` of an axis-aligned object.
+
+    Read from ``matrix_world``, so delta transforms count as Blender draws them;
+    an object without one (headless doubles) falls back to location and scale.
+    """
+    matrix = getattr(obj, "matrix_world", None)
+    if matrix is None:
+        return (tuple(float(c) for c in obj.location), tuple(float(c) for c in obj.scale))
+    return (tuple(float(matrix[i][3]) for i in range(3)),
+            tuple(float(matrix[i][i]) for i in range(3)))
 
 
 def world_bounds(location, scale, low, high):
@@ -321,8 +499,8 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
     """Drag a domain face; preview the grid while dragging, commit on release."""
 
     bl_idname = "FLUIDSIM_GT_deck_face"
-    __slots__ = ("shape", "axis", "side", "start_world", "start_location", "start_scale",
-                 "local", "result", "target")
+    __slots__ = ("shape", "axis", "side", "start_location", "start_scale", "start_bounds",
+                 "world_origin", "world_scale", "local", "result", "target", "drag")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _SQUARE_LINES)
@@ -341,49 +519,65 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
 
     def invoke(self, context, event):
         global _ACTIVE_PREVIEW
+        self.target, self.result = None, None
+        if bake_holds_edits(context):
+            return {"CANCELLED"}
         obj = self.target = context.active_object
         self.local = local_bounds(obj)
         self.start_location = tuple(float(c) for c in obj.location)
         self.start_scale = tuple(float(c) for c in obj.scale)
-        bounds = world_bounds(self.start_location, self.start_scale, *self.local)
-        self.start_world = mouse_to_world(context, _mouse(event), self._face_centre(bounds))
-        self.result = None
-        _ACTIVE_PREVIEW = domain_preview(context.scene, bounds)
+        # The world box comes from matrix_world, captured once: Blender does not
+        # re-evaluate it between the drag's events.
+        self.world_origin, self.world_scale = world_axes(obj)
+        self.start_bounds = world_bounds(self.world_origin, self.world_scale, *self.local)
+        start = mouse_to_world(context, _mouse(event), self._face_centre(self.start_bounds))
+        self.drag = PrecisionDrag((self.side * start[self.axis],), (0.0,), 1.0)
+        _ACTIVE_PREVIEW = domain_preview(context.scene, self.start_bounds)
         return {"RUNNING_MODAL"}
 
     def _apply(self, context, scale, location):
         """Write the face's axis of the domain it started on (gone: no-op)."""
         obj = _started_object(context, getattr(self, "target", None))
         if obj is None:
-            return  # the domain was deleted mid-drag
+            return False  # the domain was deleted mid-drag
         obj.scale[self.axis] = scale
         obj.location[self.axis] = location
+        return True
 
     def modal(self, context, event, tweak):
         global _ACTIVE_PREVIEW
+        if getattr(self, "target", None) is None:
+            return {"RUNNING_MODAL"}
         axis = self.axis
         low, high = self.local
-        bounds = world_bounds(self.start_location, self.start_scale, low, high)
-        now = mouse_to_world(context, _mouse(event), self._face_centre(bounds))
-        factor = PRECISE_FACTOR if "PRECISE" in tweak else 1.0
-        growth = self.side * (now[axis] - self.start_world[axis]) * factor
-        new_scale, shift = face_resize(low[axis], high[axis], self.start_scale[axis],
-                                       self.side, growth)
-        location = list(self.start_location)
-        scale = list(self.start_scale)
-        location[axis] += shift
-        scale[axis] = new_scale
-        self.result = (new_scale, shift)
-        _ACTIVE_PREVIEW = domain_preview(context.scene, world_bounds(location, scale, low, high))
+        now = mouse_to_world(context, _mouse(event), self._face_centre(self.start_bounds))
+        (growth,) = self.drag.value((self.side * now[axis],), "PRECISE" in tweak)
+        world_scale = self.world_scale[axis]
+        new_world_scale, shift = face_resize(
+            low[axis], high[axis], world_scale, self.side, growth,
+            SNAP_STEPS["domain_size"] if "SNAP" in tweak else None)
+        # Unparented and unrotated, location moves the world box one-to-one and
+        # scale multiplies its size, also under delta transforms.
+        ratio = new_world_scale / world_scale
+        origin, scales = list(self.world_origin), list(self.world_scale)
+        origin[axis] += shift
+        scales[axis] = new_world_scale
+        _ACTIVE_PREVIEW = domain_preview(context.scene, world_bounds(origin, scales, low, high))
         # Resize the domain while dragging, so the viewport follows the handle.
-        self._apply(context, new_scale, location[axis])
+        if self._apply(context, self.start_scale[axis] * ratio,
+                       self.start_location[axis] + shift):
+            self.result = (ratio, shift)
         return {"RUNNING_MODAL"}
 
     def exit(self, context, cancel):
         global _ACTIVE_PREVIEW
         _ACTIVE_PREVIEW = None
-        if cancel and getattr(self, "result", None) is not None:
+        if getattr(self, "result", None) is None:
+            return
+        if cancel:
             self._apply(context, self.start_scale[self.axis], self.start_location[self.axis])
+        elif _started_object(context, getattr(self, "target", None)) is not None:
+            push_undo("domain")
 
 
 # Gizmo groups ---------------------------------------------------------------------
@@ -400,7 +594,14 @@ def _active_role(context) -> str:
 
 
 def _axis_aligned(obj) -> bool:
+    """Unparented, unconstrained, unrotated and positively scaled.
+
+    Only then does writing location and scale move ``matrix_world``'s box by the
+    same offset and ratio (constraints could override or remap the write).
+    """
     if getattr(obj, "parent", None) is not None:
+        return False
+    if any(getattr(c, "enabled", True) for c in getattr(obj, "constraints", ())):
         return False
     matrix = getattr(obj, "matrix_world", None)
     if matrix is None:
@@ -414,6 +615,23 @@ def _place(gizmo, location, size=0.15):
 
     gizmo.matrix_basis = Matrix.Translation(location)
     gizmo.scale_basis = size
+
+
+def show_held(group, context, gizmos):
+    """Dim ``gizmos`` while a Production Bake holds edits; restore them after.
+
+    Their ``invoke`` refuses a drag in that state, so the dimming is the cue.
+    """
+    held = bake_holds_edits(context)
+    base = getattr(group, "base_alpha", None)
+    if base is None:
+        base = group.base_alpha = [(float(getattr(g, "alpha", 1.0)),
+                                    float(getattr(g, "alpha_highlight", 1.0))) for g in gizmos]
+    for gizmo, (alpha, highlight) in zip(gizmos, base):
+        gizmo.alpha = alpha * DIM_ALPHA if held else alpha
+        # No highlight while held: hovering must not suggest the handle responds.
+        gizmo.alpha_highlight = gizmo.alpha if held else highlight
+    return held
 
 
 class _DeckGizmoGroup:
@@ -453,6 +671,7 @@ class FLUIDSIM_GGT_deck_emitter(_DeckGizmoGroup, bpy.types.GizmoGroup):
         for gizmo in (self.velocity, self.dial):
             gizmo.color = tokens.current_tokens(context).accent
             gizmo.color_highlight = tokens.current_tokens(context).text
+        show_held(self, context, (self.velocity, self.dial))
 
 
 class FLUIDSIM_GGT_deck_collider(_DeckGizmoGroup, bpy.types.GizmoGroup):
@@ -480,6 +699,7 @@ class FLUIDSIM_GGT_deck_collider(_DeckGizmoGroup, bpy.types.GizmoGroup):
         _place(self.dial, origin + Vector((offset, 0.0, 0.0)))
         if self.toggle is not None:
             _place(self.toggle, origin + Vector((offset, 0.0, 0.4)), 0.1)
+        show_held(self, context, [g for g in (self.dial, self.toggle) if g is not None])
 
 
 class FLUIDSIM_GGT_deck_domain(_DeckGizmoGroup, bpy.types.GizmoGroup):
@@ -506,9 +726,10 @@ class FLUIDSIM_GGT_deck_domain(_DeckGizmoGroup, bpy.types.GizmoGroup):
 
     def draw_prepare(self, context):
         obj = context.active_object
-        bounds = world_bounds(tuple(obj.location), tuple(obj.scale), *local_bounds(obj))
+        bounds = world_bounds(*world_axes(obj), *local_bounds(obj))
         for gizmo in self.faces:
             _place(gizmo, gizmo._face_centre(bounds), 0.12)
+        show_held(self, context, self.faces)
 
 
 GIZMO_CLASSES = (FLUIDSIM_GT_deck_velocity, FLUIDSIM_GT_deck_dial, FLUIDSIM_GT_deck_toggle,
