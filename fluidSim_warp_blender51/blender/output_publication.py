@@ -1291,6 +1291,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
         tris = np.zeros((0, 3), dtype=np.int32)
         surface_attributes = {}
     voxel_size = float(solver.settings.voxel_size)
+    policies = {p.name: p for p in output_family_policy(scene, voxel_size=voxel_size)}
     return PublicationPayload(
         voxel_size=voxel_size,
         publish_surface=publish_surface,
@@ -1301,15 +1302,13 @@ def prepare_live_payload(scene, host, publish_surface=True):
         surface_attributes=surface_attributes,
         particles_visible=bool(fs.show_particles),
         particle_attribute_mode=str(fs.particle_attribute_mode),
-        particle_radius=(voxel_size * 0.25
-                         * getattr(fs, "particle_display_scale", 1.0)),
+        particle_radius=policies[PARTICLES_NAME].radius,
         particles=np.asarray(positions, dtype=np.float32),
         particle_attributes=particle_attributes,
         whitewater_visible=whitewater_visible,
         whitewater_output_mode=whitewater_output_mode,
         whitewater_attribute_mode=str(fs.whitewater_attribute_mode),
-        whitewater_radius=(voxel_size * 0.15
-                           * getattr(fs, "whitewater_display_scale", 1.0)),
+        whitewater_radius=policies[WHITEWATER_NAME].radius,
         whitewater=np.asarray(whitewater, dtype=np.float32),
         whitewater_attributes=whitewater_attributes,
     )
@@ -1399,6 +1398,7 @@ def prepare_cache_payload(scene, frame_data):
             key: np.asarray(value)[::ww_step]
             for key, value in whitewater_attributes.items()
         }
+    policies = {p.name: p for p in output_family_policy(scene, voxel_size=voxel_size)}
     return PublicationPayload(
         voxel_size=voxel_size, publish_surface=True,
         surface_visible=bool(fs.show_surface and getattr(ds, "surface_enabled", False)),
@@ -1407,96 +1407,124 @@ def prepare_cache_payload(scene, frame_data):
         surface_attributes=surface_attributes,
         particles_visible=bool(fs.show_particles),
         particle_attribute_mode=str(fs.particle_attribute_mode),
-        particle_radius=(voxel_size * 0.25
-                         * getattr(fs, "particle_display_scale", 1.0)),
+        particle_radius=policies[PARTICLES_NAME].radius,
         particles=positions, particle_attributes=particle_attributes,
         whitewater_visible=bool(fs.show_whitewater and getattr(ds, "whitewater_enabled", False)),
         whitewater_output_mode=str(
             getattr(fs, "whitewater_output_mode", "COMBINED")),
         whitewater_attribute_mode=str(fs.whitewater_attribute_mode),
-        whitewater_radius=(voxel_size * 0.15
-                           * getattr(fs, "whitewater_display_scale", 1.0)),
+        whitewater_radius=policies[WHITEWATER_NAME].radius,
         whitewater=whitewater, whitewater_attributes=whitewater_attributes,
     )
 
 
+@dataclass(frozen=True)
+class OutputFamilyPolicy:
+    """Resolved presentation facts; geometry/material construction stays local."""
+
+    name: str
+    family: str
+    material: str
+    radius_scale: float
+    radius: float | None
+    visible: bool
+    legacy_visible: bool = False
+    particle_type: WhitewaterType | None = None
+
+    def visible_with_legacy(self, count=0):
+        return self.visible or (self.legacy_visible and int(count) > 0)
+
+
+def output_family_policy(scene, *, payload=None, voxel_size=None):
+    """Resolve family membership, modes, materials and radii in one owner.
+
+    Payload visibility/radii are already admitted facts (live or cache); refresh
+    derives them from authored settings. Legacy points retain the combined lane
+    in Separate mode. Shell creation deliberately ignores resolved visibility.
+    """
+    if payload is None:
+        fs = scene.fluidsim
+        ds = _domain_settings(scene)
+        surface = bool(getattr(fs, "show_surface", False) and getattr(ds, "surface_enabled", False))
+        particles = bool(getattr(fs, "show_particles", False))
+        whitewater = bool(getattr(fs, "show_whitewater", False) and getattr(ds, "whitewater_enabled", False))
+        mode = getattr(fs, "whitewater_output_mode", "COMBINED")
+    else:
+        # Publication consumes captured facts only; even scene settings may
+        # have changed since payload admission and must not be reacquired.
+        fs = None
+        surface, particles, whitewater = (payload.surface_visible,
+            payload.particles_visible, payload.whitewater_visible)
+        mode = payload.whitewater_output_mode
+    combined, separate = _whitewater_mode_flags(mode)
+    particle_scale = float(getattr(fs, "particle_display_scale", 1.0))
+    whitewater_scale = float(getattr(fs, "whitewater_display_scale", 1.0))
+    particle_radius = (float(voxel_size) * 0.25 * particle_scale
+                       if voxel_size is not None else None)
+    whitewater_radius = (float(voxel_size) * 0.15 * whitewater_scale
+                         if voxel_size is not None else None)
+    if payload is not None:
+        particle_radius, whitewater_radius = payload.particle_radius, payload.whitewater_radius
+    return (
+        OutputFamilyPolicy(SURFACE_NAME, "surface", "ensure_surface_material",
+                           1.0, None, surface),
+        OutputFamilyPolicy(PARTICLES_NAME, "particles", "ensure_particle_material",
+                           particle_scale, particle_radius, particles),
+        OutputFamilyPolicy(WHITEWATER_NAME, "whitewater", "ensure_whitewater_material",
+                           whitewater_scale, whitewater_radius,
+                           whitewater and combined, whitewater),
+        OutputFamilyPolicy(FOAM_NAME, "whitewater", "ensure_foam_material",
+                           whitewater_scale, whitewater_radius,
+                           whitewater and separate, particle_type=WhitewaterType.FOAM),
+        OutputFamilyPolicy(BUBBLES_NAME, "whitewater", "ensure_bubble_material",
+                           whitewater_scale, whitewater_radius,
+                           whitewater and separate, particle_type=WhitewaterType.BUBBLE),
+        OutputFamilyPolicy(SPRAY_NAME, "whitewater", "ensure_spray_material",
+                           whitewater_scale, whitewater_radius,
+                           whitewater and separate, particle_type=WhitewaterType.SPRAY),
+    )
+
+
+def _prepare_family(scene, policy, materials, ds):
+    if policy.family == "surface":
+        obj = _ensure_object(scene, policy.name,
+            lambda: _new_blender_id(bpy.data.meshes.new, policy.name), "MESH")
+    else:
+        obj = _ensure_point_object(scene, policy.name,
+            enabled_attribute_keys(ds, policy.family))
+    _ensure_material(getattr(materials, policy.material), scene, obj)
+    return obj
+
+
 @_cost_phase("output_preparation")
 def ensure_output_shells(scene):
-    """Create persistent surface, particle, and whitewater output IDs.
-
-    Guided setup needs stable render targets before a solver is initialized;
-    visibility toggles remain independent and no geometry is published here.
-    """
+    """Create every persistent render target, independently of visibility."""
     _require_bpy()
     from . import materials
 
-    surface = _ensure_object(
-        scene, SURFACE_NAME,
-        lambda: _new_blender_id(bpy.data.meshes.new, SURFACE_NAME), "MESH")
-    fs = scene.fluidsim
     ds = _domain_settings(scene)
-    particles = _ensure_point_object(
-        scene, PARTICLES_NAME, enabled_attribute_keys(ds, "particles"))
-    whitewater = _ensure_point_object(
-        scene, WHITEWATER_NAME, enabled_attribute_keys(ds, "whitewater"))
-    foam = _ensure_point_object(
-        scene, FOAM_NAME, enabled_attribute_keys(ds, "whitewater"))
-    bubbles = _ensure_point_object(
-        scene, BUBBLES_NAME, enabled_attribute_keys(ds, "whitewater"))
-    spray = _ensure_point_object(
-        scene, SPRAY_NAME, enabled_attribute_keys(ds, "whitewater"))
-    _ensure_material(materials.ensure_surface_material, scene, surface)
-    _ensure_material(materials.ensure_particle_material, scene, particles)
-    _ensure_material(materials.ensure_whitewater_material, scene, whitewater)
-    _ensure_material(materials.ensure_foam_material, scene, foam)
-    _ensure_material(materials.ensure_bubble_material, scene, bubbles)
-    _ensure_material(materials.ensure_spray_material, scene, spray)
-    for obj in (surface, particles, whitewater, foam, bubbles, spray):
+    objects = []
+    for policy in output_family_policy(scene):
+        obj = _prepare_family(scene, policy, materials, ds)
         try:
             obj["fluidsim_owned"] = True
             obj["fluidsim_kind"] = "OUTPUT"
         except (AttributeError, TypeError):
             pass
-    return surface, particles, whitewater, foam, bubbles, spray
+        objects.append(obj)
+    return tuple(objects)
 
 
 @_cost_phase("output_preparation")
 def prepare_outputs(scene):
     """Output Preparation: create enabled IDs/schema without geometry writes."""
     _require_bpy()
-    fs = scene.fluidsim
+    from . import materials
+
     ds = _domain_settings(scene)
-    materials = None
-    if (fs.show_surface and getattr(ds, "surface_enabled", False)) or fs.show_particles or (
-            fs.show_whitewater and getattr(ds, "whitewater_enabled", False)):
-        from . import materials
-    if fs.show_surface and getattr(ds, "surface_enabled", False):
-        _ensure_material(materials.ensure_surface_material, scene, _ensure_object(
-            scene, SURFACE_NAME,
-            lambda: _new_blender_id(
-                bpy.data.meshes.new, SURFACE_NAME), "MESH"))
-    if fs.show_particles:
-        _ensure_material(
-            materials.ensure_particle_material,
-            scene, _ensure_point_object(
-                scene, PARTICLES_NAME, enabled_attribute_keys(ds, "particles")))
-    if fs.show_whitewater and getattr(ds, "whitewater_enabled", False):
-        combined_enabled, separate_enabled = _whitewater_mode_flags(
-            getattr(fs, "whitewater_output_mode", "COMBINED"))
-        targets = []
-        if combined_enabled:
-            targets.append((WHITEWATER_NAME, materials.ensure_whitewater_material))
-        if separate_enabled:
-            targets.extend((
-                (FOAM_NAME, materials.ensure_foam_material),
-                (BUBBLES_NAME, materials.ensure_bubble_material),
-                (SPRAY_NAME, materials.ensure_spray_material),
-            ))
-        for name, ensure_material in targets:
-            _ensure_material(
-                ensure_material,
-                scene, _ensure_point_object(
-                    scene, name, enabled_attribute_keys(ds, "whitewater")))
+    for policy in output_family_policy(scene):
+        if policy.visible:
+            _prepare_family(scene, policy, materials, ds)
 
 
 def _whitewater_mode_flags(mode: str) -> tuple[bool, bool]:
@@ -1578,12 +1606,13 @@ def publish_payload(scene, payload):
     to ``_swap_points`` and is separately observable by reason.
     """
     _require_bpy()
+    policies = {p.name: p for p in output_family_policy(scene, payload=payload)}
     materials = None
     if (payload.surface_visible or payload.particles_visible
             or payload.whitewater_visible):
         from . import materials
 
-    if payload.surface_visible:
+    if policies[SURFACE_NAME].visible:
         if payload.publish_surface:
             values = _selected_attribute_values(
                 payload.surface_attributes, payload.surface_attribute_mode)
@@ -1595,7 +1624,7 @@ def publish_payload(scene, payload):
             _swap_mesh(
                 obj, payload.surface_verts, payload.surface_tris, colors,
                 payload.surface_attributes)
-            _ensure_material(materials.ensure_surface_material, scene, obj)
+            _ensure_material(getattr(materials, policies[SURFACE_NAME].material), scene, obj)
     else:
         obj = output_object(scene, SURFACE_NAME)
         if obj is not None and obj.type == "MESH" and len(obj.data.vertices):
@@ -1605,7 +1634,7 @@ def publish_payload(scene, payload):
                 np.zeros((0, 3), dtype=np.int32),
             )
 
-    if payload.particles_visible:
+    if policies[PARTICLES_NAME].visible:
         values = _selected_attribute_values(
             payload.particle_attributes, payload.particle_attribute_mode)
         colors = _values_to_colors(values) if values is not None else None
@@ -1615,17 +1644,15 @@ def publish_payload(scene, payload):
                   if key in payload.particle_attributes))
         if _supports_pointcloud():
             _swap_points(
-                obj, payload.particles, payload.particle_radius, colors,
+                obj, payload.particles, policies[PARTICLES_NAME].radius, colors,
                 payload.particle_attributes)
         else:
             _swap_vertex_cloud(
                 obj, payload.particles, colors, payload.particle_attributes)
-        _ensure_material(materials.ensure_particle_material, scene, obj)
+        _ensure_material(getattr(materials, policies[PARTICLES_NAME].material), scene, obj)
     else:
         _clear_points(scene, PARTICLES_NAME)
 
-    combined_enabled, separate_enabled = _whitewater_mode_flags(
-        payload.whitewater_output_mode)
     if payload.whitewater_visible:
         particle_count = len(payload.whitewater)
         raw_types = payload.whitewater_attributes.get("type")
@@ -1644,33 +1671,28 @@ def publish_payload(scene, payload):
         # Legacy cache points have no physical classification. Keep them on the
         # combined object even in Separate mode rather than dropping them or
         # falsely labelling them as foam.
-        if combined_enabled or legacy_count:
+        combined = policies[WHITEWATER_NAME]
+        if combined.visible_with_legacy(legacy_count):
             _publish_whitewater_points(
                 scene, WHITEWATER_NAME, payload.whitewater,
                 payload.whitewater_attributes,
                 payload.whitewater_attribute_mode,
-                payload.whitewater_radius, materials.ensure_whitewater_material,
+                combined.radius, getattr(materials, combined.material),
                 legacy_unclassified_count=legacy_count)
         else:
             _hide_and_clear_output(scene, WHITEWATER_NAME)
 
-        if separate_enabled:
-            typed_outputs = (
-                (FOAM_NAME, WhitewaterType.FOAM, materials.ensure_foam_material),
-                (BUBBLES_NAME, WhitewaterType.BUBBLE,
-                 materials.ensure_bubble_material),
-                (SPRAY_NAME, WhitewaterType.SPRAY,
-                 materials.ensure_spray_material),
-            )
-            for name, particle_type, ensure_material in typed_outputs:
-                indices = partitions[particle_type]
+        typed_outputs = tuple(p for p in policies.values() if p.particle_type is not None)
+        if any(p.visible for p in typed_outputs):
+            for policy in typed_outputs:
+                indices = partitions[policy.particle_type]
                 attributes = _subset_aligned_attributes(
                     payload.whitewater_attributes, indices, particle_count)
                 _publish_whitewater_points(
-                    scene, name, np.ascontiguousarray(
+                    scene, policy.name, np.ascontiguousarray(
                         payload.whitewater[indices]), attributes,
                     payload.whitewater_attribute_mode,
-                    payload.whitewater_radius, ensure_material)
+                    policy.radius, getattr(materials, policy.material))
         else:
             for name in (FOAM_NAME, BUBBLES_NAME, SPRAY_NAME):
                 _hide_and_clear_output(scene, name)
@@ -1700,87 +1722,27 @@ def refresh_existing_output_settings(scene):
     _require_bpy()
     from . import materials
 
-    # This is intentionally metadata-only. Without an active solver we cannot
-    # recompute attributes or surfaces, but cache/current-output objects should
-    # still respond to visibility and material picker changes.
-    fs = scene.fluidsim
+    # Metadata only: no solver readback or attribute/geometry reconstruction.
     ds = _domain_settings(scene)
-    voxel_size = _effective_voxel_size(scene, ds)
-    surface = output_object(scene, SURFACE_NAME)
-    if surface is not None:
-        visible = fs.show_surface and getattr(ds, "surface_enabled", False)
-        _set_hidden(surface, not visible)
-        if visible:
-            _ensure_material(
-                materials.ensure_surface_material, scene, surface)
-
-    particles = output_object(scene, PARTICLES_NAME)
-    if particles is not None:
-        _set_hidden(particles, not fs.show_particles)
-        if fs.show_particles:
-            radius = (voxel_size * 0.25 *
-                      getattr(fs, "particle_display_scale", 1.0))
-            _set_point_radius(particles, radius)
-            _ensure_material(
-                materials.ensure_particle_material, scene, particles)
-
-    combined_enabled, separate_enabled = _whitewater_mode_flags(
-        getattr(fs, "whitewater_output_mode", "COMBINED"))
-    visible = fs.show_whitewater and getattr(ds, "whitewater_enabled", False)
-    typed_materials = {
-        WHITEWATER_NAME: materials.ensure_whitewater_material,
-        FOAM_NAME: materials.ensure_foam_material,
-        BUBBLES_NAME: materials.ensure_bubble_material,
-        SPRAY_NAME: materials.ensure_spray_material,
-    }
-    for name, ensure_material in typed_materials.items():
-        obj = output_object(scene, name)
+    for policy in output_family_policy(scene, voxel_size=_effective_voxel_size(scene, ds)):
+        obj = output_object(scene, policy.name)
         if obj is None:
             continue
-        legacy_visible = bool(
-            name == WHITEWATER_NAME
-            and int(obj.get(LEGACY_UNCLASSIFIED_COUNT_TAG, 0)) > 0)
-        selected = (combined_enabled or legacy_visible
-                    if name == WHITEWATER_NAME else separate_enabled)
-        obj_visible = visible and selected
-        _set_hidden(obj, not obj_visible)
-        if obj_visible:
-            radius = (voxel_size * 0.15 *
-                      getattr(fs, "whitewater_display_scale", 1.0))
-            _set_point_radius(obj, radius)
-            _ensure_material(ensure_material, scene, obj)
+        visible = policy.visible_with_legacy(obj.get(LEGACY_UNCLASSIFIED_COUNT_TAG, 0))
+        _set_hidden(obj, not visible)
+        if visible:
+            if policy.radius is not None:
+                _set_point_radius(obj, policy.radius)
+            _ensure_material(getattr(materials, policy.material), scene, obj)
     return _sync_render_inputs(scene)
 
 
 def ensure_render_visibility(scene):
-    """Apply render visibility to persistent simulation outputs.
-
-    Uses the same visibility rule as the viewport
-    (``refresh_existing_output_settings``): the scene display toggle *and* the
-    domain's Surface/Whitewater switch, so an output the viewport hides never
-    renders.
-    """
-    fs = scene.fluidsim
-    ds = _domain_settings(scene)
-    surface_visible = bool(
-        fs.show_surface and getattr(ds, "surface_enabled", False))
-    whitewater_visible = bool(
-        fs.show_whitewater and getattr(ds, "whitewater_enabled", False))
-    combined_enabled, separate_enabled = _whitewater_mode_flags(
-        getattr(fs, "whitewater_output_mode", "COMBINED"))
-    for name, show in (
-        (SURFACE_NAME, surface_visible),
-        (PARTICLES_NAME, fs.show_particles),
-        (WHITEWATER_NAME, whitewater_visible and combined_enabled),
-        (FOAM_NAME, whitewater_visible and separate_enabled),
-        (BUBBLES_NAME, whitewater_visible and separate_enabled),
-        (SPRAY_NAME, whitewater_visible and separate_enabled),
-    ):
-        obj = output_object(scene, name)
+    """Apply the resolved display/domain/mode policy to render flags only."""
+    for policy in output_family_policy(scene):
+        obj = output_object(scene, policy.name)
         if obj is not None:
-            if (name == WHITEWATER_NAME and whitewater_visible
-                    and int(obj.get(LEGACY_UNCLASSIFIED_COUNT_TAG, 0)) > 0):
-                show = True
+            show = policy.visible_with_legacy(obj.get(LEGACY_UNCLASSIFIED_COUNT_TAG, 0))
             _set_hidden(obj, not show, viewport=False)
 
 

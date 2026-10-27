@@ -49,6 +49,40 @@ Dependency direction is one-way: Blender UI/handler adapters call these deep mod
 
 Runtime tests and source-level contracts certify these claims. HTML reviews, screenshots, demos, profiles, and policy reports are supporting evidence only, not substitutes for core implementation proof.
 
+## Deepened architecture seams
+
+- **Scene Evaluation** — one `SceneInputs.evaluate` recipe owns device selection,
+  generation, staged capture and cache pruning. Admission and Session adapters
+  retain their separate acceptance and mutation policies.
+- **Evaluated Geometry Capture** — short-lived evaluated geometry with explicit
+  original/evaluated transform selection and an authored override for Dynamic
+  rest poses. Consumers copy their own point, region or identity projection;
+  the capture owns temporary mesh release.
+- **Effect Package Installation** — the existing Effect Library owns identity
+  conflicts, built-in protection, keep-both/replacement and version cleanup for
+  Import and Save. Arbitrary Export is separate. Installation never grants trust.
+- **Structural Effect Edit** — the Custom Effects module owns collection/key,
+  binding, selection, text ownership and fingerprint update recipes. Artist and
+  Warp Code adapters request edits; draft and applied execution remain distinct.
+- **Output Family Policy** — Output Publication resolves family selection,
+  whitewater legacy/mode rules, material and radius choices once for its existing
+  preparation/publication/visibility workflows and Geometry Nodes adapter.
+- **Committed Sequence Observation** — the cache schema owns an immutable view
+  of a complete verified committed sequence, pinned to exact manifest bytes.
+  Export adapters revalidate checksums and the playback root at execution;
+  inspection retains its separate valid-prefix reporting behavior.
+- **Liquid State Revision** — the Solver Session's numerical solver records
+  attempted particle membership/position or narrow-band level-set edits before
+  fallible writes. Surface products depend on this revision, grid topology and
+  complete SDF settings, rather than clocks. Clock-only advances need no carry
+  protocol. Conservative invalidation on refused/failed attempts grants no commit.
+- **Captured Drag Target** — Deck modal updates and cancellation resolve the
+  object captured at invoke; selection changes never redirect an active drag.
+- **Registration Step Atomicity** — each multi-action step unwinds only its own
+  newly registered classes, pointers, handlers or UI resources on failure. The
+  ordered Registration module still rolls back completed steps only. Local
+  journals preserve pre-existing registrations and report cleanup errors.
+
 ## Storage invariant
 
 - **Sparse Leaf Grid** — the live field-storage contract: fixed `8x8x8` leaf tiles addressed through a flat leaf table, with no hierarchical tree storage.

@@ -301,15 +301,14 @@ class SurfacePipeline:
         return (int(getattr(s, "surface_resolution_mode", 0)), round(float(getattr(s, "surface_resolution_multiplier", 2.0)), 6),
                 round(float(getattr(s, "surface_voxel_size", 0.0)), 9), round(float(getattr(s, "surface_leaf_capacity_scale", 8.0)), 6),
                 int(getattr(s, "surface_max_dense_dim", 512)), int(getattr(s, "surface_update_cadence", 1)),
-                bool(getattr(s, "surface_build_lowres_sdf", False)), round(float(s.particle_radius_scale), 6), int(s.surface_splat_radius),
-                int(s.surface_filter_type), int(s.surface_filter_iterations), round(float(s.surface_filter_strength), 6),
-                int(s.surface_dilate_iterations), round(float(s.surface_dilate_strength), 6), int(s.surface_erode_iterations),
-                round(float(s.surface_erode_strength), 6), int(s.surface_smooth_type), int(s.surface_smooth_iterations),
-                round(float(s.surface_smooth_strength), 6), self.topology_generation)
+                bool(getattr(s, "surface_build_lowres_sdf", False)),
+                self._sdf_settings_signature(), self.topology_generation)
 
     def build_key(self):
         solver = self.solver
-        return (solver.frame, round(float(solver.sim_time), 12), self.settings_signature())
+        return (int(getattr(solver, "liquid_state_revision", 0)),
+                int(getattr(solver.grid, "topology_generation", 0)),
+                self.settings_signature())
 
     def invalidate(self):
         self.mesh_cache = self.mesh_key = None
@@ -516,16 +515,13 @@ class SurfacePipeline:
             self.topology_generation += 1
         return self.nvox
 
-    def solver_sdf_build_key(self):
-        solver, s = self.solver, self.solver.settings
+    def _sdf_settings_signature(self):
+        """Inputs read by build_sdf, shared by physical and render products."""
+        s = self.solver.settings
+        capillary_active = (bool(getattr(s, "surface_tension_enabled", False))
+                            and float(getattr(s, "surface_tension_coefficient", 0.0)) > 0.0)
         return (
-            int(getattr(solver, "frame", 0)),
-            round(float(getattr(solver, "sim_time", 0.0)), 12),
-            # A topology rebuild re-ranks leaf slots without moving time, so a
-            # frame-end SDF would otherwise be read through the new leaf table.
-            int(getattr(getattr(solver, "grid", None), "topology_generation", 0)),
-            round(float(s.voxel_size), 12),
-            round(float(s.particle_radius_scale), 6),
+            float(s.voxel_size), float(s.particle_radius_scale),
             int(s.surface_splat_radius),
             int(s.surface_filter_type), int(s.surface_filter_iterations),
             round(float(s.surface_filter_strength), 6),
@@ -533,28 +529,24 @@ class SurfacePipeline:
             int(s.surface_erode_iterations), round(float(s.surface_erode_strength), 6),
             int(s.surface_smooth_type), int(s.surface_smooth_iterations),
             round(float(s.surface_smooth_strength), 6),
+            capillary_active,
+            float(getattr(s, "surface_tension_band_voxels", 1.5)),
+            int(getattr(s, "surface_tension_smoothing_iterations", 1)),
+            self.splat_mode(), self.band_mode(), self.band_seed_radius(),
         )
 
+    def solver_sdf_build_key(self):
+        solver = self.solver
+        return (int(getattr(solver, "liquid_state_revision", 0)),
+                int(getattr(getattr(solver, "grid", None), "topology_generation", 0)),
+                self._sdf_settings_signature())
+
     def invalidate_solver_sdf(self):
-        """Mark the simulation SDF stale after particle positions change."""
+        """Force a physical-SDF rebuild; liquid mutations use the solver revision."""
         self.solver_sdf_key = None
 
-    def advance_solver_sdf_key(self, previous_key):
-        """Keep a current SDF current across a frame/time advance.
-
-        The key stands in for "these particle positions": the solver moves
-        frame or time without touching particles at the end of a substep and
-        of a frame, so an SDF built for ``previous_key`` (whitewater builds
-        one after advection) still describes them. Every position change has
-        its own explicit invalidation or a topology generation in the key, so
-        those still force a rebuild (P11).
-        """
-        key = getattr(self, "solver_sdf_key", None)
-        if key is not None and key == previous_key:
-            self.solver_sdf_key = self.solver_sdf_build_key()
-
     def invalidate_particle_state(self):
-        """Invalidate every surface product after an out-of-step particle edit."""
+        """Discard derived products after an owner-reported liquid edit."""
 
         self.built_key = None
         self.solver_sdf_key = None

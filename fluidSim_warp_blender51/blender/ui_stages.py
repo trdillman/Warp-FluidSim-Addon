@@ -580,8 +580,9 @@ STAGE_PANEL_CLASSES = (
 
 
 def register():
-    for cls in STAGE_PANEL_CLASSES:
-        bpy.utils.register_class(cls)
+    from ..unregister_guard import register_classes
+
+    register_classes(STAGE_PANEL_CLASSES)
 
 
 def unregister():

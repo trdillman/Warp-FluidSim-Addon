@@ -1,11 +1,10 @@
 """P11: an unchanged solver SDF is not rebuilt just because time advanced.
 
-The solver SDF cache key holds frame and time as a stand-in for particle
-positions. Whitewater builds the SDF after advection; the solver then
-advances time (end of substep) and frame (end of frame) without moving a
-particle, so the next consumer (surface tension, or frame-end surfacing)
-rebuilt an identical SDF. The key is now carried across those advances. The
-simulation must be bitwise unchanged while the build count drops.
+The solver SDF cache key follows liquid-state and topology revisions, rather
+than frame/time. Whitewater's post-advection SDF remains current when the clock
+advances. Compare against a control that always rebuilds at the consumer seam;
+the simulation must remain bitwise unchanged. This is a correctness/build-count
+check, not a timing benchmark.
 """
 
 import os
@@ -38,8 +37,13 @@ def _run(device, monkeypatch, carry):
 
     monkeypatch.setattr(S.SurfacePipeline, "build_sdf", counting)
     if not carry:
-        monkeypatch.setattr(S.SurfacePipeline, "advance_solver_sdf_key",
-                            lambda self, previous_key: None)
+        ensure_current = S.SurfacePipeline.ensure_solver_sdf_current
+
+        def force_rebuild(self):
+            self.invalidate_solver_sdf()
+            return ensure_current(self)
+
+        monkeypatch.setattr(S.SurfacePipeline, "ensure_solver_sdf_current", force_rebuild)
     settings = H.settings(device, narrow_band=False, surface_tension_enabled=True,
                           max_whitewater=50_000, min_substeps=2, max_substeps=2)
     settings.surface_enabled = True

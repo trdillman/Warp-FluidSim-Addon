@@ -1,7 +1,9 @@
-"""Blender scene adapters for the versioned Custom Effects workflow.
+"""Blender authoring owner for the versioned Custom Effects workflow.
 
 The PropertyGroups in this module are authoring state only. Every compile,
 apply, cache, and report boundary converts them to immutable v2 snapshots.
+Structural edit recipes keep collection, binding, owned-text and draft refresh
+sequencing here. They never replace the applied snapshot or grant source trust.
 """
 
 from __future__ import annotations
@@ -464,6 +466,105 @@ def rebuild_definition_json(scene, pg) -> EffectDefinitionV2:
     return definition
 
 
+def add_parameter(scene, pg):
+    key = unique_id("param", (item.key for item in pg.parameters))
+    parameter = pg.parameters.add()
+    parameter.key = key
+    parameter.label = key.replace("_", " ").title()
+    parameter.kind = "FLOAT"
+    parameter.float_value = 1.0
+    parameter.minimum = 0.0
+    parameter.maximum = 100.0
+    parameter.has_minimum = True
+    parameter.has_maximum = True
+    rebuild_definition_json(scene, pg)
+    return parameter
+
+
+def remove_parameter(scene, pg, index: int) -> None:
+    unbind_parameter_key(pg, pg.parameters[index].key)
+    pg.parameters.remove(index)
+    rebuild_definition_json(scene, pg)
+
+
+def move_parameter(scene, pg, index: int, target: int) -> None:
+    if 0 <= target < len(pg.parameters):
+        pg.parameters.move(index, target)
+        rebuild_definition_json(scene, pg)
+
+
+def _new_kernel_text(instance_id: str, kernel_id: str, source: str):
+    # A matching display name is not proof of ownership. Never overwrite a
+    # user/shared Text datablock just because Blender finds the same name.
+    text = bpy.data.texts.new(f"FluidSim Effect - {instance_id} - {kernel_id}.py")
+    text.write(source.rstrip("\n") + "\n")
+    text["fluidsim_effect_instance"] = instance_id
+    text["fluidsim_effect_kernel"] = kernel_id
+    return text
+
+
+def _owned_source_text_names(items) -> set[str]:
+    # Evaluate users before detaching: after removal a shared text can have one
+    # remaining user, and that user must retain its source.
+    return {
+        kernel.source_text.name
+        for item in items for kernel in item.kernels
+        if kernel.source_text is not None
+        and kernel.source_text.get("fluidsim_effect_instance") == item.instance_id
+        and kernel.source_text.users <= 1
+    }
+
+
+def _remove_source_texts(names) -> None:
+    for name in names:
+        text = bpy.data.texts.get(name)
+        if text is not None:
+            bpy.data.texts.remove(text)
+
+
+def add_kernel(scene, pg):
+    kernel_id = unique_id("kernel", (item.kernel_id for item in pg.kernels))
+    kernel = pg.kernels.add()
+    kernel.kernel_id = kernel_id
+    kernel.parameter_keys_authored = True
+    kernel.label = kernel.kernel_id.replace("_", " ").title()
+    kernel.domain = "PARTICLES"
+    kernel.stage = "AFTER_PARTICLE_TRANSFER"
+    kernel.cadence = "EVERY_SUBSTEP"
+    kernel.safe_mode = True
+    kernel.source_text = _new_kernel_text(pg.instance_id, kernel.kernel_id, "# Custom kernel body\npass\n")
+    rebuild_definition_json(scene, pg)
+    return kernel
+
+
+def remove_kernel(scene, pg, index: int) -> None:
+    if len(pg.kernels) <= 1:
+        raise ValueError("An effect must have at least one kernel")
+    kernel = pg.kernels[index]
+    names = _owned_source_text_names((pg,))
+    names.intersection_update((kernel.source_text.name,) if kernel.source_text is not None else ())
+    pg.kernels.remove(index)
+    _remove_source_texts(names)
+    rebuild_definition_json(scene, pg)
+
+
+def bind_kernel_field(scene, pg, kernel_index: int, field_name: str, access: str) -> None:
+    kernel = pg.kernels[kernel_index]
+    binding = next((item for item in kernel.fields if item.field == field_name), None)
+    if binding is None:
+        binding = kernel.fields.add()
+        binding.field = field_name
+    binding.access = access
+    rebuild_definition_json(scene, pg)
+
+
+def remove_kernel_field(scene, pg, kernel_index: int, field_index: int) -> None:
+    fields = pg.kernels[kernel_index].fields
+    if field_index < len(fields):
+        fields.remove(field_index)
+        rebuild_definition_json(scene, pg)
+
+
 def add_custom_effect_from_template(scene, template_key: str, *, effect_name: str | None = None):
     from ..sim.effects.templates import get_template_definition
     definition = get_template_definition(template_key)
@@ -678,13 +779,7 @@ def _add_instance_to_scene(scene, instance: EffectInstanceV2, *, select: bool = 
         kernel_pg.frame_step = kernel.frame_step
         kernel_pg.parameter_keys_csv = ", ".join(kernel.parameter_keys)
         kernel_pg.parameter_keys_authored = True
-        text_name = f"FluidSim Effect - {instance.instance_id} - {kernel.kernel_id}.py"
-        text = bpy.data.texts.get(text_name) or bpy.data.texts.new(text_name)
-        text.clear()
-        text.write(kernel.source.rstrip("\n") + "\n")
-        text["fluidsim_effect_instance"] = instance.instance_id
-        text["fluidsim_effect_kernel"] = kernel.kernel_id
-        kernel_pg.source_text = text
+        kernel_pg.source_text = _new_kernel_text(instance.instance_id, kernel.kernel_id, kernel.source)
         for binding in kernel.fields:
             field_pg = kernel_pg.fields.add()
             field_pg.field = binding.field
@@ -713,20 +808,58 @@ def add_builtin_effect(scene, effect_id: str, *, instance_id: str | None = None)
     return add_instance_to_scene(scene, instance)
 
 
+def _normalize_orders(stack) -> None:
+    for index, item in enumerate(stack.items):
+        item.order = index
+
+
+def remove_effect(scene, index: int) -> None:
+    stack = scene.fluidsim_effects
+    names = _owned_source_text_names((stack.items[index],))
+    stack.items.remove(index)
+    _remove_source_texts(names)
+    stack.active_index = max(0, min(index, len(stack.items) - 1))
+    _normalize_orders(stack)
+    refresh_stack_state(scene)
+
+
+def duplicate_effect(scene, pg):
+    instance = effect_instance_from_pg(scene, pg)
+    return add_instance_to_scene(scene, replace(
+        instance,
+        instance_id=f"effect-{uuid.uuid4().hex[:12]}",
+        display_name=f"{instance.display_name or instance.definition.name} Copy",
+        order=len(scene.fluidsim_effects.items),
+        solo=False,
+    ))
+
+
+def move_effect(scene, index: int, target: int) -> bool:
+    stack = scene.fluidsim_effects
+    if target < 0 or target >= len(stack.items):
+        return False
+    stack.items.move(index, target)
+    stack.active_index = target
+    _normalize_orders(stack)
+    refresh_stack_state(scene)
+    return True
+
+
+def toggle_effect_mute(scene, pg) -> None:
+    pg.muted = not pg.muted
+    refresh_stack_state(scene)
+
+
+def toggle_effect_solo(scene, pg) -> None:
+    pg.solo = not pg.solo
+    refresh_stack_state(scene)
+
+
 def clear_effects(scene, *, remove_owned_texts: bool = False):
     stack = scene.fluidsim_effects
-    if remove_owned_texts:
-        names = [
-            kernel.source_text.name
-            for item in stack.items
-            for kernel in item.kernels
-            if kernel.source_text is not None
-        ]
-        for name in names:
-            text = bpy.data.texts.get(name)
-            if text is not None and text.users <= 1:
-                bpy.data.texts.remove(text)
+    names = _owned_source_text_names(stack.items) if remove_owned_texts else ()
     stack.items.clear()
+    _remove_source_texts(names)
     stack.active_index = 0
     refresh_stack_state(scene)
 
@@ -1460,9 +1593,12 @@ def untrust_effect(scene, index: int) -> None:
 
 
 def register():
-    for cls in CLASSES:
-        bpy.utils.register_class(cls)
-    bpy.types.Scene.fluidsim_effects = PointerProperty(type=FLUIDSIM_PG_effect_stack)
+    from ..unregister_guard import class_registration
+
+    if hasattr(bpy.types.Scene, "fluidsim_effects"):
+        raise RuntimeError("Scene.fluidsim_effects is already registered")
+    with class_registration(CLASSES):
+        bpy.types.Scene.fluidsim_effects = PointerProperty(type=FLUIDSIM_PG_effect_stack)
 
 
 def unregister():

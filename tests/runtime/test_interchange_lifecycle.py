@@ -69,10 +69,11 @@ def export_env(monkeypatch):
     monkeypatch.setattr(interchange, "playback", playback)
     from fluidSim_warp_blender51.blender import production_bake
     monkeypatch.setattr(production_bake, "bake_is_active", lambda s: False)
-    monkeypatch.setattr(interchange, "available_frames", lambda s: (1, 2))
+    monkeypatch.setattr(interchange, "_cache_sequence", lambda s: SimpleNamespace(frames=(1, 2)))
+    monkeypatch.setattr(interchange, "available_frames", lambda s, **kw: (1, 2))
     monkeypatch.setattr(interchange.output_publication, "output_object", lambda *a: obj)
-    monkeypatch.setattr(interchange, "_range_point_counts", lambda *a: (0, 0))
-    monkeypatch.setattr(interchange.rigid_publication, "carried_objects", lambda *a: ())
+    monkeypatch.setattr(interchange, "_range_point_counts", lambda *a, **kw: (0, 0))
+    monkeypatch.setattr(interchange.rigid_publication, "carried_objects", lambda *a, **kw: ())
     monkeypatch.setattr(interchange._UsdSamplers, "attach", lambda *a: None)
     monkeypatch.setattr(interchange.output_publication, "hold_point_capacity", nullcontext)
     obj.hide_render = False
@@ -194,7 +195,7 @@ def test_partial_entry_failure_restores_scene(export_env, monkeypatch, fmt):
     e = export_env
     before = snapshot(e)
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         e.scene.frame_set(2)
         raise RuntimeError("injected setup failure")
 
@@ -222,7 +223,7 @@ def test_usd_plan_carries_render_enabled_dynamic_colliders(export_env, monkeypat
     cork, unrendered = _cork(e), _cork(e, "unrendered", hide_render=True)
     asked = []
 
-    def carried_objects(scene, base_dir, frames):
+    def carried_objects(scene, base_dir, frames, **kw):
         asked.append((scene, base_dir, frames))
         return (cork, unrendered)
 
@@ -238,7 +239,7 @@ def test_usd_plan_with_only_carried_colliders_is_refused_like_alembic(
         export_env, monkeypatch):
     e = export_env
     cork = _cork(e)
-    monkeypatch.setattr(e.module.rigid_publication, "carried_objects", lambda *a: (cork,))
+    monkeypatch.setattr(e.module.rigid_publication, "carried_objects", lambda *a, **kw: (cork,))
     monkeypatch.setattr(e.module.output_publication, "output_object", lambda *a: None)
     with pytest.raises(e.module.ExportRefused, match="no FluidSim outputs"):
         e.module.plan_usd_export(e.scene)
@@ -253,7 +254,7 @@ def test_usd_export_keys_and_selects_carried_colliders_without_a_sampler(
     before = snapshot(e)
     keyed, sampled, exported = [], [], []
     monkeypatch.setattr(e.module.rigid_publication, "publish_cache_frames",
-                        lambda scene, base_dir, frames: keyed.append((base_dir, frames)))
+                        lambda scene, base_dir, frames, **kw: keyed.append((base_dir, frames)))
     monkeypatch.setattr(e.module._UsdSamplers, "attach",
                         lambda self, objects: sampled.extend(objects))
 
@@ -289,4 +290,85 @@ def test_operator_reports_refusal_and_cancels(export_env, fmt, entry):
     assert reports[0][0] == {"ERROR"}
     assert "particle and rigid-body state" in reports[0][1]
     assert "paused" in reports[0][1]
+    assert snapshot(e) == before
+
+
+@pytest.mark.parametrize("fmt", ["alembic", "usd"])
+def test_pinned_sequence_revalidated_before_any_scene_mutation(export_env, fmt):
+    e = export_env
+    before = snapshot(e)
+
+    def refuse():
+        raise ValueError("changed pinned cache")
+
+    sequence = SimpleNamespace(revalidate=refuse)
+    plan = (e.module.ExportPlan("cache", (1, 2), e.obj, sequence=sequence)
+            if fmt == "alembic" else
+            e.module.UsdExportPlan("cache", (1, 2), e.obj, (), sequence=sequence))
+    with pytest.raises(ValueError, match="changed pinned cache"):
+        getattr(e.module, "export_" + fmt)(e.scene, "out", plan)
+    assert snapshot(e) == before
+
+
+@pytest.mark.parametrize("fmt", ["alembic", "usd"])
+def test_pinned_sequence_change_during_export_restores_scene(export_env, fmt):
+    e = export_env
+    before = snapshot(e)
+    calls = []
+
+    def revalidate():
+        calls.append("verify")
+        if len(calls) == 2:
+            raise ValueError("changed during export")
+
+    sequence = SimpleNamespace(revalidate=revalidate)
+    plan = (e.module.ExportPlan("cache", (1, 2), e.obj, sequence=sequence)
+            if fmt == "alembic" else
+            e.module.UsdExportPlan("cache", (1, 2), e.obj, (), sequence=sequence))
+    with pytest.raises(ValueError, match="changed during export"):
+        getattr(e.module, "export_" + fmt)(e.scene, "out", plan)
+    assert len(calls) == 2
+    assert snapshot(e) == before
+
+
+def test_usd_planner_shares_one_observation_with_counts_and_rigid_selection(export_env, monkeypatch):
+    e = export_env
+    sequence = SimpleNamespace(frames=(1, 2))
+    consumers = []
+    monkeypatch.setattr(e.module, "_cache_sequence", lambda scene: sequence)
+
+    def counts(base, frames, *, sequence):
+        consumers.append(sequence)
+        return 0, 0
+
+    def carried(scene, base, frames, *, sequence):
+        consumers.append(sequence)
+        return ()
+
+    monkeypatch.setattr(e.module, "_range_point_counts", counts)
+    monkeypatch.setattr(e.module.rigid_publication, "carried_objects", carried)
+    plan = e.module.plan_usd_export(e.scene)
+    assert plan.sequence is sequence
+    assert consumers == [sequence, sequence]
+
+
+@pytest.mark.parametrize("fmt", ["alembic", "usd"])
+def test_changed_scene_cache_path_refuses_pinned_plan_before_mutation(export_env, fmt):
+    e = export_env
+    calls = []
+    sequence = SimpleNamespace(revalidate=lambda: calls.append("verify-cache-A"))
+    plan = (e.module.ExportPlan("cache", (1, 2), e.obj, sequence=sequence)
+            if fmt == "alembic" else
+            e.module.UsdExportPlan("cache", (1, 2), e.obj, (), sequence=sequence))
+    e.scene.fluidsim.cache_path = "other-cache"
+    before = snapshot(e)
+
+    def wrong_cache_export(**_kwargs):
+        calls.append("export-cache-B")
+        return {"FINISHED"}
+
+    setattr(e.bpy.ops.wm, fmt + "_export", wrong_cache_export)
+    with pytest.raises(e.module.ExportRefused, match="cache path changed"):
+        getattr(e.module, "export_" + fmt)(e.scene, "out", plan)
+    assert calls == []
     assert snapshot(e) == before

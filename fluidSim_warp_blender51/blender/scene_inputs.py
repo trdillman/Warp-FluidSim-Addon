@@ -3,11 +3,26 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 
 import numpy as np
 
 from ..sim.attributes import stable_source_id
 from .scene_access import active_domain_settings
+from .evaluated_geometry import EvaluatedGeometry, TransformPolicy
+
+
+@dataclass(frozen=True)
+class SceneEvaluation:
+    """Owned projections of one scene-input evaluation (no solver mutation)."""
+
+    descriptors: tuple
+    source_plans: tuple
+    colliders: tuple
+    force_fields: tuple
+    height_source: object
+    seeds: tuple
+    session_generation: int
 
 
 def _effective_source_target(scene, pg) -> int:
@@ -371,8 +386,8 @@ class SceneInputs:
 
     def __init__(self):
         self.device = "cuda:0"
-        # Admission sets this while it stages inputs on the CPU: meshes are
-        # then StagedMesh stand-ins until materialize_device_meshes.
+        # A staged evaluation keeps CPU geometry behind StagedMesh stand-ins
+        # until materialize_device_meshes commits the selected device.
         self.stage_meshes = False
         self.clear()
 
@@ -423,7 +438,51 @@ class SceneInputs:
         self._sync_generation += 1
         return self._sync_generation
 
+    def evaluate(self, scene, depsgraph=None, *, device, staged=False,
+                 include_sources=True, capture_first_mesh=True,
+                 include_auto_seeds=False):
+        """Own the device, generation and mesh lifetime recipe for one capture.
+
+        Admission requests CPU staging and clears this owner if planning fails.
+        Session decides whether source edits are admissible and installs the
+        returned lanes; refusing sources still refreshes colliders/forces/height.
+        First/Every Sim Frame freezing remains owned by the gatherers below.
+        """
+        if depsgraph is None:
+            import bpy
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+        self.device = "cpu" if staged else str(device)
+        self.stage_meshes = bool(staged)
+        generation = self.begin_sync()
+        self._evaluation_active = True
+        try:
+            descriptors = tuple(self.gather_sources(
+                scene, depsgraph, capture_first_mesh=capture_first_mesh,
+                sync_generation=generation)) if include_sources else ()
+            plans = tuple(self.gather_source_plans(
+                scene, depsgraph)) if include_sources else ()
+            colliders = tuple(self.gather_colliders(
+                scene, depsgraph, sync_generation=generation))
+            force_fields = tuple(self.gather_force_fields(scene, depsgraph))
+            height_source = self.gather_height_source(scene, depsgraph)
+            seeds = ()
+            if include_auto_seeds:
+                from . import sources
+                seeds = tuple(sources.prepare_auto_seeds(scene, depsgraph))
+            if staged:
+                # Register bindings before admission performs fallible planning.
+                self.materialize_device_meshes(
+                    descriptors, colliders, "cpu", staged=True)
+            return SceneEvaluation(
+                descriptors, plans, colliders, force_fields, height_source,
+                seeds, self._session_generation)
+        finally:
+            self._evaluation_active = False
+            self._prune_evaluated_mesh_cache()
+
     def _prune_evaluated_mesh_cache(self):
+        if getattr(self, "_evaluation_active", False):
+            return
         active = self._source_mesh_cache_keys | self._collider_mesh_cache_keys
         for cache_key in list(self._evaluated_mesh_cache):
             if cache_key not in active:
@@ -466,16 +525,13 @@ class SceneInputs:
             self.collider_mesh_cache_stats["reuses"] += 1
             return entry, ""
 
-        evaluated = obj.evaluated_get(depsgraph)
-        matrix_world = (
-            evaluated.matrix_world if matrix_override is None
-            else matrix_override)
-        matrix = np.asarray(matrix_world, dtype=np.float32)
+        geometry = EvaluatedGeometry(obj, depsgraph)
+        matrix = geometry.world_matrix(
+            TransformPolicy.EVALUATED, override=matrix_override)
         matrix_signature = _array_signature(matrix)
-        mesh = evaluated.to_mesh()
-        if mesh is None:
-            return None, "evaluated mesh is unavailable"
-        try:
+        with geometry.mesh() as mesh:
+            if mesh is None:
+                return None, "evaluated mesh is unavailable"
             mesh.calc_loop_triangles()
             if len(mesh.vertices) == 0 or len(mesh.loop_triangles) == 0:
                 return None, "evaluated mesh has no triangles"
@@ -505,9 +561,6 @@ class SceneInputs:
                 # Dropped triangles can leave vertices unreferenced.
                 aabb_min, aabb_max = _referenced_bounds(world_verts, tris)
             tris = np.ascontiguousarray(tris, dtype=np.int32)
-        finally:
-            evaluated.to_mesh_clear()
-
         signature = _cache_signature(
             object_id, self.device, verts, tris, matrix)
         if entry is not None and entry["signature"] == signature:
@@ -550,16 +603,18 @@ class SceneInputs:
         self.collider_mesh_cache_stats["rebuilds"] += 1
         return entry, ""
 
-    def materialize_device_meshes(self, descriptors, colliders, device):
-        """Retarget staged mesh descriptors after Replacement Cutover.
+    def materialize_device_meshes(self, descriptors, colliders, device, *, staged=False):
+        """Retarget staged mesh descriptors to the selected runtime device.
 
         Admission gathers evaluated geometry on CPU.  Only the committed
         replacement may allocate CUDA BVHs, and this owner keeps bindings so
         :meth:`clear` can break every descriptor reference before the CUDA
-        allocator pool is flushed.
+        allocator pool is flushed. The private evaluation recipe uses staged
+        registration; ordinary callers end staging and build the real BVHs.
         """
         import warp as wp
 
+        self.stage_meshes = bool(staged)
         device = str(device)
         replacements = {}
         for entry in self._evaluated_mesh_cache.values():

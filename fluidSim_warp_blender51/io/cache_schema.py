@@ -731,6 +731,87 @@ def load_manifest(path: Path | str) -> CacheManifestV3 | None:
     return record[2].clone()
 
 
+class SequenceIntegrityError(ValueError):
+    """A manifest parsed, but its committed sequence failed verification."""
+
+
+@dataclass(frozen=True)
+class CommittedSequence:
+    """Read-only committed metadata bound to exact manifest bytes.
+
+    This observation is evidence, never a checksum waiver. Export adapters must
+    revalidate at execution; individual payload reads retain their own checks.
+    Inspection intentionally uses its separate valid-prefix reporting path.
+    """
+
+    base_dir: Path
+    manifest_sha256: str
+    _manifest_json: str = field(repr=False)
+    frames: tuple[int, ...]
+
+    @property
+    def manifest(self):
+        # Return a fresh schema object so caller mutation cannot alter evidence.
+        return CacheManifestV3.from_dict(json.loads(self._manifest_json))
+
+    def entries(self, frames=None):
+        selected = self.frames if frames is None else tuple(int(f) for f in frames)
+        manifest = self.manifest
+        if any(f not in self.frames for f in selected):
+            raise ValueError("Requested frame is not in the observed committed sequence")
+        return tuple(manifest.frames[f] for f in selected)
+
+    def point_counts(self, frames=None):
+        entries = self.entries(frames)
+        return (max((e.particle_count for e in entries), default=0),
+                max((e.whitewater_count for e in entries), default=0))
+
+    def rigid_records(self, frames=None):
+        # Rigid consumers historically ignore requested frames absent from the
+        # manifest; format range validators retain their own strict policy.
+        selected = (None if frames is None else
+                    tuple(int(f) for f in frames if int(f) in self.frames))
+        return {e.frame: e.rigid_bodies for e in self.entries(selected) if e.rigid_bodies}
+
+    def revalidate(self):
+        current = observe_committed_sequence(self.base_dir)
+        if current is None or current.manifest_sha256 != self.manifest_sha256:
+            raise ValueError("The baked cache changed after export was prepared. Retry export.")
+        return current
+
+
+def read_manifest_snapshot(base_dir):
+    """Return schema and exact digest from the same bytes, without artifact proof."""
+    path = manifest_path(base_dir)
+    if not path.is_file():
+        return None, ""
+    try:
+        record = _manifest_record(path)
+        return (CacheManifestV3.from_dict(record[1]),
+                hashlib.sha256(record[0]).hexdigest())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid cache manifest {path}: {exc}") from exc
+
+
+def observe_committed_sequence(base_dir):
+    """Observe one complete contiguous sequence, verifying every artifact.
+
+    Parsing, digest identity and records all come from the same raw manifest;
+    a concurrent manifest replacement during verification is refused.
+    """
+    base = Path(base_dir).resolve()
+    manifest, digest = read_manifest_snapshot(base)
+    if manifest is None:
+        return None
+    try:
+        frames = verified_contiguous_frames(base, manifest)
+    except ValueError as exc:
+        raise SequenceIntegrityError(str(exc)) from exc
+    if sha256_file(manifest_path(base)) != digest:
+        raise ValueError("The baked cache changed during integrity verification. Retry export.")
+    return CommittedSequence(base, digest, json.dumps(manifest.to_dict()), frames)
+
+
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
         return

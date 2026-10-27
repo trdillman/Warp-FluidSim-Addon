@@ -477,8 +477,9 @@ PHYSICS_PANEL_CLASSES = (
 
 
 def register():
-    for cls in PHYSICS_PANEL_CLASSES:
-        bpy.utils.register_class(cls)
+    from ..unregister_guard import register_classes
+
+    register_classes(PHYSICS_PANEL_CLASSES)
 
 
 def unregister():
