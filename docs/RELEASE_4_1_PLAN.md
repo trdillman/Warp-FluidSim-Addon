@@ -29,16 +29,21 @@ the integrated settings UI). Waves A–C are mostly still open.
 - Every domain setting shown in the Scene tab and All Simulation Settings
   (PR #33).
 
+**Done in the 4.1 cleanup (2026-10-23)**
+- #4 Span cap: kept for 4.1 because Warp 1.17 is still accepted and
+  uses it; the hover text and the 4.1.0 Known limitations now say so.
+  Remove it when the Warp floor reaches 1.18.
+- #5 `CONTRIBUTING.md` no longer names the removed `ci.yml`.
+- #6 Not cherry-picked, by decision: the archived notes describe the
+  Cursor Cloud image, hosted CI (since removed) and Warp 1.17 pins, so
+  they are stale.
+- #10 Warp: recorded from `version.py`. 4.1 certifies Warp 1.18.0
+  (`1.18.0+cu13`, needs an R580-series driver) and still loads 1.17.0
+  or newer 1.x with a warning.
+
 **Still open**
-- #4 Span cap: the setting is still in `properties.py:1607` and its hover
-  text still says "removed in 4.1". Remove it, or change the text to 4.2.
-- #5 `CONTRIBUTING.md:9` still names `.github/workflows/ci.yml`, which does
-  not exist.
-- #6 AGENTS.md Cloud Agent notes: not cherry-picked.
 - #8 Publication buffer fix, #11 cloud UI smoke lane, #15 Alembic point
   clouds, #18 benchmark: not started.
-- #10 Warp decision: the lock pins Warp 1.18.0 (not 1.17 as §2 says); the
-  decision is not recorded here.
 - #12–#14, #16 Solver wave (MG warm start, perf headroom, crown metric,
   residual margin): not started. Proposed: move to 4.2.
 - #17 Linux certification: not done; listed as a known limitation in the
