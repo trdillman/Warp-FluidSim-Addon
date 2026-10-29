@@ -623,6 +623,7 @@ class FluidSolver:
 
     def __init__(self, settings: SolverSettings, profiler=None):
         self.settings = settings
+        self.liquid_state_revision = 0
         self.quality = resolve_quality(
             settings, (settings.domain_min, settings.domain_max))
         settings.resolved_quality = self.quality
@@ -686,9 +687,11 @@ class FluidSolver:
         self.attr_weight = ScalarField(g, name="attr_weight")
         self.ww_density = ScalarField(g, name="ww_density")
 
-        self.old_leaf_table = wp.full(
-            g.num_leaf_cells, -1, dtype=wp.int32, device=self.device
-        )
+        from .grid_storage_layout import SIMULATION_TABLE_NAMES
+
+        for name in SIMULATION_TABLE_NAMES:
+            setattr(self, name, wp.full(
+                g.num_leaf_cells, -1, dtype=wp.int32, device=self.device))
 
         self.particles = ParticleSystem(
             settings.max_particles, self.device,
@@ -720,9 +723,7 @@ class FluidSolver:
             ensure_particle_capacity=self.ensure_particle_capacity,
             invalidate_host_cache=lambda: setattr(
                 self, "_host_frame_cache", None),
-            invalidate_particle_surface=lambda: (
-                self.surface.invalidate_particle_state()
-                if getattr(self, "surface", None) is not None else None),
+            invalidate_particle_surface=self.mark_liquid_state_changed,
         )
         self.surface = SurfacePipeline(self)
         self.surface_tension = SurfaceTensionSolver(self)
@@ -762,6 +763,19 @@ class FluidSolver:
         if getattr(settings, "pressure_learned_guess", False):
             from .learned_guess import LearnedGuess
             self.pressure_solver.learned_guess = LearnedGuess(self.grid, self.device)
+
+    def mark_liquid_state_changed(self):
+        """Record a particle/level-set edit independently of simulation clocks.
+
+        Mutation owners call this for positions, membership or narrow-band phi;
+        topology retains its own grid-owned generation. Failed edits may already
+        have touched storage, so conservative revision advances are intentional.
+        """
+        self.liquid_state_revision = int(getattr(self, "liquid_state_revision", 0)) + 1
+        self._host_frame_cache = None
+        surface = getattr(self, "surface", None)
+        if surface is not None:
+            surface.invalidate_particle_state()
 
     # Host configuration
 
@@ -846,7 +860,11 @@ class FluidSolver:
     def ensure_particle_capacity(self, required: int):
         """Atomically grow particle/binner storage while preserving solver state."""
         from .memory_safety import (
-            affine_bytes_per_particle, release_cuda_memory, vram_snapshot,
+            release_cuda_memory, vram_snapshot,
+        )
+        from .particle_storage_layout import (
+            AFFINE_BYTES_PER_PARTICLE, bin_voxel_bytes,
+            optional_particle_bytes_per_slot,
         )
         from .particle_capacity import (
             ParticleGrowthResult, plan_particle_growth,
@@ -871,7 +889,14 @@ class FluidSolver:
             current, required,
             gpu_total_bytes=int(resources.get("gpu_total_bytes", 0)),
             gpu_free_bytes=int(resources.get("gpu_free_bytes", 0)),
-            extra_particle_bytes=affine_bytes_per_particle(self.settings),
+            # resized_copy preserves allocated channels, even when authored
+            # settings have changed before the next synchronization step.
+            extra_particle_bytes=(
+                optional_particle_bytes_per_slot(
+                    getattr(self.particles, "optional_channels", ()))
+                + (AFFINE_BYTES_PER_PARTICLE if getattr(
+                    self.particles, "affine_allocated", False) else 0)),
+            fixed_allocation_bytes=bin_voxel_bytes(self.grid.voxel_capacity),
         )
         if not plan.allowed:
             result = ParticleGrowthResult(
@@ -925,6 +950,7 @@ class FluidSolver:
         return result
 
     def reset(self):
+        self.mark_liquid_state_changed()
         self._host_frame_cache = None
         self.surface_attribute_transfer = None
         sourcing = getattr(self, "sourcing", None)
@@ -1088,6 +1114,7 @@ class FluidSolver:
                     "checkpoint particle count cannot be admitted: "
                     f"{getattr(growth, 'reason', growth)}")
 
+        self.mark_liquid_state_changed()
         self.grid.restore_topology(arrays["grid_leaf_coords"])
         active_voxels = counts["leaf_count"] * C.LEAF_VOLUME
         for dotted_name in self._checkpoint_field_names():
@@ -1889,6 +1916,7 @@ class FluidSolver:
 
     def _sanitize_particles(self, dt):
         """Kill non-finite particles, clamp particle speeds."""
+        self.mark_liquid_state_changed()
         s = self.settings
         g = self.grid
         # Time Scale = 0 is an authored pause mode. Keep its no-op substep
@@ -1936,6 +1964,7 @@ class FluidSolver:
         s = self.settings
         p = self.particles
         self._g2p_transfer()
+        self.mark_liquid_state_changed()
 
         fast_launch(
             k_advect_particles, dim=self._np_dim(),
@@ -1969,6 +1998,7 @@ class FluidSolver:
         )
 
     def _lifecycle(self, dt):
+        self.mark_liquid_state_changed()
         g = self.grid
         p = self.particles
         np_dim = self._np_dim()
@@ -1997,6 +2027,7 @@ class FluidSolver:
         s = self.settings
         if not s.relax_enabled:
             return
+        self.mark_liquid_state_changed()
         g = self.grid
         p = self.particles
         self._index_particles()
@@ -2389,11 +2420,6 @@ class FluidSolver:
                 # Skipped when no emitter ran: indexing is already current.
                 if emitted:
                     self._index_particles()
-                    # The previous frame may have produced a current-key SDF
-                    # during render surfacing. Newly emitted particles change
-                    # the physical interface without advancing frame/time, so
-                    # invalidate explicitly before the capillary force reads it.
-                    self.surface.invalidate_solver_sdf()
             with self._phase("p2g"):
                 self._p2g()
             if self.narrow_band is not None:
@@ -2431,21 +2457,12 @@ class FluidSolver:
                 self._lifecycle(dt)
             with self._phase("relax"):
                 self._relax()
-            # Surface tension may have built the SDF before G2P/advection.  The
-            # particle positions now describe a new interface; invalidate that
-            # pre-advection key so whitewater and substep render surfacing can
-            # never consume stale geometry.
-            self.surface.invalidate_solver_sdf()
             sdf_ready = self.surface.after_substep()
             with self._phase("whitewater"):
                 self._whitewater(dt, sdf_ready=sdf_ready)
             self.features.run(
                 FrameFeaturePhase.AFTER_PARTICLE_UPDATE, self, time_ctx)
-            # Time advances, particles do not: a solver SDF built after
-            # advection (whitewater) stays current for the next consumer.
-            sdf_key = self.surface.solver_sdf_build_key()
             self.sim_time += dt
-            self.surface.advance_solver_sdf_key(sdf_key)
             time_ctx["time"] = self.sim_time
 
         # Color is an artistic display attribute, so exchange it once per
@@ -2455,9 +2472,7 @@ class FluidSolver:
             self._mix_particle_colors(frame_dt)
         self._restore_collider_poses()
 
-        sdf_key = self.surface.solver_sdf_build_key()
         self.frame += 1
-        self.surface.advance_solver_sdf_key(sdf_key)
         self._host_frame_cache = None
         with self._phase("whitewater"):
             whitewater_particles = self._finalize_whitewater()

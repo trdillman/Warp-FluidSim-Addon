@@ -239,7 +239,6 @@ def capture_snapshot(
     The compiler is always released.  The returned SceneInputs owner is either
     transferred to the running session or cleared by the caller on every exit.
     """
-    from . import sources
     from ..sim.capacity_planner import DemandQuality, leaf_coords_for_world_bounds
     from ..sim.enums import SourceOperation
     from ..sim.source_compat import descriptors_to_plans, height_descriptor_to_plan
@@ -250,35 +249,25 @@ def capture_snapshot(
     frame = int(getattr(scene, "frame_current", 0))
     captured_domain_transform = domain_transform(scene)
     inputs = SceneInputs()
-    # Planning is deliberately CPU-staged.  The configured CUDA device is
-    # sampled for capacity only; its first allocation belongs to the committed
-    # replacement after Cutover.
-    inputs.device = "cpu"
-    # Nothing queries a mesh BVH before the replacement materializes its own.
-    inputs.stage_meshes = True
     compiler = SourceCompiler()
     try:
-        sync_generation = inputs.begin_sync()
-        descriptors = tuple(inputs.gather_sources(
-            scene, depsgraph, capture_first_mesh=True,
-            sync_generation=sync_generation))
-        extra_plans = tuple(inputs.gather_source_plans(scene, depsgraph))
-        colliders = tuple(inputs.gather_colliders(
-            scene, depsgraph, sync_generation=sync_generation))
-        force_fields = tuple(inputs.gather_force_fields(scene, depsgraph))
-        height_source = inputs.gather_height_source(scene, depsgraph)
-        seeds = tuple(sources.prepare_auto_seeds(scene, depsgraph))
+        evaluation = inputs.evaluate(
+            scene, depsgraph, device=settings.device, staged=True,
+            include_auto_seeds=True)
+        descriptors = evaluation.descriptors
+        extra_plans = evaluation.source_plans
+        colliders = evaluation.colliders
+        force_fields = evaluation.force_fields
+        height_source = evaluation.height_source
+        seeds = evaluation.seeds
         effects = tuple(effect_builder(scene))
-        # Register staged mesh descriptor bindings so every failure path can
-        # break those references deterministically.
-        inputs.materialize_device_meshes(descriptors, colliders, "cpu")
 
         legacy_plans = tuple(descriptors_to_plans(
-            descriptors, session_generation=inputs._session_generation))
+            descriptors, session_generation=evaluation.session_generation))
         plans = list(extra_plans)
         if getattr(height_source, "enabled", False):
             height_plan = height_descriptor_to_plan(
-                height_source, session_generation=inputs._session_generation)
+                height_source, session_generation=evaluation.session_generation)
             if not getattr(height_source, "emit_particles", False):
                 height_plan = replace(
                     height_plan, operation=SourceOperation.ACTIVATION)
@@ -286,7 +275,7 @@ def capture_snapshot(
 
         context = CompileContext(
             frame=frame, substep=0,
-            session_generation=inputs._session_generation,
+            session_generation=evaluation.session_generation,
             device="cpu",
             origin=tuple(float(value) for value in settings.domain_min),
             voxel_size=float(settings.voxel_size),
@@ -596,7 +585,6 @@ class SimulationAdmission:
     def _configure_candidate(self, candidate, snapshot, scene):
         inputs = snapshot.scene_inputs
         # Staging ends here: build real meshes even on a CPU solver device.
-        inputs.stage_meshes = False
         inputs.materialize_device_meshes(
             snapshot.descriptors, snapshot.colliders,
             snapshot.configured_device)

@@ -1,11 +1,87 @@
 from __future__ import annotations
 
 from pathlib import Path
+import ast
+from types import SimpleNamespace
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS_RELEASE = ROOT.parent / "tools" / "release"
 VALIDATOR = TOOLS_RELEASE / "validate_properties_ui_blender.py"
 SMOKE = TOOLS_RELEASE / "smoke_test_blender.py"
+
+
+def _metadata_validator():
+    """Run the real metadata checks without requiring a Blender import."""
+    tree = ast.parse(VALIDATOR.read_text(encoding="utf-8"))
+    names = {
+        "EXPECTED_SCENE_ROOTS", "EXPECTED_OBJECT_ROOTS", "EXPECTED_EFFECT_CHILDREN",
+        "EXPECTED_STAGE_PANELS", "PHYSICS_MIRROR_SOURCES", "REMOVED_PANEL_IDS",
+        "_mirror_id", "_assert_metadata",
+    }
+    nodes = [node for node in tree.body if (
+        isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id in names for target in node.targets)
+    ) or (isinstance(node, ast.FunctionDef) and node.name in names)]
+    namespace = {}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(VALIDATOR), "exec"), namespace)
+    records = {}
+
+    def add(panel, context="scene", order=0, parent="", closed=False, space="PROPERTIES"):
+        records[panel] = dict(space=space, region="WINDOW" if space == "PROPERTIES" else "UI",
+                              context=context, order=order, parent=parent, closed=closed)
+
+    for panel, (order, _closed) in namespace["EXPECTED_SCENE_ROOTS"].items():
+        add(panel, order=order)
+    for panel, order in namespace["EXPECTED_OBJECT_ROOTS"].items():
+        add(panel, context="object", order=order)
+    for panel in namespace["EXPECTED_EFFECT_CHILDREN"]:
+        add(panel, parent="FLUIDSIM_PT_custom_effects")
+    for group, sources in namespace["PHYSICS_MIRROR_SOURCES"].items():
+        for source in sources:
+            if source not in records:
+                add(source)
+            add(namespace["_mirror_id"](group, source), context="physics")
+    for panel, (order, parent, closed) in namespace["EXPECTED_STAGE_PANELS"].items():
+        add(panel, order=order, parent=parent, closed=closed, space="VIEW_3D")
+    add("FLUIDSIM_PT_viewport_status", space="VIEW_3D")
+    add("FLUIDSIM_PT_physics_root", context="physics")
+    namespace.update(
+        _panel_metadata=records.__getitem__,
+        _panel=lambda panel: SimpleNamespace(bl_category="FluidSim"),
+        bpy=SimpleNamespace(types=SimpleNamespace(FLUIDSIM_OT_open_scene_properties=object())),
+    )
+    return namespace["_assert_metadata"], records
+
+
+def test_release_metadata_accepts_expanded_properties_and_existing_sidebar_defaults():
+    validate, records = _metadata_validator()
+    assert validate() == records
+
+
+@pytest.mark.parametrize("panel", [
+    "FLUIDSIM_PT_scene_lifecycle", "FLUIDSIM_PT_custom_effects",
+    "FLUIDSIM_PT_scene_diagnostics", "FLUIDSIM_PT_effect_packages",
+    "FLUIDSIM_PT_effect_warp_code", "FLUIDSIM_PT_object_role",
+    "FLUIDSIM_PT_physics_domain_scene_domain", "FLUIDSIM_PT_physics_root",
+])
+def test_release_metadata_rejects_collapsed_properties(panel):
+    validate, records = _metadata_validator()
+    records[panel]["closed"] = True
+    with pytest.raises(AssertionError, match=panel):
+        validate()
+
+
+@pytest.mark.parametrize("options, expanded", [(None, True), (set(), True), ({"DEFAULT_CLOSED"}, False)])
+def test_gui_expanded_check_handles_omitted_panel_options(options, expanded):
+    tree = ast.parse((ROOT.parent / "tests/acceptance/blender_gui_acceptance.py").read_text(encoding="utf-8"))
+    check = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and node.args and isinstance(node.args[0], ast.Constant)
+                 and node.args[0].value == "Lifecycle starts expanded")
+    panel = SimpleNamespace() if options is None else SimpleNamespace(bl_options=options)
+    namespace = {"bpy": SimpleNamespace(types=SimpleNamespace(FLUIDSIM_PT_scene_lifecycle=panel))}
+    assert eval(compile(ast.Expression(check.args[1]), "<gui expanded check>", "eval"), namespace) is expanded
 
 
 def test_properties_ui_blender_validator_covers_native_surfaces_and_lifecycle():

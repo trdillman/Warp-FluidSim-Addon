@@ -83,8 +83,9 @@ def register_all(package: str, steps: tuple[Step, ...] = STEPS) -> None:
     Blender's enable path does not unregister a half-registered add-on after
     ``register()`` raises, so the rollback happens here. Every module is
     imported before the first registration, so an import error leaves Blender
-    untouched. A failing step is not undone (it did not complete); a failing
-    rollback is reported and the remaining rollbacks still run.
+    untouched. Each step must be internally atomic: on failure it removes only
+    its own new side effects. A failing step is not centrally undone (it did not
+    complete); a failing rollback is reported and the remaining rollbacks run.
     """
     registrable = [step for step in steps if step.register is not None]
     modules = [importlib.import_module(f"{package}.{step.module}") for step in registrable]

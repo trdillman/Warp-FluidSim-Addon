@@ -92,7 +92,8 @@ def _draw_overlay():
 def register_overlay():
     global _OVERLAY_HANDLE
     _require_bpy()
-    unregister_overlay()
+    if _OVERLAY_HANDLE is not None:
+        return
     _OVERLAY_HANDLE = bpy.types.SpaceView3D.draw_handler_add(
         _draw_overlay, (), "WINDOW", "POST_PIXEL")
 

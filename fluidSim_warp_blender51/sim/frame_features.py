@@ -56,20 +56,19 @@ class FrameFeatures:
         if effect_stage is None:
             return
         requirements = self.effects.requirements_for_stage(effect_stage)
-        if requirements.surface_sdf and not solver.surface.ensure_solver_sdf_current():
-            # Fail closed: an effect reading the SDF must not run on stale or
-            # zero-initialized storage (the runtime raises a structured error).
-            self.effects.run(
-                effect_stage, solver, time_context,
-                surface_sdf_error=str(
-                    getattr(solver.surface, "solver_sdf_error", "") or ""))
-        else:
-            self.effects.run(effect_stage, solver, time_context)
-        if requirements.moves_particles:
-            # The solver SDF is keyed on frame/time, not on positions; an
-            # effect that moved particles would otherwise leave surface
-            # tension and whitewater reading the pre-effect interface.
-            solver.surface.invalidate_solver_sdf()
+        try:
+            if requirements.surface_sdf and not solver.surface.ensure_solver_sdf_current():
+                # Fail closed rather than sampling stale or unbuilt storage.
+                self.effects.run(
+                    effect_stage, solver, time_context,
+                    surface_sdf_error=str(
+                        getattr(solver.surface, "solver_sdf_error", "") or ""))
+            else:
+                self.effects.run(effect_stage, solver, time_context)
+        finally:
+            if requirements.moves_particles:
+                # A failed stage can already have written some positions.
+                solver.mark_liquid_state_changed()
 
     def frame_stats_snapshot(self) -> list[dict[str, object]]:
         return self.effects.frame_stats_snapshot()

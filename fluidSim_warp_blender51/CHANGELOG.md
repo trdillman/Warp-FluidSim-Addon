@@ -71,7 +71,8 @@
 - Alembic still exports particle point clouds as empty transforms on
   Blender 5.2; only the surface mesh is written.
 - The Surface span cap setting is still shown but has no effect with
-  sparse extraction (Warp 1.18 or newer).
+  sparse extraction (Warp 1.18 or newer). It stays in 4.1, not removed as
+  4.0.0 said, because Warp 1.17 is still accepted and uses it.
 
 ## 4.0.1 — Install Warp from a file, and downloads that survive slow links
 

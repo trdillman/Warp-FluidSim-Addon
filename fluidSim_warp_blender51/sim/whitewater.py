@@ -24,6 +24,7 @@ from .fields import (
     sample_scalar_trilinear,
 )
 from .particles import k_clamp_count
+from .whitewater_storage_layout import CANDIDATE_BUFFER_NAMES, WHITEWATER_BUFFER_LAYOUT
 from .registry import register_fn
 from .whitewater_types import WhitewaterType, validate_type_values
 
@@ -695,32 +696,18 @@ class WhitewaterSystem:
         self.candidate_capacity = max(
             1, int(self.capacity if candidate_capacity is None else candidate_capacity))
         self.device = device
-        self.position = wp.zeros(self.capacity, dtype=wp.vec3, device=device)
-        self.velocity = wp.zeros(self.capacity, dtype=wp.vec3, device=device)
-        self.age = wp.zeros(self.capacity, dtype=float, device=device)
-        self.life = wp.zeros(self.capacity, dtype=float, device=device)
-        self.alive = wp.zeros(self.capacity, dtype=wp.int32, device=device)
-        self.type = wp.zeros(self.capacity, dtype=wp.int32, device=device)
+        # Persistent state, ordered free-stack scratch and compaction buffers.
+        # The same owner inventory supplies admission's per-slot payload.
+        for name, (dtype_name, _) in WHITEWATER_BUFFER_LAYOUT.items():
+            setattr(self, name, wp.zeros(
+                self.capacity, dtype=getattr(wp, dtype_name), device=device))
         self.count = wp.zeros(1, dtype=wp.int32, device=device)
-        self.free_slots = wp.zeros(self.capacity, dtype=wp.int32, device=device)
         self.free_count = wp.zeros(1, dtype=wp.int32, device=device)
-        # Per-substep death flags and their scan build the free stack in slot order.
-        self.dead = wp.zeros(self.capacity, dtype=wp.int32, device=device)
-        self.dead_offsets = wp.zeros(self.capacity, dtype=wp.int32, device=device)
         self.host_count = 0
-        # Compaction double buffers.
-        self._position2 = wp.zeros_like(self.position)
-        self._velocity2 = wp.zeros_like(self.velocity)
-        self._age2 = wp.zeros_like(self.age)
-        self._life2 = wp.zeros_like(self.life)
-        self._type2 = wp.zeros_like(self.type)
-        self._scan = wp.zeros(self.capacity, dtype=wp.int32, device=device)
         self._count2 = wp.zeros(1, dtype=wp.int32, device=device)
         # Emission scans only the active liquid prefix, never whitewater capacity.
-        self.candidates = wp.zeros(
-            self.candidate_capacity, dtype=wp.int32, device=device)
-        self.candidate_offsets = wp.zeros_like(self.candidates)
-        self.candidate_types = wp.zeros_like(self.candidates)
+        self.swap_candidate_workspace(
+            self.allocate_candidate_workspace(self.candidate_capacity))
         self.admission_plan = wp.zeros(4, dtype=wp.int32, device=device)
         # required, admitted, dropped, and available are per-frame totals.
         self.diagnostics = wp.zeros(4, dtype=wp.int32, device=device)
@@ -763,16 +750,16 @@ class WhitewaterSystem:
     def allocate_candidate_workspace(self, capacity):
         """Allocate replacement emission scratch without mutating live state."""
         capacity = max(1, int(capacity))
-        candidates = wp.zeros(capacity, dtype=wp.int32, device=self.device)
-        return candidates, wp.zeros_like(candidates), wp.zeros_like(candidates)
+        return tuple(wp.zeros(capacity, dtype=wp.int32, device=self.device)
+                     for _ in CANDIDATE_BUFFER_NAMES)
 
     def swap_candidate_workspace(self, workspace):
         """Commit a fully allocated candidate workspace."""
-        candidates, offsets, candidate_types = workspace
-        self.candidates = candidates
-        self.candidate_offsets = offsets
-        self.candidate_types = candidate_types
-        self.candidate_capacity = len(candidates)
+        if len(workspace) != len(CANDIDATE_BUFFER_NAMES):
+            raise ValueError("incomplete whitewater candidate workspace")
+        for name, array in zip(CANDIDATE_BUFFER_NAMES, workspace):
+            setattr(self, name, array)
+        self.candidate_capacity = len(self.candidates)
 
     def mark_sdf_unavailable(self, message):
         self._dependency_error = str(message or "Simulation liquid SDF build failed")

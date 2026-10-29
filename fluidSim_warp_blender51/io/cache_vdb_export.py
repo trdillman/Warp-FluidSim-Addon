@@ -6,7 +6,6 @@ saved scene. Never guess it from changed settings or silently use world zero.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -37,12 +36,10 @@ class LegacyOriginRequired(ValueError):
 
 
 def _manifest_snapshot(base):
-    path = cache_schema.manifest_path(base)
-    if not path.is_file():
+    manifest, digest = cache_schema.read_manifest_snapshot(base)
+    if manifest is None:
         raise ValueError("There is no baked cache to export. Bake first.")
-    data = path.read_bytes()
-    manifest = cache_schema.CacheManifestV3.from_dict(json.loads(data))
-    return manifest, hashlib.sha256(data).hexdigest()
+    return manifest, digest
 
 
 def _manifest(plan):
@@ -87,10 +84,13 @@ def plan_export(base_dir, settings=None, *, frame_start=0, frame_end=0) -> VDBEx
     New frames export without a scene, Blender, Warp, or a solver.
     """
     base = Path(base_dir).resolve()
-    manifest, digest = _manifest_snapshot(base)
+    sequence = cache_schema.observe_committed_sequence(base)
+    if sequence is None:
+        raise ValueError("There is no baked cache to export. Bake first.")
+    manifest, digest = sequence.manifest, sequence.manifest_sha256
     if not manifest.narrow_band["enabled"]:
         raise ValueError("This cache has no liquid level set. Enable Narrow-Band Particles and re-bake before VDB export.")
-    frames = cache_schema.verified_contiguous_frames(base, manifest)
+    frames = manifest.committed_frames
     if not frames:
         raise ValueError("The cache has no committed frames. Bake first.")
     first = int(frame_start) or frames[0]
@@ -130,8 +130,10 @@ def export_sequence(plan: VDBExportPlan, destination) -> tuple[Path, ...]:
         raise FileExistsError(f"Choose a new destination folder; {dest} already exists and will not be replaced.")
     if not dest.parent.is_dir():
         raise ValueError("The destination parent folder does not exist.")
-    manifest = _manifest(plan)
-    cache_schema.verified_contiguous_frames(plan.base_dir, manifest)
+    _manifest(plan)
+    sequence = cache_schema.observe_committed_sequence(plan.base_dir)
+    if sequence is None or sequence.manifest_sha256 != plan.manifest_sha256:
+        raise ValueError("The baked cache changed after VDB export was prepared. Retry export.")
     stage = Path(tempfile.mkdtemp(prefix=".fluidsim-vdb-", dir=dest.parent))
     reserved = False
     try:

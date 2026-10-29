@@ -508,10 +508,13 @@ def test_capture_acquires_one_depsgraph_and_shares_it_with_every_gatherer(
     seen = []
     cleared = []
 
-    class Inputs:
+    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
+
+    class Inputs(SceneInputs):
         _session_generation = 4
 
         def __init__(self):
+            SceneInputs.clear(self)
             self.device = "cuda:0"
 
         def begin_sync(self):
@@ -538,7 +541,7 @@ def test_capture_acquires_one_depsgraph_and_shares_it_with_every_gatherer(
             return None
 
         def materialize_device_meshes(
-                self, _descriptors, _colliders, device):
+                self, _descriptors, _colliders, device, **_kwargs):
             seen.append(("staging", device))
 
         def clear(self):
@@ -597,9 +600,14 @@ def test_capture_rejects_depsgraph_generation_invalidation(monkeypatch):
     cleared = []
     released = []
 
-    class Inputs:
+    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
+
+    class Inputs(SceneInputs):
         _session_generation = 1
         device = "cpu"
+
+        def __init__(self):
+            SceneInputs.clear(self)
 
         def begin_sync(self):
             return 1
@@ -621,7 +629,7 @@ def test_capture_rejects_depsgraph_generation_invalidation(monkeypatch):
         def gather_height_source(self, _scene, _depsgraph):
             return None
 
-        def materialize_device_meshes(self, *_args):
+        def materialize_device_meshes(self, *_args, **_kwargs):
             return 0
 
         def clear(self):

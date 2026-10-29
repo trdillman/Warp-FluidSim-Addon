@@ -769,6 +769,10 @@ class CompiledSourceExecution:
             )
             return False
 
+        # Admission/commit kernels may partially write before a device error.
+        # Record the attempted liquid mutation before any such work is queued.
+        owner.invalidate_host_cache()
+        owner.invalidate_particle_surface()
         self._emission_state.zero_()
         self._compiled_result.zero_()
         wp.copy(self._emission_scratch_counts, owner.voxel_counts.data, count=int(owner._nvox))
@@ -1230,6 +1234,8 @@ class CompiledSourceExecution:
             device=self.device,
         )
         empty_scalar = self._compiled_empty_scalar
+        self.runtime.invalidate_host_cache()
+        self.runtime.invalidate_particle_surface()
         for packet, positions, velocities in uploaded:
             count = len(packet.positions)
             fast_launch(
@@ -1308,9 +1314,6 @@ class CompiledSourceExecution:
                 )
                 particles.next_uid = uid_base + emitted
             total = particles.refresh_host_count() if emitted else initial
-            if emitted:
-                self.runtime.invalidate_host_cache()
-                self.runtime.invalidate_particle_surface()
             return InjectionResult(True, emitted, demand, available, False, int(total))
         return InjectionResult(False, 0, demand, available, True, initial)
 

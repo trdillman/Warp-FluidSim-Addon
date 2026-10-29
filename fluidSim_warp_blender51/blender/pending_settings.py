@@ -1324,14 +1324,15 @@ def _on_load_pre(_filepath):
 
 
 def register_handlers():
-    """Register the persistent handlers owned by Pending Settings."""
-    _remove_handlers()
-    if hasattr(bpy.app.handlers, "depsgraph_update_post"):
-        bpy.app.handlers.depsgraph_update_post.append(_on_interaction_state_update)
-    if hasattr(bpy.app.handlers, "undo_post"):
-        bpy.app.handlers.undo_post.append(_on_interaction_state_update)
-    if hasattr(bpy.app.handlers, "load_pre"):
-        bpy.app.handlers.load_pre.append(_on_load_pre)
+    from ..unregister_guard import handler_registration
+
+    handlers = bpy.app.handlers
+    with handler_registration((
+        (getattr(handlers, "depsgraph_update_post", None), _on_interaction_state_update),
+        (getattr(handlers, "undo_post", None), _on_interaction_state_update),
+        (getattr(handlers, "load_pre", None), _on_load_pre),
+    )):
+        pass
 
 
 def _remove_handlers():

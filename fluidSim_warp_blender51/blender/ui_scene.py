@@ -1377,8 +1377,9 @@ SCENE_TAB_PANEL_CLASSES = SCENE_PANEL_CLASSES + DOMAIN_DRAW_SOURCE_CLASSES
 
 
 def register():
-    for cls in SCENE_TAB_PANEL_CLASSES:
-        bpy.utils.register_class(cls)
+    from ..unregister_guard import register_classes
+
+    register_classes(SCENE_TAB_PANEL_CLASSES)
 
 
 def unregister():

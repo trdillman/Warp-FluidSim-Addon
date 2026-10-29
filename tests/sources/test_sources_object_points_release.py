@@ -75,3 +75,36 @@ def test_mesh_is_released_when_reading_vertices_raises(sources):
     with pytest.raises(RuntimeError, match="vertex read failed"):
         sources.object_points_world(_mesh_object(eval_obj), depsgraph=object())
     assert eval_obj.cleared == 1
+
+
+def test_points_preserve_original_transform_when_evaluated_pose_differs(sources):
+    eval_obj = _EvalObject(_Vertices([(1.0, 0.0, 0.0)]))
+    eval_obj.matrix_world = np.eye(4)
+    eval_obj.matrix_world[0, 3] = 99.0
+    points = sources.object_points_world(
+        _mesh_object(eval_obj, (10.0, 0.0, 0.0)), depsgraph=object())
+    np.testing.assert_array_equal(points, [(11.0, 0.0, 0.0)])
+    assert eval_obj.cleared == 1
+
+
+def test_particle_system_points_are_already_world_space(sources):
+    eval_obj = _EvalObject(_Vertices([]))
+    eval_obj.particle_systems = [SimpleNamespace(
+        particles=_Vertices([(2.0, 3.0, 4.0)]))]
+    points = sources.object_points_world(
+        _mesh_object(eval_obj, (10.0, 0.0, 0.0)), depsgraph=object())
+    np.testing.assert_array_equal(points, [(2.0, 3.0, 4.0)])
+    assert eval_obj.cleared == 0
+
+
+def test_pointcloud_points_use_original_world_transform(sources):
+    eval_obj = _EvalObject(_Vertices([]))
+    points = _Vertices([(2.0, 3.0, 4.0)])
+    eval_obj.data = SimpleNamespace(
+        points=points, attributes={"position": SimpleNamespace(data=points)})
+    obj = _mesh_object(eval_obj, (10.0, 0.0, 0.0))
+    obj.type = "POINTCLOUD"
+    np.testing.assert_array_equal(
+        sources.object_points_world(obj, depsgraph=object()),
+        [(12.0, 3.0, 4.0)])
+    assert eval_obj.cleared == 0

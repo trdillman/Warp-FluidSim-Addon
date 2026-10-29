@@ -337,3 +337,40 @@ def test_deck_mode_preference_defaults_to_on():
                 and getattr(node.target, "id", "") == "deck_mode")
     default = next(kw.value.value for kw in call.keywords if kw.arg == "default")
     assert default == "ON"
+
+
+
+def test_failed_second_deck_registration_preserves_existing_resources(monkeypatch):
+    import pytest
+    bpy = install_deck_bpy(monkeypatch, deck_mode="ON")
+    deck = reload_deck()
+    deck.register()
+    counts = deck.registry.REGISTRY.counts()
+    classes = list(bpy.registered)
+    handlers = list(bpy.types.SpaceView3D.handlers)
+    try:
+        with pytest.raises(RuntimeError, match="already registered"):
+            deck.register()
+        assert deck.registry.REGISTRY.counts() == counts
+        assert bpy.registered == classes
+        assert bpy.types.SpaceView3D.handlers == handlers
+    finally:
+        deck.unregister()
+
+
+def test_failed_deck_registration_preserves_preexisting_app_handler(monkeypatch):
+    import pytest
+    bpy = install_deck_bpy(monkeypatch, deck_mode="ON")
+    deck = reload_deck()
+    prior = deck._on_deck_load_post
+    bpy.app.handlers.load_post.append(prior)
+    error = RuntimeError("injected Deck timer failure")
+    def fail(_registry):
+        raise error
+    monkeypatch.setattr(deck.modal, "start", fail)
+    with pytest.raises(RuntimeError) as raised:
+        deck.register()
+    assert raised.value is error
+    assert bpy.app.handlers.load_post == [prior]
+    assert bpy.registered == []
+    assert all(value == 0 for value in deck.registry.REGISTRY.counts().values())

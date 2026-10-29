@@ -33,8 +33,9 @@ globals().update({cls.__name__: cls for cls in CLASSES})
 
 
 def register():
-    for cls in CLASSES:
-        bpy.utils.register_class(cls)
+    from .unregister_guard import register_classes
+
+    register_classes(CLASSES)
 
 
 def unregister():

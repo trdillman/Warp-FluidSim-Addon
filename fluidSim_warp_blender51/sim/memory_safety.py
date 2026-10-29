@@ -8,14 +8,31 @@ import math
 import os
 import subprocess
 import time
+from collections.abc import Mapping
 
 from .constants import LEAF_VOLUME
 from .quality_contract import resolve_quality
+from .grid_storage_layout import (
+    GRID_TABLE_BYTES_PER_CELL,
+    SIMULATION_TABLE_BYTES_PER_CELL,
+    GRID_COORD_BYTES_PER_LEAF,
+    CAPILLARY_BYTES_PER_VOXEL,
+)
+from .attributes import persistent_particle_channels
+from .particle_storage_layout import (
+    AFFINE_BYTES_PER_PARTICLE as _AFFINE_BYTES_PER_PARTICLE,
+    optional_particle_bytes_per_slot,
+)
+from .whitewater_storage_layout import (
+    CANDIDATE_BYTES_PER_LIQUID,
+    candidate_workspace_bytes,
+    WHITEWATER_BYTES_PER_PARTICLE,
+)
 
 
 BASE_BYTES = 256 * 1024**2
 SIM_BYTES_PER_VOXEL = 356
-SURFACE_TENSION_BYTES_PER_VOXEL = 24
+SURFACE_TENSION_BYTES_PER_VOXEL = CAPILLARY_BYTES_PER_VOXEL
 # SurfacePipeline._ensure_band_buffers() lazily allocates one int32
 # (_band_closest) plus two vec3 arrays (_band_points, _band_points_tmp)
 # per voxel once surface tension is active, alongside the solver's own
@@ -24,16 +41,14 @@ SURFACE_TENSION_PROPAGATION_BYTES_PER_VOXEL = 28
 RENDER_BYTES_PER_VOXEL = 16
 SURFACE_DENSE_BYTES_PER_VOXEL = 40
 PARTICLE_BYTES = 128
-# APIC affine matrix: one float32 mat33 (36 B) in the live buffer plus one in the
-# compaction double buffer (ParticleSystem._affine2) = 72 B per particle slot.
-# Charged only while the transfer mode is APIC.
-AFFINE_BYTES_PER_PARTICLE = 72
-WHITEWATER_BYTES = 76
-WHITEWATER_EMISSION_BYTES_PER_LIQUID = 8  # candidate flag + exclusive offset
-# Live table + candidate table + candidate flag/expand scratch (int32 each).
-TOPOLOGY_BYTES_PER_LEAF_CELL = 16
+AFFINE_BYTES_PER_PARTICLE = _AFFINE_BYTES_PER_PARTICLE
+WHITEWATER_BYTES = WHITEWATER_BYTES_PER_PARTICLE
+WHITEWATER_EMISSION_BYTES_PER_LIQUID = CANDIDATE_BYTES_PER_LIQUID
+# Six grid-owned tables plus the simulation owner's retained rebuild table.
+# Secondary render grids are conservatively charged the same allowance.
+TOPOLOGY_BYTES_PER_LEAF_CELL = GRID_TABLE_BYTES_PER_CELL + SIMULATION_TABLE_BYTES_PER_CELL
 # Live and candidate vec3i coordinate arrays.
-TOPOLOGY_COORD_BYTES_PER_LEAF = 24
+TOPOLOGY_COORD_BYTES_PER_LEAF = GRID_COORD_BYTES_PER_LEAF
 
 
 def release_cuda_memory(device_name: str | None) -> None:
@@ -184,7 +199,7 @@ NARROW_BAND_BYTES_PER_VOXEL = 56
 
 
 def _value(settings, name, default):
-    if isinstance(settings, dict):
+    if isinstance(settings, Mapping):
         return settings.get(name, default)
     return getattr(settings, name, default)
 
@@ -222,6 +237,39 @@ def affine_bytes_per_particle(settings) -> int:
         _value(settings, "sample_type", 1)) == 2 else 0
 
 
+def optional_particle_bytes_per_particle(settings) -> int:
+    """Cost the same optional channel selection used by ParticleSystem."""
+    if isinstance(settings, Mapping):
+        # A planner overlay can delegate keys without enumerating all authored
+        # settings. Preserve those lookups instead of materializing a dict.
+        settings = _MappingAttributes(settings)
+    return optional_particle_bytes_per_slot(persistent_particle_channels(settings))
+
+
+class _MappingAttributes:
+    def __init__(self, settings):
+        self.settings = settings
+
+    def __getattr__(self, name):
+        try:
+            return self.settings[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+def particle_storage_bytes(capacity: int, *, extra_particle_bytes: int = 0) -> int:
+    """Conservative liquid pool plus its complete whitewater emission workspace.
+
+    The 128-byte allowance includes base particles and binning. Optional
+    channels and APIC are additional owned payload; allocator overhead and
+    other solver resources remain covered by separate conservative allowances.
+    For replacement this is the full new pool, while the old pool stays live.
+    """
+    capacity = max(0, int(capacity))
+    return (capacity * (PARTICLE_BYTES + max(0, int(extra_particle_bytes)))
+            + candidate_workspace_bytes(capacity))
+
+
 def estimate_solver_bytes(settings) -> int:
     """Return a deliberately conservative peak-device-memory estimate."""
     leaf_cells = _domain_leaf_cells(settings)
@@ -231,9 +279,9 @@ def estimate_solver_bytes(settings) -> int:
     estimate = (
         BASE_BYTES
         + leaves * LEAF_VOLUME * SIM_BYTES_PER_VOXEL
-        + particles * (
-            PARTICLE_BYTES + WHITEWATER_EMISSION_BYTES_PER_LIQUID
-            + affine_bytes_per_particle(settings))
+        + particle_storage_bytes(particles, extra_particle_bytes=(
+            affine_bytes_per_particle(settings)
+            + optional_particle_bytes_per_particle(settings)))
         + whitewater * WHITEWATER_BYTES
         + leaf_cells * TOPOLOGY_BYTES_PER_LEAF_CELL
         + leaves * TOPOLOGY_COORD_BYTES_PER_LEAF

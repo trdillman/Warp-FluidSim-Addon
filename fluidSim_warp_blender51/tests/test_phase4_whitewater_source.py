@@ -24,9 +24,17 @@ def test_phase4_type_schema_and_public_name_are_stable():
 
 
 def test_phase4_keeps_one_simulation_pool_and_persists_type_state():
+    import warp as wp
+    from fluidsim_testpkg.sim.whitewater import WhitewaterSystem
+
     source = (ROOT / "sim" / "whitewater.py").read_text(encoding="utf-8")
-    assert "self.type = wp.zeros" in source
-    assert "self._type2 = wp.zeros" in source
+    owner = WhitewaterSystem(3, "cpu", candidate_capacity=5)
+    for name, size in (("type", 3), ("_type2", 3), ("candidate_types", 5)):
+        array = getattr(owner, name)
+        assert array.dtype == wp.int32
+        assert array.shape == (size,)
+        assert not array.numpy().any()
+    assert owner.type.ptr != owner._type2.ptr
     assert "candidate_types" in source
     assert "self.foam =" not in source
     assert "self.bubbles =" not in source

@@ -13,11 +13,14 @@ from .fastlaunch import launch as fast_launch
 
 from .checkpoint_state import host_prefix
 from .constants import LEAF_VOLUME
-
-
-PHYSICAL_ATTR_NAMES = ("age", "life", "temperature", "viscosity", "density")
-OPTIONAL_VEC4_ATTR_NAMES = ("color",)
-OPTIONAL_INT_ATTR_NAMES = ("source_id", "uid")
+from .particle_storage_layout import (
+    AFFINE_BUFFER_NAMES,
+    PHYSICAL_ATTR_NAMES,
+    OPTIONAL_VEC4_ATTR_NAMES,
+    OPTIONAL_INT_ATTR_NAMES,
+    BIN_VOXEL_BUFFER_NAMES,
+    BIN_PARTICLE_BUFFER_NAMES,
+)
 
 
 @wp.kernel
@@ -242,10 +245,9 @@ class ParticleSystem:
     def ensure_affine(self):
         """Allocate the zeroed affine channel if needed and return it."""
         if self.affine is None:
-            self.affine = wp.zeros(
-                self.capacity, dtype=wp.mat33, device=self.device)
-            self._affine2 = wp.zeros(
-                self.capacity, dtype=wp.mat33, device=self.device)
+            for name in AFFINE_BUFFER_NAMES:
+                setattr(self, name, wp.zeros(
+                    self.capacity, dtype=wp.mat33, device=self.device))
             self._affine2_bound = 0
         return self.affine
 
@@ -543,14 +545,12 @@ class ParticleBins:
         self.device = device
         self.particle_capacity = int(particle_capacity)
         self.voxel_capacity = int(voxel_capacity)
-        self.counts = wp.zeros(voxel_capacity, dtype=wp.int32, device=device)
-        self.starts = wp.zeros(voxel_capacity, dtype=wp.int32, device=device)
-        self.indices = wp.zeros(
-            self.particle_capacity, dtype=wp.int32, device=device)
-        self.arrival = wp.zeros(
-            self.particle_capacity, dtype=wp.int32, device=device)
-        self.unordered = wp.zeros(
-            self.particle_capacity, dtype=wp.int32, device=device)
+        for name in BIN_VOXEL_BUFFER_NAMES:
+            setattr(self, name, wp.zeros(
+                self.voxel_capacity, dtype=wp.int32, device=device))
+        for name in BIN_PARTICLE_BUFFER_NAMES:
+            setattr(self, name, wp.zeros(
+                self.particle_capacity, dtype=wp.int32, device=device))
 
     def zero(self):
         self.counts.zero_()

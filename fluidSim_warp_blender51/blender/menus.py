@@ -130,10 +130,12 @@ def draw_add_menu(self, context):
 
 
 def register():
-    bpy.utils.register_class(FLUIDSIM_OT_add_domain)
-    add_menu = getattr(bpy.types, "VIEW3D_MT_add", None)
-    if add_menu is not None:
-        add_menu.append(draw_add_menu)
+    from ..unregister_guard import class_registration
+
+    with class_registration((FLUIDSIM_OT_add_domain,)):
+        add_menu = getattr(bpy.types, "VIEW3D_MT_add", None)
+        if add_menu is not None:
+            add_menu.append(draw_add_menu)
 
 
 def unregister():

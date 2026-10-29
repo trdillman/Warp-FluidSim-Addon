@@ -283,15 +283,8 @@ def install_render_nodes(
         if before is None:
             appended.append(group.name)
 
-    fs = scene.fluidsim
-    radius_scales = {
-        "FluidSim Surface": 1.0,
-        "FluidSim Particles": float(getattr(fs, "particle_display_scale", 1.0)),
-        "FluidSim Whitewater": float(getattr(fs, "whitewater_display_scale", 1.0)),
-        "FluidSim Foam": float(getattr(fs, "whitewater_display_scale", 1.0)),
-        "FluidSim Bubbles": float(getattr(fs, "whitewater_display_scale", 1.0)),
-        "FluidSim Spray": float(getattr(fs, "whitewater_display_scale", 1.0)),
-    }
+    radius_scales = {policy.name: policy.radius_scale
+                     for policy in output_publication.output_family_policy(scene)}
     attached: list[str] = []
     skipped: list[str] = []
     warnings: list[str] = []
@@ -325,15 +318,8 @@ def sync_render_inputs(scene) -> None:
     """Refresh material and radius modifier inputs without changing groups."""
     from . import output_publication
 
-    fs = scene.fluidsim
-    radius_scales = {
-        "FluidSim Surface": 1.0,
-        "FluidSim Particles": float(getattr(fs, "particle_display_scale", 1.0)),
-        "FluidSim Whitewater": float(getattr(fs, "whitewater_display_scale", 1.0)),
-        "FluidSim Foam": float(getattr(fs, "whitewater_display_scale", 1.0)),
-        "FluidSim Bubbles": float(getattr(fs, "whitewater_display_scale", 1.0)),
-        "FluidSim Spray": float(getattr(fs, "whitewater_display_scale", 1.0)),
-    }
+    radius_scales = {policy.name: policy.radius_scale
+                     for policy in output_publication.output_family_policy(scene)}
     for output_name, modifier_name in MODIFIER_BY_OUTPUT.items():
         obj = output_publication.output_object(scene, output_name)
         modifier = (
