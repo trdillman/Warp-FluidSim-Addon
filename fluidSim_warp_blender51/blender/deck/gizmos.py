@@ -173,6 +173,88 @@ def snap(value, step):
     return round(float(value) / step) * step
 
 
+_TWEAK_ACTIONS = {
+    "PRECISE": ("PRECISION_ON", "PRECISION_OFF"),
+    "SNAP": ("SNAP_ON", "SNAP_OFF"),
+}
+_MODIFIER_KEYS = {
+    "shift": ("LEFT_SHIFT", "RIGHT_SHIFT"),
+    "ctrl": ("LEFT_CTRL", "RIGHT_CTRL"),
+    "alt": ("LEFT_ALT", "RIGHT_ALT"),
+    "oskey": ("OSKEY",),
+}
+
+
+def _paired_modifier_action(items, keys):
+    """An unambiguous ON/OFF action shared by both sides of a modifier.
+
+    The mouse-down event reports a modifier family, not which side is held.
+    Infer initial state only for equivalent, unconditional press/release pairs.
+    """
+    for flag, (on, off) in _TWEAK_ACTIONS.items():
+        if all({(item.value, item.propvalue) for item in items if item.type == key}
+               == {("PRESS", on), ("RELEASE", off)} for key in keys):
+            return flag
+    return None
+
+
+class DragModifiers:
+    """Bridge held-at-invoke modifiers until Blender's native tweak takes over.
+
+    Blender starts gizmo tweak flags empty, even when a modifier was held before
+    mouse-down. Seed that initial state from the effective user keymap, and retire
+    it permanently on release or a native ON/OFF transition. Never re-arm from
+    raw modifier bits: subsequent changes belong to the native modal keymap.
+    """
+
+    def __init__(self, context, event):
+        self.initial = {}
+        self.items = ()
+        wm = getattr(context, "window_manager", None)
+        config = getattr(getattr(wm, "keyconfigs", None), "user", None)
+        keymaps = getattr(config, "keymaps", None)
+        keymap = keymaps.get("Generic Gizmo Tweak Modal Map") if keymaps is not None else None
+        if keymap is None:
+            return
+        active = tuple(item for item in keymap.keymap_items if item.active)
+        actions = {action for pair in _TWEAK_ACTIONS.values() for action in pair}
+        types = {item.type for item in active if item.propvalue in actions}
+        # Include competing entries for these key types, in native order. Public
+        # Event fields cannot reproduce arbitrary chord/conditional/mouse matching;
+        # leave such maps entirely to Blender rather than guess a transition.
+        items = tuple(item for item in active if item.type in types or item.type == "ANY")
+        if any(not item.any or item.key_modifier != "NONE"
+               or item.map_type != "KEYBOARD" or item.type in {"NONE", "ANY"}
+               or item.value not in {"PRESS", "RELEASE"} for item in items):
+            return
+        self.items = items
+        for modifier, keys in _MODIFIER_KEYS.items():
+            if getattr(event, modifier, False):
+                flag = _paired_modifier_action(items, keys)
+                if flag is not None:
+                    self.initial.setdefault(flag, set()).add(modifier)
+
+    def resolve(self, event, tweak):
+        flags = set(tweak)
+        # keymap_items.match_event polls operator IDs, so it cannot match a modal
+        # keymap's propvalue entries. These validated unconditional keyboard items
+        # can be matched explicitly in their original order instead.
+        action = next((item.propvalue for item in self.items
+                       if item.active and item.type == event.type and item.value == event.value
+                       and not (getattr(event, "is_repeat", False) and not item.repeat)), None)
+        for flag, modifiers in tuple(self.initial.items()):
+            if flag in flags or action in _TWEAK_ACTIONS[flag]:
+                del self.initial[flag]
+                continue
+            modifiers.intersection_update(
+                modifier for modifier in tuple(modifiers) if getattr(event, modifier, False))
+            if modifiers:
+                flags.add(flag)
+            else:
+                del self.initial[flag]
+        return flags
+
+
 class PrecisionDrag:
     """Pointer -> value, where Shift slows the motion from the point it was pressed.
 
@@ -254,7 +336,7 @@ class FLUIDSIM_GT_deck_velocity(bpy.types.Gizmo):
     """Drag the arrow head to set the emitter's initial velocity."""
 
     bl_idname = "FLUIDSIM_GT_deck_velocity"
-    __slots__ = ("shape", "start_value", "target", "drag", "changed")
+    __slots__ = ("shape", "start_value", "target", "drag", "changed", "modifiers")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _ARROW_LINES)
@@ -269,6 +351,7 @@ class FLUIDSIM_GT_deck_velocity(bpy.types.Gizmo):
         self.target, self.changed = None, False
         if bake_holds_edits(context):
             return {"CANCELLED"}
+        self.modifiers = DragModifiers(context, event)
         obj = self.target = context.active_object
         self.start_value = tuple(float(c) for c in obj.fluidsim.initial_velocity)
         start_world = mouse_to_world(context, _mouse(event), _object_origin(obj))
@@ -279,6 +362,7 @@ class FLUIDSIM_GT_deck_velocity(bpy.types.Gizmo):
         obj = _started_object(context, getattr(self, "target", None))
         if obj is None:
             return {"CANCELLED"}
+        tweak = self.modifiers.resolve(event, tweak)
         now = mouse_to_world(context, _mouse(event), _object_origin(obj))
         value = self.drag.value(now, "PRECISE" in tweak)
         if "SNAP" in tweak:
@@ -302,7 +386,7 @@ class FLUIDSIM_GT_deck_dial(bpy.types.Gizmo):
 
     bl_idname = "FLUIDSIM_GT_deck_dial"
     __slots__ = ("shape", "binding", "start_value", "prop", "target", "drag", "range",
-                 "changed")
+                 "changed", "modifiers")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _circle_lines())
@@ -317,6 +401,7 @@ class FLUIDSIM_GT_deck_dial(bpy.types.Gizmo):
         self.target, self.prop, self.changed = None, None, False
         if bake_holds_edits(context):
             return {"CANCELLED"}
+        self.modifiers = DragModifiers(context, event)
         self.target = context.active_object
         settings = self.target.fluidsim
         self.prop = dial_property(settings, getattr(self, "binding", ""))
@@ -333,6 +418,7 @@ class FLUIDSIM_GT_deck_dial(bpy.types.Gizmo):
         obj = _started_object(context, getattr(self, "target", None))
         if obj is None or getattr(self, "prop", None) is None:
             return {"CANCELLED"}
+        tweak = self.modifiers.resolve(event, tweak)
         low, high, _span = self.range
         (value,) = self.drag.value((float(event.mouse_region_x),), "PRECISE" in tweak)
         if "SNAP" in tweak:
@@ -500,7 +586,7 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
 
     bl_idname = "FLUIDSIM_GT_deck_face"
     __slots__ = ("shape", "axis", "side", "start_location", "start_scale", "start_bounds",
-                 "world_origin", "world_scale", "local", "result", "target", "drag")
+                 "world_origin", "world_scale", "local", "result", "target", "drag", "modifiers")
 
     def setup(self):
         self.shape = self.new_custom_shape("LINES", _SQUARE_LINES)
@@ -522,6 +608,7 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
         self.target, self.result = None, None
         if bake_holds_edits(context):
             return {"CANCELLED"}
+        self.modifiers = DragModifiers(context, event)
         obj = self.target = context.active_object
         self.local = local_bounds(obj)
         self.start_location = tuple(float(c) for c in obj.location)
@@ -549,6 +636,7 @@ class FLUIDSIM_GT_deck_face(bpy.types.Gizmo):
         if _started_object(context, getattr(self, "target", None)) is None:
             _ACTIVE_PREVIEW = None  # the domain was deleted mid-drag
             return {"CANCELLED"}
+        tweak = self.modifiers.resolve(event, tweak)
         axis = self.axis
         low, high = self.local
         now = mouse_to_world(context, _mouse(event), self._face_centre(self.start_bounds))

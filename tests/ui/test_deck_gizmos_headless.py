@@ -652,6 +652,230 @@ def test_handles_draw_dimmed_during_a_production_bake(env, baking):
     assert [(h.alpha, h.alpha_highlight) for h in handles] == [(0.8, 1.0)] * 2
 
 
+# Blender starts gizmo tweak flags empty, even when invoke's event has modifiers.
+# The effective user modal map decides which initially held keys can seed a flag.
+
+def _modifier_event(x=0.0, **values):
+    event = _event(x)
+    event.shift = event.ctrl = event.alt = event.oskey = event.is_repeat = False
+    for key, value in values.items():
+        setattr(event, key, value)
+    return event
+
+
+def _keymap_item(action, key, value, **overrides):
+    values = {"propvalue": action, "type": key, "value": value, "active": True, "any": True,
+              "key_modifier": "NONE", "map_type": "KEYBOARD", "repeat": False}
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+class _ModalItems(list):
+    def match_event(self, *_args):
+        # Blender's public matcher polls operator IDs; modal items have no ID.
+        # It therefore cannot identify a modal PRECISION_OFF/SNAP_OFF transition.
+        return None
+
+
+def _modifier_keymap(context, items=None):
+    if items is None:
+        items = [
+            _keymap_item(action, key, value)
+            for keys, actions in ((('LEFT_SHIFT', 'RIGHT_SHIFT'),
+                                   ('PRECISION_ON', 'PRECISION_OFF')),
+                                  (('LEFT_CTRL', 'RIGHT_CTRL'), ('SNAP_ON', 'SNAP_OFF')))
+            for key in keys
+            for action, value in zip(actions, ('PRESS', 'RELEASE'), strict=True)
+        ]
+    keymap = SimpleNamespace(keymap_items=_ModalItems(items))
+    user = SimpleNamespace(keymaps={"Generic Gizmo Tweak Modal Map": keymap})
+    context.window_manager = SimpleNamespace(keyconfigs=SimpleNamespace(user=user))
+    return keymap.keymap_items
+
+
+def _modifier_drag_case(env, kind):
+    """Public drag, observed scalar value, value/pixel gain and snap increment."""
+    gizmos = env.deck.gizmos
+    if kind.startswith("domain"):
+        scene, obj = _domain()
+        gizmo = gizmos.FLUIDSIM_GT_deck_face()
+        gizmo.axis, gizmo.side = 0, (-1 if kind == "domain_minus" else 1)
+        read = lambda: obj.scale[0] * 5.0
+        gain, step = gizmo.side / 100.0, 0.1
+    else:
+        scene, obj = _emitter_scene(env.pending, collider_friction=0.2)
+        if kind == "velocity":
+            gizmo = gizmos.FLUIDSIM_GT_deck_velocity()
+            read = lambda: obj.fluidsim.initial_velocity[0]
+            gain, step = 1.0 / (100.0 * gizmos.ARROW_SCALE), 0.5
+        else:
+            gizmo = gizmos.FLUIDSIM_GT_deck_dial()
+            gizmo.binding = "friction" if kind == "friction" else "rate"
+            if kind == "legacy":
+                obj.fluidsim.source_sampling_mode = "LEGACY_ABSOLUTE"
+            prop, span, step = {
+                "multiplier": ("source_sampling_multiplier", 8.0, 0.25),
+                "legacy": ("emit_rate", 32.0, 1.0),
+                "friction": ("collider_friction", 1.0, 0.05),
+            }[kind]
+            read = lambda: getattr(obj.fluidsim, prop)
+            gain = span / gizmos.DIAL_PIXELS
+    context = _context(scene, obj)
+    _modifier_keymap(context)
+    return context, gizmo, read, gain, step
+
+
+_MODIFIER_DRAG_CASES = ('velocity', 'multiplier', 'legacy', 'friction',
+                        'domain_plus', 'domain_minus')
+
+
+@pytest.mark.parametrize("kind", _MODIFIER_DRAG_CASES)
+def test_ctrl_held_before_invoke_snaps_and_hands_off_on_release(env, kind):
+    context, gizmo, read, gain, step = _modifier_drag_case(env, kind)
+    start = read()
+    assert gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", ctrl=True)) == {
+        "RUNNING_MODAL"}
+    gizmo.modal(context, _modifier_event(13.0, ctrl=True), set())
+    assert read() == pytest.approx(round((start + 13.0 * gain) / step) * step)
+
+    gizmo.modal(context, _modifier_event(13.0, type="LEFT_CTRL", value="RELEASE"), set())
+    gizmo.modal(context, _modifier_event(14.0), set())
+    assert read() == pytest.approx(start + 14.0 * gain)
+    # Once released, native tweak flags own subsequent presses and releases.
+    gizmo.modal(context, _modifier_event(14.0, type="LEFT_CTRL", ctrl=True), {"SNAP"})
+    gizmo.modal(context, _modifier_event(17.0, ctrl=True), {"SNAP"})
+    assert read() == pytest.approx(round((start + 17.0 * gain) / step) * step)
+    gizmo.modal(context, _modifier_event(18.0, ctrl=True), set())
+    assert read() == pytest.approx(start + 18.0 * gain)
+    gizmo.exit(context, True)
+    assert read() == pytest.approx(start)
+
+
+@pytest.mark.parametrize("kind", _MODIFIER_DRAG_CASES)
+def test_shift_held_before_invoke_is_precise_and_release_is_continuous(env, kind):
+    context, gizmo, read, gain, _step = _modifier_drag_case(env, kind)
+    start = read()
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(30.0, shift=True), set())
+    precise = start + 30.0 * gain * env.deck.gizmos.PRECISE_FACTOR
+    assert read() == pytest.approx(precise)
+    gizmo.modal(context, _modifier_event(30.0, type="LEFT_SHIFT", value="RELEASE"), set())
+    assert read() == pytest.approx(precise)
+    gizmo.modal(context, _modifier_event(40.0), set())
+    assert read() == pytest.approx(precise + 10.0 * gain)
+    gizmo.exit(context, True)
+    assert read() == pytest.approx(start)
+
+
+def test_initial_shift_and_ctrl_release_independently(env):
+    context, gizmo, read, gain, step = _modifier_drag_case(env, "velocity")
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True, ctrl=True))
+    gizmo.modal(context, _modifier_event(137.0, shift=True, ctrl=True), set())
+    precise = 137.0 * gain * env.deck.gizmos.PRECISE_FACTOR
+    assert read() == pytest.approx(round(precise / step) * step)
+    gizmo.modal(context, _modifier_event(137.0, type="LEFT_CTRL", value="RELEASE",
+                                       shift=True), set())
+    gizmo.modal(context, _modifier_event(147.0, shift=True), set())
+    precise += 10.0 * gain * env.deck.gizmos.PRECISE_FACTOR
+    assert read() == pytest.approx(precise)
+    gizmo.modal(context, _modifier_event(147.0, type="LEFT_SHIFT", value="RELEASE"), set())
+    gizmo.modal(context, _modifier_event(157.0), set())
+    assert read() == pytest.approx(precise + 10.0 * gain)
+
+
+def test_initial_flags_follow_the_effective_user_map_not_fixed_modifier_names(env):
+    for held, expected in (("shift", 0.5), ("ctrl", 0.052)):
+        context, gizmo, read, _gain, _step = _modifier_drag_case(env, "velocity")
+        items = context.window_manager.keyconfigs.user.keymaps[
+            "Generic Gizmo Tweak Modal Map"].keymap_items
+        for item in items:
+            item.propvalue = item.propvalue.replace("PRECISION", "TEMP").replace(
+                "SNAP", "PRECISION").replace("TEMP", "SNAP")
+        gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", **{held: True}))
+        gizmo.modal(context, _modifier_event(13.0, **{held: True}), set())
+        assert read() == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("unsupported", ["disabled", "asymmetric", "conditional", "missing"])
+def test_unsupported_initial_modifier_maps_defer_to_native_tweak(env, unsupported):
+    context, gizmo, read, gain, _step = _modifier_drag_case(env, "velocity")
+    items = context.window_manager.keyconfigs.user.keymaps[
+        "Generic Gizmo Tweak Modal Map"].keymap_items
+    if unsupported == "disabled":
+        for item in items:
+            if "SHIFT" in item.type:
+                item.active = False
+    elif unsupported == "asymmetric":
+        items[:] = [item for item in items
+                    if not (item.type == "RIGHT_SHIFT" and item.value == "RELEASE")]
+    elif unsupported == "conditional":
+        items[0].any = False
+    else:
+        context.window_manager.keyconfigs.user.keymaps.clear()
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(20.0, shift=True), set())
+    assert read() == pytest.approx(20.0 * gain)
+    gizmo.modal(context, _modifier_event(30.0, shift=True), {"PRECISE"})
+    assert read() == pytest.approx(20.0 * gain + gain)
+
+
+def test_custom_off_retires_initial_precision_even_while_shift_stays_held(env):
+    context, gizmo, read, _gain, _step = _modifier_drag_case(env, "velocity")
+    items = context.window_manager.keyconfigs.user.keymaps[
+        "Generic Gizmo Tweak Modal Map"].keymap_items
+    items.append(_keymap_item("PRECISION_OFF", "A", "PRESS"))
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(10.0, shift=True), set())
+    assert read() == pytest.approx(0.04)
+    gizmo.modal(context, _modifier_event(10.0, type="A", shift=True), set())
+    gizmo.modal(context, _modifier_event(20.0, shift=True), set())
+    assert read() == pytest.approx(0.44)
+    gizmo.modal(context, _modifier_event(30.0, shift=True), set())
+    assert read() == pytest.approx(0.84)
+
+
+def test_an_unbound_key_does_not_retire_initial_precision(env):
+    context, gizmo, read, _gain, _step = _modifier_drag_case(env, "velocity")
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(10.0, shift=True), set())
+    gizmo.modal(context, _modifier_event(10.0, type="Z", shift=True), set())
+    gizmo.modal(context, _modifier_event(20.0, shift=True), set())
+    assert read() == pytest.approx(0.08)
+
+
+@pytest.mark.parametrize("unsupported", ["chord", "shadow", "non_keyboard", "any_value"])
+def test_unsupported_transition_forms_leave_initial_state_to_native(env, unsupported):
+    context, gizmo, read, gain, _step = _modifier_drag_case(env, "velocity")
+    items = context.window_manager.keyconfigs.user.keymaps[
+        "Generic Gizmo Tweak Modal Map"].keymap_items
+    if unsupported == "chord":
+        items.append(_keymap_item("PRECISION_OFF", "A", "PRESS", key_modifier="B"))
+    elif unsupported == "shadow":
+        items.insert(0, _keymap_item("CANCEL", "LEFT_SHIFT", "PRESS", any=False))
+    elif unsupported == "non_keyboard":
+        items.append(_keymap_item("PRECISION_OFF", "LEFTMOUSE", "PRESS", map_type="MOUSE"))
+    else:
+        items.append(_keymap_item("PRECISION_OFF", "A", "ANY"))
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(20.0, shift=True), set())
+    assert read() == pytest.approx(20.0 * gain)
+    gizmo.modal(context, _modifier_event(30.0, shift=True), {"PRECISE"})
+    assert read() == pytest.approx(20.0 * gain + gain)
+
+
+@pytest.mark.parametrize("repeat", [False, True])
+def test_custom_off_respects_the_keymap_repeat_setting(env, repeat):
+    context, gizmo, read, _gain, _step = _modifier_drag_case(env, "velocity")
+    items = context.window_manager.keyconfigs.user.keymaps[
+        "Generic Gizmo Tweak Modal Map"].keymap_items
+    items.append(_keymap_item("PRECISION_OFF", "A", "PRESS", repeat=repeat))
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(10.0, shift=True), set())
+    gizmo.modal(context, _modifier_event(10.0, type="A", shift=True, is_repeat=True), set())
+    gizmo.modal(context, _modifier_event(20.0, shift=True), set())
+    assert read() == pytest.approx(0.44 if repeat else 0.08)
+
+
 @pytest.mark.parametrize("kind", ["velocity", "dial"])
 @pytest.mark.parametrize("active", ["other", "none"])
 @pytest.mark.parametrize("cancel", [False, True])
