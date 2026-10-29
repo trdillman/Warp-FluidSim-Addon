@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Bounded CUDA allocation proof; run through an isolated Blender launcher.
 
 This measures array payload separately from CUDA pool usage/free-memory samples.
@@ -135,7 +136,7 @@ def run_case(name, settings, device):
                 solver.release()
         except Exception:
             record["error"] = record.get("error", "") + traceback.format_exc()
-        solver = old_particles = old_bins = old_candidates = fresh_candidates = None
+        solver = old_particles = old_bins = old_candidates = fresh_candidates = None  # noqa: F841
         original_allocate = None
         gc.collect()
         retained_paths = sorted({path for path, ref in array_refs if ref() is not None})
