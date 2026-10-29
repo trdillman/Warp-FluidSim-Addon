@@ -698,11 +698,14 @@ def _on_frame_change(scene, depsgraph):
 
 
 def register_handlers():
-    """Deduplicate and install the two handlers exclusively owned here."""
-    _remove_handlers()
-    bpy.app.handlers.frame_change_post.append(_on_frame_change)
-    if hasattr(bpy.app.handlers, "animation_playback_pre"):
-        bpy.app.handlers.animation_playback_pre.append(_on_playback_pre)
+    from ..unregister_guard import handler_registration
+
+    handlers = bpy.app.handlers
+    with handler_registration((
+        (getattr(handlers, "frame_change_post", None), _on_frame_change),
+        (getattr(handlers, "animation_playback_pre", None), _on_playback_pre),
+    )):
+        pass
 
 
 def _remove_handlers():

@@ -505,15 +505,15 @@ class SurfaceTensionSolver:
         # Allocate transactionally: a failure while creating the second buffer
         # must not leave one unaccounted device allocation attached to the solver.
         device = self.solver.device
-        normal_a = wp.zeros(capacity, dtype=wp.vec3, device=device)
-        normal_b = wp.zeros(capacity, dtype=wp.vec3, device=device)
-        phi_a = wp.zeros(capacity, dtype=float, device=device)
-        phi_b = wp.zeros(capacity, dtype=float, device=device)
-        self._normal_a = normal_a
-        self._normal_b = normal_b
-        self._phi_a = phi_a
-        self._phi_b = phi_b
-        self._set_accounted_bytes(capacity * (2 * 3 + 2) * 4)
+        from .grid_storage_layout import CAPILLARY_BUFFER_LAYOUT, CAPILLARY_BYTES_PER_VOXEL
+
+        allocated = [
+            wp.zeros(capacity, dtype=wp.vec3 if words == 3 else float, device=device)
+            for _, words in CAPILLARY_BUFFER_LAYOUT
+        ]
+        for (name, _), array in zip(CAPILLARY_BUFFER_LAYOUT, allocated):
+            setattr(self, name, array)
+        self._set_accounted_bytes(capacity * CAPILLARY_BYTES_PER_VOXEL)
 
     def reset(self) -> None:
         self._last_status = "DISABLED"
@@ -556,10 +556,9 @@ class SurfaceTensionSolver:
         # The solver-grid SDF rebuild (SurfacePipeline.build_sdf: a reset
         # kernel, a particle-splat kernel launched over the full particle
         # count, then filter/dilate/erode/smooth passes) is by a wide margin
-        # the most expensive part of this method, and the SDF cache never
-        # hits during substeps because solver_sdf_build_key() includes
-        # sim_time, which advances every substep (see surface.py). Time it
-        # under the same "surface" phase slot SurfacePipeline.after_substep/
+        # the most expensive part of this method. Cached results are reused
+        # while liquid-state and topology revisions match. Attribute a required
+        # rebuild under the same "surface" phase slot SurfacePipeline.after_substep/
         # after_frame already use for the identical SDF-build operation, so
         # per-phase profiler output attributes this cost correctly instead of
         # silently folding it into the "forces" phase bucket.

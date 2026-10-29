@@ -76,6 +76,7 @@ BLENDER_FAILURE_MARKERS = (
     "Traceback (most recent call last):",
     "CACHE-EXPORT-PIPELINE-FAIL",
     "MEMORY-SAFETY-GATE-FAIL",
+    "ALLOCATION-ACCOUNTING-ACCEPTANCE-FAIL",
     "HANDLER-PERSISTENCE-GATE-FAIL",
     "VIEWPORT-2FRAME-GATE-FAIL",
     "BACKGROUND-ACCEPTANCE-FAIL",
@@ -146,6 +147,8 @@ BACKGROUND_ACCEPTANCE = (
 )
 # Acceptance scripts that take --json-out: (label, script, report path, marker).
 REPORT_ACCEPTANCE = (
+    ("allocation accounting acceptance", "tests/acceptance/blender_allocation_accounting_acceptance.py",
+     "artifacts/allocation_accounting_acceptance.json", "ALLOCATION-ACCOUNTING-ACCEPTANCE-PASS"),
     ("Phase 3 source UI acceptance", "tests/acceptance/blender_phase3_source_ui_acceptance.py",
      "artifacts/phase3_source_ui_acceptance.json", "PHASE3-SOURCE-UI-ACCEPTANCE-PASS"),
     ("source capacity planner acceptance", "tests/acceptance/blender_capacity_planner_acceptance.py",
@@ -167,6 +170,8 @@ MANUAL_BLENDER_PROBES = {
         "focused foreground UI review via launch_profile_safe_addon_review.py; requires a designated domain and profile-safe temporary add-on",
     "tests/acceptance/blender_deck_gizmo_realtime_acceptance.py":
         "needs a real GUI window and --enable-event-simulate; drags every Deck gizmo live",
+    "tests/acceptance/blender_deck_defects_acceptance.py":
+        "needs a real GUI window and --enable-event-simulate; checks the Liquid Deck defect fixes live, including a real modal bake (also grep its log for Traceback)",
     "tests/acceptance/blender_vdb_writer_acceptance.py":
         "lane I spike: pure writer needs no add-on; run headless on demand (prints VDB_WRITER_OK)",
     "tests/acceptance/blender_resolution_divisions_acceptance.py":
@@ -455,6 +460,7 @@ def _run_acceptance_batch(blender_exe, env, entries, name="gate_batch"):
 # Acceptance scripts kept off the concurrent lanes: they read device free
 # memory or bound wall time, or read the demo files the demo lane rebuilds.
 QUIET_ACCEPTANCE = frozenset({
+    "tests/acceptance/blender_allocation_accounting_acceptance.py",
     "tests/acceptance/blender_memory_safety_gate.py",
     "tests/acceptance/blender_capacity_planner_acceptance.py",
     "tests/acceptance/blender_phase4_live_interaction_acceptance.py",
@@ -855,6 +861,7 @@ def _production_main(argv=None):
         "tools/gate/validate_gui_playback_report.py",
         "tests/acceptance/blender_cache_export_pipeline.py",
         "tests/acceptance/blender_memory_safety_gate.py",
+        "tests/acceptance/blender_allocation_accounting_acceptance.py",
         "tests/acceptance/blender_mesh_source_acceptance.py",
         "tests/acceptance/blender_force_region_acceptance.py",
         "tests/acceptance/blender_phase3_source_ui_acceptance.py",

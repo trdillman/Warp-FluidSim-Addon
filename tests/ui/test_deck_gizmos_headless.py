@@ -163,7 +163,7 @@ def test_emitter_arrow_drag_sets_the_velocity_property_like_the_panel(env, monke
     assert gizmo_pending["action"] == panel_pending["action"] == "NONE"
     assert gizmo_pending["reasons"] == panel_pending["reasons"]
     chip = _chip(env, scene)
-    assert chip.kind == "LIVE" and "initial_velocity" in chip.text
+    assert chip.kind == "LIVE" and "initial velocity" in chip.text.lower()
 
 
 def test_emitter_arrow_cancel_restores_the_value(env):
@@ -383,3 +383,563 @@ def test_face_resize_math_keeps_the_opposite_face_fixed(env):
     # A drag past the opposite face stops at the minimum size instead of inverting.
     scale, _shift = resize(-2.5, 2.5, 1.0, side=1, delta=-50.0)
     assert scale > 0.0
+
+
+# Undo, precision, snapping, ranges, toggle clicks, matrix_world and the bake gate ----
+
+def _record_undo(env):
+    pushes = []
+    env.bpy.ops.ed = SimpleNamespace(undo_push=lambda message: pushes.append(message))
+    return pushes
+
+
+def _velocity_drag(env, scene, emitter):
+    context = _context(scene, emitter)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_velocity()
+    gizmo.invoke(context, _event(0.0))
+    return context, gizmo
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_a_committed_drag_pushes_one_undo_step_and_a_cancelled_one_none(env, cancel):
+    pushes = _record_undo(env)
+    scene, emitter = _emitter_scene(env.pending)
+    context, gizmo = _velocity_drag(env, scene, emitter)
+    for x in (10.0, 20.0, 30.0):
+        gizmo.modal(context, _event(x), set())
+    gizmo.exit(context, cancel)
+
+    dial = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "rate"
+    dial.invoke(context, _event(0.0))
+    dial.modal(context, _event(40.0), set())
+    dial.exit(context, cancel)
+
+    scene_d, domain = _domain()
+    context_d = _context(scene_d, domain)
+    face = env.deck.gizmos.FLUIDSIM_GT_deck_face()
+    face.axis, face.side = 0, 1
+    face.invoke(context_d, _event(0.0))
+    face.modal(context_d, _event(50.0), set())
+    face.exit(context_d, cancel)
+    assert len(pushes) == (0 if cancel else 3)
+
+
+def test_a_toggle_click_pushes_one_undo_step(env):
+    pushes = _record_undo(env)
+    scene, collider = _emitter_scene(env.pending, role="COLLIDER")
+    context = _context(scene, collider)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_toggle()
+    gizmo.invoke(context, _event(0.0))
+    gizmo.exit(context, False)
+    assert len(pushes) == 1
+
+
+def test_undo_push_tolerates_a_refusing_operator(env):
+    def refuse(message):
+        raise RuntimeError("context is incorrect")
+    env.bpy.ops.ed = SimpleNamespace(undo_push=refuse)
+    scene, emitter = _emitter_scene(env.pending)
+    context, gizmo = _velocity_drag(env, scene, emitter)
+    gizmo.modal(context, _event(40.0), set())
+    gizmo.exit(context, False)
+    assert emitter.fluidsim.initial_velocity[0] == pytest.approx(0.4 / env.deck.gizmos.ARROW_SCALE)
+
+
+def test_shift_mid_drag_slows_from_where_it_was_pressed_without_a_jump(env):
+    gizmos = env.deck.gizmos
+    scene, emitter = _emitter_scene(env.pending)
+    context, gizmo = _velocity_drag(env, scene, emitter)
+    gizmo.modal(context, _event(50.0), set())
+    before = emitter.fluidsim.initial_velocity[0]
+    gizmo.modal(context, _event(60.0), {"PRECISE"})
+    precise = emitter.fluidsim.initial_velocity[0]
+    step = 0.1 / gizmos.ARROW_SCALE  # 10 px = 0.1 m of pointer travel
+    assert precise == pytest.approx(before + step * gizmos.PRECISE_FACTOR)
+    # Releasing Shift continues at full speed from there, again without a jump.
+    gizmo.modal(context, _event(70.0), set())
+    assert emitter.fluidsim.initial_velocity[0] == pytest.approx(precise + step)
+
+
+def test_shift_mid_drag_on_a_dial_does_not_jump(env):
+    gizmos = env.deck.gizmos
+    scene, emitter = _emitter_scene(env.pending)
+    context = _context(scene, emitter)
+    dial = gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "rate"
+    dial.invoke(context, _event(0.0))
+    dial.modal(context, _event(60.0), set())
+    before = emitter.fluidsim.source_sampling_multiplier
+    dial.modal(context, _event(90.0), {"PRECISE"})
+    per_pixel = 8.0 / gizmos.DIAL_PIXELS
+    assert emitter.fluidsim.source_sampling_multiplier == pytest.approx(
+        before + 30.0 * per_pixel * gizmos.PRECISE_FACTOR)
+
+
+def test_ctrl_snaps_velocity_fill_and_friction(env):
+    gizmos = env.deck.gizmos
+    scene, emitter = _emitter_scene(env.pending)
+    context, gizmo = _velocity_drag(env, scene, emitter)
+    gizmo.modal(context, _event(9.0, 4.0), {"SNAP"})  # 0.36, 0, 0.16 m/s
+    assert emitter.fluidsim.initial_velocity == pytest.approx((0.5, 0.0, 0.0))
+
+    dial = gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "rate"
+    dial.invoke(context, _event(0.0))
+    dial.modal(context, _event(13.0), {"SNAP"})  # 1 + 0.347
+    assert emitter.fluidsim.source_sampling_multiplier == pytest.approx(1.25)
+
+    object.__setattr__(emitter.fluidsim, "collider_friction", 0.0)
+    friction = gizmos.FLUIDSIM_GT_deck_dial()
+    friction.binding = "friction"
+    friction.invoke(context, _event(0.0))
+    friction.modal(context, _event(20.0), {"SNAP"})  # 0.0667
+    assert emitter.fluidsim.collider_friction == pytest.approx(0.05)
+
+
+def test_ctrl_snaps_the_dragged_domain_size_to_a_tenth_of_a_metre(env):
+    scene, domain = _domain()
+    context = _context(scene, domain)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_face()
+    gizmo.axis, gizmo.side = 0, 1
+    gizmo.invoke(context, _event(0.0))
+    gizmo.modal(context, _event(137.0), {"SNAP"})  # 5 m + 1.37 m -> 6.4 m
+    assert domain.scale[0] * 5.0 == pytest.approx(6.4)
+    assert domain.location[0] - 2.5 * domain.scale[0] == pytest.approx(-2.5)  # -X face fixed
+
+
+class _Rna:
+    def __init__(self, **ranges):
+        self.properties = {name: SimpleNamespace(hard_min=r[0], hard_max=r[1], soft_min=r[2],
+                                                 soft_max=r[3]) for name, r in ranges.items()}
+
+
+@pytest.mark.parametrize("with_rna", [False, True])
+def test_legacy_rate_dial_clamps_to_the_property_range_not_32(env, with_rna):
+    from fluidSim_warp_blender51.sim import constants
+
+    scene, emitter = _emitter_scene(env.pending, source_sampling_mode="LEGACY_ABSOLUTE",
+                                    emit_rate=30.0)
+    hard = float(constants.MAX_PARTICLES_PER_VOXEL)
+    if with_rna:
+        object.__setattr__(emitter.fluidsim, "bl_rna",
+                           _Rna(emit_rate=(0.0, hard, 0.0, 32.0)))
+    context = _context(scene, emitter)
+    dial = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "rate"
+    dial.invoke(context, _event(0.0))
+    dial.modal(context, _event(30.0), set())  # 30 px of a 0-32 sweep: +3.2
+    assert emitter.fluidsim.emit_rate == pytest.approx(33.2)
+    dial.modal(context, _event(10_000.0), set())
+    assert emitter.fluidsim.emit_rate == pytest.approx(hard)
+
+
+def test_dial_reads_a_narrower_rna_range(env):
+    scene, emitter = _emitter_scene(env.pending)
+    object.__setattr__(emitter.fluidsim, "bl_rna",
+                       _Rna(source_sampling_multiplier=(0.0, 4.0, 0.0, 4.0)))
+    context = _context(scene, emitter)
+    dial = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "rate"
+    dial.invoke(context, _event(0.0))
+    dial.modal(context, _event(10_000.0), set())
+    assert emitter.fluidsim.source_sampling_multiplier == pytest.approx(4.0)
+
+
+def test_a_drag_released_over_the_toggle_does_not_flip_it(env):
+    scene, collider = _emitter_scene(env.pending, role="COLLIDER")
+    context = _context(scene, collider)
+    gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_toggle()
+    gizmo.invoke(context, _event(0.0))
+    gizmo.modal(context, _event(40.0), set())
+    gizmo.modal(context, _event(0.0), set())  # back over the toggle
+    gizmo.exit(context, False)
+    assert collider.fluidsim.collider_dynamic is False
+    # A click with a pixel of jitter still flips it.
+    gizmo.invoke(context, _event(0.0))
+    gizmo.modal(context, _event(1.0, 1.0), set())
+    gizmo.exit(context, False)
+    assert collider.fluidsim.collider_dynamic is True
+
+
+def _delta_domain():
+    """Domain whose matrix_world differs from location/scale: delta location +2 m X,
+    delta scale x2 on X, so the world box is X -3..7 m."""
+    scene, domain = _domain()
+    domain.matrix_world = [[2.0, 0.0, 0.0, 2.0], [0.0, 1.0, 0.0, 0.0],
+                           [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+    domain.parent, domain.constraints = None, []
+    return scene, domain
+
+
+def test_domain_face_drag_follows_matrix_world(env):
+    gizmos = env.deck.gizmos
+    scene, domain = _delta_domain()
+    context = _context(scene, domain)
+    gizmo = gizmos.FLUIDSIM_GT_deck_face()
+    gizmo.axis, gizmo.side = 0, 1
+    gizmo.invoke(context, _event(0.0))
+    assert gizmos.active_domain_preview().bounds[0][0] == pytest.approx(-3.0)
+    assert gizmos.active_domain_preview().bounds[1][0] == pytest.approx(7.0)
+    gizmo.modal(context, _event(140.0), set())  # +1.4 m on the +X face: 10 m -> 11.4 m
+    lo, hi = gizmos.active_domain_preview().bounds
+    assert (lo[0], hi[0]) == pytest.approx((-3.0, 8.4))
+    # Written so matrix_world (delta scale x2, delta location +2) gives that box.
+    assert domain.scale[0] == pytest.approx(1.14)
+    world_scale = 2.0 * domain.scale[0]
+    world_x = 2.0 + domain.location[0]
+    assert (world_x - 2.5 * world_scale, world_x + 2.5 * world_scale) == pytest.approx(
+        (-3.0, 8.4))
+
+
+def test_domain_handles_are_not_offered_for_a_constrained_domain(env):
+    gizmos = env.deck.gizmos
+    _scene, domain = _delta_domain()
+    assert gizmos._axis_aligned(domain)
+    domain.constraints = [SimpleNamespace(enabled=True)]
+    assert not gizmos._axis_aligned(domain)
+    domain.constraints = [SimpleNamespace(enabled=False)]
+    assert gizmos._axis_aligned(domain)
+
+
+@pytest.fixture
+def baking(env, monkeypatch):
+    from fluidSim_warp_blender51.blender import production_bake
+
+    state = SimpleNamespace(here=True, anywhere=True)
+    monkeypatch.setattr(production_bake, "bake_is_active", lambda _scene: state.here)
+    monkeypatch.setattr(production_bake, "any_bake_active", lambda: state.anywhere)
+    return state
+
+
+@pytest.mark.parametrize("where", ["here", "other_scene"])
+def test_no_gizmo_starts_a_drag_during_a_production_bake(env, baking, where):
+    baking.here = where == "here"
+    pushes = _record_undo(env)
+    gizmos = env.deck.gizmos
+    scene, emitter = _emitter_scene(env.pending, role="COLLIDER", collider_friction=0.0,
+                                    initial_velocity=(1.0, 0.0, 0.0))
+    context = _context(scene, emitter)
+    velocity = gizmos.FLUIDSIM_GT_deck_velocity()
+    dial = gizmos.FLUIDSIM_GT_deck_dial()
+    dial.binding = "friction"
+    toggle = gizmos.FLUIDSIM_GT_deck_toggle()
+    scene_d, domain = _domain()
+    face = gizmos.FLUIDSIM_GT_deck_face()
+    face.axis, face.side = 0, 1
+    for gizmo, ctx in ((velocity, context), (dial, context), (toggle, context),
+                       (face, _context(scene_d, domain))):
+        assert gizmo.invoke(ctx, _event(0.0)) == {"CANCELLED"}
+        gizmo.modal(ctx, _event(100.0), set())
+        gizmo.exit(ctx, False)
+    assert emitter.fluidsim.initial_velocity == (1.0, 0.0, 0.0)
+    assert emitter.fluidsim.collider_friction == 0.0
+    assert emitter.fluidsim.collider_dynamic is False
+    assert domain.scale == [1.0, 1.0, 1.0] and domain.location == [0.0, 0.0, 0.0]
+    assert gizmos.active_domain_preview() is None
+    assert pushes == []
+
+
+def test_handles_draw_dimmed_during_a_production_bake(env, baking):
+    gizmos = env.deck.gizmos
+    group = SimpleNamespace()
+    handles = [SimpleNamespace(alpha=0.8, alpha_highlight=1.0) for _ in range(2)]
+    assert gizmos.show_held(group, SimpleNamespace(scene=None), handles) is True
+    assert [h.alpha for h in handles] == pytest.approx([0.8 * gizmos.DIM_ALPHA] * 2)
+    assert [h.alpha_highlight for h in handles] == [h.alpha for h in handles]
+    baking.here = baking.anywhere = False
+    assert gizmos.show_held(group, SimpleNamespace(scene=None), handles) is False
+    assert [(h.alpha, h.alpha_highlight) for h in handles] == [(0.8, 1.0)] * 2
+
+
+# Blender starts gizmo tweak flags empty, even when invoke's event has modifiers.
+# The effective user modal map decides which initially held keys can seed a flag.
+
+def _modifier_event(x=0.0, **values):
+    event = _event(x)
+    event.shift = event.ctrl = event.alt = event.oskey = event.is_repeat = False
+    for key, value in values.items():
+        setattr(event, key, value)
+    return event
+
+
+def _keymap_item(action, key, value, **overrides):
+    values = {"propvalue": action, "type": key, "value": value, "active": True, "any": True,
+              "key_modifier": "NONE", "map_type": "KEYBOARD", "repeat": False}
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+class _ModalItems(list):
+    def match_event(self, *_args):
+        # Blender's public matcher polls operator IDs; modal items have no ID.
+        # It therefore cannot identify a modal PRECISION_OFF/SNAP_OFF transition.
+        return None
+
+
+def _modifier_keymap(context, items=None):
+    if items is None:
+        items = [
+            _keymap_item(action, key, value)
+            for keys, actions in ((('LEFT_SHIFT', 'RIGHT_SHIFT'),
+                                   ('PRECISION_ON', 'PRECISION_OFF')),
+                                  (('LEFT_CTRL', 'RIGHT_CTRL'), ('SNAP_ON', 'SNAP_OFF')))
+            for key in keys
+            for action, value in zip(actions, ('PRESS', 'RELEASE'), strict=True)
+        ]
+    keymap = SimpleNamespace(keymap_items=_ModalItems(items))
+    user = SimpleNamespace(keymaps={"Generic Gizmo Tweak Modal Map": keymap})
+    context.window_manager = SimpleNamespace(keyconfigs=SimpleNamespace(user=user))
+    return keymap.keymap_items
+
+
+def _modifier_drag_case(env, kind):
+    """Public drag, observed scalar value, value/pixel gain and snap increment."""
+    gizmos = env.deck.gizmos
+    if kind.startswith("domain"):
+        scene, obj = _domain()
+        gizmo = gizmos.FLUIDSIM_GT_deck_face()
+        gizmo.axis, gizmo.side = 0, (-1 if kind == "domain_minus" else 1)
+        read = lambda: obj.scale[0] * 5.0
+        gain, step = gizmo.side / 100.0, 0.1
+    else:
+        scene, obj = _emitter_scene(env.pending, collider_friction=0.2)
+        if kind == "velocity":
+            gizmo = gizmos.FLUIDSIM_GT_deck_velocity()
+            read = lambda: obj.fluidsim.initial_velocity[0]
+            gain, step = 1.0 / (100.0 * gizmos.ARROW_SCALE), 0.5
+        else:
+            gizmo = gizmos.FLUIDSIM_GT_deck_dial()
+            gizmo.binding = "friction" if kind == "friction" else "rate"
+            if kind == "legacy":
+                obj.fluidsim.source_sampling_mode = "LEGACY_ABSOLUTE"
+            prop, span, step = {
+                "multiplier": ("source_sampling_multiplier", 8.0, 0.25),
+                "legacy": ("emit_rate", 32.0, 1.0),
+                "friction": ("collider_friction", 1.0, 0.05),
+            }[kind]
+            read = lambda: getattr(obj.fluidsim, prop)
+            gain = span / gizmos.DIAL_PIXELS
+    context = _context(scene, obj)
+    _modifier_keymap(context)
+    return context, gizmo, read, gain, step
+
+
+_MODIFIER_DRAG_CASES = ('velocity', 'multiplier', 'legacy', 'friction',
+                        'domain_plus', 'domain_minus')
+
+
+@pytest.mark.parametrize("kind", _MODIFIER_DRAG_CASES)
+def test_ctrl_held_before_invoke_snaps_and_hands_off_on_release(env, kind):
+    context, gizmo, read, gain, step = _modifier_drag_case(env, kind)
+    start = read()
+    assert gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", ctrl=True)) == {
+        "RUNNING_MODAL"}
+    gizmo.modal(context, _modifier_event(13.0, ctrl=True), set())
+    assert read() == pytest.approx(round((start + 13.0 * gain) / step) * step)
+
+    gizmo.modal(context, _modifier_event(13.0, type="LEFT_CTRL", value="RELEASE"), set())
+    gizmo.modal(context, _modifier_event(14.0), set())
+    assert read() == pytest.approx(start + 14.0 * gain)
+    # Once released, native tweak flags own subsequent presses and releases.
+    gizmo.modal(context, _modifier_event(14.0, type="LEFT_CTRL", ctrl=True), {"SNAP"})
+    gizmo.modal(context, _modifier_event(17.0, ctrl=True), {"SNAP"})
+    assert read() == pytest.approx(round((start + 17.0 * gain) / step) * step)
+    gizmo.modal(context, _modifier_event(18.0, ctrl=True), set())
+    assert read() == pytest.approx(start + 18.0 * gain)
+    gizmo.exit(context, True)
+    assert read() == pytest.approx(start)
+
+
+@pytest.mark.parametrize("kind", _MODIFIER_DRAG_CASES)
+def test_shift_held_before_invoke_is_precise_and_release_is_continuous(env, kind):
+    context, gizmo, read, gain, _step = _modifier_drag_case(env, kind)
+    start = read()
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(30.0, shift=True), set())
+    precise = start + 30.0 * gain * env.deck.gizmos.PRECISE_FACTOR
+    assert read() == pytest.approx(precise)
+    gizmo.modal(context, _modifier_event(30.0, type="LEFT_SHIFT", value="RELEASE"), set())
+    assert read() == pytest.approx(precise)
+    gizmo.modal(context, _modifier_event(40.0), set())
+    assert read() == pytest.approx(precise + 10.0 * gain)
+    gizmo.exit(context, True)
+    assert read() == pytest.approx(start)
+
+
+def test_initial_shift_and_ctrl_release_independently(env):
+    context, gizmo, read, gain, step = _modifier_drag_case(env, "velocity")
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True, ctrl=True))
+    gizmo.modal(context, _modifier_event(137.0, shift=True, ctrl=True), set())
+    precise = 137.0 * gain * env.deck.gizmos.PRECISE_FACTOR
+    assert read() == pytest.approx(round(precise / step) * step)
+    gizmo.modal(context, _modifier_event(137.0, type="LEFT_CTRL", value="RELEASE",
+                                       shift=True), set())
+    gizmo.modal(context, _modifier_event(147.0, shift=True), set())
+    precise += 10.0 * gain * env.deck.gizmos.PRECISE_FACTOR
+    assert read() == pytest.approx(precise)
+    gizmo.modal(context, _modifier_event(147.0, type="LEFT_SHIFT", value="RELEASE"), set())
+    gizmo.modal(context, _modifier_event(157.0), set())
+    assert read() == pytest.approx(precise + 10.0 * gain)
+
+
+def test_initial_flags_follow_the_effective_user_map_not_fixed_modifier_names(env):
+    for held, expected in (("shift", 0.5), ("ctrl", 0.052)):
+        context, gizmo, read, _gain, _step = _modifier_drag_case(env, "velocity")
+        items = context.window_manager.keyconfigs.user.keymaps[
+            "Generic Gizmo Tweak Modal Map"].keymap_items
+        for item in items:
+            item.propvalue = item.propvalue.replace("PRECISION", "TEMP").replace(
+                "SNAP", "PRECISION").replace("TEMP", "SNAP")
+        gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", **{held: True}))
+        gizmo.modal(context, _modifier_event(13.0, **{held: True}), set())
+        assert read() == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("unsupported", ["disabled", "asymmetric", "conditional", "missing"])
+def test_unsupported_initial_modifier_maps_defer_to_native_tweak(env, unsupported):
+    context, gizmo, read, gain, _step = _modifier_drag_case(env, "velocity")
+    items = context.window_manager.keyconfigs.user.keymaps[
+        "Generic Gizmo Tweak Modal Map"].keymap_items
+    if unsupported == "disabled":
+        for item in items:
+            if "SHIFT" in item.type:
+                item.active = False
+    elif unsupported == "asymmetric":
+        items[:] = [item for item in items
+                    if not (item.type == "RIGHT_SHIFT" and item.value == "RELEASE")]
+    elif unsupported == "conditional":
+        items[0].any = False
+    else:
+        context.window_manager.keyconfigs.user.keymaps.clear()
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(20.0, shift=True), set())
+    assert read() == pytest.approx(20.0 * gain)
+    gizmo.modal(context, _modifier_event(30.0, shift=True), {"PRECISE"})
+    assert read() == pytest.approx(20.0 * gain + gain)
+
+
+def test_custom_off_retires_initial_precision_even_while_shift_stays_held(env):
+    context, gizmo, read, _gain, _step = _modifier_drag_case(env, "velocity")
+    items = context.window_manager.keyconfigs.user.keymaps[
+        "Generic Gizmo Tweak Modal Map"].keymap_items
+    items.append(_keymap_item("PRECISION_OFF", "A", "PRESS"))
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(10.0, shift=True), set())
+    assert read() == pytest.approx(0.04)
+    gizmo.modal(context, _modifier_event(10.0, type="A", shift=True), set())
+    gizmo.modal(context, _modifier_event(20.0, shift=True), set())
+    assert read() == pytest.approx(0.44)
+    gizmo.modal(context, _modifier_event(30.0, shift=True), set())
+    assert read() == pytest.approx(0.84)
+
+
+def test_an_unbound_key_does_not_retire_initial_precision(env):
+    context, gizmo, read, _gain, _step = _modifier_drag_case(env, "velocity")
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(10.0, shift=True), set())
+    gizmo.modal(context, _modifier_event(10.0, type="Z", shift=True), set())
+    gizmo.modal(context, _modifier_event(20.0, shift=True), set())
+    assert read() == pytest.approx(0.08)
+
+
+@pytest.mark.parametrize("unsupported", ["chord", "shadow", "non_keyboard", "any_value"])
+def test_unsupported_transition_forms_leave_initial_state_to_native(env, unsupported):
+    context, gizmo, read, gain, _step = _modifier_drag_case(env, "velocity")
+    items = context.window_manager.keyconfigs.user.keymaps[
+        "Generic Gizmo Tweak Modal Map"].keymap_items
+    if unsupported == "chord":
+        items.append(_keymap_item("PRECISION_OFF", "A", "PRESS", key_modifier="B"))
+    elif unsupported == "shadow":
+        items.insert(0, _keymap_item("CANCEL", "LEFT_SHIFT", "PRESS", any=False))
+    elif unsupported == "non_keyboard":
+        items.append(_keymap_item("PRECISION_OFF", "LEFTMOUSE", "PRESS", map_type="MOUSE"))
+    else:
+        items.append(_keymap_item("PRECISION_OFF", "A", "ANY"))
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(20.0, shift=True), set())
+    assert read() == pytest.approx(20.0 * gain)
+    gizmo.modal(context, _modifier_event(30.0, shift=True), {"PRECISE"})
+    assert read() == pytest.approx(20.0 * gain + gain)
+
+
+@pytest.mark.parametrize("repeat", [False, True])
+def test_custom_off_respects_the_keymap_repeat_setting(env, repeat):
+    context, gizmo, read, _gain, _step = _modifier_drag_case(env, "velocity")
+    items = context.window_manager.keyconfigs.user.keymaps[
+        "Generic Gizmo Tweak Modal Map"].keymap_items
+    items.append(_keymap_item("PRECISION_OFF", "A", "PRESS", repeat=repeat))
+    gizmo.invoke(context, _modifier_event(type="LEFTMOUSE", shift=True))
+    gizmo.modal(context, _modifier_event(10.0, shift=True), set())
+    gizmo.modal(context, _modifier_event(10.0, type="A", shift=True, is_repeat=True), set())
+    gizmo.modal(context, _modifier_event(20.0, shift=True), set())
+    assert read() == pytest.approx(0.44 if repeat else 0.08)
+
+
+@pytest.mark.parametrize("kind", ["velocity", "dial"])
+@pytest.mark.parametrize("active", ["other", "none"])
+@pytest.mark.parametrize("cancel", [False, True])
+def test_drag_updates_and_cancel_remain_bound_to_captured_object(env, kind, active, cancel):
+    scene, emitter = _emitter_scene(env.pending, initial_velocity=(1.0, 0.0, 0.0))
+    _other_scene, other = _emitter_scene(env.pending)
+    scene.objects.append(other)
+    context = _context(scene, emitter)
+    if kind == "velocity":
+        gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_velocity()
+        prop, start = "initial_velocity", (1.0, 0.0, 0.0)
+    else:
+        gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+        gizmo.binding = "rate"
+        prop, start = "source_sampling_multiplier", 1.0
+    untouched = getattr(other.fluidsim, prop)
+    gizmo.invoke(context, _event(0.0))
+    context.active_object = None if active == "none" else other
+    assert gizmo.modal(context, _event(80.0), set()) == {"RUNNING_MODAL"}
+    assert getattr(emitter.fluidsim, prop) != pytest.approx(start)
+    gizmo.exit(context, cancel)
+    if cancel:
+        assert getattr(emitter.fluidsim, prop) == pytest.approx(start)
+    assert getattr(other.fluidsim, prop) == untouched
+    assert not other.fluidsim.writes
+
+
+@pytest.mark.parametrize("kind", ["velocity", "dial"])
+def test_drag_cancels_without_writes_after_captured_object_is_deleted(env, kind):
+    scene, emitter = _emitter_scene(env.pending)
+    _other_scene, other = _emitter_scene(env.pending)
+    scene.objects.append(other)
+    context = _context(scene, emitter)
+    if kind == "velocity":
+        gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_velocity()
+    else:
+        gizmo = env.deck.gizmos.FLUIDSIM_GT_deck_dial()
+        gizmo.binding = "rate"
+    gizmo.invoke(context, _event(0.0))
+    scene.objects.remove(emitter)
+    context.active_object = other
+    assert gizmo.modal(context, _event(80.0), set()) == {"CANCELLED"}
+    gizmo.exit(context, True)
+    assert not emitter.fluidsim.writes
+    assert not other.fluidsim.writes
+
+
+@pytest.mark.parametrize("active", ["other", "none"])
+def test_domain_modal_update_keeps_the_captured_target(env, active):
+    scene, domain, context, gizmo = _drag_domain(env)
+    other = SimpleNamespace(scale=[1.0, 1.0, 1.0], location=[0.0, 0.0, 0.0])
+    scene.objects.append(other)
+    context.active_object = None if active == "none" else other
+    assert gizmo.modal(context, _event(200.0), set()) == {"RUNNING_MODAL"}
+    assert domain.scale != [1.0, 1.0, 1.0]
+    assert other.scale == [1.0, 1.0, 1.0]
+    assert other.location == [0.0, 0.0, 0.0]
+    gizmo.exit(context, True)
+    assert domain.scale == [1.0, 1.0, 1.0]
+    assert domain.location == [0.0, 0.0, 0.0]
+
+
+def test_deleted_domain_cancels_and_clears_preview(env):
+    scene, domain, context, gizmo = _drag_domain(env)
+    scene.objects.remove(domain)
+    assert gizmo.modal(context, _event(200.0), set()) == {"CANCELLED"}
+    assert env.deck.gizmos.active_domain_preview() is None

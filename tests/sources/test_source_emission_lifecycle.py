@@ -403,7 +403,9 @@ def test_mixed_source_batch_owns_each_representation_once():
 
 def _mixed_scene_inputs(legacy, plans):
     """Scene-input double yielding one legacy descriptor and native plans."""
-    class Inputs:
+    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
+
+    class Inputs(SceneInputs):
         device = None
 
         def begin_sync(self):

@@ -101,6 +101,27 @@ def _resolved_cache_path(scene) -> Path:
     return Path(raw).expanduser().resolve()
 
 
+NO_CACHE_MESSAGE = "No cache to manage"
+
+
+def _cache_exists_poll(cls, context) -> bool:
+    """Refuse cache management when the configured path holds no FluidSim cache."""
+    from ..blender.cache_manager import is_managed_cache_directory
+
+    try:
+        present = is_managed_cache_directory(_resolved_cache_path(context.scene))
+    except Exception:  # noqa: BLE001 - an unresolvable path has no cache to manage
+        present = False
+    if not present:
+        cls.poll_message_set(NO_CACHE_MESSAGE)
+    return present
+
+
+def _cache_mutation_poll(cls, context) -> bool:
+    """Free/move/rename/clean only an existing cache no Production Bake is writing."""
+    return _bake_poll(cls, context) and _cache_exists_poll(cls, context)
+
+
 def _owned_capacity_plan(scene):
     bridge = _bridge()
     getter = getattr(bridge, "capacity_plan_for_scene", None)

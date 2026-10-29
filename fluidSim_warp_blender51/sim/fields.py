@@ -27,6 +27,7 @@ from .constants import (
     VOXEL_COLLISION,
 )
 from .quality_contract import AuthoredQualitySettings, resolve_quality
+from .grid_storage_layout import GRID_BUFFER_LAYOUT
 
 # Warp address helpers (shared by every kernel module)
 
@@ -477,26 +478,11 @@ class SparseGrid:
         # Live lookup/count buffers are never cleared while candidate demand is
         # still unadmitted. Candidate table/coords are swapped into place only
         # after the overflow readback proves the rebuild fits.
-        self.leaf_table = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
-        self.leaf_coords = wp.zeros(self.capacity, dtype=wp.vec3i, device=device)
-        self.num_leaves = wp.zeros(1, dtype=wp.int32, device=device)
-        self.overflow = wp.zeros(1, dtype=wp.int32, device=device)
-        self._candidate_leaf_table = wp.zeros(
-            self.num_leaf_cells, dtype=wp.int32, device=device)
-        self._candidate_leaf_coords = wp.zeros(
-            self.capacity, dtype=wp.vec3i, device=device)
-        self._candidate_num_leaves = wp.zeros(1, dtype=wp.int32, device=device)
-        self._candidate_overflow = wp.zeros(1, dtype=wp.int32, device=device)
-        # Flags are candidate-only scratch and do not participate in live field
-        # lookup, so one pair can be reused across transactions.
-        self.leaf_flags = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
-        self.leaf_flags_tmp = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
-        # Allocation-order scratch: the pending predicate, its exclusive prefix
-        # rank, and the slot base captured before the scan publishes new slots.
-        self._leaf_pending = wp.zeros(self.num_leaf_cells, dtype=wp.int32, device=device)
-        self._leaf_pending_rank = wp.zeros(
-            self.num_leaf_cells, dtype=wp.int32, device=device)
-        self._leaf_slot_base = wp.zeros(1, dtype=wp.int32, device=device)
+        extents = {"cells": self.num_leaf_cells, "leaves": self.capacity, "scalar": 1}
+        for name, extent, words in GRID_BUFFER_LAYOUT:
+            setattr(self, name, wp.zeros(
+                extents[extent], dtype=wp.vec3i if words == 3 else wp.int32,
+                device=device))
         self._candidate_pending = False
         self.active_leaf_count = 0  # host mirror, refreshed by refresh_topology_counts
 

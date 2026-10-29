@@ -152,12 +152,12 @@ def _on_load_post(_filepath):
 
 
 def register_handlers():
-    unregister_handlers()
+    from ..unregister_guard import handler_registration
+
     handlers = getattr(getattr(bpy, "app", None), "handlers", None)
     load_post = getattr(handlers, "load_post", None)
-    if load_post is not None:
-        load_post.append(_on_load_post)
-    migrate_source_schema(getattr(bpy.context, "scene", None))
+    with handler_registration(((load_post, _on_load_post),)):
+        migrate_source_schema(getattr(bpy.context, "scene", None))
 
 
 def unregister_handlers():
@@ -234,8 +234,10 @@ def object_points_world(obj, depsgraph=None):
     Used for direct particle injection (fluidSimSourceParticles path).
     """
     depsgraph = depsgraph or bpy.context.evaluated_depsgraph_get()
-    eval_obj = obj.evaluated_get(depsgraph)
-    mw = np.array(obj.matrix_world, dtype=np.float32)
+    from .evaluated_geometry import EvaluatedGeometry, TransformPolicy
+    geometry = EvaluatedGeometry(obj, depsgraph)
+    eval_obj = geometry.evaluated
+    mw = geometry.world_matrix(TransformPolicy.ORIGINAL)
 
     # Particle system on the object takes priority.
     if eval_obj.particle_systems:
@@ -256,15 +258,10 @@ def object_points_world(obj, depsgraph=None):
             return pts @ mw[:3, :3].T + mw[:3, 3]
 
     if obj.type == "MESH":
-        mesh = eval_obj.to_mesh()
-        try:
+        with geometry.mesh() as mesh:
             n = len(mesh.vertices)
             pts = np.empty(n * 3, dtype=np.float32)
             mesh.vertices.foreach_get("co", pts)
-        finally:
-            # A raise between to_mesh and here would otherwise leak the
-            # evaluated mesh until the object is freed (REVIEW-041).
-            eval_obj.to_mesh_clear()
         return pts.reshape(n, 3) @ mw[:3, :3].T + mw[:3, 3]
 
     return np.zeros((0, 3), dtype=np.float32)

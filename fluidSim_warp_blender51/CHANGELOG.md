@@ -37,6 +37,12 @@
 
 ### Fixes
 
+- **Cache tools are greyed out when there is nothing to manage or a bake
+  is writing the cache.** Free, Move, Rename and Remove Orphans were
+  offered with no cache on disk and during a Production Bake, so the
+  cache could be deleted under a running bake. They now say why they are
+  unavailable ("No cache to manage", "Production Bake owns this scene");
+  Scan Integrity and Open Folder need only an existing cache.
 - **Surface tension no longer loses liquid on fine grids.** On voxels
   smaller than 1 cm the pressure solve stopped too early (its tolerance
   did not scale with voxel size), so surface tension squeezed the liquid
@@ -65,7 +71,8 @@
 - Alembic still exports particle point clouds as empty transforms on
   Blender 5.2; only the surface mesh is written.
 - The Surface span cap setting is still shown but has no effect with
-  sparse extraction (Warp 1.18 or newer).
+  sparse extraction (Warp 1.18 or newer). It stays in 4.1, not removed as
+  4.0.0 said, because Warp 1.17 is still accepted and uses it.
 
 ## 4.0.1 — Install Warp from a file, and downloads that survive slow links
 

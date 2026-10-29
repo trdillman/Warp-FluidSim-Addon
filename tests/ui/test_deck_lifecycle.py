@@ -221,7 +221,7 @@ def _routing(monkeypatch):
     status = {"value": (True, "")}
     monkeypatch.setattr(controls, "control_status", lambda _ctx, _c: status["value"])
     ran = []
-    monkeypatch.setattr(controls, "run_control", lambda _ctx, control: ran.append(control))
+    monkeypatch.setattr(controls, "run_control", lambda _ctx, control, **_kwargs: ran.append(control))
     operator = modal.FLUIDSIM_OT_deck_modal()
     operator.generation = modal._GENERATION
     operator.status = status
@@ -247,6 +247,40 @@ def test_deck_events_consume_clicks_only_over_the_bar_and_never_esc(monkeypatch)
     assert operator.modal(context, _event("LEFTMOUSE", 850, 20)) == {"PASS_THROUGH"}
     assert operator.modal(context, _event("ESC", 120, 20)) == {"PASS_THROUGH"}
     assert len(ran) == 1
+
+
+def test_a_release_over_the_bar_is_kept_only_when_the_press_started_there(monkeypatch):
+    _modal, operator, context, ran = _routing(monkeypatch)
+    # A box select that starts in the viewport and ends over the bar keeps its release.
+    assert operator.modal(context, _event("LEFTMOUSE", 500, 300)) == {"PASS_THROUGH"}
+    assert operator.modal(context, _event("LEFTMOUSE", 120, 20, "RELEASE")) == {"PASS_THROUGH"}
+    # A press on the bar owns its release.
+    assert operator.modal(context, _event("LEFTMOUSE", 120, 20)) == {"RUNNING_MODAL"}
+    assert operator.modal(context, _event("LEFTMOUSE", 120, 20, "RELEASE")) == {"RUNNING_MODAL"}
+    assert len(ran) == 1
+
+
+def test_file_load_brings_the_event_layer_timer_forward(monkeypatch):
+    bpy = install_deck_bpy(monkeypatch, deck_mode="ON")
+    deck = reload_deck()
+    from fluidSim_warp_blender51.blender.deck.registry import REGISTRY
+
+    bpy.app.background = False
+    intervals = []
+    register = bpy.app.timers.register
+
+    def recording(fn, first_interval=0.0, persistent=False):
+        intervals.append(first_interval)
+        register(fn, first_interval=first_interval, persistent=persistent)
+
+    bpy.app.timers.register = recording
+    deck.modal.start(REGISTRY)
+    assert intervals == [0.1]
+    _load(bpy, deck, _scene(None))
+    # The next tick comes at once, not up to ENSURE_SECONDS after the file opens.
+    assert intervals == [0.1, 0.0]
+    assert len(bpy.app.timers.registered) == 1
+    REGISTRY.unregister_all()
 
 
 def test_a_refused_bar_click_runs_nothing_and_says_why(monkeypatch):
@@ -303,3 +337,40 @@ def test_deck_mode_preference_defaults_to_on():
                 and getattr(node.target, "id", "") == "deck_mode")
     default = next(kw.value.value for kw in call.keywords if kw.arg == "default")
     assert default == "ON"
+
+
+
+def test_failed_second_deck_registration_preserves_existing_resources(monkeypatch):
+    import pytest
+    bpy = install_deck_bpy(monkeypatch, deck_mode="ON")
+    deck = reload_deck()
+    deck.register()
+    counts = deck.registry.REGISTRY.counts()
+    classes = list(bpy.registered)
+    handlers = list(bpy.types.SpaceView3D.handlers)
+    try:
+        with pytest.raises(RuntimeError, match="already registered"):
+            deck.register()
+        assert deck.registry.REGISTRY.counts() == counts
+        assert bpy.registered == classes
+        assert bpy.types.SpaceView3D.handlers == handlers
+    finally:
+        deck.unregister()
+
+
+def test_failed_deck_registration_preserves_preexisting_app_handler(monkeypatch):
+    import pytest
+    bpy = install_deck_bpy(monkeypatch, deck_mode="ON")
+    deck = reload_deck()
+    prior = deck._on_deck_load_post
+    bpy.app.handlers.load_post.append(prior)
+    error = RuntimeError("injected Deck timer failure")
+    def fail(_registry):
+        raise error
+    monkeypatch.setattr(deck.modal, "start", fail)
+    with pytest.raises(RuntimeError) as raised:
+        deck.register()
+    assert raised.value is error
+    assert bpy.app.handlers.load_post == [prior]
+    assert bpy.registered == []
+    assert all(value == 0 for value in deck.registry.REGISTRY.counts().values())

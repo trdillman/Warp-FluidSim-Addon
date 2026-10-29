@@ -1,7 +1,8 @@
 """The Deck's event layer: a pass-through modal that takes clicks only on the bar.
 
 ``fluidsim.deck_modal`` runs once per window. Every event passes through to
-Blender except a left click (press, release, double click) over the bar card:
+Blender except a left press or double click over the bar card, and the release
+of a press that started there:
 over a button it runs that button's :class:`controls.Control`; elsewhere on the
 card it is swallowed so the click does not select or deselect in the viewport.
 Esc is never consumed, so the Deck cannot take Esc away from a running bake or
@@ -11,8 +12,8 @@ The modal keeps no settings state: only which bar item is under the pointer, for
 the hover highlight. A generation number retires modals left from an earlier
 ``register()`` (add-on reload) or from before a file load (the load-post handler
 starts a new generation, whether or not Blender called ``cancel()``). A timer
-started by ``register()`` starts the modal in each window, and again after a file
-load drops it; ``--background`` has no windows and starts none.
+started by ``register()`` starts the modal in each window, and again right after a
+file load drops it; ``--background`` has no windows and starts none.
 """
 
 from __future__ import annotations
@@ -117,22 +118,34 @@ class FLUIDSIM_OT_deck_modal(bpy.types.Operator):
         window = getattr(context, "window", None)
         if window is None:
             return {"PASS_THROUGH"}
+        pressing = event.type == "LEFTMOUSE" and event.value in {"PRESS", "DOUBLE_CLICK"}
         # Event and region coordinates are both window-relative.
         area, region = region_under(window, event.mouse_x, event.mouse_y)
         if region is None:
             self._set_hover(None, None)
+            if event.type == "LEFTMOUSE":
+                self.press_on_bar = False
             return {"PASS_THROUGH"}
         x, y = event.mouse_x - region.x, event.mouse_y - region.y
         with context.temp_override(window=window, area=area, region=region):
             layout = bar.current_layout(bpy.context)
             over, item = bar.hit_test(layout, x, y)
             self._set_hover(region, item)
-            if event.type == "MOUSEMOVE" or not over:
+            if event.type == "MOUSEMOVE":
+                return {"PASS_THROUGH"}
+            if not pressing:
+                # A release is the bar's only when its press was: a box select or
+                # drag that started in the viewport must still get its release.
+                started_here = getattr(self, "press_on_bar", False)
+                self.press_on_bar = False
+                return {"RUNNING_MODAL"} if over and started_here else {"PASS_THROUGH"}
+            self.press_on_bar = over
+            if not over:
                 return {"PASS_THROUGH"}
             if item is not None and item.control is not None and event.value == "PRESS":
                 ready, reason = controls.control_status(bpy.context, item.control)
                 if ready:
-                    controls.run_control(bpy.context, item.control)
+                    controls.run_control(bpy.context, item.control, report=self.report)
                 else:
                     # A refused click says why in the status bar instead of doing nothing.
                     self.report({"WARNING"}, f"{item.control.label}: {reason}")
@@ -170,3 +183,14 @@ def start(registry) -> None:
     new_generation()
     if not getattr(bpy.app, "background", False):
         registry.add_timer("deck_modal", _ensure_running, 0.1)
+
+
+def restart_after_load(registry) -> None:
+    """After a file load: retire the old modals and start new ones on the next tick.
+
+    Without this the ensure timer's next regular tick (up to ``ENSURE_SECONDS``
+    later) is the first moment the bar takes clicks in the loaded file.
+    """
+    new_generation()
+    if not getattr(bpy.app, "background", False) and registry.has_timer("deck_modal"):
+        registry.add_timer("deck_modal", _ensure_running, 0.0)

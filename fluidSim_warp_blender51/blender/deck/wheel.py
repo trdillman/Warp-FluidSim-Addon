@@ -57,7 +57,12 @@ def clamp_centre(x, y, width, height, scale=1.0):
     return cx, cy
 
 
-def slot_tip(stage, hover, statuses):
+def stage_controls(context, stage):
+    """The stage's six slots as they stand now (Play and Bake follow the state)."""
+    return tuple(controls.resolve(context, c) for c in STAGE_SLOTS[stage])
+
+
+def slot_tip(stage, hover, statuses, slots=None):
     """``(title, body, note)`` for the hovered hub or slot; empty strings when none."""
     if hover == "HUB":
         following = controls.STAGE_LABELS[controls.next_stage(stage)]
@@ -65,7 +70,7 @@ def slot_tip(stage, hover, statuses):
                 f"Click to show the {following} actions", "")
     if not isinstance(hover, int):
         return "", "", ""
-    control = STAGE_SLOTS[stage][hover]
+    control = (slots or STAGE_SLOTS[stage])[hover]
     ready, reason = statuses[hover]
     return control.label, control.tooltip, "" if ready else f"Unavailable: {reason}"
 
@@ -87,8 +92,9 @@ def _draw_wheel(operator):
         size = 11.0 * scale
         _draw.circle(cx, cy, (RING_RADIUS + SLOT_RADIUS + 8.0) * scale,
                      tokens.rgba(palette.surface, tokens.CARD_ALPHA * 0.85), 64)
-        statuses = [controls.control_status(context, c) for c in STAGE_SLOTS[stage]]
-        for index, control in enumerate(STAGE_SLOTS[stage]):
+        slots = stage_controls(context, stage)
+        statuses = [controls.control_status(context, c) for c in slots]
+        for index, control in enumerate(slots):
             ox, oy = slot_centre(index)
             x, y = cx + ox * scale, cy + oy * scale
             enabled = statuses[index][0]
@@ -105,7 +111,7 @@ def _draw_wheel(operator):
         label = controls.STAGE_LABELS[stage]
         width = _draw.text_width(label, size)
         _draw.text(cx - width / 2.0, cy - size / 3.0, label, size, tokens.rgba(palette.text))
-        title, body, note = slot_tip(stage, operator.hover, statuses)
+        title, body, note = slot_tip(stage, operator.hover, statuses, slots)
         if title:
             # Above the wheel when it fits, else below it.
             extent = (RING_RADIUS + SLOT_RADIUS + 8.0) * scale
@@ -167,14 +173,14 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
         if target == "HUB":
             scene.fluidsim.deck_stage = controls.next_stage(current_stage(scene))
             return None
-        control = STAGE_SLOTS[current_stage(scene)][target]
+        control = stage_controls(context, current_stage(scene))[target]
         ready, reason = controls.control_status(context, control)
         if not ready:
             # Keep the wheel open and say why, rather than closing and doing nothing.
             self.report({"WARNING"}, f"{control.label}: {reason}")
             return None
         self._close(context)
-        controls.run_control(context, control)
+        controls.run_control(context, control, report=self.report)
         return {"FINISHED"}
 
     def modal(self, context, event):

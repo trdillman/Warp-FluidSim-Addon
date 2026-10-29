@@ -42,8 +42,24 @@ class FLUIDSIM_OT_open_scene_properties(bpy.types.Operator):
         "when the Fluid Domain is active, otherwise the Scene tab"
     )
 
+    # Automatic picks the tab for the selection; the domain's Physics panel
+    # asks for the Scene tab explicitly, since it is already in Physics.
+    target: bpy.props.EnumProperty(
+        name="Tab",
+        description="Which Properties tab to open",
+        items=(
+            ("AUTO", "Automatic", "Physics for the active Fluid Domain, otherwise Scene"),
+            ("SCENE", "Scene", "The scene-level FluidSim settings"),
+            ("PHYSICS", "Physics", "The Fluid Domain settings"),
+        ),
+        default="AUTO",
+        options={"SKIP_SAVE"},
+    )
+
     def execute(self, context):
-        target = _properties_target(context)
+        target = str(getattr(self, "target", "AUTO") or "AUTO")
+        if target not in {"SCENE", "PHYSICS"}:
+            target = _properties_target(context)
         tab = "Physics" if target == "PHYSICS" else "Scene"
         screen = getattr(context, "screen", None)
         areas = getattr(screen, "areas", ()) if screen is not None else ()
@@ -167,8 +183,9 @@ CLASSES = (
 
 
 def register():
-    for cls in CLASSES:
-        bpy.utils.register_class(cls)
+    from .unregister_guard import register_classes
+
+    register_classes(CLASSES)
 
 
 def unregister():

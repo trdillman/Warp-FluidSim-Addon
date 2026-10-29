@@ -7,7 +7,7 @@ import json
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
-from . import effects
+from . import effect_library, effects
 from ..sim.effects.enums import TrustState
 from ..sim.effects.fields import FIELD_SPECS
 from ..sim.effects.source import generate_kernel_source
@@ -331,17 +331,7 @@ class FLUIDSIM_OT_effect_parameter_add(bpy.types.Operator):
         item, _kernel = _active(context.scene)
         if item is None:
             return {"CANCELLED"}
-        key = effects.unique_id("param", (q.key for q in item.parameters))
-        p = item.parameters.add()
-        p.key = key
-        p.label = key.replace("_", " ").title()
-        p.kind = "FLOAT"
-        p.float_value = 1.0
-        p.minimum = 0.0
-        p.maximum = 100.0
-        p.has_minimum = True
-        p.has_maximum = True
-        effects.rebuild_definition_json(context.scene, item)
+        p = effects.add_parameter(context.scene, item)
         self.report({"INFO"}, f"Added parameter {p.key}")
         return {"FINISHED"}
 
@@ -359,10 +349,7 @@ class FLUIDSIM_OT_effect_parameter_remove(bpy.types.Operator):
         item, _kernel = _active(context.scene)
         if item is None or self.parameter_index >= len(item.parameters):
             return {"CANCELLED"}
-        # Unbind the key first, or every kernel that used it fails validation.
-        effects.unbind_parameter_key(item, item.parameters[self.parameter_index].key)
-        item.parameters.remove(self.parameter_index)
-        effects.rebuild_definition_json(context.scene, item)
+        effects.remove_parameter(context.scene, item, self.parameter_index)
         return {"FINISHED"}
 
 
@@ -381,9 +368,7 @@ class FLUIDSIM_OT_effect_parameter_move(bpy.types.Operator):
         if item is None or self.parameter_index >= len(item.parameters):
             return {"CANCELLED"}
         target = self.parameter_index - 1 if self.direction == "UP" else self.parameter_index + 1
-        if 0 <= target < len(item.parameters):
-            item.parameters.move(self.parameter_index, target)
-            effects.rebuild_definition_json(context.scene, item)
+        effects.move_parameter(context.scene, item, self.parameter_index, target)
         return {"FINISHED"}
 
 
@@ -398,22 +383,8 @@ class FLUIDSIM_OT_effect_kernel_add(bpy.types.Operator):
         item, _kernel = _active(context.scene)
         if item is None:
             return {"CANCELLED"}
-        kid = effects.unique_id("kernel", (q.kernel_id for q in item.kernels))
-        k = item.kernels.add()
-        k.kernel_id = kid
-        k.parameter_keys_authored = True
-        k.label = kid.replace("_", " ").title()
-        k.domain = "PARTICLES"
-        k.stage = "AFTER_PARTICLE_TRANSFER"
-        k.cadence = "EVERY_SUBSTEP"
-        k.safe_mode = True
-        text_name = f"FluidSim Effect - {item.instance_id} - {kid}.py"
-        text = bpy.data.texts.get(text_name) or bpy.data.texts.new(text_name)
-        text.clear()
-        text.write("# Custom kernel body\npass\n")
-        k.source_text = text
-        effects.rebuild_definition_json(context.scene, item)
-        self.report({"INFO"}, f"Added kernel {kid}")
+        kernel = effects.add_kernel(context.scene, item)
+        self.report({"INFO"}, f"Added kernel {kernel.kernel_id}")
         return {"FINISHED"}
 
 
@@ -433,8 +404,7 @@ class FLUIDSIM_OT_effect_kernel_remove(bpy.types.Operator):
         if len(item.kernels) <= 1:
             self.report({"WARNING"}, "An effect must have at least one kernel")
             return {"CANCELLED"}
-        item.kernels.remove(self.kernel_index)
-        effects.rebuild_definition_json(context.scene, item)
+        effects.remove_kernel(context.scene, item, self.kernel_index)
         return {"FINISHED"}
 
 
@@ -480,15 +450,7 @@ class FLUIDSIM_OT_effect_field_add(bpy.types.Operator):
             return {"CANCELLED"}
         if self.field_name == "none":
             return {"CANCELLED"}
-        kernel = item.kernels[self.kernel_index]
-        existing = next((f for f in kernel.fields if f.field == self.field_name), None)
-        if existing is not None:
-            existing.access = self.access
-        else:
-            fb = kernel.fields.add()
-            fb.field = self.field_name
-            fb.access = self.access
-        effects.rebuild_definition_json(context.scene, item)
+        effects.bind_kernel_field(context.scene, item, self.kernel_index, self.field_name, self.access)
         self.report({"INFO"}, f"Bound field {self.field_name} ({self.access})")
         return {"FINISHED"}
 
@@ -507,10 +469,7 @@ class FLUIDSIM_OT_effect_field_remove(bpy.types.Operator):
         item, _kernel = _active(context.scene)
         if item is None or self.kernel_index >= len(item.kernels):
             return {"CANCELLED"}
-        kernel = item.kernels[self.kernel_index]
-        if self.field_index < len(kernel.fields):
-            kernel.fields.remove(self.field_index)
-            effects.rebuild_definition_json(context.scene, item)
+        effects.remove_kernel_field(context.scene, item, self.kernel_index, self.field_index)
         return {"FINISHED"}
 
 
@@ -623,24 +582,14 @@ class FLUIDSIM_OT_effect_install_to_library(bpy.types.Operator):
     bl_idname = "fluidsim.effect_install_to_library"
     bl_label = "Save to User Library"
 
-    @staticmethod
-    def _package_path(item):
-        from .effect_library import user_library_path
+    conflict: EnumProperty(items=effect_library.INSTALL_CONFLICT_ITEMS, default="cancel")
 
-        # Same folder and naming as effect_library.install_package, so the
-        # library browser lists what was saved here.
-        return user_library_path() / f"{item.effect_id}-{item.effect_version}.fseffect"
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_props_dialog(self)
 
-    def invoke(self, context, event):
-        item, _kernel = _active(context.scene)
-        if item is not None and self._package_path(item).exists():
-            return context.window_manager.invoke_confirm(
-                self,
-                event,
-                title="Overwrite Library Package?",
-                message=f"{self._package_path(item).name} already exists and will be replaced.",
-            )
-        return self.execute(context)
+    def draw(self, _context):
+        self.layout.prop(self, "conflict", text="Existing Identity")
+        self.layout.label(text="Saving does not grant trust to custom code.")
 
     def execute(self, context):
         item, _kernel = _active(context.scene)
@@ -648,13 +597,11 @@ class FLUIDSIM_OT_effect_install_to_library(bpy.types.Operator):
             return {"CANCELLED"}
         effects.rebuild_definition_json(context.scene, item)
         definition = effects.exportable_definition(context.scene, item)
-        pkg_path = self._package_path(item)
-        from ..sim.effects.package import write_effect_package
         try:
-            write_effect_package(pkg_path, definition)
+            report = effect_library.install_definition(definition, conflict=self.conflict)
             # No trust is recorded here: an installed package is reviewed through
             # Review & Trust (or session trust) like any other, never auto-trusted.
-            self.report({"INFO"}, f"Saved to library: {pkg_path.name}")
+            self.report({"INFO"}, f"Saved to library: {report.path.name}")
         except Exception as exc:
             self.report({"ERROR"}, f"Failed to save package: {exc}")
             return {"CANCELLED"}
@@ -925,8 +872,9 @@ CLASSES = (
 
 
 def register():
-    for cls in CLASSES:
-        bpy.utils.register_class(cls)
+    from ..unregister_guard import register_classes
+
+    register_classes(CLASSES)
 
 
 def unregister():

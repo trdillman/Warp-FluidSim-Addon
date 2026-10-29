@@ -6,12 +6,10 @@ scratch work do not belong in Git.
 
 ## Continuous integration
 
-Every pull request runs `.github/workflows/ci.yml` on GitHub-hosted runners.
-The workflow lints, runs the tests, validates the kernels on Warp CPU, then
-builds, installs and smoke-tests the extension in Blender. The runners have no
-GPU, so CUDA-only tests skip there. A green CI run is required before merging,
-but it is not GPU proof. See `docs/RELEASING.md` for the release procedure and
-the manual GPU gate.
+There is no hosted CI: the GitHub Actions workflows were removed (see
+`docs/RELEASING.md`). Before merging, run the checks in the next section
+locally. See `docs/RELEASING.md` for the release procedure and the manual GPU
+gate.
 
 ## Before touching `master`
 

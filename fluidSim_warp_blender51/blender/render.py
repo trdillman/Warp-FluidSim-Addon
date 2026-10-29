@@ -67,12 +67,15 @@ _HANDLER_LISTS = ("render_init", "render_complete", "render_cancel")
 
 
 def register_handlers():
-    unregister_handlers()
-    bpy.app.handlers.render_init.append(_on_render_init)
-    # Both endings restore the frame, so both have to arm.
-    for name in ("render_complete", "render_cancel"):
-        if hasattr(bpy.app.handlers, name):
-            getattr(bpy.app.handlers, name).append(_on_render_end)
+    from ..unregister_guard import handler_registration
+
+    handlers = bpy.app.handlers
+    with handler_registration((
+        (getattr(handlers, "render_init", None), _on_render_init),
+        (getattr(handlers, "render_complete", None), _on_render_end),
+        (getattr(handlers, "render_cancel", None), _on_render_end),
+    )):
+        pass
 
 
 def _remove_all(handler_list, function):

@@ -66,6 +66,7 @@ class ExportPlan:
     surface: object
     # Dynamic colliders whose solved poses the cache holds (cache v3.1).
     carried: tuple = ()
+    sequence: cache_schema.CommittedSequence | None = None
 
     @property
     def start(self) -> int:
@@ -76,7 +77,7 @@ class ExportPlan:
         return self.frames[-1]
 
 
-def available_frames(scene) -> tuple[int, ...]:
+def _cache_sequence(scene):
     """Verified, contiguous cache frames that cache playback can also play.
 
     Raises :class:`ExportRefused` with a user-facing reason when there are none.
@@ -84,10 +85,12 @@ def available_frames(scene) -> tuple[int, ...]:
     fs = scene.fluidsim
     base = bpy.path.abspath(fs.cache_path)
     try:
-        manifest = cache_schema.load_manifest(cache_schema.manifest_path(base))
+        sequence = cache_schema.observe_committed_sequence(base)
+    except cache_schema.SequenceIntegrityError as exc:
+        raise ExportRefused(f"The cache is not verified and contiguous: {exc}") from exc
     except ValueError as exc:
         raise ExportRefused(f"The cache manifest is unreadable: {exc}") from exc
-    if manifest is None:
+    if sequence is None:
         try:
             version = cache.detect_cache_format(base)
         except Exception:  # noqa: BLE001 - only used to pick a better message
@@ -96,13 +99,16 @@ def available_frames(scene) -> tuple[int, ...]:
             raise ExportRefused(
                 "This cache was baked by an older FluidSim. Re-bake it to export.")
         raise ExportRefused("There is no baked cache to export. Bake first.")
-    try:
-        frames = cache_schema.verified_contiguous_frames(base, manifest)
-    except ValueError as exc:
-        raise ExportRefused(
-            f"The cache is not verified and contiguous: {exc}") from exc
-    if not frames:
+    if not sequence.frames:
         raise ExportRefused("The cache has no committed frames.")
+    return sequence
+
+
+def available_frames(scene, *, sequence=None) -> tuple[int, ...]:
+    """Verified complete sequence, limited by Blender's authored playback range."""
+    fs = scene.fluidsim
+    sequence = _cache_sequence(scene) if sequence is None else sequence
+    frames = sequence.frames
     if getattr(fs, "cache_use_custom_range", False):
         low, high = cache.resolve_frame_range(
             scene, use_custom=True,
@@ -131,10 +137,10 @@ def _require_export_idle(scene):
             "that live state.")
 
 
-def _export_frames(scene, frame_start: int, frame_end: int) -> tuple[int, ...]:
+def _export_frames(scene, frame_start: int, frame_end: int, *, sequence=None) -> tuple[int, ...]:
     """Cached frames inside the requested range; ``0`` bounds mean the whole cache."""
     _require_export_idle(scene)
-    frames = available_frames(scene)
+    frames = available_frames(scene, sequence=sequence)
     start = int(frame_start) or frames[0]
     end = int(frame_end) or frames[-1]
     if start > end:
@@ -148,7 +154,9 @@ def _export_frames(scene, frame_start: int, frame_end: int) -> tuple[int, ...]:
 
 def plan_export(scene, frame_start: int = 0, frame_end: int = 0) -> ExportPlan:
     """Validate everything the export needs; ``0`` bounds mean the whole cache."""
-    frames = _export_frames(scene, frame_start, frame_end)
+    _require_export_idle(scene)
+    sequence = _cache_sequence(scene)
+    frames = _export_frames(scene, frame_start, frame_end, sequence=sequence)
     surface = output_publication.output_object(scene, SURFACE_KIND)
     if surface is None:
         raise ExportRefused(
@@ -159,7 +167,8 @@ def plan_export(scene, frame_start: int = 0, frame_end: int = 0) -> ExportPlan:
         base_dir=base_dir,
         frames=frames,
         surface=surface,
-        carried=rigid_publication.carried_objects(scene, base_dir, frames),
+        carried=rigid_publication.carried_objects(scene, base_dir, frames, sequence=sequence),
+        sequence=sequence,
     )
 
 
@@ -174,6 +183,7 @@ class UsdExportPlan:
     # Render-enabled Dynamic colliders whose solved poses the cache holds, as
     # for Alembic: keyed and selected by _SceneState, never given a sampler.
     carried: tuple = ()
+    sequence: cache_schema.CommittedSequence | None = None
 
     @property
     def start(self) -> int:
@@ -190,12 +200,10 @@ class UsdExportPlan:
         return head + tuple(obj for obj, _peak in self.points)
 
 
-def _range_point_counts(base_dir: str, frames) -> tuple[int, int]:
-    """Largest particle and whitewater counts the manifest records in ``frames``."""
-    manifest = cache_schema.load_manifest(cache_schema.manifest_path(base_dir))
-    entries = [manifest.frames[frame] for frame in frames]
-    return (max((int(e.particle_count) for e in entries), default=0),
-            max((int(e.whitewater_count) for e in entries), default=0))
+def _range_point_counts(base_dir: str, frames, *, sequence=None) -> tuple[int, int]:
+    """Largest recorded point counts from the same verified sequence."""
+    sequence = cache_schema.observe_committed_sequence(base_dir) if sequence is None else sequence
+    return sequence.point_counts(frames)
 
 
 def plan_usd_export(scene, frame_start: int = 0, frame_end: int = 0) -> UsdExportPlan:
@@ -207,9 +215,11 @@ def plan_usd_export(scene, frame_start: int = 0, frame_end: int = 0) -> UsdExpor
     combined whitewater count, an upper bound on its own. As for Alembic,
     carried colliders alone are not enough to export.
     """
-    frames = _export_frames(scene, frame_start, frame_end)
+    _require_export_idle(scene)
+    sequence = _cache_sequence(scene)
+    frames = _export_frames(scene, frame_start, frame_end, sequence=sequence)
     base_dir = bpy.path.abspath(scene.fluidsim.cache_path)
-    particles, whitewater = _range_point_counts(base_dir, frames)
+    particles, whitewater = _range_point_counts(base_dir, frames, sequence=sequence)
     surface = output_publication.output_object(scene, SURFACE_KIND)
     if surface is not None and (surface.type != "MESH" or surface.hide_render):
         surface = None
@@ -227,11 +237,11 @@ def plan_usd_export(scene, frame_start: int = 0, frame_end: int = 0) -> UsdExpor
             "There are no FluidSim outputs to export. Enable the surface, particle "
             "or whitewater output and play a cached frame first.")
     carried = tuple(
-        obj for obj in rigid_publication.carried_objects(scene, base_dir, frames)
+        obj for obj in rigid_publication.carried_objects(scene, base_dir, frames, sequence=sequence)
         if not obj.hide_render)
     return UsdExportPlan(
         base_dir=base_dir, frames=frames, surface=surface, points=tuple(points),
-        carried=carried)
+        carried=carried, sequence=sequence)
 
 
 def _set_frame_range(scene, start: int, end: int):
@@ -288,7 +298,7 @@ class _SceneState:
         if carried:
             # Key every cached pose before the exporter samples transforms.
             rigid_publication.publish_cache_frames(
-                scene, plan.base_dir, plan.frames)
+                scene, plan.base_dir, plan.frames, sequence=plan.sequence)
             for obj in carried:
                 if obj.visible_get(view_layer=self.view_layer):
                     obj.select_set(True)
@@ -348,8 +358,19 @@ def _normalized_path(filepath: str, suffixes=(".abc",)) -> str:
     return str(path)
 
 
+def _require_plan_cache(scene, plan):
+    """The playback consumer must read the same cache the export plan pins."""
+    current = Path(bpy.path.abspath(scene.fluidsim.cache_path)).resolve()
+    if current != Path(plan.base_dir).resolve():
+        raise ExportRefused(
+            "The scene cache path changed after export was prepared. Retry export.")
+
+
 def export_alembic(scene, filepath: str, plan: ExportPlan) -> list[str]:
     """Run the exporter under cache playback; returns restore problems (if any)."""
+    _require_plan_cache(scene, plan)
+    if plan.sequence is not None:
+        plan.sequence.revalidate()
     state = _SceneState(scene, (plan.surface,))
     try:
         state.enter(plan)
@@ -368,6 +389,8 @@ def export_alembic(scene, filepath: str, plan: ExportPlan) -> list[str]:
         )
         if "FINISHED" not in result:
             raise RuntimeError("Blender's Alembic exporter did not finish.")
+        if plan.sequence is not None:
+            plan.sequence.revalidate()
     finally:
         problems = state.restore()
     return problems
@@ -475,6 +498,9 @@ def export_usd(scene, filepath: str, plan: UsdExportPlan) -> list[str]:
     Raises when a point cloud was replaced mid-range anyway (its points would
     be split across prims instead of sampled per frame).
     """
+    _require_plan_cache(scene, plan)
+    if plan.sequence is not None:
+        plan.sequence.revalidate()
     state = _SceneState(scene, plan.objects)
     samplers = _UsdSamplers()
     try:
@@ -500,6 +526,8 @@ def export_usd(scene, filepath: str, plan: UsdExportPlan) -> list[str]:
                 raise RuntimeError("Blender's USD exporter did not finish.")
             replaced = [obj.name for obj, pointer in datablocks
                         if obj.data.as_pointer() != pointer]
+            if plan.sequence is not None:
+                plan.sequence.revalidate()
             if replaced:
                 raise RuntimeError(
                     f"{', '.join(replaced)} changed datablock during the export, "
@@ -689,8 +717,9 @@ CLASSES = (FLUIDSIM_OT_export_alembic, FLUIDSIM_OT_export_usd, FLUIDSIM_OT_expor
 
 
 def register():
-    for cls in CLASSES:
-        bpy.utils.register_class(cls)
+    from ..unregister_guard import register_classes
+
+    register_classes(CLASSES)
 
 
 def unregister():

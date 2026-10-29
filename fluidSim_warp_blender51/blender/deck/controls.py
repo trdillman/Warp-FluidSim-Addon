@@ -37,18 +37,19 @@ class Control:
 
 def operator(target, label, icon, why, *, optional=False, call_context="INVOKE_DEFAULT",
              **properties) -> Control:
-    return Control("operator", target, "", label, icon, f"{why} ({target})", optional,
+    # The tooltip is plain language only: no operator or property names.
+    return Control("operator", target, "", label, icon, why, optional,
                    tuple(sorted(properties.items())), call_context)
 
 
 def setting(target, label, icon, why) -> Control:
     """A scene or domain setting; the declaring group is the one the panel draws."""
     owner = "scene" if target in SCENE_OWNED_SETTINGS else "domain"
-    return Control("property", target, owner, label, icon, f"{why} ({target})")
+    return Control("property", target, owner, label, icon, why)
 
 
 def object_setting(target, label, icon, why, *, optional=False) -> Control:
-    return Control("property", target, "object", label, icon, f"{why} ({target})", optional)
+    return Control("property", target, "object", label, icon, why, optional)
 
 
 # Deck bar -------------------------------------------------------------------
@@ -75,6 +76,17 @@ WHEEL = operator("fluidsim.radial_wheel", "Wheel", "PROP_CON",
                  "Open the wheel of actions for the current stage (Alt+Right-click)")
 BAKE = operator("fluidsim.bake_start", "Bake", "RENDER_ANIMATION",
                 "Start a Production Bake of the frame range")
+# What the Bake slot becomes, following the panel's Production Bake actions
+# (``ui_scene.draw_cache_bake``): progress and Cancel while this scene bakes,
+# Resume or Restart when the cache already holds frames.
+BAKE_PROGRESS = operator("fluidsim.bake_cancel", "Cancel Bake", "RENDER_ANIMATION",
+                         "The Production Bake is running; click to cancel it at the next "
+                         "saved frame")
+BAKE_RESUME = operator("fluidsim.bake_resume", "Resume", "PLAY",
+                       "Resume the Production Bake from its last checkpoint")
+BAKE_RESTART = operator("fluidsim.bake_start", "Restart Bake…", "FILE_REFRESH",
+                        "Replace the existing cache and bake again (asks first)",
+                        restart_existing=True)
 # The Deck's own surfaces: they open the Deck's palette and wheel, so no panel twins them.
 DECK_OPERATORS = frozenset({SEARCH.target, WHEEL.target})
 
@@ -101,6 +113,94 @@ def transport_controls(activity: str, playing: bool, owns_scene: bool) -> tuple[
     return tuple(result)
 
 
+def deck_state(context) -> tuple[str, bool, bool]:
+    """``(activity, playing, owns_scene)`` for the context scene, as the bar reads them."""
+    from ..ui_common import activity_ui_state
+
+    state = activity_ui_state(getattr(context, "scene", None))
+    playing = bool(getattr(getattr(context, "screen", None), "is_animation_playing", False))
+    return str(state.get("id", "IDLE")), playing, bool(state.get("owns_scene"))
+
+
+def scene_is_baking(scene) -> bool:
+    """Whether ``scene`` itself has a running Production Bake."""
+    from .. import production_bake
+
+    return any(baking is scene or baking == scene
+               for baking, _controller in production_bake.active_bakes())
+
+
+def _bake_action(scene) -> str:
+    """``START``, ``RESUME`` or ``RESTART``: the panel's Production Bake action for the cache."""
+    try:
+        import bpy
+
+        from ..ui_cache_state import production_bake_action
+
+        raw = str(bpy.path.abspath(scene.fluidsim.cache_path) or "").strip()
+        return production_bake_action(raw or None).action
+    except Exception:  # noqa: BLE001 - presentation only; the operator re-checks
+        return "START"
+
+
+def bake_control(scene) -> Control:
+    """The Bake slot for ``scene``: progress and Cancel, Resume, Restart, or Bake."""
+    if scene_is_baking(scene):
+        return BAKE_PROGRESS
+    action = _bake_action(scene)
+    if action == "RESUME":
+        return BAKE_RESUME
+    if action == "RESTART":
+        return BAKE_RESTART
+    return BAKE
+
+
+def resolve(context, control) -> Control:
+    """The control a slot stands for right now.
+
+    Play follows the bar's transport (Cancel Bake while baking, Pause while
+    playing), and Bake follows the cache (see :func:`bake_control`), so the wheel
+    and the bar offer the same action in every state.
+    """
+    if control is PLAY:
+        return transport_controls(*deck_state(context))[0]
+    if control is BAKE:
+        return bake_control(getattr(context, "scene", None))
+    return control
+
+
+def _state_reason(context, control) -> str:
+    """Why ``control`` should not run in the current state, beyond its operator's poll."""
+    target = control.target
+    if target not in {STEP.target, APPLY.target, "fluidsim.install_render_nodes"}:
+        return ""
+    scene = getattr(context, "scene", None)
+    if target == APPLY.target:
+        from ..pending_settings import pending_presentation
+
+        if str(pending_presentation(scene).get("action", "NONE")) == "NONE":
+            return "No changes are waiting to be applied"
+        return ""
+    activity, _playing, owns_scene = deck_state(context)
+    if target == STEP.target:
+        # The bar offers Step only where the panel offers Step One Frame.
+        if activity == "CACHE_PLAYBACK":
+            return "Cache playback is on; switch to Live Preview to step the simulation"
+        if not owns_scene:
+            from ..scene_bridge import session
+
+            if getattr(session(), "active", False):
+                return "Another scene owns the solver; release it from that scene first"
+        return ""
+    from ..scene_access import active_domain_object
+
+    if active_domain_object(scene) is None:
+        return _MISSING_GROUP["domain"]
+    if activity == "PRODUCTION_BAKE":
+        return "A Production Bake is running; install the materials when it ends"
+    return ""
+
+
 # Radial wheel: six slots per workflow stage ---------------------------------
 
 STAGES = ("SETUP", "SIMULATE", "LOOK", "BAKE")
@@ -109,7 +209,7 @@ STAGE_LABELS = {"SETUP": "Setup", "SIMULATE": "Simulate", "LOOK": "Look", "BAKE"
 STAGE_SLOTS = OrderedDict((
     ("SETUP", (
         operator("fluidsim.setup_scene", "Set Up Scene", "SCENE_DATA",
-                 "Create a liquid domain and emitter in this scene"),
+                 "Fit a liquid domain around the selected mesh and tag the objects' roles"),
         operator("fluidsim.tag_liquid_emitter", "Emitter", "MOD_FLUIDSIM",
                  "Make the selected object a liquid emitter"),
         operator("fluidsim.tag_collider", "Collider", "MOD_PHYSICS",
@@ -145,8 +245,7 @@ STAGE_SLOTS = OrderedDict((
     )),
     ("BAKE", (
         BAKE,
-        operator("fluidsim.bake_resume", "Resume", "PLAY",
-                 "Resume the Production Bake from its last checkpoint"),
+        BAKE_RESUME,
         operator("fluidsim.cache_preview_start", "Play Cache", "FILE_MOVIE",
                  "Play the baked cache on the timeline"),
         operator("fluidsim.export_alembic", "Alembic", "EXPORT",
@@ -272,6 +371,9 @@ def control_status(context, control) -> tuple[bool, str]:
     if control.kind == "operator":
         if not operator_available(control.target):
             return False, "Not available in this build"
+        reason = _state_reason(context, control)
+        if reason:
+            return False, reason
         import bpy
 
         module, _, name = control.target.partition(".")
@@ -310,20 +412,46 @@ def control_active(context, control) -> bool:
     return bool(getattr(group, control.target, False)) if group is not None else False
 
 
-def run_control(context, control):
-    """Call the control's operator, or toggle its boolean property, as the panel would."""
+# The warning ``fluidsim.toggle_liquid_preview`` gives; the Deck toggle says the same.
+NO_PUBLISHED_PARTICLES = ("Liquid Preview is on but no particles are published yet; "
+                          "play the simulation in a particle view")
+
+
+def _published_particles() -> bool:
+    try:
+        from .. import output_publication
+
+        record = output_publication.latest_published_points()
+    except Exception:  # noqa: BLE001 - only decides whether to warn
+        return True
+    return record is not None and getattr(record, "particle_count", 0) != 0
+
+
+def run_control(context, control, report=None):
+    """Call the control's operator, or toggle its boolean property, as the panel would.
+
+    ``report(kind, message)`` (an operator's ``report``) receives what the panel
+    would say: why an operator call failed, or the Liquid Preview warning.
+    """
     if control.kind == "operator":
         if not operator_available(control.target):
             return {"CANCELLED"}
-        return call_operator(control.target, control.call_context,
-                             **dict(control.properties))[0]
+        result, message = call_operator(control.target, control.call_context,
+                                        **dict(control.properties))
+        if message and report is not None:
+            report({"WARNING"}, f"{control.label}: {message}")
+        return result
     group = property_owner(context, control)
     if group is None or not isinstance(getattr(group, control.target, None), bool):
         return {"CANCELLED"}
-    setattr(group, control.target, not getattr(group, control.target))
+    value = not getattr(group, control.target)
+    setattr(group, control.target, value)
     scene = getattr(context, "scene", None)
     if scene is not None:
         from . import bar
 
-        bar.note_deck_write(scene, control.target)
+        bar.note_deck_write(scene, control.target, group)
+    if (control is LIQUID_PREVIEW and value and report is not None
+            and not _published_particles()):
+        report({"WARNING"}, NO_PUBLISHED_PARTICLES)
     return {"FINISHED"}

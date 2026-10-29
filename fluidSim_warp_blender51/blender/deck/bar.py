@@ -40,9 +40,44 @@ def _scene_key(scene):
     return scene_identity(scene)
 
 
-def note_deck_write(scene, field_name: str) -> None:
-    """Record that a Deck control just wrote ``field_name`` (drives the LIVE chip)."""
-    _FLASHES[_scene_key(scene)] = (str(field_name), _now())
+_SETTINGS_GROUPS = ("FLUIDSIM_PG_scene", "FLUIDSIM_PG_domain", "FLUIDSIM_PG_object")
+
+
+def _rna_name(owner, field_name: str) -> str:
+    try:
+        return str(owner.bl_rna.properties[field_name].name or "")
+    except (AttributeError, KeyError, TypeError, ReferenceError):
+        return ""
+
+
+def field_label(field_name: str, group=None) -> str:
+    """The UI label (RNA name) of a FluidSim setting, never its raw property name.
+
+    ``group`` is the settings group that was written, when the caller has it;
+    otherwise the registered FluidSim settings classes are searched.
+    """
+    name = str(field_name)
+    label = _rna_name(group, name) if group is not None else ""
+    if not label:
+        try:
+            import bpy
+
+            for class_name in _SETTINGS_GROUPS:
+                label = _rna_name(getattr(bpy.types, class_name, None), name)
+                if label:
+                    break
+        except ImportError:
+            label = ""
+    return label or name.replace("_", " ").strip().capitalize()
+
+
+def note_deck_write(scene, field_name: str, group=None) -> None:
+    """Record that a Deck control just wrote ``field_name`` (drives the LIVE chip).
+
+    The chip shows the setting's UI label; pass ``group`` (the group written)
+    when it is at hand so the label comes from exactly that group.
+    """
+    _FLASHES[_scene_key(scene)] = (field_label(field_name, group), _now())
 
 
 def forget_scene_state() -> None:
@@ -101,10 +136,31 @@ class Readout:
     samples: tuple = ()
 
 
+def _solver_frame(scene):
+    """The frame this scene's live solver is on, or ``None`` when it does not own one.
+
+    A Step advances the solver without moving the timeline, so the readout and
+    the sparkline follow the solver's frame while this scene owns it.
+    """
+    if bool(getattr(getattr(scene, "fluidsim", None), "cache_playback_enabled", False)):
+        return None
+    try:
+        from ..scene_bridge import session
+
+        sess = session()
+        if not sess.owns_scene(scene):
+            return None
+        return int(sess.solver.frame)
+    except Exception:  # noqa: BLE001 - presentation only
+        return None
+
+
 def sample_readout(scene) -> Readout:
     """Session stats the solver already writes (``scene_bridge``), plus the ms history."""
     fs = scene.fluidsim
-    frame = int(getattr(scene, "frame_current", 0))
+    frame = _solver_frame(scene)
+    if frame is None:
+        frame = int(getattr(scene, "frame_current", 0))
     step_ms = float(getattr(fs, "stat_step_ms", 0.0) or 0.0)
     history = _SAMPLES.setdefault(_scene_key(scene), [None, deque(maxlen=SPARKLINE_SAMPLES)])
     if history[0] != frame and step_ms > 0.0:
@@ -233,22 +289,31 @@ def _ui_scale(context) -> float:
         return 1.0
 
 
+def overlays_shown(context) -> bool:
+    """Whether the 3D View's Overlays toggle is on (the bar and gizmo labels are overlays)."""
+    space = getattr(context, "space_data", None)
+    if getattr(space, "type", "VIEW_3D") != "VIEW_3D":
+        space = None
+    if space is None:
+        spaces = getattr(getattr(context, "area", None), "spaces", None)
+        space = getattr(spaces, "active", None)
+    overlay = getattr(space, "overlay", None)
+    return bool(getattr(overlay, "show_overlays", True))
+
+
 def current_layout(context):
     """The bar layout for this viewport region, or ``None`` when the Deck is hidden."""
     from . import deck_visible
-    from ..ui_common import activity_ui_state
 
     scene = getattr(context, "scene", None)
     region = getattr(context, "region", None)
-    if scene is None or region is None or not deck_visible(context, scene):
+    if (scene is None or region is None or not deck_visible(context, scene)
+            or not overlays_shown(context)):
         return None
-    state = activity_ui_state(scene)
-    screen = getattr(context, "screen", None)
-    playing = bool(getattr(screen, "is_animation_playing", False))
-    transport = controls.transport_controls(str(state.get("id", "IDLE")), playing,
-                                            bool(state.get("owns_scene")))
+    transport = controls.transport_controls(*controls.deck_state(context))
+    tools = tuple(controls.resolve(context, c) for c in controls.TOOL_CONTROLS)
     return bar_layout(region.width, _ui_scale(context), transport, chip_state(scene),
-                      bake_fraction(scene))
+                      bake_fraction(scene), tools)
 
 
 def hit_test(layout: BarLayout | None, x: float, y: float):
@@ -378,7 +443,8 @@ def _paint(context, layout, palette, hover):
                 width = _draw.text_width(control.label, size)
                 _draw.text((x0 + x1 - width) / 2.0, mid_y, control.label, size, colour)
                 continue
-            fraction = bake if control is controls.BAKE and bake is not None else None
+            # While this scene bakes the Bake slot is a live progress ring with Cancel.
+            fraction = ((bake or 0.0) if control is controls.BAKE_PROGRESS else None)
             r = ICON / 2.0 * s
             if layout.compact:
                 _draw_icon(control.icon, (x0 + x1) / 2.0, (y0 + y1) / 2.0, r, colour,
@@ -386,7 +452,8 @@ def _paint(context, layout, palette, hover):
             else:
                 _draw_icon(control.icon, x0 + PAD * s + r, (y0 + y1) / 2.0, r, colour,
                            tokens.rgba(palette.accent), fraction)
-                label = f"{round(fraction * 100)}%" if fraction is not None else control.label
+                label = (f"{round(fraction * 100)}% Cancel" if fraction is not None
+                         else control.label)
                 _draw.text(x0 + (PAD + ICON + GAP) * s, mid_y, label, size, colour)
         elif item.role == "separator":
             _draw.rect(x0, y0 + 2 * s, x1, y1 - 2 * s, tokens.rgba(palette.text_dim, 0.35))

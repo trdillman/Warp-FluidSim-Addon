@@ -141,11 +141,11 @@ class FLUIDSIM_PT_header_popover(bpy.types.Panel):
         state = activity_ui_state(scene)
         runtime_ready, runtime_message = runtime_ui_state()
         layout.label(text=state["label"], icon=state["icon"])
-        if not runtime_ready:
-            draw_status_message(layout, runtime_message, "ERROR")
 
         domain = active_domain_settings(scene)
         if domain is None:
+            if not runtime_ready:
+                draw_status_message(layout, runtime_message, "ERROR")
             box = layout.box()
             box.label(text="No liquid domain yet", icon="INFO")
             draw_guided_setup_buttons(box)
@@ -154,8 +154,14 @@ class FLUIDSIM_PT_header_popover(bpy.types.Panel):
             draw_pending_apply(layout, scene)
 
             layout.separator()
-            draw_quality(layout, scene)
-            draw_simulate_controls(layout, scene, domain)
+            # Without a usable runtime the simulation will not run: say why
+            # right above the settings and dim them (still editable).
+            if not runtime_ready:
+                draw_status_message(layout, runtime_message, "ERROR")
+            settings = layout.column()
+            settings.active = runtime_ready
+            draw_quality(settings, scene)
+            draw_simulate_controls(settings, scene, domain)
 
         workspace = getattr(context, "workspace", None)
         if getattr(workspace, "name", "") != WORKSPACE_NAME:
@@ -184,11 +190,12 @@ def _header_type():
 
 
 def register():
-    for cls in CLASSES:
-        bpy.utils.register_class(cls)
-    header = _header_type()
-    if header is not None:
-        header.append(draw_header_button)
+    from ..unregister_guard import class_registration
+
+    with class_registration(CLASSES):
+        header = _header_type()
+        if header is not None:
+            header.append(draw_header_button)
 
 
 def unregister():

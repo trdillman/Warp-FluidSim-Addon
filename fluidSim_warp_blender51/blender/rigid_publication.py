@@ -163,35 +163,29 @@ def publish_cache_frame(scene, frame_data) -> int:
     return publish(scene, records, frame)
 
 
-def cache_records(base_dir, frames) -> dict:
-    """``{frame: records}`` for the committed frames of a cache manifest."""
+def cache_records(base_dir, frames, *, sequence=None) -> dict:
+    """Rigid records from one verified committed sequence observation."""
     from ..io import cache_schema
 
-    manifest = cache_schema.load_manifest(cache_schema.manifest_path(base_dir))
-    if manifest is None:
-        return {}
-    result = {}
-    for frame in frames:
-        entry = manifest.frames.get(int(frame))
-        if entry is not None and entry.rigid_bodies:
-            result[int(frame)] = entry.rigid_bodies
-    return result
+    if sequence is None:
+        sequence = cache_schema.observe_committed_sequence(base_dir)
+    return {} if sequence is None else sequence.rigid_records(frames)
 
 
-def carried_objects(scene, base_dir, frames) -> tuple:
+def carried_objects(scene, base_dir, frames, *, sequence=None) -> tuple:
     """Dynamic colliders whose poses the cache holds for ``frames``."""
     uids = {record.object_uid
-            for records in cache_records(base_dir, frames).values()
+            for records in cache_records(base_dir, frames, sequence=sequence).values()
             for record in records}
     if not uids:
         return ()
     return tuple(obj for uid, obj in _bodies_by_uid(scene).items() if uid in uids)
 
 
-def publish_cache_frames(scene, base_dir, frames) -> int:
+def publish_cache_frames(scene, base_dir, frames, *, sequence=None) -> int:
     """Key every cached pose in ``frames`` (the Alembic export pre-pass)."""
     published = 0
-    for frame, records in sorted(cache_records(base_dir, frames).items()):
+    for frame, records in sorted(cache_records(base_dir, frames, sequence=sequence).items()):
         published += publish(scene, records, frame)
     return published
 

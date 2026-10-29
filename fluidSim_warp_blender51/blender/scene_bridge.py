@@ -307,8 +307,6 @@ class Session:
     def sync_scene(self, scene, depsgraph=None, *, capture_first_mesh=True):
         if not self.owns_scene(scene):
             return
-        self.scene_inputs.device = self.solver.device
-        sync_generation = self.scene_inputs.begin_sync()
         # A narrow-band run was admitted without features that keep
         # per-particle interior state. Playback syncs every frame, so a
         # source edit admission would refuse (a Scalar field source) must not
@@ -326,16 +324,15 @@ class Session:
                 if self.current_error(scene) == self.sync_refusal:
                     self.clear_error(scene)
                 self.sync_refusal = ""
+        evaluation = self.scene_inputs.evaluate(
+            scene, depsgraph, device=self.solver.device,
+            include_sources=not refusal, capture_first_mesh=capture_first_mesh)
+        if not refusal:
             self.solver.set_source_batch(
-                self.scene_inputs.gather_sources(
-                    scene, depsgraph, capture_first_mesh=capture_first_mesh,
-                    sync_generation=sync_generation),
-                self.scene_inputs.gather_source_plans(scene, depsgraph))
-        self.solver.set_colliders(self.scene_inputs.gather_colliders(
-            scene, depsgraph, sync_generation=sync_generation))
-        self.solver.set_force_fields(
-            self.scene_inputs.gather_force_fields(scene))
-        self.solver.set_height_source(self.scene_inputs.gather_height_source(scene))
+                evaluation.descriptors, evaluation.source_plans)
+        self.solver.set_colliders(evaluation.colliders)
+        self.solver.set_force_fields(evaluation.force_fields)
+        self.solver.set_height_source(evaluation.height_source)
 
     def prepare_step(self, scene, *, refresh_pending=False, apply_live=True):
         """Reconcile pending signatures and live settings before every step.

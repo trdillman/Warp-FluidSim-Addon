@@ -253,3 +253,50 @@ def test_start_exception_after_animation_begins_cancels_timeline(monkeypatch):
     assert ops.FLUIDSIM_OT_preview_start().execute(context) == {'CANCELLED'}
     assert not context.screen.is_animation_playing
     assert not context.scene.fluidsim.live
+
+
+def _restart_fixture(monkeypatch, *, owns, solver_frame):
+    bpy, ops, context, calls = preview_fixture(monkeypatch)
+    from fluidSim_warp_blender51.blender import pending_settings, scene_bridge
+    monkeypatch.setattr(pending_settings, 'apply_changes', lambda scene, **kw: calls.append('apply'))
+    monkeypatch.setattr(pending_settings, 'change_confirmation_token', lambda scene: 'token')
+    sess = SimpleNamespace(
+        active=owns, owns_scene=lambda _scene: owns,
+        solver=SimpleNamespace(frame=solver_frame), last_frame=1 + solver_frame, start_frame=1)
+    monkeypatch.setattr(scene_bridge, 'session', lambda: sess)
+    dialogs = []
+    context.window_manager = SimpleNamespace(
+        invoke_props_dialog=lambda op: dialogs.append(op) or {'RUNNING_MODAL'})
+    return ops, context, calls, dialogs
+
+
+def test_restart_click_confirms_before_clearing_preview_progress(monkeypatch):
+    ops, context, calls, dialogs = _restart_fixture(monkeypatch, owns=True, solver_frame=11)
+    op = ops.FLUIDSIM_OT_restart_simulation()
+    op.allow_restart = True
+
+    assert op.invoke(context, None) == {'RUNNING_MODAL'}
+    assert dialogs == [op] and calls == []
+
+    class Layout:
+        def __init__(self):
+            self.lines = []
+        def label(self, text='', **_kw):
+            self.lines.append(text)
+    op.layout = Layout()
+    op.draw(context)
+    assert op.layout.lines == [
+        'Restart simulation from frame 1?', 'Current preview progress will be cleared.']
+    assert op.execute(context) == {'FINISHED'}
+    assert calls == ['apply']
+
+
+@pytest.mark.parametrize('owns, solver_frame', [(False, 0), (True, 0)])
+def test_restart_click_without_progress_runs_at_once(monkeypatch, owns, solver_frame):
+    ops, context, calls, dialogs = _restart_fixture(
+        monkeypatch, owns=owns, solver_frame=solver_frame)
+    op = ops.FLUIDSIM_OT_restart_simulation()
+    op.allow_restart = True
+
+    assert op.invoke(context, None) == {'FINISHED'}
+    assert dialogs == [] and calls == ['apply']

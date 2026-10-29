@@ -62,8 +62,19 @@ class _FLUIDSIM_OT_production_bake_modal:
     def poll(cls, context):
         from ..blender import production_bake
 
+        from ..blender.scene_access import active_domain_object
+
         if production_bake.active_bakes():
             cls.poll_message_set("A production bake is already active")
+            return False
+        # Grey the button for refusals known before the click, rather than
+        # failing after it.
+        scene = getattr(context, "scene", None)
+        if active_domain_object(scene) is None:
+            cls.poll_message_set("Set up a liquid domain first to bake")
+            return False
+        if _runtime._unsaved_relative_cache_path(scene):
+            cls.poll_message_set(_runtime.UNSAVED_RELATIVE_CACHE_MESSAGE)
             return False
         return _runtime._runtime_poll(cls)
 
@@ -309,6 +320,15 @@ class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):
     bl_idname = "fluidsim.bake_cancel"
     bl_label = "Cancel Production Bake"
 
+    # Off by default: the button cancels only the bake this scene owns, so a
+    # click in one scene never stops a bake started in another.
+    all_scenes: BoolProperty(
+        name="All Scenes",
+        default=False,
+        options={"SKIP_SAVE"},
+        description="Cancel the running Production Bake even when another scene owns it",
+    )
+
     @classmethod
     def poll(cls, _context):
         from ..blender import production_bake
@@ -318,10 +338,27 @@ class FLUIDSIM_OT_bake_cancel(bpy.types.Operator):
             return False
         return True
 
-    def execute(self, _context):
+    def execute(self, context):
         from ..blender import production_bake
 
-        for scene, controller in production_bake.active_bakes():
+        running = production_bake.active_bakes()
+        if not bool(getattr(self, "all_scenes", False)):
+            key = scene_identity(getattr(context, "scene", None))
+            owned = tuple(
+                (scene, controller) for scene, controller in running
+                if scene_identity(scene) == key)
+            if not owned:
+                names = ", ".join(
+                    f"'{getattr(scene, 'name', '')}'" for scene, _ in running
+                    if getattr(scene, "name", ""))
+                where = f" in scene {names}" if names else " in another scene"
+                self.report(
+                    {"WARNING"},
+                    f"The Production Bake is running{where}; switch to that "
+                    "scene to cancel it")
+                return {"CANCELLED"}
+            running = owned
+        for scene, controller in running:
             controller.request_cancel()
             _update_bake_rna(scene, controller)
         return {"FINISHED"}
@@ -332,6 +369,10 @@ class FLUIDSIM_OT_cache_integrity_scan(bpy.types.Operator):
 
     bl_idname = "fluidsim.cache_integrity_scan"
     bl_label = "Scan Cache Integrity"
+
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_exists_poll(cls, context)
 
     def execute(self, context):
         from ..blender.cache_manager import inspect_cache
@@ -353,6 +394,10 @@ class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
     bl_idname = "fluidsim.cache_remove_orphans"
     bl_label = "Remove Cache Orphans"
     bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_mutation_poll(cls, context)
 
     expected_cache_path: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
     expected_orphans_json: StringProperty(default="[]", options={"HIDDEN", "SKIP_SAVE"})
@@ -408,6 +453,10 @@ class FLUIDSIM_OT_cache_free(bpy.types.Operator):
     bl_label = "Free Cache"
     bl_options = {"REGISTER"}
 
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_mutation_poll(cls, context)
+
     expected_cache_path: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
@@ -449,6 +498,10 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
     bl_idname = "fluidsim.cache_move"
     bl_label = "Move Cache"
     bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_mutation_poll(cls, context)
 
     destination: StringProperty(name="Destination", subtype="DIR_PATH")
     expected_source: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
@@ -492,6 +545,10 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
     bl_label = "Rename Cache"
     bl_options = {"REGISTER"}
 
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_mutation_poll(cls, context)
+
     name: StringProperty(name="New Directory Name", default="fluidsim_cache")
     expected_source: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
@@ -529,6 +586,10 @@ class FLUIDSIM_OT_cache_open_folder(bpy.types.Operator):
 
     bl_idname = "fluidsim.cache_open_folder"
     bl_label = "Open Cache Folder"
+
+    @classmethod
+    def poll(cls, context):
+        return _runtime._cache_exists_poll(cls, context)
 
     def execute(self, context):
         from ..blender.cache_manager import open_cache_folder

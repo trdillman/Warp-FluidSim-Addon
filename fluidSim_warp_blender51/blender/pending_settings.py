@@ -1156,6 +1156,46 @@ def _record_publication_warning(scene, sess, publication) -> bool:
     return True
 
 
+_IMMEDIATE_OUTPUT_TIERS = frozenset({
+    SettingTier.OUTPUT, SettingTier.SURFACE, SettingTier.WHITEWATER})
+
+
+def edit_outcome(scene, name: str, label: str = "") -> tuple[bool, str]:
+    """``(applied now, message)`` for an edit to ``name`` that was just written.
+
+    For adapters (the Liquid Deck palette) that tell the user what an edit did:
+    the decision follows :func:`request_scene_update`, so they render it rather
+    than rebuilding it from tiers. ``applied now`` is true when the edit reached
+    the running simulation or its outputs straight away; otherwise ``message``
+    says why not or when it applies.
+    """
+    label = label or name
+    refusal = _bake_refusal()
+    if refusal:
+        return False, refusal
+    tier = SETTING_TRANSITION_REGISTRY.get(name)
+    if tier in _IMMEDIATE_OUTPUT_TIERS:
+        # Output settings refresh existing outputs with or without a solver.
+        return True, ""
+    try:
+        sess = session()
+        owned = sess.owns_scene(scene)
+    except Exception:  # noqa: BLE001 - no session module means no solver
+        sess, owned = None, False
+    next_run = f"{label} is set; it takes effect on the next run"
+    if tier in {SettingTier.LIVE, SettingTier.SYNC}:
+        return (True, "") if owned else (False, next_run)
+    if tier in {SettingTier.RESET, SettingTier.REINITIALIZE}:
+        if owned and _is_disposable_start(sess):
+            return True, ""  # applied at once: nothing has been simulated yet
+        if owned:
+            presentation = pending_presentation(scene)
+            if presentation["action"] != "NONE":
+                return False, (f"{presentation['summary']}; "
+                               f"{presentation['reason_detail']}")
+    return False, next_run
+
+
 def request_scene_update(scene, action: SceneUpdate):
     """Apply property changes immediately where the live session allows it."""
     from . import output_publication
@@ -1284,14 +1324,15 @@ def _on_load_pre(_filepath):
 
 
 def register_handlers():
-    """Register the persistent handlers owned by Pending Settings."""
-    _remove_handlers()
-    if hasattr(bpy.app.handlers, "depsgraph_update_post"):
-        bpy.app.handlers.depsgraph_update_post.append(_on_interaction_state_update)
-    if hasattr(bpy.app.handlers, "undo_post"):
-        bpy.app.handlers.undo_post.append(_on_interaction_state_update)
-    if hasattr(bpy.app.handlers, "load_pre"):
-        bpy.app.handlers.load_pre.append(_on_load_pre)
+    from ..unregister_guard import handler_registration
+
+    handlers = bpy.app.handlers
+    with handler_registration((
+        (getattr(handlers, "depsgraph_update_post", None), _on_interaction_state_update),
+        (getattr(handlers, "undo_post", None), _on_interaction_state_update),
+        (getattr(handlers, "load_pre", None), _on_load_pre),
+    )):
+        pass
 
 
 def _remove_handlers():

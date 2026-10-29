@@ -1978,6 +1978,17 @@ class _SyncInputs:
     def gather_height_source(self, _scene, _depsgraph=None):
         return None
 
+    def evaluate(self, scene, depsgraph=None, *, device, include_sources=True, **_kwargs):
+        """Same shape as ``SceneInputs.evaluate``; sources only when admitted."""
+        self.device = device
+        return SimpleNamespace(
+            descriptors=tuple(self.gather_sources(scene, depsgraph)) if include_sources else (),
+            source_plans=tuple(self.gather_source_plans(scene, depsgraph)) if include_sources else (),
+            colliders=tuple(self.gather_colliders(scene, depsgraph)),
+            force_fields=tuple(self.gather_force_fields(scene, depsgraph)),
+            height_source=self.gather_height_source(scene, depsgraph),
+            seeds=(), session_generation=self.begin_sync())
+
 
 def test_scene_sync_does_not_install_a_source_narrow_band_refuses(monkeypatch):
     """Playback syncs the scene every frame, past the SYNC property callback.
@@ -2005,7 +2016,7 @@ def test_scene_sync_does_not_install_a_source_narrow_band_refuses(monkeypatch):
 
     assert solver.source_batches == []
     # Colliders are not part of the refusal and keep following the scene.
-    assert solver.collider_batches == [["collider"]]
+    assert solver.collider_batches == [("collider",)]
     assert "Narrow-Band Particles cannot run" in sess.current_error(scene)
     assert "Scalar / Temperature" in sess.current_error(scene)
     assert "Narrow-Band Particles cannot run" in scene.fluidsim.status
@@ -2015,5 +2026,5 @@ def test_scene_sync_does_not_install_a_source_narrow_band_refuses(monkeypatch):
     field.fluidsim.field_operation = "PRESSURE"
     sess.sync_scene(scene, object())
 
-    assert solver.source_batches == [(["gathered-source"], ("gathered-plan",))]
+    assert solver.source_batches == [(("gathered-source",), ("gathered-plan",))]
     assert sess.current_error(scene) == ""

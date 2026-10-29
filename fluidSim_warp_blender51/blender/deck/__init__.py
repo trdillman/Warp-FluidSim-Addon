@@ -85,10 +85,12 @@ def _on_deck_load_post(_filepath):
     from ..file_compat import scene_saved_by_deck_release
 
     from . import modal
+    from .registry import REGISTRY
 
     # Retire the old file's event modals even if Blender dropped them without
-    # cancel(); the ensure timer then starts one per window again.
-    modal.new_generation()
+    # cancel(); the ensure timer then starts one per window on its next tick,
+    # which is brought forward so the bar takes clicks as soon as the file opens.
+    modal.restart_after_load(REGISTRY)
     context = bpy.context
     data = getattr(bpy, "data", None)
     if deck_mode(context) == "AUTO" and getattr(data, "filepath", ""):
@@ -110,6 +112,10 @@ def register():
     from . import bar, gizmos, modal, palette, wheel
     from .registry import REGISTRY
 
+    # The registry owns whole-step teardown. Reject re-entry before touching its
+    # existing resources, so a failed second enable cannot tear down the first.
+    if any(REGISTRY.counts().values()):
+        raise RuntimeError("FluidSim Liquid Deck is already registered")
     try:
         for cls in palette.CLASSES + wheel.CLASSES + modal.CLASSES + gizmos.CLASSES:
             REGISTRY.register_class(cls)

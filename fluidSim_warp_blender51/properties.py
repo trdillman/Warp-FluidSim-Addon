@@ -1604,7 +1604,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         description=(
             "Cap the marching-cubes dense extraction span on any axis, in surface voxels. "
             "Higher values allow larger active surfaces but can sharply increase VRAM and extraction time; lower values fail surface extraction sooner when the liquid span exceeds the cap. "
-            "No effect with sparse extraction (Warp 1.18 or newer), which has no span cap; this setting is removed in 4.1"))
+            "No effect with sparse extraction (Warp 1.18 or newer), which has no span cap; it still applies on Warp 1.17"))
     surface_update_cadence: EnumProperty(
         name="Update Cadence", items=_items(SurfaceUpdateCadence),
         default="FRAME", update=_request_surface_refresh,
@@ -1883,12 +1883,31 @@ CLASSES = (
 
 
 def register():
-    for cls in CLASSES:
-        bpy.utils.register_class(cls)
-    bpy.types.Scene.fluidsim = PointerProperty(type=FLUIDSIM_PG_scene)
-    bpy.types.Object.fluidsim = PointerProperty(type=FLUIDSIM_PG_object)
-    # Per-object home for domain settings; the solver reads only this group.
-    bpy.types.Object.fluidsim_domain = PointerProperty(type=FLUIDSIM_PG_domain)
+    from .unregister_guard import class_registration
+
+    bindings = (
+        (bpy.types.Scene, "fluidsim", FLUIDSIM_PG_scene),
+        (bpy.types.Object, "fluidsim", FLUIDSIM_PG_object),
+        (bpy.types.Object, "fluidsim_domain", FLUIDSIM_PG_domain),
+    )
+    # Do not overwrite properties owned by an earlier registration.
+    for owner, name, _kind in bindings:
+        if hasattr(owner, name):
+            raise RuntimeError(f"FluidSim property already registered: {owner.__name__}.{name}")
+    added = []
+    with class_registration(CLASSES):
+        try:
+            for owner, name, kind in bindings:
+                setattr(owner, name, PointerProperty(type=kind))
+                added.append((owner, name))
+        except Exception as exc:
+            for owner, name in reversed(added):
+                try:
+                    delattr(owner, name)
+                except Exception as undo_exc:
+                    exc.add_note(f"FluidSim property rollback {name}: {undo_exc!r}")
+                    print(f"FluidSim: could not roll back property {name}: {undo_exc!r}")
+            raise
 
 
 def unregister():

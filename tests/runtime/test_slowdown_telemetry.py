@@ -66,7 +66,10 @@ def test_solver_reset_clears_surface_extractor_buffers():
     solver.grid = Grid()
     extractor = Extractor()
     solver.settings = SimpleNamespace()
-    solver.surface = SimpleNamespace(reset=lambda: extractor.reset_buffers())
+    solver.surface = SimpleNamespace(
+        reset=lambda: extractor.reset_buffers(),
+        invalidate_particle_state=lambda: None,
+    )
     solver.frame = 99
     solver.sim_time = 1.0
 

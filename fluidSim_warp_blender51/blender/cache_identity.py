@@ -73,15 +73,12 @@ def scene_key(scene) -> str:
 
 
 def _geometry_record(obj, depsgraph) -> dict:
-    evaluated = obj.evaluated_get(depsgraph) if depsgraph is not None else obj
-    mesh = None
-    try:
-        if getattr(evaluated, "type", None) == "MESH":
-            mesh = (
-                evaluated.to_mesh()
-                if hasattr(evaluated, "to_mesh")
-                else evaluated.data
-            )
+    from .evaluated_geometry import EvaluatedGeometry
+
+    geometry = EvaluatedGeometry(obj, depsgraph)
+    evaluated = geometry.evaluated
+    if getattr(evaluated, "type", None) == "MESH":
+        with geometry.mesh(data_fallback=True, tolerate_release_error=True) as mesh:
             vertices = getattr(mesh, "vertices", ())
             coords = np.empty(len(vertices) * 3, dtype=np.float32)
             if vertices:
@@ -92,20 +89,11 @@ def _geometry_record(obj, depsgraph) -> dict:
                 "vertex_bytes": coords.tobytes(),
                 "polygon_count": len(getattr(mesh, "polygons", ())),
             }
-        data = getattr(evaluated, "data", None)
-        return {
-            "kind": getattr(evaluated, "type", ""),
-            "point_count": len(getattr(data, "points", ())),
-        }
-    finally:
-        if (
-            mesh is not None
-            and hasattr(evaluated, "to_mesh_clear")
-        ):
-            try:
-                evaluated.to_mesh_clear()
-            except RuntimeError:
-                pass
+    data = getattr(evaluated, "data", None)
+    return {
+        "kind": getattr(evaluated, "type", ""),
+        "point_count": len(getattr(data, "points", ())),
+    }
 
 
 def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:

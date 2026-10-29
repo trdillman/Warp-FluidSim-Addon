@@ -532,7 +532,10 @@ def _run_phase(phase, scene):
         )
         check(
             "Lifecycle starts expanded",
-            "DEFAULT_CLOSED" not in bpy.types.FLUIDSIM_PT_scene_lifecycle.bl_options,
+            # Expanded panels declare no bl_options at all (66e25ce8).
+            "DEFAULT_CLOSED" not in getattr(
+                bpy.types.FLUIDSIM_PT_scene_lifecycle, "bl_options", set()
+            ),
         )
         scene.fluidsim.ui_mode = "BASIC"
 

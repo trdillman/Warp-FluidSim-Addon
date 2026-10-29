@@ -447,19 +447,33 @@ PANEL_CLASSES = (
 
 
 def register():
-    for cls in PANEL_CLASSES:
-        bpy.utils.register_class(cls)
+    from ..unregister_guard import class_registration
 
-    # Load preview icons if images exist
-    pcoll = get_preview_collection()
-    if pcoll is not None:
-        for demo_id in DEMO_CATALOG:
-            preview_path = resolve_demo_preview_path(demo_id)
-            if preview_path and preview_path.is_file() and demo_id not in pcoll:
-                try:
-                    pcoll.load(demo_id, str(preview_path), "IMAGE")
-                except Exception:
-                    pass
+    previous_collection = _preview_collection
+    added_icons = []
+    with class_registration(PANEL_CLASSES):
+        try:
+            pcoll = get_preview_collection()
+            if pcoll is not None:
+                for demo_id in DEMO_CATALOG:
+                    preview_path = resolve_demo_preview_path(demo_id)
+                    if preview_path and preview_path.is_file() and demo_id not in pcoll:
+                        try:
+                            pcoll.load(demo_id, str(preview_path), "IMAGE")
+                            added_icons.append(demo_id)
+                        except Exception:
+                            pass  # optional missing/unsupported preview image
+        except Exception as exc:
+            if previous_collection is None:
+                cleanup_preview_icons()
+            else:
+                for demo_id in reversed(added_icons):
+                    try:
+                        del pcoll[demo_id]
+                    except Exception as undo_exc:
+                        exc.add_note(f"FluidSim preview icon rollback: {undo_exc!r}")
+                        print(f"FluidSim: could not roll back preview icon: {undo_exc!r}")
+            raise
 
 
 def unregister():

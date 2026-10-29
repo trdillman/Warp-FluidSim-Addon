@@ -171,3 +171,30 @@ def test_render_visibility_still_shows_enabled_outputs(monkeypatch):
     assert objects[output.WHITEWATER_NAME].hide_render is True
     for name in (output.FOAM_NAME, output.BUBBLES_NAME, output.SPRAY_NAME):
         assert objects[name].hide_render is False, name
+
+
+@pytest.mark.parametrize("mode,typed,combined", [
+    ("COMBINED", False, True), ("SEPARATE", True, False),
+    ("BOTH", True, True), ("unknown", False, True)])
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("show", [False, True])
+def test_family_policy_resolves_modes_materials_radii_and_legacy(mode, typed, combined, enabled, show):
+    scene = _scene(surface_enabled=enabled, whitewater_enabled=enabled, mode=mode)
+    fs = scene.fluidsim
+    fs.show_surface = fs.show_particles = fs.show_whitewater = show
+    fs.particle_display_scale, fs.whitewater_display_scale = 2.0, 3.0
+    policies = {p.name: p for p in output.output_family_policy(scene, voxel_size=0.1)}
+    assert policies[output.SURFACE_NAME].visible == (show and enabled)
+    assert policies[output.PARTICLES_NAME].visible == show
+    assert policies[output.PARTICLES_NAME].radius == pytest.approx(0.05)
+    assert policies[output.PARTICLES_NAME].radius_scale == 2.0
+    combined_policy = policies[output.WHITEWATER_NAME]
+    assert combined_policy.visible == (show and enabled and combined)
+    assert combined_policy.visible_with_legacy(1) == (show and enabled)
+    for name, material in ((output.FOAM_NAME, "ensure_foam_material"),
+                           (output.BUBBLES_NAME, "ensure_bubble_material"),
+                           (output.SPRAY_NAME, "ensure_spray_material")):
+        assert policies[name].visible == (show and enabled and typed)
+        assert policies[name].material == material
+        assert policies[name].radius == pytest.approx(0.045)
+        assert policies[name].radius_scale == 3.0
