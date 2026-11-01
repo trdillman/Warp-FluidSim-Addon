@@ -1,5 +1,11 @@
 # 4.1.0 Plan: Archive Review and Integration
 
+> Scope decision, 2026-11-01: ST-FLIP is permanently retired from all project
+> scope. Native GPU interop and particle-surface rendering APIs are reactivated
+> for recovered-source review and a new implementation/validation plan; their
+> dependency/runtime qualification remains open, with no merge/release acceptance.
+> This supersedes older experiment decline/obsolete classifications below.
+
 Date: 2026-10-16, re-ranked 2026-10-17 · Baseline: origin/master `454839e` (v4.0.0)
 
 ## 0. Status on master (2026-10-23, `8cd30c0`)
@@ -106,9 +112,9 @@ including tests and a GUI gate where the item changes sim output.
 | 20 | Species-v2 extended transport | `archive/codex/species-v2` | M | 16–30 | Yes, opt-in | Defer to 4.2 |
 | 21 | Guide to Target effect | `RELEASE_4_0_PLAN.md` §8 | M | 12–20 | Opt-in | Defer |
 | 22 | Rigid body-to-body / body-to-static contact | CHANGELOG 4.0.0 | M | 16+ | Opt-in | Defer |
-| 23 | ST-FLIP: needs a conservation reference gate first | `archive/worktree-stflip-implementation` | M | 20–40 | Yes | Defer |
+| 23 | Retired item (owner decision 2026-11-01; permanently outside project scope) | Historical ST-FLIP archive only | — | — | — | Removed; never schedule |
 | 24 | Effect Graph node editor | `RELEASE_4_0_PLAN.md` §8 | M | 40+ | No | Defer |
-| 25 | Native GPU interop requalification | `archive/wt-interop-requalification-*`, `codex/native-gpu-interop*` | L | 40+ | High risk | No: declined in 4.0 plan |
+| 25 | Native GPU interop requalification | `archive/wt-interop-requalification-*`, `codex/native-gpu-interop*` | L | Re-plan | High risk | Reactivated for recovered-source review and a new validation plan (2026-11-01); dependency/runtime qualification open, no merge acceptance |
 | — | Adaptive grids, `wp.Tape` fitting, zero-copy viewport | `RELEASE_4_0_PLAN.md` | L-M | 80+ / research | — | No |
 
 ## 3. 4.1.0 scope (balanced cut)
