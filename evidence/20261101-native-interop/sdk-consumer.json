@@ -1,0 +1,92 @@
+{
+  "status": "passed",
+  "pid": 25640,
+  "sdk_version": "0.1.0a3.dev0",
+  "sdk_path": "C:\\workspace\\interop-acceptance-20261101\\site-packages\\blender_vulkan_interop\\__init__.py",
+  "sdk_api_sha256": "f70bfff68590228fd500da24de00ead12e7bfc51eaedd575ad5f69b24c1b5422",
+  "blender_build": "fbe6228777e7",
+  "blender_version": [
+    5,
+    2,
+    0
+  ],
+  "python": "3.13.13 (main, May  8 2026, 12:37:03) [MSC v.1944 64 bit (AMD64)]",
+  "backend": "VULKAN",
+  "warp": "1.18.0",
+  "device": "cuda:0",
+  "counts": [
+    {
+      "count": 0,
+      "publish": true,
+      "close": "completed"
+    },
+    {
+      "count": 3,
+      "publish": true,
+      "texture_verified": true,
+      "frame": 0,
+      "width": 4096,
+      "height": 1,
+      "close": "completed"
+    },
+    {
+      "count": 4095,
+      "publish": true,
+      "texture_verified": true,
+      "frame": 0,
+      "width": 4096,
+      "height": 1,
+      "close": "completed"
+    },
+    {
+      "count": 4096,
+      "publish": true,
+      "texture_verified": true,
+      "frame": 0,
+      "width": 4096,
+      "height": 1,
+      "close": "completed"
+    },
+    {
+      "count": 4097,
+      "publish": true,
+      "texture_verified": true,
+      "frame": 0,
+      "width": 4096,
+      "height": 2,
+      "close": "completed"
+    },
+    {
+      "count": 4194304,
+      "publish": true,
+      "texture_verified": true,
+      "frame": 0,
+      "width": 4096,
+      "height": 1024,
+      "close": "completed"
+    }
+  ],
+  "draw_samples": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      1.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+    ]
+  ],
+  "correctness_readback": true,
+  "performance_qualification": false,
+  "elapsed_seconds": 13.184163900004933
+}

@@ -188,6 +188,8 @@ class Session:
         ``admitted_effects`` are the effect instances the candidate was
         admitted with.
         """
+        from . import gpu_particle_owner
+        gpu_particle_owner.reset_runtime()
         old_solver = self.solver
         old_inputs = self.scene_inputs
         self.solver = candidate
@@ -206,6 +208,8 @@ class Session:
             release_cuda_memory(retired_device)
 
     def _clear_runtime(self):
+        from . import gpu_particle_owner
+        gpu_particle_owner.reset_runtime()
         solver = self.solver
         device = getattr(solver, "device", None) or self.device
         self.solver = None
@@ -495,6 +499,9 @@ class Session:
             if warning:
                 self.set_error(scene, warning)
                 fs.status = f"{fs.status} — {warning}"
+        if publish_outputs:
+            from . import gpu_particle_owner
+            gpu_particle_owner.publish_scene(scene, self, stats.active_particles)
         return stats
 
     def reset(self, scene, *, depsgraph=None):

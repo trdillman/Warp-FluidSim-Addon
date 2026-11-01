@@ -1,0 +1,25 @@
+{
+  "before_save": {
+    "owner_active": true,
+    "prk_count": 5984,
+    "preview_output_hidden": true
+  },
+  "after_load": {
+    "owner_none": true,
+    "retirement_pending": false,
+    "retired_count": 0,
+    "restart_required": false,
+    "error": null,
+    "persistent_handler": true,
+    "output_visible": false
+  },
+  "restart": {
+    "initialize": "FINISHED",
+    "step": "FINISHED",
+    "count": 5984,
+    "owner_active": true,
+    "prk_count": 5984
+  },
+  "status": "failed",
+  "failure": "output hidden state persisted into saved blend"
+}

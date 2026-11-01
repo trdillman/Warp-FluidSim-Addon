@@ -1,0 +1,12 @@
+{
+  "owner": "Tyler / FluidSim integration agents",
+  "run_id": "20261101-native-interop",
+  "source": "source fingerprints in SOURCE_FINGERPRINT.json",
+  "absolute_path": "C:\\workspace\\fluidsim-native-interop-clean-20261101\\evidence\\20261101-native-interop",
+  "state": "retained PR qualification evidence",
+  "budget_bytes": 104857600,
+  "expiry": "retain with PR and private dependency versions",
+  "active_gpu_lease": false,
+  "retention_reason": "Exact-build integration correctness evidence; not release qualification",
+  "protected_evidence": true
+}

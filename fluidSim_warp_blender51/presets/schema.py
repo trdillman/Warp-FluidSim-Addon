@@ -150,7 +150,7 @@ SCENE_OWNED_SETTINGS = frozenset({
     "ui_mode", "quality", "live", "playback_advanced_expanded",
     "max_frame_catchup", "domain_object", "capacity_show_alternatives",
     "surface_advanced_expanded", "liquid_view_mode", "show_surface",
-    "show_particles", "show_whitewater", "particle_display_fraction",
+    "show_particles", "show_whitewater", "gpu_particle_preview", "particle_display_fraction",
     "particle_display_scale", "surface_attribute_mode",
     "particle_attribute_mode", "whitewater_attribute_mode",
     "whitewater_output_mode", "whitewater_display_scale",

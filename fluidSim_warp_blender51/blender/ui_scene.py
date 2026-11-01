@@ -940,6 +940,7 @@ class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):
         surface = _gated(layout, fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"} and _surface_enabled(context))
         surface.prop(fs, "surface_attribute_mode")
         particles = _gated(layout, fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"})
+        particles.prop(fs, "gpu_particle_preview")
         particles.prop(fs, "particle_display_fraction")
         particles.prop(fs, "particle_display_scale")
         particles.prop(fs, "particle_attribute_mode")
