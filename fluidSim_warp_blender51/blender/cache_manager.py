@@ -107,13 +107,16 @@ def foreign_cache_entries(path: Path | str) -> tuple[str, ...]:
                 "logs": r"bake\.log"}
     for entry in base.iterdir():
         name = entry.name.lower()
+        canonical = base / name
+        # Lowercasing alone must not claim a distinct directory on POSIX.
+        same_name = entry.name == name or (canonical.exists() and entry.samefile(canonical))
         linked = entry.is_symlink() or getattr(entry, "is_junction", lambda: False)()
-        if not linked and name in patterns and entry.is_dir():
+        if not linked and same_name and name in patterns and entry.is_dir():
             for child in entry.iterdir():
                 if (child.is_symlink() or getattr(child, "is_junction", lambda: False)()
                         or not child.is_file() or not re.fullmatch(patterns[name], child.name)):
                     foreign.append(child.relative_to(base).as_posix())
-        elif not linked and entry.is_file() and (
+        elif not linked and same_name and entry.is_file() and (
                 name in files or re.fullmatch(r"fluidsim_-?[0-9]+\.npz", name)):
             continue
         else:

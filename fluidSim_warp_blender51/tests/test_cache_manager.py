@@ -420,3 +420,24 @@ def test_whole_cache_accepts_interrupted_writer_files(tmp_path, operation):
     else:
         destination = rename_cache(folder, "renamed")
         assert (destination / "frames/frame_000001.npz.abcd1234.tmp").read_bytes() == b"partial"
+
+
+@pytest.mark.parametrize("operation", ["free", "move", "rename"])
+def test_whole_cache_refuses_distinct_uppercase_directory(tmp_path, operation):
+    folder = tmp_path / "cache"
+    _make_cache(folder)
+    upper = folder / "FRAMES"
+    upper.mkdir(exist_ok=True)
+    if upper.samefile(folder / "frames"):
+        pytest.skip("filesystem is case insensitive")
+    foreign = upper / "frame_000001.npz"
+    foreign.write_bytes(b"unrelated")
+    before = _tree(folder)
+    with pytest.raises(ValueError, match="FRAMES"):
+        if operation == "free":
+            free_cache(folder)
+        elif operation == "move":
+            move_cache(folder, tmp_path / "moved")
+        else:
+            rename_cache(folder, "renamed")
+    assert _tree(folder) == before
