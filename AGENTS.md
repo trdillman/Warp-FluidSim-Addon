@@ -13,14 +13,24 @@ not qualify a release candidate.
 
 Build the Blender 5.2 FluidSim Warp add-on from the in-repo requirements. Keep simulation GPU-resident, support interactive viewport playback, and preserve the listed FluidSim features. The original porting contracts (enums, kernel inventory, dispatch/custom-kernel contracts, UI behavior, profiling, validation targets) were removed from the tree and live in git history. The live field-storage contract is a sparse tiled leaf grid: fixed 8x8x8 leaf tiles addressed through a flat leaf table, without hierarchical tree storage.
 
-## Branched experiments are not merge candidates
+## Experiment scope decision — 1 November 2026
 
-The native GPU interop checkouts `…_port_native_interop_main_20260715` (`codex/native-gpu-interop-main-20260715`) and `…_port_native_interop` (`codex/native-gpu-interop`), the nested rendering-APIs checkout `.claude/worktrees/particle-surface-rendering-apis-f62356` (`claude/particle-surface-rendering-apis-f62356`), and the nested ST-FLIP checkout `.claude/worktrees/stflip-implementation` (`worktree-stflip-implementation`) are archived **branched experiments**, not genuine worktree candidates, pending features, or merge-ready implementations. Their staged, unstaged, committed, benchmark, documentation, backlog, and evidence files are experimental records only.
+The owner permanently removed ST-FLIP (Spatiotemporal FLIP / Variable
+Projection) from FluidSim's global project scope. Its solver, settings and UI
+were removed in 3.0. Do not implement, schedule, merge or reactivate ST-FLIP.
+Keep historical tags, changelogs, migration notes, evidence and legacy-schema
+comparison support as records, not revival candidates. Ordinary FLIP/APIC
+remains in scope.
 
-- Do not recommend, schedule, rebase, merge, cherry-pick, or extract changes from these experiments merely because a worktree or branch exists.
-- Exclude all four from merge-readiness lists and conflict-driven integration plans. If inventorying worktrees, label them `EXPERIMENT — NOT A MERGE CANDIDATE`.
-- Do not describe their overlap with active code or documentation as a future merge requirement. It is only historical collision information.
-- Reuse requires an explicit user request to reactivate the experiment plus a new implementation and validation plan; ordinary cleanup or integration work is not authorization.
+The owner reactivated native GPU interop (`codex/native-gpu-interop*`) and
+particle-surface rendering APIs
+(`claude/particle-surface-rendering-apis-f62356`) for recovered-source review
+and a new implementation and validation plan. Recover the actual experimental
+sources first, work in clean isolated branches based on fresh `origin/master`,
+then qualify dependencies and runtime behavior with current tests and evidence
+before proposing reviewable PRs. Dependency/runtime qualification remains open;
+historical results do not establish current acceptance. This does not authorize
+merge or release.
 
 ## Architecture ownership
 

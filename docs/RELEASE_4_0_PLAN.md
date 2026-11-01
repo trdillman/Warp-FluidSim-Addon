@@ -1,5 +1,11 @@
 # FluidSim Warp 4.0 — release plan
 
+> Scope decision, 2026-11-01: ST-FLIP is permanently retired from all project
+> scope. Native GPU interop and particle-surface rendering APIs are reactivated
+> for recovered-source review and a new implementation/validation plan; their
+> dependency/runtime qualification remains open, with no merge/release acceptance.
+> This supersedes older experiment decline/obsolete classifications below.
+
 Status: proposal, 2026-10-14. Baseline is master `296fa95` (3.2.1: Blender 5.2 LTS,
 Warp 1.17.0 cu12 installed from Preferences, CUDA only, Windows certified, Linux
 packaged, 2936+ tests, GUI gate reference hash `8da88683…2105`).
@@ -214,8 +220,8 @@ Spec: `SPEC-warp-118-surface.md`.
   sparse-grid FLIP/APIC solver with hash-free P2G/G2P; the SPH data-structure work in
   the dossier does not apply (Appendix A).
 - **Neural surrogate replacing the solver.** Only the gated initial-guess use (§5).
-- **ST-FLIP re-introduction.** Removed in 3.0 for lack of a conservation reference;
-  the published method (TOG 45(4), 2026) is a candidate for 4.1 with a reference gate.
+- **ST-FLIP.** Removed in 3.0 and permanently outside project scope by the
+  owner decision of 2026-11-01. It is not a future release candidate.
 - **CPU or macOS simulation.** Playback-only stays.
 - **Adaptive / multi-resolution grids.** 4.1+.
 
@@ -293,7 +299,7 @@ Fluid Rendering" (2026-10-14). Status key: **shipped** (already here), **adopt**
 | §6.2 invariant 2, "raw draw calls fail without a bound VAO in 5.2" | n/a | Not applicable to the `gpu` module path, which owns its own batches. |
 | §6.2 invariant 3, graph-capture boundaries | shipped | The pressure, viscosity and whitewater paths already capture fixed-shape kernels with conditional graphs (`wp.capture_while`, Warp ≥ 1.8); allocation stays outside capture. |
 | [WHK17] infinite continuous adaptivity | decline for 4.0 | Grid solver; adaptivity would be a multi-resolution grid programme (4.1+). Narrow band (3.0) covers the particle-count half. |
-| [Bra26] Spatiotemporal FLIP | decline for 4.0 | Implemented pre-3.0 and removed in 3.0 for lack of a conservation reference; the TOG paper now exists and a 4.1 re-introduction needs that reference gate first. |
+| [Bra26] Spatiotemporal FLIP | permanently retired | Removed in 3.0; the owner decision of 2026-11-01 removes it from all future project scope. Retain the citation as historical research context only. |
 | [BK15] DFSPH, [MM13] PBF, [Aki+12] rigid-fluid coupling | adapt | Only the boundary-sample force/torque accumulation idea from Akinci is reused, on the grid solver (§3). |
 | [TY18] narrow-range filter | adopt | §1. |
 | [Mor+24], [Wol22] | partial | Blue-noise jitter only (§1 thickness pass). |

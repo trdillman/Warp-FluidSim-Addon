@@ -574,7 +574,7 @@ and promoted demo evidence are recorded below the baseline.
 | Custom Effects supplied-Warp proof | Eight built-ins plus positive/negative fixtures compiled and executed on Warp 1.16.0 CPU; false-positive compile cases were rejected |
 | Custom Effects supplied-Blender proof | Three static validation/review scenes, F12 evidence, Test/Apply, controller, order/mute/solo/duplicate, line mapping, trust, and save/reopen passed; this is not live demo-playback proof |
 | Release workflow coverage | Linux package job now runs and uploads the native Properties UI report in addition to P4/P5 Warp, Custom Effects Warp/Blender, package build, and installed smoke evidence |
-| NVIDIA CUDA solver gate | **Passed 21/21**, including pressure, viscosity, collision/sink masks, ST-FLIP, surface tension, and bounded diagnostics |
+| Historical 1.0.255 NVIDIA CUDA solver gate | **Passed 21/21 at that historical candidate**, including pressure, viscosity, collision/sink masks, ST-FLIP, surface tension, and bounded diagnostics. ST-FLIP was removed in 3.0 and permanently retired from project scope on 2026-11-01; this receipt does not describe current solver capabilities. |
 | Interactive user path | **Passed**: 7.785 ms mean viewport publication, 23.353 ms mean total, with no added readbacks, synchronization, Blender ID churn, depsgraph updates, or structural replacement |
 
 The GUI-inclusive production gate proves the current Windows source, Blender

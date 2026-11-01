@@ -49,13 +49,18 @@ See [`docs/ARTIST_WORKFLOWS.md`](docs/ARTIST_WORKFLOWS.md) for the consequences
 of each action, effect trust, safe versus structural changes, cached playback,
 and the Advanced diagnostic controls.
 
-## Archived experiments
+## Experiment scope
 
-The following checkouts are historical branched experiments and are **not merge candidates**:
+ST-FLIP (Spatiotemporal FLIP / Variable Projection) is permanently outside
+FluidSim's project scope by the owner's 1 November 2026 decision. Its solver,
+settings and UI were removed in 3.0. Historical records and legacy benchmark
+schema comparisons remain evidence, not implementation or revival candidates.
+The ordinary FLIP/APIC solver remains in scope.
 
-- `codex/native-gpu-interop-main-20260715` in the `..._port_native_interop_main_20260715` checkout;
-- `codex/native-gpu-interop` in the `..._port_native_interop` checkout;
-- `claude/particle-surface-rendering-apis-f62356` in `.claude/worktrees/particle-surface-rendering-apis-f62356`;
-- `worktree-stflip-implementation` in `.claude/worktrees/stflip-implementation`.
-
-Do not merge, rebase, cherry-pick, or extract from them unless the experiment is explicitly reactivated with a new implementation and validation plan.
+Native GPU interop (`codex/native-gpu-interop*`) and particle-surface rendering
+APIs (`claude/particle-surface-rendering-apis-f62356`) are reactivated for
+recovered-source review and a new implementation/validation plan. Use clean
+isolated branches based on fresh `origin/master`; historical experiment results
+do not qualify a current candidate. Dependency/runtime qualification is open.
+Reviewable PRs require current tests and evidence; reactivation does not
+authorize merge or release.
