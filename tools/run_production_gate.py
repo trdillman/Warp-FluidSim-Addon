@@ -166,6 +166,9 @@ SOURCE_REPORT_ACCEPTANCE = (
 # tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
+    "tests/acceptance/blender_pr41_safety_acceptance.py": (
+        "Standalone RNA deletion/recreation and save/reopen stress probe; run in "
+        "an isolated factory-startup process, not the shared acceptance batch."),
     "tests/acceptance/blender_41_ui_acceptance.py":
         "focused foreground UI review via launch_profile_safe_addon_review.py; requires a designated domain and profile-safe temporary add-on",
     "tests/acceptance/blender_deck_gizmo_realtime_acceptance.py":
