@@ -401,6 +401,7 @@ def test_double_click_cannot_dispatch_replacement_cancel_control(monkeypatch):
     monkeypatch.setattr(modal.bar, "current_layout", lambda _ctx: layout)
     operator.modal(context, _event("LEFTMOUSE", 120, 20, "DOUBLE_CLICK"))
     assert ran == [original]
+    assert operator.modal(context, _event("LEFTMOUSE", 120, 20, "RELEASE")) == {"RUNNING_MODAL"}
 
 
 def test_double_click_does_not_pause_new_playback(monkeypatch):
