@@ -381,3 +381,42 @@ def test_rename_refuses_a_cache_folder_holding_foreign_files(tmp_path):
         rename_cache(folder, "renamed")
 
     assert (folder / "scene.blend").is_file()
+
+
+@pytest.mark.parametrize("relative", ["notes.tmp", "frames/render.png", "checkpoints/scene.blend", "logs/assets/wood.png", "frames/frame_fake.npz"])
+@pytest.mark.parametrize("operation", ["free", "move", "rename"])
+def test_whole_cache_preserves_nested_foreign_data(tmp_path, relative, operation):
+    folder = tmp_path / "cache"
+    _make_cache(folder)
+    foreign = folder / relative
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign.write_bytes(b"precious unrelated data")
+    before = _tree(folder)
+    with pytest.raises(ValueError):
+        if operation == "free":
+            free_cache(folder)
+        elif operation == "move":
+            move_cache(folder, tmp_path / "moved")
+        else:
+            rename_cache(folder, "renamed")
+    assert _tree(folder) == before
+    assert foreign.read_bytes() == b"precious unrelated data"
+    assert not (tmp_path / "moved").exists()
+    assert not (tmp_path / "renamed").exists()
+
+
+@pytest.mark.parametrize("operation", ["free", "move", "rename"])
+def test_whole_cache_accepts_interrupted_writer_files(tmp_path, operation):
+    folder = tmp_path / "cache"
+    _make_cache(folder)
+    for directory, prefix in (("frames", "frame"), ("checkpoints", "checkpoint")):
+        (folder / directory / (prefix + "_000001.npz.abcd1234.tmp")).write_bytes(b"partial")
+    if operation == "free":
+        free_cache(folder)
+        assert not folder.exists()
+    elif operation == "move":
+        destination = move_cache(folder, tmp_path / "moved")
+        assert (destination / "frames/frame_000001.npz.abcd1234.tmp").read_bytes() == b"partial"
+    else:
+        destination = rename_cache(folder, "renamed")
+        assert (destination / "frames/frame_000001.npz.abcd1234.tmp").read_bytes() == b"partial"

@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import fnmatch
 import hashlib
 import os
-from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import uuid
+from dataclasses import dataclass
+from pathlib import Path
 
 from ..io.cache import (
     CACHE_FORMAT_VERSION,
     LEGACY_CACHE_MESSAGE,
-    LEGACY_FRAME_GLOB,
     detect_cache_format,
 )
 from ..io.cache_schema import (
@@ -98,24 +96,28 @@ def _require_managed_cache_directory(path: Path | str) -> Path:
     return base
 
 
-# Top-level entries FluidSim writes in a cache folder (all formats), plus the
-# files operating systems drop into any folder.
-_CACHE_ENTRY_NAMES = frozenset({
-    "fluidsim_cache.json", "fluidsim_sequence.json", "frames", "checkpoints",
-    "logs", "thumbs.db", "desktop.ini", ".ds_store",
-})
-
-
 def foreign_cache_entries(path: Path | str) -> tuple[str, ...]:
-    """Top-level entries in a cache folder that FluidSim did not write."""
+    """Reject foreign descendants, links and unexpected entry types before mutation."""
+    base = Path(path)
     foreign = []
-    for entry in Path(path).iterdir():
+    files = {"fluidsim_cache.json", "fluidsim_sequence.json", "fluidsim_cache.json.tmp",
+             "fluidsim_sequence.json.tmp", "thumbs.db", "desktop.ini", ".ds_store"}
+    patterns = {"frames": r"frame_-?[0-9]+\.(?:npz|tmp|tmp\.npz|npz\.tmp|npz\.[a-z0-9_]+\.tmp)",
+                "checkpoints": r"checkpoint_-?[0-9]+\.(?:npz|tmp|tmp\.npz|npz\.tmp|npz\.[a-z0-9_]+\.tmp)",
+                "logs": r"bake\.log"}
+    for entry in base.iterdir():
         name = entry.name.lower()
-        if name in _CACHE_ENTRY_NAMES or name.endswith(".tmp"):
+        linked = entry.is_symlink() or getattr(entry, "is_junction", lambda: False)()
+        if not linked and name in patterns and entry.is_dir():
+            for child in entry.iterdir():
+                if (child.is_symlink() or getattr(child, "is_junction", lambda: False)()
+                        or not child.is_file() or not re.fullmatch(patterns[name], child.name)):
+                    foreign.append(child.relative_to(base).as_posix())
+        elif not linked and entry.is_file() and (
+                name in files or re.fullmatch(r"fluidsim_-?[0-9]+\.npz", name)):
             continue
-        if fnmatch.fnmatch(name, LEGACY_FRAME_GLOB):
-            continue
-        foreign.append(entry.name)
+        else:
+            foreign.append(entry.name)
     return tuple(sorted(foreign))
 
 
