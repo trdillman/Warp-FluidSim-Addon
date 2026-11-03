@@ -447,6 +447,10 @@ def run_control(context, control, report=None):
     if control is LIQUID_PREVIEW and hasattr(group, "liquid_display_mode"):
         from .. import liquid_display
         value = liquid_display.cycle(group) == "PREVIEW"
+        if group.liquid_display_mode == "SURFACE" and report is not None:
+            from ..scene_access import active_domain_settings
+            if not getattr(active_domain_settings(context.scene), "surface_enabled", False):
+                report({"INFO"}, "Surface meshing is disabled; showing liquid particles")
     else:
         value = not getattr(group, control.target)
         setattr(group, control.target, value)

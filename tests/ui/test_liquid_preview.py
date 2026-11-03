@@ -361,7 +361,7 @@ def _payload(*, particles=None, whitewater=None, types_=None,
         whitewater_attributes=attributes)
 
 
-def _publish(output_publication, payload, scene=None, monkeypatch=None):
+def _publish(output_publication, payload, scene=None, monkeypatch=None, mutations=None):
     """Run publish_payload with every Blender ID mutation stubbed out."""
     patched = {
         "_require_bpy": lambda: None,
@@ -375,6 +375,12 @@ def _publish(output_publication, payload, scene=None, monkeypatch=None):
         "_hide_and_clear_output": lambda *_a: None,
         "_sync_render_inputs": lambda _scene: None,
     }
+    if mutations is not None:
+        patched.update({
+            "_ensure_object": lambda _scene, name, *_a: mutations.append(name) or SimpleNamespace(),
+            "_ensure_point_object": lambda _scene, name, *_a: mutations.append(name) or SimpleNamespace(),
+            "_swap_mesh": lambda *_a, **_k: None,
+        })
     saved = {name: getattr(output_publication, name) for name in patched}
     sys.modules.setdefault(
         "fluidSim_warp_blender51.blender.materials",
@@ -807,7 +813,10 @@ def test_display_modes_change_only_liquid_viewport_objects(monkeypatch):
                output_publication.PARTICLES_NAME: particles,
                output_publication.WHITEWATER_NAME: whitewater}
     monkeypatch.setattr(output_publication, "output_object", lambda _s, name: objects.get(name))
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(liquid_display_mode="PREVIEW"))
+    monkeypatch.setattr(output_publication, "_domain_settings",
+                        lambda _scene: SimpleNamespace(surface_enabled=True))
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        liquid_display_mode="PREVIEW", show_surface=True, show_particles=True))
     for mode, expected in (("PREVIEW", True), ("SURFACE", False), ("OFF", True)):
         scene.fluidsim.liquid_display_mode = mode
         liquid_display.apply_viewport(scene)
@@ -880,3 +889,143 @@ def test_display_applies_to_each_scene_view_layer(monkeypatch):
     liquid_display.apply_viewport(scene)
     assert surface.calls == [(True, layers[0]), (True, layers[1])]
     assert particles.calls == [(True, layers[0]), (True, layers[1])]
+
+
+def test_particle_only_legacy_scene_migrates_to_preview(monkeypatch):
+    from fluidSim_warp_blender51.blender import liquid_display, scene_access
+    scene, domain = _live_scene(False)
+    scene.fluidsim.liquid_display_mode = "SURFACE"
+    scene.fluidsim.is_property_set = lambda _name: False
+    monkeypatch.setattr(scene_access, "active_domain_settings", lambda _scene: domain)
+    monkeypatch.setattr(liquid_display, "apply_viewport", lambda _scene: None)
+    liquid_display.restore_scene(scene)
+    assert scene.fluidsim.liquid_display_mode == "PREVIEW"
+    assert scene.fluidsim.liquid_preview_enabled
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("surface_enabled", [False, True])
+def test_viewport_geometry_is_independent_of_render_flags(monkeypatch, cached, surface_enabled):
+    from fluidSim_warp_blender51.blender import output_publication as output
+    scene, domain = _live_scene(False)
+    scene.fluidsim.liquid_display_mode = "SURFACE"
+    scene.fluidsim.show_particles = False
+    domain.surface_enabled = surface_enabled
+    monkeypatch.setattr(output, "_domain_settings", lambda _scene: domain)
+    monkeypatch.setattr(output, "_particle_values", lambda *_a, **_k: None)
+    verts = np.ones((3, 3), np.float32)
+    tris = np.array([[0, 1, 2]], np.int32)
+
+    class Host:
+        solver = _CountingSolver()
+        surface_mesh = (verts, tris)
+        def positions_strided(self, _step):
+            return np.ones((4, 3), np.float32)
+        def output_attributes(self, *_a, **_k):
+            return {}
+
+    if cached:
+        payload = output.prepare_cache_payload(scene, {
+            "positions": np.ones((4, 3), np.float32),
+            "surface_verts": verts, "surface_tris": tris})
+    else:
+        payload = output.prepare_live_payload(scene, Host())
+    assert not payload.surface_visible and not payload.particles_visible
+    assert payload.viewport_surface is surface_enabled
+    assert payload.viewport_particles is not surface_enabled
+    assert payload.retain_cache_geometry is cached
+    if surface_enabled:
+        assert len(payload.surface_verts) == 3
+    else:
+        assert len(payload.particles) == 4
+    mutations = []
+    _publish(output, payload, scene=scene, mutations=mutations)
+    expected = [output.SURFACE_NAME] if surface_enabled or cached else []
+    if cached or not surface_enabled:
+        expected.append(output.PARTICLES_NAME)
+    assert mutations == expected
+
+
+@pytest.mark.parametrize("mode,failed", [("SURFACE", False), ("PREVIEW", True)])
+def test_no_mesh_fallback_unhides_particles_without_enabling_render(monkeypatch, mode, failed):
+    from fluidSim_warp_blender51.blender import liquid_display
+    from fluidSim_warp_blender51.blender import output_publication as output
+    from fluidSim_warp_blender51.blender.liquid_preview import handler
+    scene, domain = _live_scene(mode == "PREVIEW")
+    scene.fluidsim.liquid_display_mode = mode
+    scene.fluidsim.show_particles = False
+    monkeypatch.setattr(output, "_domain_settings", lambda _scene: domain)
+    monkeypatch.setattr(handler, "failure", lambda: "shader failed" if failed else None)
+
+    class Obj:
+        hide_viewport = True
+        hide_render = True
+        def hide_set(self, hidden):
+            self.hidden = hidden
+
+    surface, particles = Obj(), Obj()
+    monkeypatch.setattr(output, "output_object", lambda _scene, name:
+                        surface if name == output.SURFACE_NAME else particles)
+    liquid_display.apply_viewport(scene)
+    assert surface.hidden
+    assert not particles.hidden and not particles.hide_viewport
+    assert particles.hide_render
+
+
+@pytest.mark.parametrize("initial_mode", ["PREVIEW", "OFF"])
+@pytest.mark.parametrize("has_mesh", [False, True])
+def test_paused_cache_keeps_both_representations_for_mode_changes(monkeypatch, initial_mode, has_mesh):
+    from fluidSim_warp_blender51.blender import liquid_display
+    from fluidSim_warp_blender51.blender import output_publication as output
+    scene, domain = _live_scene(initial_mode == "PREVIEW")
+    scene.fluidsim.liquid_display_mode = initial_mode
+    scene.fluidsim.show_particles = False
+    domain.surface_enabled = True
+    monkeypatch.setattr(output, "_domain_settings", lambda _scene: domain)
+    verts = np.ones((3 if has_mesh else 0, 3), np.float32)
+    payload = output.prepare_cache_payload(scene, {
+        "positions": np.ones((4, 3), np.float32), "surface_verts": verts,
+        "surface_tris": np.array([[0, 1, 2]], np.int32) if has_mesh else np.zeros((0, 3), np.int32)})
+    assert not payload.surface_visible and not payload.particles_visible
+    mutations = []
+    _publish(output, payload, scene=scene, mutations=mutations)
+    assert mutations == [output.SURFACE_NAME, output.PARTICLES_NAME]
+
+    class Obj:
+        hide_viewport = True
+        hide_render = True
+        def hide_set(self, hidden):
+            self.hidden = hidden
+    surface, particles = Obj(), Obj()
+    surface.data = SimpleNamespace(vertices=payload.surface_verts)
+    monkeypatch.setattr(output, "output_object", lambda _scene, name:
+                        surface if name == output.SURFACE_NAME else particles)
+    scene.fluidsim.liquid_display_mode = "SURFACE"
+    liquid_display.apply_viewport(scene)  # metadata only, no solver/cache read
+    assert surface.hidden is not has_mesh
+    assert particles.hidden is has_mesh
+    assert surface.hide_render and particles.hide_render
+
+
+def test_renderer_fallback_refresh_is_deferred_deduplicated_and_removed(monkeypatch):
+    from fluidSim_warp_blender51.blender import liquid_display, pending_settings
+    handler, fake_bpy, _draw_handlers, _keymaps = _install_handler_bpy(monkeypatch)
+    pending, refreshed = [], []
+    fake_bpy.app.timers = SimpleNamespace(
+        is_registered=lambda fn: fn in pending,
+        register=lambda fn, **_kw: pending.append(fn),
+        unregister=lambda fn: pending.remove(fn))
+    scene = _scene(True)
+    fake_bpy.data.scenes = [scene, _scene(False)]
+    monkeypatch.setattr(liquid_display, "apply_viewport", lambda _scene: None)
+    monkeypatch.setattr(pending_settings, "request_scene_update",
+                        lambda scene, action: refreshed.append((scene, action)))
+    liquid_display.show_surface_fallback(scene)
+    liquid_display.show_surface_fallback(scene)
+    assert pending == [liquid_display._refresh_fallback_outputs]
+    assert not refreshed
+    pending.pop()()
+    assert refreshed == [(scene, pending_settings.SceneUpdate.OUTPUT)]
+    liquid_display.show_surface_fallback(scene)
+    handler.unregister()
+    assert not pending

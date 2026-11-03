@@ -2422,6 +2422,7 @@ def _stage_context(
         particle_display_scale=1.0,
         show_whitewater=True,
         show_overlay=True,
+        liquid_display_mode="SURFACE",
         liquid_preview_enabled=False,
         liquid_preview_scale=0.5,
         liquid_preview_radius_multiplier=2.0,
@@ -2633,7 +2634,7 @@ _LOOK_SCENE_OWNED = {
     "particle_display_scale",
     "show_whitewater",
     "show_overlay",
-    "liquid_preview_enabled",
+    "liquid_display_mode",
     "liquid_preview_scale",
     "liquid_preview_radius_multiplier",
     "liquid_preview_absorption",
@@ -2679,7 +2680,7 @@ def test_workflow_stage_look_hides_inactive_controls(monkeypatch):
         "surface_enabled",
         "whitewater_enabled",
         "show_overlay",
-        "liquid_preview_enabled",
+        "liquid_display_mode",
     }, "particle, smoothing, whitewater-amount and preview controls need their gate on"
 
     context, _scene, _domain = _stage_context(

@@ -91,7 +91,7 @@ LOOK_PROPS = (
     "ww_emission_rate",
     "show_whitewater",
     "show_overlay",
-    "liquid_preview_enabled",
+    "liquid_display_mode",
     "liquid_preview_scale",
     "liquid_preview_radius_multiplier",
     "liquid_preview_absorption",

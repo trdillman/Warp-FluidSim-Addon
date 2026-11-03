@@ -238,6 +238,9 @@ def unregister():
     global _FAILURE
     _require_bpy()
     timers = getattr(bpy.app, "timers", None)
+    from ..liquid_display import _refresh_fallback_outputs
+    if timers is not None and timers.is_registered(_refresh_fallback_outputs):
+        timers.unregister(_refresh_fallback_outputs)
     if timers is not None and timers.is_registered(_restore_after_registration):
         timers.unregister(_restore_after_registration)
     load_post = bpy.app.handlers.load_post
