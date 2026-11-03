@@ -26,6 +26,7 @@ from . import controls, tokens
 
 _FLASHES: dict = {}
 _SAMPLES: dict = {}
+_PAINTED_LAYOUTS: dict = {}
 SPARKLINE_SAMPLES = 48
 _last_draw_error = ""
 
@@ -84,6 +85,7 @@ def forget_scene_state() -> None:
     """Drop presentation memory (file load, unregister)."""
     _FLASHES.clear()
     _SAMPLES.clear()
+    _PAINTED_LAYOUTS.clear()
 
 
 @dataclass(frozen=True)
@@ -316,6 +318,33 @@ def current_layout(context):
                       bake_fraction(scene), tools)
 
 
+def _paint_key(context):
+    region = getattr(context, "region", None)
+    return region.as_pointer() if region is not None else None
+
+
+def _paint_stamp(context):
+    region = context.region
+    return (_scene_key(context.scene), region.width, region.height,
+            getattr(region, "x", 0), getattr(region, "y", 0), _ui_scale(context))
+
+
+def event_layout(context):
+    """Hit-test the last successfully painted bar, never an unseen recomputation.
+
+    LIVE-chip expiry and pending/transport changes can move buttons between
+    draws. Resize, scene changes and hiding invalidate the previous geometry.
+    """
+    from . import deck_visible
+
+    if not deck_visible(context) or not overlays_shown(context):
+        return None
+    painted = _PAINTED_LAYOUTS.get(_paint_key(context))
+    if painted is None or painted[0] != _paint_stamp(context):
+        return None
+    return painted[1]
+
+
 def hit_test(layout: BarLayout | None, x: float, y: float):
     """``(over_deck, item)`` for a region-space point; ``item.control`` may be ``None``."""
     if layout is None:
@@ -492,6 +521,8 @@ def draw_deck():
     import bpy
 
     context = bpy.context
+    key = _paint_key(context)
+    _PAINTED_LAYOUTS.pop(key, None)
     try:
         layout = current_layout(context)
         if layout is None:
@@ -500,6 +531,7 @@ def draw_deck():
         from . import gizmos, modal
 
         _paint(context, layout, palette, modal.hover_item(context))
+        _PAINTED_LAYOUTS[key] = (_paint_stamp(context), layout)
         gizmos.draw_overlay(context, palette)
     except Exception as exc:  # noqa: BLE001 - a draw callback must never raise
         message = repr(exc)
