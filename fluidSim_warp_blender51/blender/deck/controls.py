@@ -68,7 +68,7 @@ APPLY = operator("fluidsim.apply_changes", "Apply", "CHECKMARK",
 REVERT = operator("fluidsim.revert_pending", "Revert", "LOOP_BACK",
                   "Revert the pending changes to the applied values")
 LIQUID_PREVIEW = setting("liquid_preview_enabled", "Liquid Preview", "SHADING_RENDERED",
-                         "Toggle the Liquid Preview look in the 3D View")
+                         "Cycle liquid display: Preview, Surface Mesh, Off")
 
 SEARCH = operator("fluidsim.command_palette", "Search", "VIEWZOOM",
                   "Search every FluidSim command, preset, demo and setting (Ctrl+K)")
@@ -414,7 +414,7 @@ def control_active(context, control) -> bool:
 
 # The warning ``fluidsim.toggle_liquid_preview`` gives; the Deck toggle says the same.
 NO_PUBLISHED_PARTICLES = ("Liquid Preview is on but no particles are published yet; "
-                          "play the simulation in a particle view")
+                          "play the simulation to publish particles")
 
 
 def _published_particles() -> bool:
@@ -444,13 +444,22 @@ def run_control(context, control, report=None):
     group = property_owner(context, control)
     if group is None or not isinstance(getattr(group, control.target, None), bool):
         return {"CANCELLED"}
-    value = not getattr(group, control.target)
-    setattr(group, control.target, value)
+    if control is LIQUID_PREVIEW and hasattr(group, "liquid_display_mode"):
+        from .. import liquid_display
+        value = liquid_display.cycle(group) == "PREVIEW"
+        if group.liquid_display_mode == "SURFACE" and report is not None:
+            from ..scene_access import active_domain_settings
+            if not getattr(active_domain_settings(context.scene), "surface_enabled", False):
+                report({"INFO"}, "Surface meshing is disabled; showing liquid particles")
+    else:
+        value = not getattr(group, control.target)
+        setattr(group, control.target, value)
     scene = getattr(context, "scene", None)
     if scene is not None:
         from . import bar
 
-        bar.note_deck_write(scene, control.target, group)
+        bar.note_deck_write(scene, "liquid_display_mode" if control is LIQUID_PREVIEW
+                            and hasattr(group, "liquid_display_mode") else control.target, group)
     if (control is LIQUID_PREVIEW and value and report is not None
             and not _published_particles()):
         report({"WARNING"}, NO_PUBLISHED_PARTICLES)

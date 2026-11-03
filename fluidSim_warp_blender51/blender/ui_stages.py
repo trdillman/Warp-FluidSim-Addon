@@ -91,7 +91,7 @@ LOOK_PROPS = (
     "ww_emission_rate",
     "show_whitewater",
     "show_overlay",
-    "liquid_preview_enabled",
+    "liquid_display_mode",
     "liquid_preview_scale",
     "liquid_preview_radius_multiplier",
     "liquid_preview_absorption",
@@ -378,13 +378,8 @@ class FLUIDSIM_STAGE_PT_look(FluidSimStagePanel, bpy.types.Panel):
         _prop(layout, scene, "show_overlay", text="Viewport HUD")
 
         preview = layout.column(align=True)
-        _prop(preview, scene, "liquid_preview_enabled")
+        _prop(preview, scene, "liquid_display_mode")
         if fs.liquid_preview_enabled:
-            if fs.liquid_view_mode not in _PARTICLE_VIEW_MODES:
-                preview.label(
-                    text="Liquid Preview draws published particles; "
-                         "pick a particle view.",
-                    icon="INFO")
             _prop(preview, scene, "liquid_preview_scale", text="Resolution")
             _prop(preview, scene, "liquid_preview_radius_multiplier",
                   text="Radius")

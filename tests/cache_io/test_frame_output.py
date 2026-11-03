@@ -1058,15 +1058,15 @@ def test_live_update_acquires_one_host_frame_then_publishes_owned_payload(monkey
             or payload))
     monkeypatch.setattr(
         output_publication, "publish_payload",
-        lambda scene_arg, payload_arg: calls.append(
-            ("publish", scene_arg, payload_arg)))
+        lambda scene_arg, payload_arg, *, preserve_preview_points=False: calls.append(
+            ("publish", scene_arg, payload_arg, preserve_preview_points)))
 
     output_publication.update_outputs(scene, session)
 
     assert calls == [
         "host_frame", ("cadence", 3),
         ("live_prepare", scene, host, True),
-        ("publish", scene, payload),
+        ("publish", scene, payload, False),
     ]
 
 
@@ -1088,14 +1088,14 @@ def test_cache_update_prepares_cache_payload_without_live_readback(monkeypatch):
             ("cache_prepare", scene_arg, data_arg)) or payload)
     monkeypatch.setattr(
         output_publication, "publish_payload",
-        lambda scene_arg, payload_arg: calls.append(
-            ("publish", scene_arg, payload_arg)))
+        lambda scene_arg, payload_arg, *, preserve_preview_points=False: calls.append(
+            ("publish", scene_arg, payload_arg, preserve_preview_points)))
 
     output_publication.update_outputs_from_cache_frame(scene, frame_data)
 
     assert calls == [
         ("cache_prepare", scene, frame_data),
-        ("publish", scene, payload),
+        ("publish", scene, payload, True),
     ]
 
 

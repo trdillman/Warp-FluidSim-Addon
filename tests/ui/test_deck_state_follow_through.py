@@ -234,3 +234,13 @@ def test_bar_hides_when_viewport_overlays_are_off(deck, monkeypatch):
     assert bar.current_layout(context) is not None
     overlay.show_overlays = False
     assert bar.current_layout(context) is None
+
+
+def test_liquid_display_cycles_exclusive_modes(deck, monkeypatch):
+    controls = deck.controls
+    group = SimpleNamespace(liquid_preview_enabled=False, liquid_display_mode="OFF")
+    monkeypatch.setattr(controls, "property_owner", lambda _ctx, _c: group)
+    _fake_module(monkeypatch, "output_publication", latest_published_points=lambda: None)
+    for expected in ("PREVIEW", "SURFACE", "OFF", "PREVIEW"):
+        assert controls.run_control(deck.bpy.context, controls.LIQUID_PREVIEW) == {"FINISHED"}
+        assert group.liquid_display_mode == expected

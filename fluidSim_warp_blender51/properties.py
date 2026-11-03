@@ -351,13 +351,18 @@ def _on_live_changed(self, context):
         self.status = f"Live toggle failed: {exc}"
 
 
-def _on_liquid_preview_changed(self, context):
-    """Add or remove the Liquid Preview draw handler; never republish."""
+def _on_liquid_display_changed(self, context):
     try:
-        from .blender.liquid_preview import handler
+        from .blender import liquid_display
+        liquid_display.mode_changed(self, context)
+    except Exception as exc:  # noqa: BLE001
+        self.status = f"Liquid display update failed: {exc}"
 
-        handler.sync_registration()
-        handler.tag_redraw()
+
+def _on_liquid_preview_changed(self, context):
+    try:
+        from .blender import liquid_display
+        liquid_display.preview_changed(self, context)
     except Exception as exc:  # noqa: BLE001
         self.status = f"Liquid Preview toggle failed: {exc}"
 
@@ -1054,6 +1059,12 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Viewport Overlay", default=True,
         update=_request_output_refresh,
         description="Enable to show FluidSim status and statistics in the viewport; disable to hide the overlay without stopping simulation")
+    liquid_display_mode: EnumProperty(
+        name="Liquid Display", items=(("PREVIEW", "Preview", ""),
+                                      ("SURFACE", "Surface Mesh", ""),
+                                      ("OFF", "Off", "")),
+        default="SURFACE", update=_on_liquid_display_changed,
+        description="Choose the liquid representation shown in the viewport")
     liquid_preview_enabled: BoolProperty(
         name="Liquid Preview", default=False,
         update=_on_liquid_preview_changed,

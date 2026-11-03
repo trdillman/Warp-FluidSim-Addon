@@ -951,7 +951,7 @@ class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):
         shown.prop(fs, "whitewater_display_scale")
         shown.prop(fs, "whitewater_attribute_mode")
         preview = layout.column(align=True)
-        preview.prop(fs, "liquid_preview_enabled")
+        preview.prop(fs, "liquid_display_mode")
         sub = preview.column(align=True)
         sub.active = fs.liquid_preview_enabled
         sub.prop(fs, "liquid_preview_scale", text="Resolution")

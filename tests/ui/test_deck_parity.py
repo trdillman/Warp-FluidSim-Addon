@@ -112,7 +112,11 @@ def test_every_deck_control_targets_an_existing_operator_or_property_a_panel_als
             assert control.target in panel_ops, f"{control.target} has no panel twin"
         else:
             assert control.kind == "property", control
-            assert control.target in panel_literals, f"{control.target} has no panel twin"
+            # The preview Boolean is the compatibility adapter; this control
+            # cycles the scene enum drawn by the panel in current files.
+            panel_target = ("liquid_display_mode" if control is deck.controls.LIQUID_PREVIEW
+                            else control.target)
+            assert panel_target in panel_literals, f"{panel_target} has no panel twin"
 
 
 def test_optional_controls_are_exactly_the_targets_other_lanes_deliver(deck):

@@ -1106,6 +1106,9 @@ class PublicationPayload:
     whitewater_radius: float
     whitewater: np.ndarray
     whitewater_attributes: dict[str, np.ndarray]
+    viewport_surface: bool = False
+    viewport_particles: bool = False
+    retain_cache_geometry: bool = False
 
 
 @dataclass(frozen=True)
@@ -1149,11 +1152,12 @@ def _read_only_view(values, dtype):
     return view
 
 
-def _record_published_points(scene, payload):
+def _record_published_points(scene, payload, *, preserve_preview_points=False):
     """Remember the published point arrays for draw layers (no copy)."""
     global _LATEST_PUBLISHED_POINTS
     positions, particle_radius = _EMPTY_POINTS, 0.0
-    if payload.particles_visible:
+    if (payload.particles_visible or preserve_preview_points
+            or getattr(getattr(scene, "fluidsim", None), "liquid_preview_enabled", False)):
         positions = _read_only_view(payload.particles, np.float32)
         particle_radius = float(payload.particle_radius)
     whitewater, whitewater_radius, types = _EMPTY_POINTS, 0.0, None
@@ -1230,9 +1234,12 @@ def prepare_live_payload(scene, host, publish_surface=True):
     fs = scene.fluidsim
     solver = host.solver
     ds = _domain_settings(scene)
+    from .liquid_display import viewport_families
+    viewport_surface, viewport_particles = viewport_families(
+        scene, getattr(ds, "surface_enabled", False))
     inventory = _AdmittedAttributeInventory(ds, getattr(solver, "settings", None))
     step = _display_stride(fs)
-    positions = (host.positions_strided(step) if fs.show_particles else
+    positions = (host.positions_strided(step) if (fs.show_particles or viewport_particles or getattr(fs, "liquid_preview_enabled", False)) else
                  np.zeros((0, 3), dtype=np.float32))
     particle_attributes = (
         host.output_attributes(inventory, "particles", stride=step)
@@ -1275,7 +1282,7 @@ def prepare_live_payload(scene, host, publish_surface=True):
         whitewater_attributes["type"] = host.whitewater_attribute(
             "type", stride=ww_step)
 
-    if publish_surface and fs.show_surface and getattr(ds, "surface_enabled", False):
+    if publish_surface and (fs.show_surface or viewport_surface) and getattr(ds, "surface_enabled", False):
         verts, tris = host.surface_mesh
         surface_attributes = host.output_attributes(
             inventory, "surface", positions=verts)
@@ -1290,12 +1297,18 @@ def prepare_live_payload(scene, host, publish_surface=True):
         verts = np.zeros((0, 3), dtype=np.float32)
         tris = np.zeros((0, 3), dtype=np.int32)
         surface_attributes = {}
+    if viewport_surface and publish_surface and not len(verts):
+        viewport_particles = True
+        if not len(positions):
+            positions = host.positions_strided(step)
     voxel_size = float(solver.settings.voxel_size)
     policies = {p.name: p for p in output_family_policy(scene, voxel_size=voxel_size)}
     return PublicationPayload(
         voxel_size=voxel_size,
         publish_surface=publish_surface,
         surface_visible=bool(fs.show_surface and getattr(ds, "surface_enabled", False)),
+        viewport_surface=viewport_surface,
+        viewport_particles=viewport_particles,
         surface_attribute_mode=str(fs.surface_attribute_mode),
         surface_verts=np.asarray(verts, dtype=np.float32),
         surface_tris=np.asarray(tris, dtype=np.int32),
@@ -1321,6 +1334,9 @@ def prepare_cache_payload(scene, frame_data):
 
     fs = scene.fluidsim
     ds = _domain_settings(scene)
+    from .liquid_display import viewport_families
+    viewport_surface, viewport_particles = viewport_families(
+        scene, getattr(ds, "surface_enabled", False))
     positions = np.asarray(
         _cache_array(frame_data, "positions", (0, 3)), dtype=np.float32)
     velocities = np.asarray(
@@ -1401,7 +1417,11 @@ def prepare_cache_payload(scene, frame_data):
     policies = {p.name: p for p in output_family_policy(scene, voxel_size=voxel_size)}
     return PublicationPayload(
         voxel_size=voxel_size, publish_surface=True,
+        # Paused caches cannot ask a live solver to recover cleared geometry.
+        retain_cache_geometry=hasattr(fs, "liquid_display_mode"),
         surface_visible=bool(fs.show_surface and getattr(ds, "surface_enabled", False)),
+        viewport_surface=viewport_surface,
+        viewport_particles=viewport_particles,
         surface_attribute_mode=str(fs.surface_attribute_mode),
         surface_verts=verts, surface_tris=tris,
         surface_attributes=surface_attributes,
@@ -1598,7 +1618,7 @@ def _hide_and_clear_output(scene, name):
 
 
 @_cost_phase("output_publication")
-def publish_payload(scene, payload):
+def publish_payload(scene, payload, *, preserve_preview_points=False):
     """Output Publication: mutate persistent IDs from owned facts only.
 
     This function has no solver, HostFrame, Warp-array, surface extraction, or
@@ -1608,11 +1628,12 @@ def publish_payload(scene, payload):
     _require_bpy()
     policies = {p.name: p for p in output_family_policy(scene, payload=payload)}
     materials = None
-    if (payload.surface_visible or payload.particles_visible
+    if (payload.retain_cache_geometry or payload.surface_visible or payload.viewport_surface
+            or payload.particles_visible or payload.viewport_particles
             or payload.whitewater_visible):
         from . import materials
 
-    if policies[SURFACE_NAME].visible:
+    if policies[SURFACE_NAME].visible or payload.viewport_surface or payload.retain_cache_geometry:
         if payload.publish_surface:
             values = _selected_attribute_values(
                 payload.surface_attributes, payload.surface_attribute_mode)
@@ -1634,7 +1655,7 @@ def publish_payload(scene, payload):
                 np.zeros((0, 3), dtype=np.int32),
             )
 
-    if policies[PARTICLES_NAME].visible:
+    if policies[PARTICLES_NAME].visible or payload.viewport_particles or payload.retain_cache_geometry:
         values = _selected_attribute_values(
             payload.particle_attributes, payload.particle_attribute_mode)
         colors = _values_to_colors(values) if values is not None else None
@@ -1699,7 +1720,9 @@ def publish_payload(scene, payload):
     else:
         for name in WHITEWATER_OUTPUT_NAMES:
             _hide_and_clear_output(scene, name)
-    _record_published_points(scene, payload)
+    _record_published_points(scene, payload, preserve_preview_points=preserve_preview_points)
+    from .liquid_display import apply_viewport
+    apply_viewport(scene)
     return _sync_render_inputs(scene)
 
 def _effective_voxel_size(scene, ds):
@@ -1734,6 +1757,8 @@ def refresh_existing_output_settings(scene):
             if policy.radius is not None:
                 _set_point_radius(obj, policy.radius)
             _ensure_material(getattr(materials, policy.material), scene, obj)
+    from .liquid_display import apply_viewport
+    apply_viewport(scene)
     return _sync_render_inputs(scene)
 
 
@@ -1789,7 +1814,8 @@ def update_outputs(scene, sess, *, force_surface=False):
 def update_outputs_from_cache_frame(scene, frame_data):
     """Write a cached frame snapshot into the regular Blender output objects."""
     _require_bpy()
-    publication = publish_payload(scene, prepare_cache_payload(scene, frame_data))
+    publication = publish_payload(scene, prepare_cache_payload(scene, frame_data),
+                                  preserve_preview_points=True)
     from . import rigid_publication
 
     rigid_publication.publish_cache_frame(scene, frame_data)
