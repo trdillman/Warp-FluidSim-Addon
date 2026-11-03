@@ -43,27 +43,32 @@ def _probe(fake):
 
 class Warp118CertificationTests(unittest.TestCase):
     def test_certified_identity_is_warp_118_cuda13(self):
-        self.assertEqual(version.CERTIFIED_WARP_VERSION, "1.18.0")
-        self.assertEqual(version.CERTIFIED_WARP_DISTRIBUTION, "1.18.0+cu13")
+        self.assertEqual(version.CERTIFIED_WARP_VERSION, "1.19.0")
+        self.assertEqual(version.CERTIFIED_WARP_DISTRIBUTION, "1.19.0+cu13")
         self.assertEqual(version.MIN_WARP_VERSION, "1.17.0")
         self.assertEqual(version.CERTIFIED_DRIVER_MIN, (13, 0))
         self.assertIn("R580", version.CERTIFIED_DRIVER_LABEL)
 
-    def test_118_is_certified(self):
-        self.assertEqual(warp_runtime.warp_version_support("1.18.0"), ("certified", ""))
+    def test_119_is_certified(self):
+        self.assertEqual(warp_runtime.warp_version_support("1.19.0"), ("certified", ""))
 
     def test_117_loads_as_older_than_certified_with_a_warning(self):
         status, message = warp_runtime.warp_version_support("1.17.0")
         self.assertEqual(status, "older")
-        self.assertIn("older than the certified 1.18.0", message)
+        self.assertIn("older than the certified 1.19.0", message)
         probe = _probe(_fake_warp("1.17.0", driver=(12, 9)))
         self.assertTrue(probe.available)
         self.assertIn("older than the certified", probe.warning)
 
+    def test_118_still_loads_as_older_than_certified(self):
+        status, message = warp_runtime.warp_version_support("1.18.0")
+        self.assertEqual(status, "older")
+        self.assertIn("older than the certified 1.19.0", message)
+
     def test_below_floor_and_other_major_stay_unsupported(self):
         self.assertEqual(warp_runtime.warp_version_support("1.16.0")[0], "unsupported")
         self.assertEqual(warp_runtime.warp_version_support("2.0.0")[0], "unsupported")
-        self.assertEqual(warp_runtime.warp_version_support("1.19.0")[0], "untested")
+        self.assertEqual(warp_runtime.warp_version_support("1.20.0")[0], "untested")
 
     def test_driver_floor_reason_is_named(self):
         self.assertEqual(warp_runtime.cuda_driver_floor_reason(13030), "")
@@ -71,12 +76,12 @@ class Warp118CertificationTests(unittest.TestCase):
         reason = warp_runtime.cuda_driver_floor_reason(12090)
         self.assertIn("R580", reason)
         self.assertIn("12.9", reason)
-        self.assertIn("1.18.0", reason)
+        self.assertIn("1.19.0", reason)
         # An unknown driver version never blocks.
         self.assertEqual(warp_runtime.cuda_driver_floor_reason(0), "")
 
     def test_probe_names_the_driver_floor_when_118_finds_no_device(self):
-        probe = _probe(_fake_warp("1.18.0", driver=(12, 8), devices=False))
+        probe = _probe(_fake_warp("1.19.0", driver=(12, 8), devices=False))
         self.assertFalse(probe.available)
         self.assertIn("R580", probe.message)
         self.assertEqual(probe.driver_floor_reason,

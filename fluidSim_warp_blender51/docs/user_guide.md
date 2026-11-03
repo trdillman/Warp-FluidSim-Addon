@@ -19,14 +19,14 @@ FluidSim Warp 4.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 | Operating systems | Windows x64 and Linux x64 |
 | GPU-gate certified | Windows 11 x64 on an NVIDIA GeForce RTX 4080 SUPER. Linux x64 is packaged from the same source but not certified |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
-| Warp dependency | NVIDIA Warp 1.18.0 (CUDA 13 build), installed via preferences button; 1.17.0 still loads |
+| Warp dependency | NVIDIA Warp 1.19.0 (CUDA 13 build), installed via preferences button; 1.17.0 and 1.18.0 still load |
 | Cache compatibility | Cache v3 write/playback/resume; Cache v1 (1.0.x) is refused, and so are caches from 2.x: bake again (see [Migrating to 3.0](migrating_to_3_0.md)) |
 
 Install the extension ZIP for your platform. On first run, open **Edit →
 Preferences → Add-ons → FluidSim Warp** and press the **Install Warp** button.
-This downloads the certified NVIDIA Warp 1.18.0 wheel (~135 MB) from PyPI and
+This downloads the certified NVIDIA Warp 1.19.0 wheel (~135 MB) from PyPI and
 extracts it into the directory Blender keeps for this extension. The button is
-safe to press again: when that copy is already 1.18.0 it reports success and
+safe to press again: when that copy is already 1.19.0 it reports success and
 does not write. If Warp is already loaded from another add-on, or an older
 Warp is in Blender's user site-packages, the button stops and asks you to
 remove that copy. It also stops when Online Access is turned off in System
@@ -34,7 +34,7 @@ preferences, or when Blender was started with `--offline-mode`; on a slow or
 offline connection, download the wheel in a browser and press **Install from
 File** instead. An NVIDIA
 driver that supports CUDA 13 (R580 series or newer) is required for
-Warp 1.18. On an older driver the button names the driver floor before
+Warp 1.19. On an older driver the button names the driver floor before
 downloading and keeps an existing Warp 1.17.0, which FluidSim still runs.
 
 If the extension's certified Warp copy is damaged, Preferences shows
@@ -45,7 +45,7 @@ before Warp imports; the replacement stays inside this extension's directory.
 If a newer 1.x Warp is ever loaded instead (for example through a developer
 override), FluidSim still runs but marks the runtime status as
 "untested Warp version". Warp 1.17.0 runs and is marked "older than
-certified Warp"; pressing Install Warp upgrades it to 1.18.0 after a
+certified Warp"; pressing Install Warp upgrades it to 1.19.0 after a
 restart. Warp older than 1.17.0 or a 2.x Warp is refused.
 
 The extension is packaged for both Windows x64 and Linux x64. Only Windows has
@@ -378,15 +378,15 @@ Conditional panels are:
 ### Add-on Preferences
 
 Preferences contains the **Install Warp** button, runtime selection, and
-detection. **Install Warp** downloads the certified NVIDIA Warp 1.18.0 wheel
+detection. **Install Warp** downloads the certified NVIDIA Warp 1.19.0 wheel
 from PyPI, checks its SHA-256 against the shipped lock, and extracts that
 file into this extension's own directory. Pressing it again when that copy is
-already 1.18.0 does nothing further. A Warp copy FluidSim does not own is not
+already 1.19.0 does nothing further. A Warp copy FluidSim does not own is not
 modified; remove it and press the button again. The button does not download
 when Blender's online access is off. A dropped connection resumes from the
 bytes already received. **Install from File** installs the same wheel from a
 `.whl` you downloaded yourself (pypi.org/project/warp-lang, the
-`win_amd64` or `manylinux` 1.18.0 file); it checks the file's size and
+`win_amd64` or `manylinux` 1.19.0 file); it checks the file's size and
 SHA-256 against the lock, refuses any other file, and needs no internet
 connection. The external-Warp developer path
 appears only when `FLUIDSIM_ALLOW_EXTERNAL_WARP=1`. Device selection does not
