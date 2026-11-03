@@ -26,6 +26,7 @@ EXEMPT = {
     "live", "status", "bake_status", "bake_message", "cache_format",
     "cache_enabled", "cache_playback_enabled", "setup_mode", "active_preset_id",
     "deck_shown", "deck_stage", "show_surface", "show_particles",
+    "liquid_preview_enabled",  # compatibility adapter for liquid_display_mode
     "capacity_show_alternatives",
     # Domain: readouts; the whitewater type attribute is always published.
     "height_error", "whitewater_attribute_type",

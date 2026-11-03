@@ -453,7 +453,9 @@ def _paint(context, layout, palette, hover):
                 _draw_icon(control.icon, x0 + PAD * s + r, (y0 + y1) / 2.0, r, colour,
                            tokens.rgba(palette.accent), fraction)
                 label = (f"{round(fraction * 100)}% Cancel" if fraction is not None
-                         else control.label)
+                         else ({"PREVIEW": "Preview", "SURFACE": "Surface Mesh", "OFF": "Off"}.get(
+                             getattr(scene.fluidsim, "liquid_display_mode", ""), control.label)
+                               if control is controls.LIQUID_PREVIEW else control.label))
                 _draw.text(x0 + (PAD + ICON + GAP) * s, mid_y, label, size, colour)
         elif item.role == "separator":
             _draw.rect(x0, y0 + 2 * s, x1, y1 - 2 * s, tokens.rgba(palette.text_dim, 0.35))

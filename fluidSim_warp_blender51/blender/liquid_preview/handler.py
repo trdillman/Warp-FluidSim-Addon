@@ -113,7 +113,7 @@ def _fail(exc):
     if _FAILURE is None:
         _FAILURE = f"{type(exc).__name__}: {exc}"
         print(f"FluidSim: Liquid Preview disabled for this session "
-              f"({_FAILURE}); the particle output stays visible.")
+              f"({_FAILURE}); restoring the surface mesh if available.")
 
 
 def _draw_frame(context):
@@ -157,11 +157,30 @@ def _draw_callback():
         _draw_frame(bpy.context)
     except Exception as exc:  # noqa: BLE001 - a draw handler must not raise
         _fail(exc)
+        try:
+            from .. import liquid_display
+            for scene in bpy.data.scenes:
+                if getattr(getattr(scene, "fluidsim", None), "liquid_preview_enabled", False):
+                    liquid_display.show_surface_fallback(scene)
+        except Exception as fallback_exc:  # noqa: BLE001
+            print(f"FluidSim: could not restore surface visibility: {fallback_exc}")
 
 
 @_persistent
 def _on_load_post(*_args):
+    from .. import liquid_display
+    try:
+        scenes = list(bpy.data.scenes)
+    except AttributeError:
+        return
+    for scene in scenes:
+        liquid_display.restore_scene(scene)
     sync_registration()
+
+
+def _restore_after_registration():
+    _on_load_post()
+    return None
 
 
 def _register_keymap():
@@ -197,7 +216,10 @@ def register():
     try:
         _register_keymap()
         with handler_registration(((bpy.app.handlers.load_post, _on_load_post),)):
-            sync_registration()
+            _on_load_post()
+            timers = getattr(bpy.app, "timers", None)
+            if timers is not None and not timers.is_registered(_restore_after_registration):
+                timers.register(_restore_after_registration, first_interval=0.0)
     except Exception as exc:
         if previous_handle is None and _DRAW_HANDLE is not None:
             _remove_draw_handler()
@@ -215,6 +237,9 @@ def register():
 def unregister():
     global _FAILURE
     _require_bpy()
+    timers = getattr(bpy.app, "timers", None)
+    if timers is not None and timers.is_registered(_restore_after_registration):
+        timers.unregister(_restore_after_registration)
     load_post = bpy.app.handlers.load_post
     while _on_load_post in load_post:
         load_post.remove(_on_load_post)

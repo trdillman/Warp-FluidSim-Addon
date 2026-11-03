@@ -159,7 +159,7 @@ SCENE_OWNED_SETTINGS = frozenset({
     "spray_material", "output_collection_name", "setup_mode",
     "product_preset", "active_preset_id", "cache_format", "bake_start",
     "bake_end", "checkpoint_interval", "bake_status", "bake_progress",
-    "bake_message", "show_overlay", "liquid_preview_enabled",
+    "bake_message", "show_overlay", "liquid_display_mode", "liquid_preview_enabled",
     "liquid_preview_scale", "liquid_preview_radius_multiplier",
     "liquid_preview_absorption", "liquid_preview_whitewater",
     "deck_shown", "deck_stage",
