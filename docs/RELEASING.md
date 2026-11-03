@@ -196,7 +196,7 @@ expected; otherwise, a changed hash needs an explanation before release.
 ## Sharing Warp with other extensions
 
 FluidSim does not ship a Warp wheel. **Install Warp** in add-on preferences
-downloads the locked `warp-lang` 1.17.0 wheel from PyPI and extracts it into
+downloads the locked `warp-lang` 1.19.0 wheel from PyPI and extracts it into
 the directory Blender assigns to this extension
 (`bpy.utils.extension_path_user`). That is not the shared
 `extensions/.local` wheel store, and it is not Blender's user site-packages.
@@ -207,10 +207,10 @@ imported Warp does not switch versions. FluidSim's development override only
 changes `sys.path` after explicit opt-in and is not a fix for an already
 imported Warp module.
 
-FluidSim certifies Warp 1.17.0. Its runtime rejects Warp older than 1.17.0
+FluidSim certifies Warp 1.19.0. Its runtime rejects Warp older than 1.17.0
 or a different major version before initializing it; newer 1.x versions
 remain untested and show a warning. A second press when this extension's own
-copy is already 1.17.0 reports success and writes nothing. An older copy in
+copy is already 1.19.0 reports success and writes nothing. An older copy in
 that same directory is replaced. A copy anywhere else, including another
 add-on or the user site-packages, is left in place until the user removes it.
 The button also stops when `bpy.app.online_access` is off. To use FluidSim

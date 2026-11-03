@@ -10,7 +10,7 @@ checkpoint layer without rewriting the solver into a different architecture.
   in 4.0, including USD export; certification is planned for 4.1)
 - Historical validation host: Blender `5.2.0` on Windows x64 with an NVIDIA
   GeForce RTX 4080 SUPER (earlier evidence, not current candidate qualification)
-- Runtime dependency: NVIDIA Warp `1.18.0+cu13` (1.17.0 still loads), installed from Preferences (never bundled)
+- Runtime dependency: NVIDIA Warp `1.19.0+cu13` (1.17.0 and 1.18.0 still load), installed from Preferences (never bundled)
 - Solver backend policy: NVIDIA CUDA only; CPU is used only for surrounding
   package/runtime smoke evidence
 - Persistent cache policy: v3 writes/playback/resume; v1 and v2 are refused
