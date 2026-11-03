@@ -19,12 +19,12 @@ FluidSim Warp 4.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 | Operating systems | Windows x64 and Linux x64 |
 | GPU-gate certified | Windows 11 x64 on an NVIDIA GeForce RTX 4080 SUPER. Linux x64 is packaged from the same source but not certified |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
-| Warp dependency | NVIDIA Warp 1.19.0 (CUDA 13 build), installed via preferences button; 1.17.0 and 1.18.0 still load |
+| Warp dependency | NVIDIA Warp 1.19.0 (CUDA 13 build; its full GPU gate has not passed yet), installed via preferences button; 1.17.0 and 1.18.0 still load |
 | Cache compatibility | Cache v3 write/playback/resume; Cache v1 (1.0.x) is refused, and so are caches from 2.x: bake again (see [Migrating to 3.0](migrating_to_3_0.md)) |
 
 Install the extension ZIP for your platform. On first run, open **Edit →
 Preferences → Add-ons → FluidSim Warp** and press the **Install Warp** button.
-This downloads the certified NVIDIA Warp 1.19.0 wheel (~135 MB) from PyPI and
+This downloads the locked NVIDIA Warp 1.19.0 wheel (~135 MB) from PyPI and
 extracts it into the directory Blender keeps for this extension. The button is
 safe to press again: when that copy is already 1.19.0 it reports success and
 does not write. If Warp is already loaded from another add-on, or an older
@@ -378,7 +378,7 @@ Conditional panels are:
 ### Add-on Preferences
 
 Preferences contains the **Install Warp** button, runtime selection, and
-detection. **Install Warp** downloads the certified NVIDIA Warp 1.19.0 wheel
+detection. **Install Warp** downloads the locked NVIDIA Warp 1.19.0 wheel
 from PyPI, checks its SHA-256 against the shipped lock, and extracts that
 file into this extension's own directory. Pressing it again when that copy is
 already 1.19.0 does nothing further. A Warp copy FluidSim does not own is not

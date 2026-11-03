@@ -319,7 +319,7 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
                         icon="FILE_REFRESH",
                     )
                     repair.force_reinstall = True
-                if status == "unsupported":
+                if status in ("older", "unsupported"):
                     _draw_install_buttons(box, "Install Certified Warp")
 
         authoring = layout.box()
