@@ -3,8 +3,9 @@
 ``fluidsim.radial_wheel`` (Alt+Right Mouse in the 3D View) opens a ring around
 the pointer. Each slot is a :class:`controls.Control` from
 :data:`controls.STAGE_SLOTS`, so a slot calls the operator or toggles the
-property the panels draw. Clicking the hub cycles ``scene.fluidsim.deck_stage``,
-the same stage the viewport header shows. Releasing the mouse button over a
+property the panels draw. Previous/Next buttons, arrow keys and scrolling change
+``scene.fluidsim.deck_stage``, the same stage the viewport header shows. Clicking
+the hub also cycles forward. Releasing the mouse button over a
 slot runs it (press-drag-release), or click a slot after release. A click
 outside the ring, or Esc, closes the wheel.
 """
@@ -21,6 +22,21 @@ STAGE_SLOTS = controls.STAGE_SLOTS
 HUB_RADIUS = 30.0
 RING_RADIUS = 92.0
 SLOT_RADIUS = 26.0
+NAV_BOTTOM = -170.0
+NAV_TOP = -144.0
+FOOTER_EXTENT = 192.0
+
+
+def navigation_rects(scale=1.0):
+    """Button bounds relative to the hub, shared by drawing and pointer routing."""
+    return {name: tuple(value * scale for value in rect) for name, rect in (
+        ("PREVIOUS", (-126.0, NAV_BOTTOM, -30.0, NAV_TOP)),
+        ("NEXT", (30.0, NAV_BOTTOM, 126.0, NAV_TOP)),
+    )}
+
+
+def adjacent_stage(stage, step):
+    return controls.STAGES[(controls.STAGES.index(stage) + step) % len(controls.STAGES)]
 
 
 def slot_centre(index: int, count: int = 6):
@@ -30,7 +46,10 @@ def slot_centre(index: int, count: int = 6):
 
 
 def slot_at(dx: float, dy: float, scale: float = 1.0, count: int = 6):
-    """``"HUB"``, a slot index, or ``None`` for a pointer offset from the hub."""
+    """Navigation button, ``"HUB"``, slot index, or ``None`` at a hub offset."""
+    for name, (x0, y0, x1, y1) in navigation_rects(scale).items():
+        if x0 <= dx <= x1 and y0 <= dy <= y1:
+            return name
     distance = math.hypot(dx, dy)
     if distance <= HUB_RADIUS * scale:
         return "HUB"
@@ -51,7 +70,7 @@ def pointer_in_region(event, region):
 def clamp_centre(x, y, width, height, scale=1.0):
     """Keep the whole wheel inside the region and above the Deck bar (it opens from there too)."""
     extent = (RING_RADIUS + SLOT_RADIUS + 8.0) * scale
-    floor = extent + (bar.BOTTOM + bar.HEIGHT + bar.GAP) * scale
+    floor = (FOOTER_EXTENT + bar.BOTTOM + bar.HEIGHT + bar.GAP) * scale
     cx = min(max(x, extent), max(extent, float(width) - extent))
     cy = min(max(y, floor), max(floor, float(height) - extent))
     return cx, cy
@@ -64,6 +83,10 @@ def stage_controls(context, stage):
 
 def slot_tip(stage, hover, statuses, slots=None):
     """``(title, body, note)`` for the hovered hub or slot; empty strings when none."""
+    if hover in {"PREVIOUS", "NEXT"}:
+        destination = controls.STAGE_LABELS[adjacent_stage(stage, -1 if hover == "PREVIOUS" else 1)]
+        return ("Previous page" if hover == "PREVIOUS" else "Next page",
+                f"Show the {destination} actions", "Use arrow keys or scroll to change pages")
     if hover == "HUB":
         following = controls.STAGE_LABELS[controls.next_stage(stage)]
         return (f"Stage: {controls.STAGE_LABELS[stage]}",
@@ -111,6 +134,22 @@ def _draw_wheel(operator):
         label = controls.STAGE_LABELS[stage]
         width = _draw.text_width(label, size)
         _draw.text(cx - width / 2.0, cy - size / 3.0, label, size, tokens.rgba(palette.text))
+        for target, (x0, y0, x1, y1) in navigation_rects(scale).items():
+            fill = palette.accent if operator.hover == target else palette.surface
+            _draw.rounded_rect(cx + x0, cy + y0, cx + x1, cy + y1, 5 * scale,
+                               tokens.rgba(fill, tokens.CARD_ALPHA))
+            label = "< Previous" if target == "PREVIOUS" else "Next >"
+            width = _draw.text_width(label, size)
+            _draw.text(cx + (x0 + x1 - width) / 2, cy + (y0 + y1) / 2 - size / 3,
+                       label, size, tokens.rgba(palette.text))
+        label = f"{controls.STAGES.index(stage) + 1}/{len(controls.STAGES)}"
+        width = _draw.text_width(label, size)
+        _draw.text(cx - width / 2, cy + (NAV_BOTTOM + NAV_TOP) / 2 * scale - size / 3,
+                   label, size, tokens.rgba(palette.text))
+        label = "Arrow keys / scroll: change page"
+        width = _draw.text_width(label, size * 0.85)
+        _draw.text(cx - width / 2, cy - 186 * scale, label, size * 0.85,
+                   tokens.rgba(palette.text_dim))
         title, body, note = slot_tip(stage, operator.hover, statuses, slots)
         if title:
             # Above the wheel when it fits, else below it.
@@ -130,8 +169,8 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
     bl_idname = "fluidsim.radial_wheel"
     bl_label = "FluidSim Radial Wheel"
     bl_description = (
-        "Open a radial wheel with six actions for the current workflow stage; click "
-        "the hub to change the stage. Click outside to close")
+        "Open a radial wheel with six actions per page; use Previous/Next, arrow "
+        "keys or scrolling to change pages. Click outside or press Esc to close")
 
     @classmethod
     def poll(cls, context):
@@ -170,8 +209,9 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
 
     def _pick(self, context, target):
         scene = context.scene
-        if target == "HUB":
-            scene.fluidsim.deck_stage = controls.next_stage(current_stage(scene))
+        if target in {"HUB", "PREVIOUS", "NEXT"}:
+            scene.fluidsim.deck_stage = adjacent_stage(
+                current_stage(scene), -1 if target == "PREVIOUS" else 1)
             return None
         control = stage_controls(context, current_stage(scene))[target]
         ready, reason = controls.control_status(context, control)
@@ -196,6 +236,13 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
         x, y = pointer_in_region(event, self.region)
         target = slot_at(x - self.centre[0], y - self.centre[1], scale)
         self.hover = target
+        if event.value == "PRESS":
+            if event.type in {"LEFT_ARROW", "PAGE_UP", "WHEELUPMOUSE"}:
+                self._pick(context, "PREVIOUS")
+                return {"RUNNING_MODAL"}
+            if event.type in {"RIGHT_ARROW", "PAGE_DOWN", "WHEELDOWNMOUSE"}:
+                self._pick(context, "NEXT")
+                return {"RUNNING_MODAL"}
         if event.type == "MOUSEMOVE":
             return {"RUNNING_MODAL"}
         if event.type == "ESC" and event.value == "PRESS":
