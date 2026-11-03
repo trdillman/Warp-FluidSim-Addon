@@ -128,7 +128,7 @@ class FLUIDSIM_OT_deck_modal(bpy.types.Operator):
             return {"PASS_THROUGH"}
         x, y = event.mouse_x - region.x, event.mouse_y - region.y
         with context.temp_override(window=window, area=area, region=region):
-            layout = bar.current_layout(bpy.context)
+            layout = bar.event_layout(bpy.context)
             over, item = bar.hit_test(layout, x, y)
             self._set_hover(region, item)
             if event.type == "MOUSEMOVE":

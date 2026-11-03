@@ -217,7 +217,7 @@ def _routing(monkeypatch):
     bpy.context = context
     button = bar.Item((10.0, 10.0, 40.0, 40.0), "button", controls.PLAY, "Play")
     layout = bar.BarLayout(card=(0.0, 0.0, 300.0, 50.0), items=(button,))
-    monkeypatch.setattr(bar, "current_layout", lambda _ctx: layout)
+    monkeypatch.setattr(bar, "event_layout", lambda _ctx: layout)
     status = {"value": (True, "")}
     monkeypatch.setattr(controls, "control_status", lambda _ctx, _c: status["value"])
     ran = []
