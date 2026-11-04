@@ -47,6 +47,28 @@ def viewport_families(scene, surface_enabled):
     return bool(ordinary and surface_enabled), bool(ordinary and not surface_enabled)
 
 
+def _set_hidden(obj, hidden, view_layer=None):
+    """Hide/show ``obj`` only when its state differs.
+
+    Frame handlers republish every frame, including while Alembic export walks
+    the depsgraph. Writing the same hide flag again re-tags the view layer and
+    crashed Blender 5.2 (``deg_check_base_in_depsgraph``), so unchanged state
+    is left alone.
+    """
+    getter = getattr(obj, "hide_get", None)
+    if getter is not None:
+        try:
+            current = getter(view_layer=view_layer) if view_layer is not None else getter()
+        except Exception:  # noqa: BLE001 - fall through to an unconditional set
+            current = None
+        if current is not None and bool(current) == bool(hidden):
+            return
+    if view_layer is not None:
+        obj.hide_set(hidden, view_layer=view_layer)
+    else:
+        obj.hide_set(hidden)
+
+
 def apply_viewport(scene):
     from . import output_publication as output
     mode = getattr(getattr(scene, "fluidsim", None), "liquid_display_mode", None)
@@ -76,9 +98,9 @@ def apply_viewport(scene):
             if layers:
                 for layer in layers:
                     if obj.name in layer.objects:
-                        obj.hide_set(hidden, view_layer=layer)
+                        _set_hidden(obj, hidden, layer)
             else:
-                obj.hide_set(hidden)
+                _set_hidden(obj, hidden)
 
 
 def restore_scene(scene):

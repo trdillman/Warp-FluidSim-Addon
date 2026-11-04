@@ -1029,3 +1029,36 @@ def test_renderer_fallback_refresh_is_deferred_deduplicated_and_removed(monkeypa
     liquid_display.show_surface_fallback(scene)
     handler.unregister()
     assert not pending
+
+
+def test_apply_viewport_does_not_rewrite_unchanged_hide_state(monkeypatch):
+    """Per-frame republishing (e.g. during Alembic export) must not re-tag the view layer."""
+    from fluidSim_warp_blender51.blender import liquid_display, output_publication
+
+    class Obj:
+        name = "liquid"
+        def __init__(self, hidden):
+            self.hidden = hidden
+            self.sets = 0
+        def hide_get(self, *, view_layer=None):
+            return self.hidden
+        def hide_set(self, value, *, view_layer=None):
+            self.sets += 1
+            self.hidden = value
+
+    surface, particles = Obj(hidden=True), Obj(hidden=True)
+    surface.data = SimpleNamespace(vertices=[(0.0, 0.0, 0.0)])
+    monkeypatch.setattr(output_publication, "_domain_settings",
+                        lambda _scene: SimpleNamespace(surface_enabled=True))
+    layer = SimpleNamespace(objects={"liquid"})
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(liquid_display_mode="OFF"), view_layers=[layer])
+    monkeypatch.setattr(output_publication, "output_object", lambda _scene, name:
+                        surface if name == output_publication.SURFACE_NAME else particles)
+    for _ in range(3):
+        liquid_display.apply_viewport(scene)
+    assert surface.sets == 0 and particles.sets == 0
+    scene.fluidsim.liquid_display_mode = "SURFACE"
+    liquid_display.apply_viewport(scene)
+    assert surface.hidden is False and surface.sets == 1
+    liquid_display.apply_viewport(scene)
+    assert surface.sets == 1
