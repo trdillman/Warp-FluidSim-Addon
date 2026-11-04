@@ -72,12 +72,15 @@ def apply_viewport(scene):
             output._set_hidden(obj, not render_visible, viewport=False)
             if not hidden:
                 output._set_hidden(obj, False, render=False)
+            # hide_set re-tags the depsgraph even for an equal value, and this
+            # runs from per-frame publication (also inside Alembic export's
+            # frame updates), so write only when the flag actually changes.
             layers = getattr(scene, "view_layers", ())
             if layers:
                 for layer in layers:
-                    if obj.name in layer.objects:
+                    if obj.name in layer.objects and obj.hide_get(view_layer=layer) != hidden:
                         obj.hide_set(hidden, view_layer=layer)
-            else:
+            elif obj.hide_get() != hidden:
                 obj.hide_set(hidden)
 
 
