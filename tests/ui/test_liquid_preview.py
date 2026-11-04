@@ -925,6 +925,34 @@ def test_display_writes_view_layer_visibility_only_when_it_changes(monkeypatch):
     assert [c[0] for c in surface.calls[2:]] == [False, False]
 
 
+def test_export_hold_keeps_display_policy_from_rehiding_outputs(monkeypatch):
+    """Exporters un-hide the objects they sample; per-frame publication must not
+    re-apply the display policy until they release (it crashed Blender 5.2.0)."""
+    from fluidSim_warp_blender51.blender import liquid_display, output_publication
+    class Obj:
+        name = "liquid"
+        def __init__(self):
+            self.calls = []
+        def hide_set(self, value, *, view_layer):
+            self.calls.append((value, view_layer))
+        def hide_get(self, *, view_layer):
+            return next((v for v, l in reversed(self.calls) if l is view_layer), None)
+    surface, particles = Obj(), Obj()
+    layers = [SimpleNamespace(objects={"liquid"})]
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(liquid_display_mode="OFF"), view_layers=layers)
+    monkeypatch.setattr(output_publication, "output_object", lambda _scene, name:
+                        surface if name == output_publication.SURFACE_NAME else particles)
+    liquid_display.hold_viewport()
+    try:
+        liquid_display.apply_viewport(scene)
+        assert surface.calls == [] and particles.calls == []
+    finally:
+        liquid_display.release_viewport()
+    liquid_display.release_viewport()  # an unbalanced release never goes negative
+    liquid_display.apply_viewport(scene)
+    assert len(surface.calls) == len(particles.calls) == 1
+
+
 def test_particle_only_legacy_scene_migrates_to_preview(monkeypatch):
     from fluidSim_warp_blender51.blender import liquid_display, scene_access
     scene, domain = _live_scene(False)

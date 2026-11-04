@@ -2,6 +2,7 @@
 
 _SYNCING = False
 MODES = ("PREVIEW", "SURFACE", "OFF")
+_HELD = 0
 
 
 def cycle(settings):
@@ -47,7 +48,25 @@ def viewport_families(scene, surface_enabled):
     return bool(ordinary and surface_enabled), bool(ordinary and not surface_enabled)
 
 
+def hold_viewport():
+    """Let an exporter own output visibility until ``release_viewport``.
+
+    Export un-hides the objects it samples and runs frame updates; the display
+    policy must not re-hide them from per-frame publication in the middle of
+    those updates (Blender 5.2.0 crashes in the depsgraph).
+    """
+    global _HELD
+    _HELD += 1
+
+
+def release_viewport():
+    global _HELD
+    _HELD = max(0, _HELD - 1)
+
+
 def apply_viewport(scene):
+    if _HELD:
+        return
     from . import output_publication as output
     mode = getattr(getattr(scene, "fluidsim", None), "liquid_display_mode", None)
     if mode is None:
