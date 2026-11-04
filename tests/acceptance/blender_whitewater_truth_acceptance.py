@@ -59,7 +59,15 @@ def _render_disabled_sdf_acceptance(device, grid):
         def _phase(self, _name):
             return nullcontext()
 
+        def mark_liquid_state_changed(self):
+            # Same contract as FluidSolver: every substep that moves particles
+            # advances the liquid revision (_sanitize_particles), and the SDF
+            # cache is keyed on that revision, not on the clock.
+            self.liquid_state_revision += 1
+            self.surface.invalidate_particle_state()
+
     solver = FakeSolver()
+    solver.liquid_state_revision = 0
     solver.frame = 0
     solver.sim_time = 0.0
     solver._nvox = grid.voxel_capacity
@@ -73,9 +81,16 @@ def _render_disabled_sdf_acceptance(device, grid):
     assert surface.after_substep() is True
     first = surface.sdf.data.numpy().copy()
     wp.copy(positions, wp.array([(0.6, 0.6, 0.6)], dtype=wp.vec3, device=device))
+    solver.mark_liquid_state_changed()
     solver.sim_time = 0.1
     assert surface.after_substep() is True
     second = surface.sdf.data.numpy().copy()
+
+    # Clock advances alone must not rebuild: without a liquid edit the key holds.
+    stale_key = surface.solver_sdf_key
+    solver.sim_time = 0.2
+    assert surface.after_substep() is True
+    assert surface.solver_sdf_key == stale_key
 
     assert surface.solver_sdf_key is not None
     assert surface.mesh_cache is None
