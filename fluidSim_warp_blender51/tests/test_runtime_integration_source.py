@@ -89,6 +89,14 @@ def test_support_report_operator_remains_available_when_runtime_is_broken():
 
 
 def test_preferences_offers_install_button_for_older_warp():
-    """An owned Warp older than the certified build must be upgradeable from Preferences."""
+    """An owned Warp older than the locked build must be upgradeable from Preferences."""
     source = (pathlib.Path(__file__).resolve().parents[1] / "preferences.py").read_text(encoding="utf-8")
     assert 'if status in ("older", "unsupported"):' in source
+
+
+def test_preferences_runtime_controls_use_supported_icon_and_honest_lock_label():
+    source = (pathlib.Path(__file__).resolve().parents[1] / "preferences.py").read_text(encoding="utf-8")
+    assert 'box.label(text="Runtime", icon="SYSTEM")' in source
+    assert '"Upgrade to Locked Warp"' in source
+    assert 'full GPU qualification pending.' in source
+    assert 'certified' not in source.lower().replace('certified_warp_version', '').replace('status == "certified"', '')

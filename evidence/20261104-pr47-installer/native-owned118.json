@@ -1,0 +1,33 @@
+{
+  "blender": "5.2.0 LTS",
+  "build": "fbe6228777e7",
+  "status": "older",
+  "probe": {
+    "available": true,
+    "message": "Detected 1 CUDA device(s). Warp 1.18.0 is older than the locked 1.19.0. It still works; Install Warp in Add-on Preferences upgrades it.",
+    "warp_version": "1.18.0",
+    "module_file": "C:\\workspace\\fluidsim-pr47-20261104\\artifacts\\pr47-native\\sessions\\bd41b98ec33745ba98044c1194197eb0\\resources\\extensions\\.user\\user_default\\fluidsim_warp\\.local\\warp\\__init__.py",
+    "cuda_driver_version": 13030,
+    "cuda_toolkit_version": 13040,
+    "cuda_devices": [
+      {
+        "alias": "cuda:0",
+        "name": "NVIDIA GeForce RTX 4080 SUPER",
+        "total_memory": 17170825216
+      }
+    ],
+    "last_error": "",
+    "warning": "Warp 1.18.0 is older than the locked 1.19.0. It still works; Install Warp in Add-on Preferences upgrades it.",
+    "driver_floor_reason": ""
+  },
+  "ready": [
+    true,
+    "Warp 1.18.0 \u2014 cuda:0: NVIDIA GeForce RTX 4080 SUPER (16.0 GiB) (older than locked Warp)"
+  ],
+  "offline": {
+    "success": false,
+    "message": "Online access required to install Warp. Launch Blender without --offline-mode",
+    "version": "",
+    "already_installed": false
+  }
+}

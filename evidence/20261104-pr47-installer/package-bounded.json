@@ -1,0 +1,20 @@
+{
+  "artifacts": [
+    {
+      "path": "C:\\workspace\\fluidsim-pr47-20261104\\artifacts\\pr47-packages\\fluidsim_warp-4.1.0-linux_x64.zip",
+      "platform": "linux-x64",
+      "runtime_dependency": "user-install",
+      "sha256": "343e1c8a15253e55e245bef6b586e53389c37966e7f606122fd8a6bc320c9e05",
+      "size": 8324215
+    },
+    {
+      "path": "C:\\workspace\\fluidsim-pr47-20261104\\artifacts\\pr47-packages\\fluidsim_warp-4.1.0-windows_x64.zip",
+      "platform": "windows-x64",
+      "runtime_dependency": "user-install",
+      "sha256": "f5a957be46a885eb56e24bdbb6db61696f087426a30a6938ee9b64f14bb6a97b",
+      "size": 8324213
+    }
+  ],
+  "mode": "build",
+  "release_ready": true
+}

@@ -656,7 +656,7 @@ def test_install_from_file_operator_passes_the_chosen_wheel(tmp_path, monkeypatc
 
     def fake_install(**kwargs):
         calls.append(kwargs)
-        return warp_result(success=False, message="not the certified Warp wheel")
+        return warp_result(success=False, message="not the locked Warp wheel")
 
     from fluidSim_warp_blender51.warp_installer import InstallResult as warp_result
 
@@ -670,7 +670,7 @@ def test_install_from_file_operator_passes_the_chosen_wheel(tmp_path, monkeypatc
 
     assert operator.execute(None) == {"CANCELLED"}
     assert calls[0]["wheel_file"] == str(tmp_path / "warp.whl")
-    assert ({"ERROR"}, "not the certified Warp wheel") in operator.reports
+    assert ({"ERROR"}, "not the locked Warp wheel") in operator.reports
 
 
 def test_install_warp_fails_for_unsupported_platform(tmp_path, monkeypatch):
@@ -1048,7 +1048,7 @@ def test_install_warp_refuses_a_local_wheel_that_is_not_the_locked_one(tmp_path,
     result = warp_installer.install_warp(wheel_file=wheel)
 
     assert result.success is False
-    assert "is not the certified Warp wheel" in result.message
+    assert "is not the locked Warp wheel" in result.message
     assert info.filename in result.message
     assert not owned.exists()
 
@@ -1064,7 +1064,7 @@ def test_install_warp_reports_a_missing_local_wheel(tmp_path, monkeypatch):
     result = warp_installer.install_warp(wheel_file=tmp_path / "nope.whl")
 
     assert result.success is False
-    assert "not the certified Warp wheel" in result.message
+    assert "not the locked Warp wheel" in result.message
 
 
 def test_download_wheel_rejects_non_https():

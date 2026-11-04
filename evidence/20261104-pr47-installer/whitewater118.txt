@@ -1,0 +1,25 @@
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.3
+   Devices:
+     "cpu"      : "CPU"
+     "cuda:0"   : "NVIDIA GeForce RTX 4080 SUPER" (16 GiB, sm_89, mempool enabled)
+   Kernel cache:
+     \\?\C:\Users\Tyler\AppData\Local\NVIDIA\warp\Cache\1.18.0
+Module fluidSim_warp_blender51.sim.fields 6d92c4d load on device 'cuda:0' took 11.99 ms  (cached)
+Module fluidSim_warp_blender51.sim.surface d10e23e load on device 'cuda:0' took 19.03 ms  (cached)
+Blender 5.2.0 LTS (hash fbe6228777e7 built 2026-07-14 01:35:40)
+
+Blender quit
+Traceback (most recent call last):
+  File "C:\workspace\fluidsim-pr47-20261104\tests\acceptance\blender_whitewater_truth_acceptance.py", line 189, in <module>
+    main()
+    ~~~~^^
+  File "C:\workspace\fluidsim-pr47-20261104\tests\acceptance\blender_whitewater_truth_acceptance.py", line 183, in main
+    _render_disabled_sdf_acceptance(device, grid)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\workspace\fluidsim-pr47-20261104\tests\acceptance\blender_whitewater_truth_acceptance.py", line 82, in _render_disabled_sdf_acceptance
+    assert not np.array_equal(first, second), "moving liquid must refresh solver SDF"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: moving liquid must refresh solver SDF
+
+Error: script failed, file: 'tests/acceptance/blender_whitewater_truth_acceptance.py', exiting.

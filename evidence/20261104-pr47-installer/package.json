@@ -1,0 +1,4 @@
+{
+  "error": "CalledProcessError: Command '['C:\\\\Python314\\\\python.exe', '-m', 'ruff', 'check', '.']' returned non-zero exit status 1.",
+  "release_ready": false
+}

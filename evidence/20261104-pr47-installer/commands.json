@@ -1,0 +1,39 @@
+[
+  {
+    "name": "production-gate",
+    "command": [
+      "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\5.2\\python\\bin\\python.exe",
+      "tools/run_production_gate.py"
+    ],
+    "returncode": 1
+  },
+  {
+    "name": "whitewater118",
+    "command": [
+      "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+      "--background",
+      "--factory-startup",
+      "--offline-mode",
+      "--python-use-system-env",
+      "--python-exit-code",
+      "1",
+      "--python",
+      "tests/acceptance/blender_whitewater_truth_acceptance.py"
+    ],
+    "returncode": 1
+  },
+  {
+    "name": "package",
+    "command": [
+      "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\5.2\\python\\bin\\python.exe",
+      "tools/release/build_extension.py",
+      "--blender",
+      "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+      "--output",
+      "C:\\workspace\\fluidsim-pr47-20261104\\artifacts\\pr47-packages",
+      "--json-report",
+      "C:\\workspace\\fluidsim-pr47-20261104\\evidence\\20261104-pr47-installer\\package.json"
+    ],
+    "returncode": 1
+  }
+]

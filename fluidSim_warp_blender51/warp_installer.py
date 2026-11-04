@@ -588,12 +588,12 @@ def get_installed_warp_info() -> tuple[bool, str]:
         if version is not None:
             status, _message = warp_version_support(version)
             if status == "certified":
-                return True, f"Warp {version} (certified)"
+                return True, f"Warp {version} (version-locked; GPU qualification pending)"
             if status == "untested":
-                return True, f"Warp {version} (newer than certified {CERTIFIED_WARP_VERSION})"
+                return True, f"Warp {version} (newer than locked {CERTIFIED_WARP_VERSION})"
             if status == "older":
-                return True, f"Warp {version} (older than certified {CERTIFIED_WARP_VERSION})"
-            return True, f"Warp {version} (incompatible; certified is {CERTIFIED_WARP_VERSION})"
+                return True, f"Warp {version} (older than locked {CERTIFIED_WARP_VERSION})"
+            return True, f"Warp {version} (incompatible; locked is {CERTIFIED_WARP_VERSION})"
     return False, "Warp is not installed"
 
 
@@ -646,7 +646,7 @@ def install_warp(
                     success=True,
                     message=(
                         f"Warp {owned_version} is already installed. It is newer than the "
-                        f"certified {CERTIFIED_WARP_VERSION} and has not been tested "
+                        f"locked {CERTIFIED_WARP_VERSION} and has not been tested "
                         "with FluidSim."
                     ),
                     version=owned_version,
@@ -676,7 +676,7 @@ def install_warp(
         host = _host_platform() or "unknown"
         return InstallResult(
             success=False,
-            message=f"No certified Warp wheel is published for this platform ({host})",
+            message=f"No locked Warp wheel is published for this platform ({host})",
         )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -691,7 +691,7 @@ def install_warp(
                 return InstallResult(
                     success=False,
                     message=(
-                        f"{wheel_path.name} is not the certified Warp wheel for this "
+                        f"{wheel_path.name} is not the locked Warp wheel for this "
                         f"computer. Download {wheel_info.filename} from "
                         "pypi.org/project/warp-lang/"
                         f"{CERTIFIED_WARP_VERSION}/#files and choose that file"
@@ -779,7 +779,7 @@ def install_warp(
         return InstallResult(
             success=False,
             message=(
-                "Installation finished, but the certified Warp files are missing "
+                "Installation finished, but the locked Warp files are missing "
                 "from this extension's directory."
             ),
         )
