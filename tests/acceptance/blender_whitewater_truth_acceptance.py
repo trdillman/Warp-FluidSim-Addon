@@ -88,9 +88,14 @@ def _render_disabled_sdf_acceptance(device, grid):
 
     # Clock advances alone must not rebuild: without a liquid edit the key holds.
     stale_key = surface.solver_sdf_key
+    builds = []
+    real_build_sdf = surface.build_sdf
+    surface.build_sdf = lambda *a, **k: (builds.append(1), real_build_sdf(*a, **k))[1]
     solver.sim_time = 0.2
     assert surface.after_substep() is True
     assert surface.solver_sdf_key == stale_key
+    assert not builds, "a clock-only advance must not rebuild the solver SDF"
+    del surface.build_sdf
 
     assert surface.solver_sdf_key is not None
     assert surface.mesh_cache is None
