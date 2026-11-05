@@ -25,6 +25,7 @@ SLOT_RADIUS = 26.0
 NAV_BOTTOM = -170.0
 NAV_TOP = -144.0
 FOOTER_EXTENT = 192.0
+PAN_THRESHOLD = 40.0
 
 
 def navigation_rects(scale=1.0):
@@ -76,6 +77,17 @@ def clamp_centre(x, y, width, height, scale=1.0):
     return cx, cy
 
 
+def tooltip_y(cy, region_height, scale, height):
+    """Fit above the ring or below the entire footer; omit when neither fits."""
+    gap = bar.GAP * scale
+    above = cy + (RING_RADIUS + SLOT_RADIUS + 8.0) * scale + gap
+    if above + height <= region_height:
+        return above
+    below = cy - FOOTER_EXTENT * scale - gap - height
+    floor = (bar.BOTTOM + bar.HEIGHT + bar.GAP) * scale
+    return below if below >= floor else None
+
+
 def stage_controls(context, stage):
     """The stage's six slots as they stand now (Play and Bake follow the state)."""
     return tuple(controls.resolve(context, c) for c in STAGE_SLOTS[stage])
@@ -108,6 +120,7 @@ def _draw_wheel(operator):
     try:
         if getattr(context, "region", None) != operator.region:
             return
+        operator.painted = None
         palette = tokens.current_tokens(context)
         scale = bar._ui_scale(context)
         cx, cy = operator.centre
@@ -152,13 +165,13 @@ def _draw_wheel(operator):
                    tokens.rgba(palette.text_dim))
         title, body, note = slot_tip(stage, operator.hover, statuses, slots)
         if title:
-            # Above the wheel when it fits, else below it.
-            extent = (RING_RADIUS + SLOT_RADIUS + 8.0) * scale
             height = bar.tip_card_height(scale, size, note)
-            y0 = cy + extent + bar.GAP * scale
-            if y0 + height > getattr(context.region, "height", y0 + height):
-                y0 = cy - extent - bar.GAP * scale - height
-            bar.draw_tip_card(context, cx, y0, title, body, palette, scale, size, note)
+            y0 = tooltip_y(cy, float(context.region.height), scale, height)
+            if y0 is not None:
+                bar.draw_tip_card(context, cx, y0, title, body, palette, scale, size, note)
+        # Publish only after the whole paint succeeds. Actions still check current availability.
+        operator.painted = (context.scene, context.region.width, context.region.height,
+                            scale, operator.centre, slots)
     except Exception as exc:  # noqa: BLE001 - a draw callback must never raise
         print(f"FluidSim Liquid Deck: wheel draw failed: {exc!r}")
 
@@ -187,6 +200,8 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
         self.centre = clamp_centre(*pointer, getattr(self.region, "width", 0),
                                    getattr(self.region, "height", 0), bar._ui_scale(context))
         self.hover = None
+        self.painted = None
+        self.pan_distance = 0.0
         # A wheel moved off the pointer (opened from the bar) has no press-drag-release pick.
         self.opened_with = event.type if self.centre == pointer else ""
         # Replacing the handler retires a wheel still open in another window.
@@ -197,6 +212,7 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def _close(self, context):
+        self.painted = None
         from .registry import REGISTRY
 
         if REGISTRY.draw_handle("wheel") is getattr(self, "handle", None):
@@ -213,7 +229,13 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
             scene.fluidsim.deck_stage = adjacent_stage(
                 current_stage(scene), -1 if target == "PREVIOUS" else 1)
             return None
-        control = stage_controls(context, current_stage(scene))[target]
+        painted = getattr(self, "painted", None)
+        if (painted is None or painted[0] is not scene
+                or context.region is not self.region
+                or painted[1:5] != (context.region.width, context.region.height,
+                                    bar._ui_scale(context), self.centre)):
+            return None
+        control = painted[5][target]
         ready, reason = controls.control_status(context, control)
         if not ready:
             # Keep the wheel open and say why, rather than closing and doing nothing.
@@ -236,7 +258,24 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
         x, y = pointer_in_region(event, self.region)
         target = slot_at(x - self.centre[0], y - self.centre[1], scale)
         self.hover = target
+        if event.type == "MOUSEPAN":
+            dx = getattr(event, "mouse_x", 0) - getattr(event, "mouse_prev_x", 0)
+            dy = getattr(event, "mouse_y", 0) - getattr(event, "mouse_prev_y", 0)
+            if (any(getattr(event, key, False) for key in ("shift", "ctrl", "alt", "oskey"))
+                    or abs(dy) <= abs(dx)
+                    or not (0 <= x < self.region.width and 0 <= y < self.region.height)):
+                self.pan_distance = 0.0
+                return {"RUNNING_MODAL"}
+            if self.pan_distance * dy < 0:
+                self.pan_distance = 0.0
+            self.pan_distance += dy
+            if abs(self.pan_distance) >= PAN_THRESHOLD * scale:
+                self._pick(context, "PREVIOUS" if self.pan_distance > 0 else "NEXT")
+                # At most one page per event; do not carry momentum into the next page.
+                self.pan_distance = 0.0
+            return {"RUNNING_MODAL"}
         if event.value == "PRESS":
+            self.pan_distance = 0.0
             if event.type in {"LEFT_ARROW", "PAGE_UP", "WHEELUPMOUSE"}:
                 self._pick(context, "PREVIOUS")
                 return {"RUNNING_MODAL"}
