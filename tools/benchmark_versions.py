@@ -33,7 +33,7 @@ from pathlib import Path
 WORKLOADS = ("plain", "visc", "st", "visc_st")
 EMIT_FRAMES = 4
 REFERENCE_COMMITS = {
-    "4.0.1": "c089c0de3936a336fe1d026fe70b6397b64237d6",
+    "4.0.1": "46cdf3ce67b16a92ea47ad372bcd6e4bba8fe877",
 }
 
 
