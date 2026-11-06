@@ -5,6 +5,29 @@ import pytest
 from test_scene_bridge_settings import _install_scene_bridge_stubs
 
 
+def test_preview_retirement_failure_does_not_skip_runtime_cleanup(monkeypatch):
+    bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import gpu_particle_owner
+    from fluidSim_warp_blender51.sim import memory_safety
+
+    events = []
+
+    def fail_preview():
+        events.append('preview')
+        raise RuntimeError('preview timer unavailable')
+
+    monkeypatch.setattr(gpu_particle_owner, 'reset_runtime', fail_preview)
+    monkeypatch.setattr(memory_safety, 'release_cuda_memory', lambda device: events.append('cuda'))
+    session = bridge.Session()
+    session.solver = NS(device='cpu', release=lambda: events.append('solver'))
+    session.scene_inputs = NS(clear=lambda: events.append('inputs'))
+    session.bind_scene(123, 'scene')
+    with pytest.raises(RuntimeError, match='Solver inactive.*preview timer unavailable'):
+        session._clear_runtime()
+    assert not session.active and session.scene_identity is None
+    assert events == ['preview', 'solver', 'inputs', 'cuda']
+
+
 @pytest.mark.parametrize("cleanup_fault", [None, "candidate", "new-inputs", "candidate-cuda"])
 @pytest.mark.parametrize("_attempt", range(2))
 @pytest.mark.parametrize("lane", ["initialize", "reinitialize", "reset"])

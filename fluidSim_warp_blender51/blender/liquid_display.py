@@ -57,6 +57,10 @@ def hold_viewport():
     those updates (Blender 5.2.0 crashes in the depsgraph).
     """
     global _HELD
+    if not _HELD:
+        # Exporters must snapshot authored visibility, not the GPU overlay lease.
+        from . import gpu_particle_owner
+        gpu_particle_owner._restore_output()
     _HELD += 1
 
 

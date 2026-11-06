@@ -28,3 +28,15 @@ then staged a forced repair while imported. A separate Blender5.2 process applie
 the repair and detected1.19.0 from the extension-owned .local directory. CUDA was
 hidden; no user profile was replaced. These checks close that recorded installer
 scenario only; they do not qualify the later integrated archive or GPU/GUI lanes.
+
+The ccee3428 no-CUDA source suite completed: 3665 passed, 350 skipped, two
+failures in a shared Blender Object double missing hide_get. Adding the real
+visibility-read contract resolved both failures; all six affected tests passed.
+
+PR43 integration repairs current display-policy eligibility and restoration,
+restores the overlay visibility lease before an export hold, and latches restart
+after renderer retirement failure. Preview cleanup failures are aggregated while
+solver, scene inputs and CUDA cleanup continue. Focused owner/renderer/display
+tests passed 69 cases and replacement-retirement tests passed 97 cases. These
+CPU checks do not qualify the native SDK/PRK GPU path on Warp1.19; that runtime
+and the final full source/production gate remain outstanding.

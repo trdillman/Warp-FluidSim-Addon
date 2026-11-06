@@ -1,0 +1,4 @@
+Command: CUDA_VISIBLE_DEVICES=-1 python -m pytest -q tests/test_sdk_interop_adapter.py tests/test_gpu_particle_owner.py tests/test_gpu_particle_renderer.py tests/runtime/test_pending_settings_registry.py --basetemp C:/workspace/fluidsim-parent-post-loadfix-tmp
+Exit code: 0
+...................................                                      [100%]
+35 passed in 2.95s

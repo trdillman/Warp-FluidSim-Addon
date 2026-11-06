@@ -64,3 +64,9 @@ isolated branches based on fresh `origin/master`; historical experiment results
 do not qualify a current candidate. Dependency/runtime qualification is open.
 Reviewable PRs require current tests and evidence; reactivation does not
 authorize merge or release.
+
+## Experimental GPU particle preview
+
+The optional GPU Particle Preview draws live liquid positions through an externally installed Vulkan interop SDK when the compatible backend is available. It supports the default flat particle display; attribute coloring and custom particle materials continue to use the regular output. If the backend cannot start, FluidSim keeps the regular output path. This preview does not replace render, cache, export, surface, or whitewater output.
+
+The texture transport does not read particle positions back to the CPU. FluidSim still publishes its persistent Blender output on the host for renders, saves, and exports, so enabling the preview does not eliminate per-frame host position reads or establish a performance improvement. A transport retirement failure requires restarting Blender before using the GPU preview again.

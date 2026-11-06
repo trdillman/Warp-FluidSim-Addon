@@ -1,0 +1,6 @@
+# Preserve the exact tested bytes of new native bridges and gate receipts.
+fluidSim_warp_blender51/blender/sdk_interop.py -text whitespace=cr-at-eol
+fluidSim_warp_blender51/blender/gpu_particle_owner.py -text whitespace=cr-at-eol
+fluidSim_warp_blender51/blender/gpu_particle_renderer.py -text whitespace=cr-at-eol
+tests/acceptance/blender_gpu_particle_preview_acceptance.py -text whitespace=cr-at-eol
+evidence/20261101-native-interop/** -text whitespace=cr-at-eol

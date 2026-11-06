@@ -193,6 +193,8 @@ class Session:
         admitted with. A retirement failure raises ReplacementRetirementError:
         ownership has transferred even though this call did not return.
         """
+        from . import gpu_particle_owner
+        gpu_particle_owner.reset_runtime()
         old_solver = self.solver
         old_inputs = self.scene_inputs
         self.solver = candidate
@@ -223,6 +225,12 @@ class Session:
                 + "; ".join(str(exc) for exc in failures)) from failures[0]
 
     def _clear_runtime(self):
+        failures = []
+        try:
+            from . import gpu_particle_owner
+            gpu_particle_owner.reset_runtime()
+        except Exception as exc:
+            failures.append(exc)
         solver = self.solver
         inputs = self.scene_inputs
         device = getattr(solver, "device", None) or self.device
@@ -237,7 +245,6 @@ class Session:
         self.sync_refusal = ""
         self._clear_capacity_plan()
         self.particle_capacity_notice_scene_identity = None
-        failures = []
         try:
             if solver is not None and hasattr(solver, "release"):
                 solver.release()
@@ -532,6 +539,9 @@ class Session:
             if warning:
                 self.set_error(scene, warning)
                 fs.status = f"{fs.status} — {warning}"
+        if publish_outputs:
+            from . import gpu_particle_owner
+            gpu_particle_owner.publish_scene(scene, self, stats.active_particles)
         return stats
 
     def reset(self, scene, *, depsgraph=None):

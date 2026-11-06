@@ -311,6 +311,12 @@ def _request_output_refresh(self, context):
     _request_scene_update(context, SceneUpdate.OUTPUT)
 
 
+def _gpu_particle_preview_changed(self, context):
+    if not self.gpu_particle_preview:
+        from .blender import gpu_particle_owner
+        gpu_particle_owner.disable_preview(context, getattr(self, "id_data", None))
+
+
 def _request_surface_refresh(self, context):
     from .blender.pending_settings import SceneUpdate
 
@@ -916,6 +922,9 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     show_whitewater: BoolProperty(
         name="Whitewater", default=True, update=_request_output_refresh,
         description="Enable to display simulated whitewater particles; disable to hide them without disabling whitewater simulation")
+    gpu_particle_preview: BoolProperty(
+        name="GPU Particle Preview", default=False, update=_gpu_particle_preview_changed,
+        description="Use the GPU texture preview for live liquid particles when available")
     particle_display_fraction: FloatProperty(
         name="Display Fraction", default=1.0, min=0.01, max=1.0,
         update=_request_output_refresh,

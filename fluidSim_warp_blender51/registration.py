@@ -62,6 +62,8 @@ STEPS: tuple[Step, ...] = (
          "register_handlers", "unregister_handlers"),
     Step("render handlers", "blender.render",
          "register_handlers", "unregister_handlers"),
+    Step("GPU particle renderer", "blender.gpu_particle_owner",
+         "register", "unregister"),
     # Liquid Preview: a draw handler exists only while the mode is on.
     Step("liquid preview", "blender.liquid_preview.handler",
          "register", "unregister"),

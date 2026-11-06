@@ -1,0 +1,103 @@
+{
+  "status": "passed",
+  "blender_version": [
+    5,
+    2,
+    0
+  ],
+  "blender_build": "fbe6228777e7",
+  "backend": "VULKAN",
+  "warp": {
+    "path": "C:\\workspace\\interop-acceptance-20261101\\site-packages\\warp\\__init__.py",
+    "version": "1.18.0",
+    "sha256": "81e043b02787e0e703b8b05ec8ab356d138f7749f08af4ce30c72a0cb2ac2ef9"
+  },
+  "sdk": {
+    "path": "C:\\workspace\\interop-acceptance-20261101\\site-packages\\blender_vulkan_interop\\__init__.py",
+    "version": "0.1.0a3.dev0",
+    "sha256": "bc874abf9ce3e82adda0537ef327398bb95c66220c442d533b1148de9e750117"
+  },
+  "prk": {
+    "path": "C:\\workspace\\interop-acceptance-20261101\\site-packages\\prk\\__init__.py",
+    "version": "0.1.0",
+    "sha256": "2294edd8cba2d1d135ccb9434f21f86b60e12ba50bdbf4ff4e8188c5e5145557"
+  },
+  "addon": {
+    "path": "C:\\workspace\\fluidsim-native-interop-20261101\\blender-profile-clean\\sessions\\b08acd965cc244e19e69fbbda5e6f008\\resources\\scripts\\addons\\fluidSim_warp_blender51\\__init__.py",
+    "version": null,
+    "sha256": "40941de156a4fc8bda6042307717a7fa374b1ff22636bfc6c009d9a569463417"
+  },
+  "source_modules": {
+    "fluidSim_warp_blender51.blender.sdk_interop": {
+      "path": "C:\\workspace\\fluidsim-native-interop-20261101\\blender-profile-clean\\sessions\\b08acd965cc244e19e69fbbda5e6f008\\resources\\scripts\\addons\\fluidSim_warp_blender51\\blender\\sdk_interop.py",
+      "version": null,
+      "sha256": "c1221bb134eacdc7d7cef5bfc9e2e13796d78df3d093845d20260a4b9422f08b"
+    },
+    "fluidSim_warp_blender51.blender.gpu_particle_owner": {
+      "path": "C:\\workspace\\fluidsim-native-interop-20261101\\blender-profile-clean\\sessions\\b08acd965cc244e19e69fbbda5e6f008\\resources\\scripts\\addons\\fluidSim_warp_blender51\\blender\\gpu_particle_owner.py",
+      "version": null,
+      "sha256": "8ca4b40e96462585866ded85e832c5bb60537a8ccc871e348d54e30f0bb352d8"
+    },
+    "fluidSim_warp_blender51.blender.gpu_particle_renderer": {
+      "path": "C:\\workspace\\fluidsim-native-interop-20261101\\blender-profile-clean\\sessions\\b08acd965cc244e19e69fbbda5e6f008\\resources\\scripts\\addons\\fluidSim_warp_blender51\\blender\\gpu_particle_renderer.py",
+      "version": null,
+      "sha256": "d829444440ff537c3dff1f96669aed44205d21bc1933043e7b132b8275c6c71f"
+    },
+    "prk.gpudraw.external_texture": {
+      "path": "C:\\workspace\\interop-acceptance-20261101\\site-packages\\prk\\gpudraw\\external_texture.py",
+      "version": null,
+      "sha256": "62a547c4001ce2a9a049339be09585c429508379c7477634917b58ae65891e1e"
+    },
+    "prk.gpudraw.strategies.points": {
+      "path": "C:\\workspace\\interop-acceptance-20261101\\site-packages\\prk\\gpudraw\\strategies\\points.py",
+      "version": null,
+      "sha256": "d99ca1d63a4448e4436a09640a4d60af7dd3684ce3185f702bebe6b1f91edf27"
+    }
+  },
+  "correctness_position_readback": true,
+  "performance_qualification": false,
+  "initial_count": 5984,
+  "prk_strategy": "prk.gpudraw.strategies.points.PointsStrategy",
+  "before_positions": [
+    [
+      0.4104803502559662,
+      0.43939539790153503,
+      1.4829686880111694
+    ],
+    [
+      0.5,
+      0.4302045404911041,
+      1.4895778894424438
+    ],
+    [
+      0.47597020864486694,
+      0.5,
+      1.4829686880111694
+    ]
+  ],
+  "solver_frame_before": 1,
+  "scene_frame": 13,
+  "solver_frame_after": 13,
+  "after_positions": [
+    [
+      0.4328128397464752,
+      0.4594002962112427,
+      0.1107349544763565
+    ],
+    [
+      0.5256246328353882,
+      0.4560670554637909,
+      0.12951813638210297
+    ],
+    [
+      0.4975610673427582,
+      0.5514535903930664,
+      0.113727867603302
+    ]
+  ],
+  "reenabled_count": 5984,
+  "release_visible": true,
+  "error": null,
+  "elapsed_seconds": 4.114725599996746,
+  "retirement_pending_at_finish": false
+}
