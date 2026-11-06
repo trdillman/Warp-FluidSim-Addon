@@ -383,6 +383,34 @@ def test_rename_refuses_a_cache_folder_holding_foreign_files(tmp_path):
     assert (folder / "scene.blend").is_file()
 
 
+@pytest.mark.parametrize("metadata_name", [".DS_Store", "Thumbs.db"])
+@pytest.mark.parametrize("operation", ["free", "move", "rename"])
+def test_os_metadata_does_not_require_a_lowercase_alias(tmp_path, monkeypatch,
+                                                       metadata_name, operation):
+    folder = tmp_path / "cache"
+    _make_cache(folder)
+    (folder / metadata_name).write_bytes(b"OS metadata")
+    original_exists = Path.exists
+
+    def case_sensitive_exists(path):
+        if path.parent == folder and path.name == metadata_name.lower():
+            return False
+        return original_exists(path)
+
+    # Model the absent lowercase alias on Windows too; the metadata file is
+    # real, and the actual guarded whole-directory operations still run.
+    monkeypatch.setattr(Path, "exists", case_sensitive_exists)
+    if operation == "free":
+        free_cache(folder)
+        assert not folder.exists()
+    elif operation == "move":
+        destination = move_cache(folder, tmp_path / "moved")
+        assert (destination / metadata_name).read_bytes() == b"OS metadata"
+    else:
+        destination = rename_cache(folder, "renamed")
+        assert (destination / metadata_name).read_bytes() == b"OS metadata"
+
+
 @pytest.mark.parametrize("relative", ["notes.tmp", "frames/render.png", "checkpoints/scene.blend", "logs/assets/wood.png", "frames/frame_fake.npz"])
 @pytest.mark.parametrize("operation", ["free", "move", "rename"])
 def test_whole_cache_preserves_nested_foreign_data(tmp_path, relative, operation):

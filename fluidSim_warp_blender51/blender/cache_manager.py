@@ -101,7 +101,8 @@ def foreign_cache_entries(path: Path | str) -> tuple[str, ...]:
     base = Path(path)
     foreign = []
     files = {"fluidsim_cache.json", "fluidsim_sequence.json", "fluidsim_cache.json.tmp",
-             "fluidsim_sequence.json.tmp", "thumbs.db", "desktop.ini", ".ds_store"}
+             "fluidsim_sequence.json.tmp"}
+    os_metadata = {"thumbs.db", "desktop.ini", ".ds_store"}
     patterns = {"frames": r"frame_-?[0-9]+\.(?:npz|tmp|tmp\.npz|npz\.tmp|npz\.[a-z0-9_]+\.tmp)",
                 "checkpoints": r"checkpoint_-?[0-9]+\.(?:npz|tmp|tmp\.npz|npz\.tmp|npz\.[a-z0-9_]+\.tmp)",
                 "logs": r"bake\.log"}
@@ -116,8 +117,9 @@ def foreign_cache_entries(path: Path | str) -> tuple[str, ...]:
                 if (child.is_symlink() or getattr(child, "is_junction", lambda: False)()
                         or not child.is_file() or not re.fullmatch(patterns[name], child.name)):
                     foreign.append(child.relative_to(base).as_posix())
-        elif not linked and same_name and entry.is_file() and (
-                name in files or re.fullmatch(r"fluidsim_-?[0-9]+\.npz", name)):
+        elif not linked and entry.is_file() and (
+                name in os_metadata or (same_name and (
+                    name in files or re.fullmatch(r"fluidsim_-?[0-9]+\.npz", name)))):
             continue
         else:
             foreign.append(entry.name)
