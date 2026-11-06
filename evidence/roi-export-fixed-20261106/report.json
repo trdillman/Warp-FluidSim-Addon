@@ -1,0 +1,129 @@
+{
+  "project": "FluidSim",
+  "owner": "portfolio ROI goal",
+  "run_id": "roi-export-fixed-20261106",
+  "source_sha": "1aa88b75b2d8d8d6030306479a27b64835f33e4a",
+  "output_path": "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\evidence\\roi-export-fixed-20261106",
+  "state": "passed",
+  "budget_bytes": 100000000,
+  "expiry": "retain until task accepted",
+  "active_lease": "solver-free exporters; global GPU mutex for handler solver check",
+  "retention_reason": "exact-candidate export and lifecycle evidence",
+  "protected_evidence": true,
+  "blender": "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+  "blender_sha256": "0060916d6921eb4d46c57254609d805a2ea711917399051391a52ba14beb6327",
+  "warp_root": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site",
+  "checks": [
+    {
+      "name": "alembic",
+      "command": [
+        "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+        "--background",
+        "--factory-startup",
+        "--python-use-system-env",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\tests\\acceptance\\blender_alembic_export_acceptance.py"
+      ],
+      "script_sha256": "4f3a97517642ce74c2f6c320a4f1e54e2fbe40da9dd3b8e2b30eadadb8ce3157",
+      "exit_code": 0,
+      "seconds": 4.77,
+      "expected_marker": "ALEMBIC_EXPORT_OK",
+      "marker_found": true,
+      "log": "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\evidence\\roi-export-fixed-20261106\\alembic.log",
+      "log_sha256": "71121aba1219c34313034438b4d18e13d62858239f5be0355d8d94eb730dd682"
+    },
+    {
+      "name": "usd",
+      "command": [
+        "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+        "--background",
+        "--factory-startup",
+        "--python-use-system-env",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\tests\\acceptance\\blender_usd_export_acceptance.py"
+      ],
+      "script_sha256": "ad1f1387fc1ded2bf6e7f1efb96e7939c3f256d80dd71293ca47234431670d53",
+      "exit_code": 0,
+      "seconds": 7.29,
+      "expected_marker": "USD_EXPORT_OK",
+      "marker_found": true,
+      "log": "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\evidence\\roi-export-fixed-20261106\\usd.log",
+      "log_sha256": "b0e993b86a0f239a7509488ffbda64fd968fb0e7efcfc628a4148b36f957a59f"
+    },
+    {
+      "name": "handlers",
+      "command": [
+        "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+        "--background",
+        "--factory-startup",
+        "--python-use-system-env",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\tests\\acceptance\\blender_handler_persistence_gate.py"
+      ],
+      "script_sha256": "377040a4fd9775f2658877d4174c5c293d1c53caf28e8bba491cfef9f5143f74",
+      "exit_code": 0,
+      "seconds": 8.92,
+      "expected_marker": "HANDLER-PERSISTENCE-GATE-PASS",
+      "marker_found": true,
+      "log": "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\evidence\\roi-export-fixed-20261106\\handlers.log",
+      "log_sha256": "a8c90ca57961c21e5e6df7add9d656801e0772ae770873dbc0c6115ed12a0226"
+    },
+    {
+      "name": "bake",
+      "command": [
+        "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+        "--background",
+        "--factory-startup",
+        "--python-use-system-env",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\tests\\acceptance\\blender_cache_export_pipeline.py"
+      ],
+      "script_sha256": "417223d11cb260b73f628e262ad1f8679f8e3627ab731e9a9c086a98df076db3",
+      "exit_code": 0,
+      "seconds": 14.04,
+      "expected_marker": "CACHE-EXPORT-PIPELINE-PASS",
+      "marker_found": true,
+      "log": "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\evidence\\roi-export-fixed-20261106\\bake.log",
+      "log_sha256": "718caf0ffbc00593954d35720c4974a13b4e6f411f99188c97f3b722b8e491ad"
+    },
+    {
+      "name": "live-export",
+      "command": [
+        "C:\\Users\\Tyler\\Downloads\\blender-5.2.0-windows-x64\\blender-5.2.0-windows-x64\\blender.exe",
+        "--background",
+        "--factory-startup",
+        "--python-use-system-env",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\tests\\acceptance\\blender_export_live_session_acceptance.py"
+      ],
+      "script_sha256": "096883d6eca0738c76c9bf5c7113501f92d75e09a523ac0b7147cf5ff443b131",
+      "exit_code": 0,
+      "seconds": 19.57,
+      "expected_marker": "EXPORT_LIVE_SESSION_OK",
+      "marker_found": true,
+      "log": "C:\\Users\\Tyler\\.codex\\worktrees\\roi-fluidsim-export\\liquid_warp_blender51_port\\evidence\\roi-export-fixed-20261106\\live-export.log",
+      "log_sha256": "0003706ad47d4beb990357d30e8e2758e22042f725f9a1f4ead32b0081a5db91"
+    }
+  ],
+  "source_status": " M fluidSim_warp_blender51/blender/liquid_display.py\n M fluidSim_warp_blender51/blender/liquid_preview/handler.py\n M tests/ui/test_liquid_preview.py\n?? evidence/roi-export-20261106-handlers/\n?? evidence/roi-export-20261106/\n",
+  "changed_source_sha256": {
+    "fluidSim_warp_blender51/blender/liquid_display.py": "2c80f8de55b36ae8ce0bff34b26aa9cdc1ddfb18cc8cc9fddad8e4cca81e60a4",
+    "fluidSim_warp_blender51/blender/liquid_preview/handler.py": "a98dc19aad824de51bc97f6445b70f2144b723ea1b3ccf1e8a785619befa7b3c",
+    "tests/ui/test_liquid_preview.py": "016c67ad3c26035afb56534710a7a30c779fab8f03ee68463f180bb941f7cba4"
+  },
+  "dependency_probe": {
+    "exit_code": 0,
+    "stdout": "{\"python\": \"3.13.13 (main, May  8 2026, 12:37:03) [MSC v.1944 64 bit (AMD64)]\", \"warp\": \"1.19.0\", \"warp_path\": \"C:\\\\Users\\\\Tyler\\\\Documents\\\\FluidSim-Warp119-gate-20261103-env\\\\site\\\\warp\\\\__init__.py\", \"numpy\": \"2.3.4\"}\n",
+    "stderr": ""
+  }
+}

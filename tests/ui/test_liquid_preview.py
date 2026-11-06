@@ -1000,6 +1000,70 @@ def test_view_layer_write_is_deferred_out_of_the_frame_update(monkeypatch, hold_
     assert timers == []
 
 
+def test_outermost_export_release_reconciles_new_output_visibility(monkeypatch):
+    from fluidSim_warp_blender51.blender import liquid_display, output_publication
+    _handler, fake_bpy, _draw, _keys = _install_handler_bpy(monkeypatch)
+    timers = []
+    fake_bpy.app.timers = SimpleNamespace(
+        is_registered=lambda fn: fn in timers,
+        register=lambda fn, **_kw: timers.append(fn),
+        unregister=lambda fn: timers.remove(fn))
+    monkeypatch.setattr(liquid_display, '_PENDING', set())
+    monkeypatch.setattr(liquid_display, '_HELD', 0)
+
+    class Obj:
+        name = 'new-particles'
+        hidden = False
+
+        def hide_get(self, **_kwargs):
+            return self.hidden
+
+        def hide_set(self, hidden, **_kwargs):
+            self.hidden = hidden
+
+    particles = Obj()
+    scene = SimpleNamespace(name='Scene', view_layers=[],
+                            fluidsim=SimpleNamespace(liquid_display_mode='OFF'))
+    fake_bpy.data.scenes = [scene]
+    monkeypatch.setattr(output_publication, 'output_object', lambda _scene, name:
+                        particles if name == output_publication.PARTICLES_NAME else None)
+    monkeypatch.setattr(output_publication, '_domain_settings',
+                        lambda _scene: SimpleNamespace(surface_enabled=True))
+    liquid_display.hold_viewport()
+    liquid_display.hold_viewport()
+    liquid_display.apply_viewport(scene)
+    assert not particles.hidden
+    liquid_display._flush_pending()  # a timer queued before export may fire
+    assert not particles.hidden
+    liquid_display.release_viewport()
+    assert not timers and not particles.hidden
+    liquid_display.release_viewport()
+    assert len(timers) == 1
+    assert not particles.hidden, 'reconciliation must stay outside frame updates'
+    timers.pop()()
+    assert particles.hidden
+
+
+@pytest.mark.parametrize('boundary', ['unregister', 'load'])
+def test_display_policy_state_is_cleared_at_lifecycle_boundary(monkeypatch, boundary):
+    from fluidSim_warp_blender51.blender import liquid_display
+    handler, fake_bpy, _draw, _keys = _install_handler_bpy(monkeypatch)
+    timers = [liquid_display._flush_pending]
+    fake_bpy.app.timers = SimpleNamespace(
+        is_registered=lambda fn: fn in timers,
+        register=lambda fn, **_kw: timers.append(fn),
+        unregister=lambda fn: timers.remove(fn))
+    monkeypatch.setattr(liquid_display, '_PENDING', {'old-scene'})
+    monkeypatch.setattr(liquid_display, '_HELD', 1)
+    if boundary == 'unregister':
+        handler.unregister()
+    else:
+        handler._on_load_post()
+    assert timers == []
+    assert not liquid_display._PENDING
+    assert liquid_display._HELD == 0
+
+
 def test_particle_only_legacy_scene_migrates_to_preview(monkeypatch):
     from fluidSim_warp_blender51.blender import liquid_display, scene_access
     scene, domain = _live_scene(False)
