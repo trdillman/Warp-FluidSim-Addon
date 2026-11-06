@@ -62,11 +62,31 @@ def hold_viewport():
 
 def release_viewport():
     global _HELD
-    _HELD = max(0, _HELD - 1)
+    if not _HELD:
+        return
+    _HELD -= 1
+    if not _HELD and _PENDING:
+        if not _schedule_pending():
+            _flush_pending()
+
+
+def reset_viewport():
+    """Discard old-scene policy work on file load or add-on teardown."""
+    global _HELD
+    import bpy
+
+    timers = getattr(bpy.app, "timers", None)
+    if timers is not None and timers.is_registered(_flush_pending):
+        timers.unregister(_flush_pending)
+    _PENDING.clear()
+    _HELD = 0
 
 
 def apply_viewport(scene, *, deferred=True):
     if _HELD:
+        name = getattr(scene, "name", None)
+        if isinstance(name, str):
+            _PENDING.add(name)
         return
     from . import output_publication as output
     mode = getattr(getattr(scene, "fluidsim", None), "liquid_display_mode", None)
@@ -122,12 +142,16 @@ def _defer_view_layer_write(scene):
     deg_check_base_in_depsgraph, so the write waits until the update is over.
     """
     name = getattr(scene, "name", None)
+    if not isinstance(name, str):
+        return False
+    _PENDING.add(name)
+    return _schedule_pending()
+
+
+def _schedule_pending():
     try:
         import bpy
         timers = bpy.app.timers
-        if not isinstance(name, str):
-            return False
-        _PENDING.add(name)
         if not timers.is_registered(_flush_pending):
             timers.register(_flush_pending, first_interval=0.0)
         return True
@@ -138,6 +162,8 @@ def _defer_view_layer_write(scene):
 def _flush_pending():
     import bpy
 
+    if _HELD:
+        return None
     names = set(_PENDING)
     _PENDING.clear()
     for scene in bpy.data.scenes:
