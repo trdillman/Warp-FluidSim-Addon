@@ -48,6 +48,7 @@ def _inventory(root):
     paths += [root / "demos" / f"{demo}.blend" for demo in
               ("dam_break", "crown_splash", "paddle_stir", "chromatic_vortex")]
     paths += list((root / "tools/gate").rglob("*.py"))
+    paths += list((root / "tools/demos").rglob("*"))
     paths += [root / "tools" / name for name in
               ("repo_addon_loader.py", "benchmark_demo_trial.py", "benchmark_versions.py",
                "performance_budget.py", "run_production_gate.py")]
@@ -73,6 +74,9 @@ def _snapshot_candidate(source, destination):
                  "performance_budget.py", "run_production_gate.py"):
         shutil.copy2(source / "tools" / name, destination / "tools" / name)
     shutil.copytree(source / "tools/gate", destination / "tools/gate")
+    if (source / "tools/demos").is_dir():
+        shutil.copytree(source / "tools/demos", destination / "tools/demos",
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     if before != _inventory(source) or before != _inventory(destination):
         raise RuntimeError("candidate changed during snapshot; rerun with stable source")
     return before
@@ -148,6 +152,20 @@ def _measurement_context(candidate, blender, out_dir, env):
                 environment_request=str(out_dir / "admission/environment-request.json"))
 
 
+def _snapshot_measurement_sources(candidate, demo, context, payload):
+    semantics = {}
+    name = f'demos/{demo}.blend'
+    if name in context.get('generated_semantics', {}):
+        try:
+            observed = json.loads(payload.with_suffix('.semantics.json').read_text())['semantic_fingerprint']
+        except (OSError, ValueError, KeyError) as exc:
+            raise RuntimeError('missing snapshot semantic observation') from exc
+        if observed != context['generated_semantics'][name]:
+            raise RuntimeError('measured snapshot semantic identity differs from admission')
+        semantics[name] = observed
+    return q.measurement_sources(candidate, demo, semantics)
+
+
 def demo_budget_main(argv):
     """Release lane: exact saved workloads, pinned references, fresh ABBA trials."""
     from tools.performance_budget import (
@@ -196,9 +214,12 @@ def demo_budget_main(argv):
     if summary_path.exists():
         shutil.copy2(summary_path, evidence_dir / "prior-summary.json")
     summary_path.unlink(missing_ok=True)
-    env = os.environ.copy()
+    from tools.release.build_extension import _blender_process_environment
+    env = _blender_process_environment(os.environ, profile_dir=evidence_dir / 'blender-profile',
+                                       allow_source_imports=True)
+    for key in ('BLENDER_USER_RESOURCES', 'PYTHONHOME', 'PYTHONSTARTUP'):
+        env.pop(key, None)
     env["PYTHONNOUSERSITE"] = "1"
-    env["BLENDER_USER_EXTENSIONS"] = str(out_dir / "blender_user_extensions")
     context = _measurement_context(candidate, args.blender, out_dir, env)
     env["FLUIDSIM_ENVIRONMENT_REQUEST"] = context["environment_request"]
     for run in carried_runs:
@@ -247,6 +268,7 @@ def demo_budget_main(argv):
                                    "--extract", str(candidate), str(blend), str(payload)]
                 _run_trial(extract_command, payload, env=env, cwd=candidate,
                            expect_marker="DEMO-SETTINGS-EXTRACT-PASS")
+                measured_sources = _snapshot_measurement_sources(candidate, demo, context, payload)
                 for block, slot, label in schedule:
                     root = roots[reference] if label == "baseline" else candidate
                     root_inventory = _inventory(root)
@@ -268,7 +290,7 @@ def demo_budget_main(argv):
                         raise RuntimeError("runtime add-on version does not match selected checkout")
                     if run.get('environment_fingerprint') != context['environment_fingerprint']:
                         raise RuntimeError('observed child environment differs from qualification')
-                    run.update(source_fingerprint=q.measurement_sources(source_root, demo, context.get('generated_semantics')),
+                    run.update(source_fingerprint=measured_sources,
                                verifier_fingerprint=context['verifier_fingerprint'], run_id=context['run_id'],
                                gitStatus=[], label=label, round=block, slot=slot, workload=demo,
                                gitHead=REFERENCE_COMMITS[reference] if label == "baseline" else head,

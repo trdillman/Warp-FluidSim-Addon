@@ -205,3 +205,20 @@ def test_unclear_early_stage_continues_to_the_full_schedule(monkeypatch, tmp_pat
         monkeypatch, tmp_path, _campaign(candidate=106.0))
     assert code == 1 and report["status"] == "regression"
     assert len(report["runs"]) == 64
+
+
+def test_snapshot_generated_semantics_cannot_borrow_admission_identity(tmp_path):
+    import pytest
+    from tools.gate import qualification as q
+    candidate = tmp_path / 'snapshot'
+    (candidate / 'demos').mkdir(parents=True)
+    (candidate / 'demos/dam_break.blend').write_bytes(b'actual measured bytes')
+    payload = tmp_path / 'settings.json'
+    context = {'generated_semantics': {'demos/dam_break.blend': 'a' * 64}}
+    with pytest.raises(RuntimeError, match='snapshot semantic observation'):
+        bench._snapshot_measurement_sources(candidate, 'dam_break', context, payload)
+    q.atomic_json(payload.with_suffix('.semantics.json'), {'semantic_fingerprint': 'b' * 64})
+    with pytest.raises(RuntimeError, match='snapshot semantic identity differs'):
+        bench._snapshot_measurement_sources(candidate, 'dam_break', context, payload)
+    q.atomic_json(payload.with_suffix('.semantics.json'), {'semantic_fingerprint': 'a' * 64})
+    assert bench._snapshot_measurement_sources(candidate, 'dam_break', context, payload) == q.measurement_sources(candidate, 'dam_break', context['generated_semantics'])

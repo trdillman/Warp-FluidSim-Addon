@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -385,7 +386,7 @@ def test_gate_blender_lanes_isolate_user_extensions(monkeypatch):
 
     assert run_production_gate.main(["--include-gui"]) == 0
 
-    private = run_production_gate.GATE_BLENDER_USER_EXTENSIONS
+    private = run_production_gate._RUN_DIRECTORY / "blender-profile" / "extensions"
     assert private.is_relative_to(ROOT / "artifacts")
     blender_lanes = [label for label, cmd in commands.items() if cmd[0] == "blender-exe"]
     assert len(blender_lanes) >= 20
@@ -394,16 +395,23 @@ def test_gate_blender_lanes_isolate_user_extensions(monkeypatch):
         assert envs[label]["BLENDER_USER_EXTENSIONS"] == str(private), label
 
 
-def test_gate_keeps_a_caller_blender_profile(monkeypatch):
-    # Any BLENDER_USER_* variable overrides BLENDER_USER_RESOURCES, so the gate
-    # must not point extensions away from a caller's own clean profile.
-    monkeypatch.delenv("BLENDER_USER_EXTENSIONS", raising=False)
-    monkeypatch.setenv("BLENDER_USER_RESOURCES", "clean-profile")
-    assert "BLENDER_USER_EXTENSIONS" not in run_production_gate._env()
-
-    monkeypatch.delenv("BLENDER_USER_RESOURCES")
-    monkeypatch.setenv("BLENDER_USER_EXTENSIONS", "caller-extensions")
-    assert run_production_gate._env()["BLENDER_USER_EXTENSIONS"] == "caller-extensions"
+def test_gate_owns_profile_and_only_preserves_explicit_import_paths(monkeypatch, tmp_path):
+    monkeypatch.setattr(run_production_gate, "_RUN_DIRECTORY", tmp_path)
+    monkeypatch.setenv("BLENDER_USER_RESOURCES", "unsafe-caller-profile")
+    monkeypatch.setenv("BLENDER_USER_EXTENSIONS", "unsafe-caller-extensions")
+    monkeypatch.setenv("PYTHONPATH", "/configured/warp")
+    monkeypatch.setenv("PYTEST_PATH", "/configured/pytest")
+    monkeypatch.setenv("PYTHONHOME", "/foreign/python")
+    monkeypatch.setenv("PYTHONSTARTUP", "/foreign/startup.py")
+    env = run_production_gate._env()
+    for key in ("BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_EXTENSIONS",
+                "BLENDER_USER_DATAFILES", "PYTHONUSERBASE", "WARP_CACHE_PATH",
+                "XDG_CACHE_HOME", "TEMP", "TMP", "TMPDIR"):
+        assert Path(env[key]).is_relative_to(tmp_path)
+        assert Path(env[key]).is_dir()
+    assert "BLENDER_USER_RESOURCES" not in env
+    assert "PYTHONHOME" not in env and "PYTHONSTARTUP" not in env
+    assert env["PYTHONPATH"].split(os.pathsep) == ["/configured/pytest", "/configured/warp"]
 
 
 def test_gate_refuses_an_uncertified_warp(monkeypatch, capsys):

@@ -90,6 +90,13 @@ def main():
             elif prop.type != "COLLECTION":
                 values[name] = value
         Path(out).write_text(json.dumps(values, sort_keys=True, indent=2), encoding="utf-8")
+        if f'demos/{blend.name}' in inventory_module.q.GENERATED_DEMOS:
+            spec = importlib.util.spec_from_file_location('snapshot_semantics',
+                Path(__file__).with_name('gate') / 'observe_environment.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.q.atomic_json(Path(out).with_suffix('.semantics.json'),
+                {'semantic_fingerprint': module.scene_semantics(blend, root)})
         print("DEMO-SETTINGS-EXTRACT-PASS", flush=True)
         return
     payload_bytes = Path(payload_path).read_bytes()
