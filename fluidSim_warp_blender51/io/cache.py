@@ -716,7 +716,7 @@ def write_frame_v3_atomic(
 
 
 def _read_v3_frame(base_dir: str, frame: int) -> dict | None:
-    from .cache_schema import load_manifest, manifest_path, verify_artifact
+    from .cache_schema import load_manifest, manifest_path
 
     manifest = load_manifest(manifest_path(base_dir))
     if manifest is None:
@@ -726,14 +726,21 @@ def _read_v3_frame(base_dir: str, frame: int) -> dict | None:
         # Files without entries are deliberately ignored as orphans.
         return None
     path = Path(base_dir) / entry.frame_file
-    verify_artifact(
-        path,
-        expected_sha256=entry.frame_sha256,
-        expected_size=entry.frame_size,
-        label=f"frame {frame}",
-    )
+    # Verify and parse the same immutable bytes. Reopening the pathname after
+    # verification permits a concurrent replacement to bypass the checksum.
     try:
-        loaded = np.load(path, allow_pickle=False)
+        snapshot = path.read_bytes()
+    except OSError as exc:
+        raise ValueError(f"frame {frame} is missing or unreadable: {path}") from exc
+    if len(snapshot) != entry.frame_size:
+        raise ValueError(f"frame {frame} size mismatch for {path}: "
+                         f"{len(snapshot)} != {entry.frame_size}")
+    digest = hashlib.sha256(snapshot).hexdigest()
+    if digest != entry.frame_sha256:
+        raise ValueError(f"frame {frame} checksum mismatch for {path}: "
+                         f"{digest} != {entry.frame_sha256}")
+    try:
+        loaded = np.load(io.BytesIO(snapshot), allow_pickle=False)
     except (EOFError, OSError, ValueError, pickle.UnpicklingError, zipfile.BadZipFile) as exc:
         raise ValueError(f"cache-v3 frame {frame} is corrupt: {exc}") from exc
     with loaded as data:

@@ -612,3 +612,18 @@ def test_truncated_before_drops_the_changed_frames_and_keeps_the_rest():
     assert manifest.truncated_before(99) == manifest
     with pytest.raises(ValueError, match="before the first frame"):
         manifest.truncated_before(0)
+
+
+def test_frame_parses_the_verified_snapshot_when_path_is_replaced(tmp_path, monkeypatch):
+    _write_v3_cache(tmp_path, _frame_npz())
+    original_load = np.load
+    frame_path = tmp_path / 'frames' / 'frame_000001.npz'
+
+    def replace_before_parse(file, *args, **kwargs):
+        frame_path.write_bytes(b'unverified replacement')
+        return original_load(file, *args, **kwargs)
+
+    monkeypatch.setattr(np, 'load', replace_before_parse)
+    result = cache.read_frame(str(tmp_path), 1)
+    assert len(result['positions']) == 3
+    assert frame_path.read_bytes() == b'unverified replacement'
