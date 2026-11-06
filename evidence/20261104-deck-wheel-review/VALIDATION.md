@@ -9,11 +9,19 @@ installation, display-cycle, or package changes.
 - Successful paint publishes the resolved controls and scene/geometry identity.
   Picks use those controls, checking current availability. Unpainted, failed,
   resized, rescaled, relocated and foreign-scene layouts cannot execute slots.
-- MOUSEPAN/NOTHING accumulates vertical motion to 40 UI-scaled pixels; reversal
+- TRACKPADPAN/NOTHING accumulates vertical motion to 40 UI-scaled pixels; reversal
   resets accumulation. Horizontal, zero, modified and out-of-region pans do not
   turn pages. At most one page per event, without residual overshoot.
 
-Validation (system Python):
+6 November review repair: compare Scene/Region RNA equality instead of Python
+wrapper identity, and consume Blender's actual TRACKPADPAN event. Updated
+regressions failed six cases before the repair. The wheel navigation, painted
+hit-region and lifecycle suites then passed all 78 tests on Windows Python 3.11
+with external pytest plugins disabled. Independent source review confirmed the
+Blender RNA comparison and event mapping. Physical trackpad and live framebuffer
+acceptance remain outstanding.
+
+Earlier validation (system Python):
 - New navigation regressions against unchanged base: 15 failed, 30 passed.
   Failures reproduce tooltip overlap, queued-navigation misrouting, missing
   paint invalidation and ignored vertical trackpad events.

@@ -230,8 +230,8 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
                 current_stage(scene), -1 if target == "PREVIOUS" else 1)
             return None
         painted = getattr(self, "painted", None)
-        if (painted is None or painted[0] is not scene
-                or context.region is not self.region
+        if (painted is None or painted[0] != scene
+                or context.region != self.region
                 or painted[1:5] != (context.region.width, context.region.height,
                                     bar._ui_scale(context), self.centre)):
             return None
@@ -258,7 +258,7 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
         x, y = pointer_in_region(event, self.region)
         target = slot_at(x - self.centre[0], y - self.centre[1], scale)
         self.hover = target
-        if event.type == "MOUSEPAN":
+        if event.type == "TRACKPADPAN":
             dx = getattr(event, "mouse_x", 0) - getattr(event, "mouse_prev_x", 0)
             dy = getattr(event, "mouse_y", 0) - getattr(event, "mouse_prev_y", 0)
             if (any(getattr(event, key, False) for key in ("shift", "ctrl", "alt", "oskey"))

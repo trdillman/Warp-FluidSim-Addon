@@ -17,7 +17,7 @@ def event(kind, *, x=500, y=400, value="PRESS"):
 
 def open_wheel(deck, entry):
     context = SimpleNamespace(
-        scene=SimpleNamespace(fluidsim=SimpleNamespace(deck_stage="SETUP")),
+        scene=SimpleNamespace(name="Scene", fluidsim=SimpleNamespace(deck_stage="SETUP")),
         region=SimpleNamespace(x=0, y=0, width=1000, height=800),
         area=SimpleNamespace(tag_redraw=lambda: None),
         window_manager=SimpleNamespace(modal_handler_add=lambda _op: None))
@@ -149,13 +149,13 @@ def test_no_paint_resize_and_scene_change_cannot_run_slots(painted_wheel):
     operator._pick(context, 1)
     assert calls == []
     deck.wheel._draw_wheel(operator)
-    context.scene = SimpleNamespace(fluidsim=SimpleNamespace(deck_stage="SETUP"))
+    context.scene = SimpleNamespace(name="Other", fluidsim=SimpleNamespace(deck_stage="SETUP"))
     operator._pick(context, 1)
     assert calls == []
 
 
 def pan(dy, dx=0, **modifiers):
-    return SimpleNamespace(type="MOUSEPAN", value="NOTHING", mouse_x=500,
+    return SimpleNamespace(type="TRACKPADPAN", value="NOTHING", mouse_x=500,
                            mouse_y=400, mouse_prev_x=500-dx, mouse_prev_y=400-dy,
                            **modifiers)
 
@@ -203,6 +203,32 @@ def test_trackpad_threshold_follows_ui_scale(deck, monkeypatch):
     assert context.scene.fluidsim.deck_stage == "SETUP"
     operator.modal(context, pan(40))
     assert context.scene.fluidsim.deck_stage == "BAKE"
+
+
+@pytest.mark.parametrize("entry", ["LEFTMOUSE", "RIGHTMOUSE"])
+def test_pick_accepts_new_wrappers_for_the_same_rna(painted_wheel, entry):
+    deck, operator, context, calls = painted_wheel
+    deck.wheel._draw_wheel(operator)
+    shown = deck.wheel.stage_controls(context, "SETUP")[1]
+
+    class RNAWrapper:
+        def __init__(self, value):
+            self.value = value
+
+        def __getattr__(self, name):
+            return getattr(self.value, name)
+
+        def __eq__(self, other):
+            return self.value is getattr(other, "value", other)
+
+    context.scene = RNAWrapper(context.scene)
+    context.region = RNAWrapper(context.region)
+    dx, dy = deck.wheel.slot_centre(1)
+    result = operator.modal(context, event(
+        entry, value="RELEASE" if entry == "RIGHTMOUSE" else "PRESS",
+        x=operator.centre[0] + dx, y=operator.centre[1] + dy))
+    assert result == {"FINISHED"}
+    assert calls == [shown]
 
 
 def test_release_pick_uses_painted_slot_and_rechecks_availability(painted_wheel, monkeypatch):
