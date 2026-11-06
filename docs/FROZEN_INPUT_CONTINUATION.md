@@ -62,3 +62,53 @@ solve. Use private absolute Blender config/scripts/extensions/datafiles paths fo
 both invocations. Full CUDA Production Bake continuation and the deforming-collider
 acceptance still belong to the certified release gate; the host acceptance does not
 replace them or expand same-GPU/same-Warp determinism guarantees.
+
+## Actual CUDA Production Bake continuation runner
+
+Run the separate production path with an unused evidence directory:
+
+```sh
+python tools/gate/run_frozen_input_acceptance.py --blender /absolute/path/to/blender --device cuda:0 --state-root /absolute/path/to/new-evidence
+```
+
+The runner creates private absolute Blender profile directories and launches each
+phase in a fresh background factory-startup process. It checks CUDA availability
+before add-on registration or fixture creation and never substitutes a CPU solver.
+Use the certified Blender/Warp runtime for qualification; Blender 5.2.1 is a
+diagnostic runtime until separately certified. The runner inherits `PYTHONPATH`
+for managed diagnostic environments; a certified installation should resolve its
+own qualified dependencies.
+
+`tests/acceptance/blender_frozen_production_acceptance.py` executes:
+
+1. CUDA preflight, retaining actual runtime and source identities.
+2. A complete six-frame Production Bake with animated FIRST_SIM_FRAME mesh and
+   point sources, a frozen volume sink and analytic scalar field, Static and
+   Every Sim Frame colliders. It saves the fixture after assigning persistent IDs.
+3. A separate-process bake cancelled after frame 3, retaining its real cache and
+   checkpoints with the original six-frame manifest range.
+4. Fresh-process Resume: exact solver checkpoint, lifecycle and frozen-state
+   import before stepping, plus a contrasting checkpoint-frame recapture. Later
+   frozen inputs and moving-collider velocities must equal the uninterrupted run.
+5. Another fresh-process Re-bake from frame 4, asserting the same invariants and
+   byte-identical preservation of frames 1–3 and their checkpoints.
+6. Actual preview-at-frame-5 restoration after finish, cancellation and an injected
+   step failure, each with Live both off and on. Solver checkpoint and frozen
+   snapshots restore exactly, and next-frame collider history matches the control.
+
+All cache generation goes through `BakeRun` and `ProductionBakeBackend`; the test
+subclass observes actual admission/commits and injects one named failure. Scene
+input observation delegates to the real evaluator unchanged. Nonempty liquid is
+required on every committed frame. The retained NPZ/cache files and per-array
+numerical differences use their original order, exposing counts, shapes, dtypes,
+exact equality, maximum absolute differences and RMS; no sorting masks drift.
+
+**This runner currently cannot qualify a release.** There is no approved numerical
+continuation tolerance for this mixed compiled-emitter fixture. It enforces exact
+state-transfer contracts but records later fluid-array differences as diagnostics.
+A complete structural run returns exit **2** with
+`pending_compiled_emitter_numerical_policy`; unavailable CUDA or a failed invariant
+returns exit **1**. It emits no release PASS marker. Establish and approve the
+numerical policy on the certified GPU/runtime before making this a release gate;
+do not loosen comparisons merely to obtain a pass. Existing rigid/narrow-band and
+deforming-collider gates remain separate requirements.
