@@ -1348,3 +1348,83 @@ def test_resumed_download_rejects_wrong_content_range(tmp_path, monkeypatch, con
     with pytest.raises(RuntimeError, match="Content-Range"):
         warp_installer._download_range("https://example.com/wheel", part, 10, 20, None)
     assert part.read_bytes() == b"a" * 10
+
+
+@pytest.mark.parametrize("declared_end,body,error,expected_exception", [
+    (10, b"b" * 10, None, RuntimeError),  # Understated range end.
+    (19, b"b" * 11, None, RuntimeError),  # Oversized body.
+    (19, b"b" * 4, None, OSError),  # Clean EOF before the promised end.
+    (19, b"b" * 4, ConnectionResetError(), ConnectionResetError),
+])
+def test_partial_response_enforces_declared_body_boundary(
+    tmp_path, monkeypatch, declared_end, body, error, expected_exception,
+):
+    from fluidSim_warp_blender51 import warp_installer
+    part = tmp_path / "wheel.part"
+    part.write_bytes(b"a" * 10)
+    response = mock.MagicMock()
+    response.status = 206
+    response.getheader.return_value = f"bytes 10-{declared_end}/20"
+    response.__enter__.return_value = response
+    response.read.side_effect = [body, error] if error else [body, b""]
+    monkeypatch.setattr(warp_installer, "urlopen", lambda *a, **kw: response)
+    with pytest.raises(expected_exception):
+        warp_installer._download_range("https://example.com/wheel", part, 10, 20, None)
+    if len(body) <= declared_end - 9:
+        assert part.read_bytes() == b"a" * 10 + body  # Interrupted bytes remain resumable.
+
+
+def test_smaller_partial_response_continues_to_locked_digest(tmp_path, monkeypatch):
+    from fluidSim_warp_blender51 import warp_installer
+    payload = b"abcdefghij"
+    ranges = []
+    def server(request, **kwargs):
+        ranges.append(request.get_header("Range"))
+        offset = 0 if ranges[-1] is None else int(ranges[-1][6:-1])
+        body = payload[offset:offset + 3]
+        response = mock.MagicMock()
+        response.status = 206
+        response.getheader.return_value = f"bytes {offset}-{offset + len(body) - 1}/{len(payload)}"
+        response.__enter__.return_value = response
+        response.read.side_effect = [body, b""]
+        return response
+    monkeypatch.setattr(warp_installer, "urlopen", server)
+    monkeypatch.setattr(warp_installer.time, "sleep", lambda _s: None)
+    dest = tmp_path / "wheel.whl"
+    warp_installer._download_wheel(
+        "https://example.com/wheel", dest,
+        expected_sha256=hashlib.sha256(payload).hexdigest(), expected_size=len(payload),
+    )
+    assert dest.read_bytes() == payload
+    assert ranges == [None, "bytes=3-", "bytes=6-", "bytes=9-"]
+
+
+@pytest.mark.parametrize("omitted", ["fluidsim.install_warp", "fluidsim.install_warp_from_file", None])
+def test_native_preferences_acceptance_observes_both_operator_calls(omitted):
+    """Mutation control: removing either helper call must prevent UI acceptance."""
+    import ast
+    source = pathlib.Path(__file__).resolve().parents[2] / "tests/acceptance/blender_installer_preferences_acceptance.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    selected = [node for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+                and node.name in {"buttons", "_ObservedLayout"}]
+    native_calls = []
+    class NativeLayout:
+        def row(self, **kwargs):
+            return self
+        def operator(self, identifier, **kwargs):
+            native_calls.append(identifier)
+            return SimpleNamespace()
+    required = {"fluidsim.install_warp", "fluidsim.install_warp_from_file"}
+    def product_helper(layout, text):
+        row = layout.row(align=True)
+        row.scale_y = 1.5
+        for identifier in sorted(required - {omitted}):
+            row.operator(identifier, text=text)
+    namespace = {"original_buttons": product_helper,
+                 "state": {"controls": False, "operators": set()},
+                 "_INSTALL_OPERATORS": required}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])), str(source), "exec"), namespace)
+    namespace["buttons"](NativeLayout())
+    assert namespace["state"]["controls"] is (omitted is None)
+    assert native_calls == sorted(required - {omitted})

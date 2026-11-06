@@ -129,6 +129,7 @@ def _download_range(
     """Append bytes from ``offset`` to ``temp``; restart if the server ignores Range."""
     request = Request(url, headers={"Range": f"bytes={offset}-"} if offset else {})
     with urlopen(request, timeout=_READ_TIMEOUT_SECONDS) as response:
+        response_end = None
         if getattr(response, "status", 200) == 206:
             content_range = response.getheader("Content-Range")
             prefix = f"bytes {offset}-"
@@ -141,6 +142,7 @@ def _download_range(
                 valid = False
             if not valid:
                 raise RuntimeError(f"Invalid wheel Content-Range: {content_range!r}")
+            response_end = end + 1
         if offset and getattr(response, "status", 200) != 206:
             offset = 0  # The server sent the whole file: start over.
         size = offset
@@ -148,14 +150,20 @@ def _download_range(
             handle.seek(offset)
             handle.truncate()
             while chunk := response.read(_CHUNK_SIZE):
-                handle.write(chunk)
                 size += len(chunk)
                 if size > expected_size:
                     raise RuntimeError(
                         f"Downloaded wheel is larger than the locked {expected_size} bytes"
                     )
+                if response_end is not None and size > response_end:
+                    raise RuntimeError("Wheel body exceeds declared Content-Range end")
+                handle.write(chunk)
                 if progress_callback:
                     progress_callback(size, expected_size)
+            if response_end is not None and size < response_end:
+                # Keep the received prefix: a short response can resume just
+                # like an interrupted read, but is not a complete range.
+                raise OSError("Wheel body ended before declared Content-Range end")
             handle.flush()
             os.fsync(handle.fileno())
 

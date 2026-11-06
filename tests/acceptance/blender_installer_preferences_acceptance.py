@@ -15,6 +15,31 @@ from pathlib import Path
 
 import bpy
 
+_INSTALL_OPERATORS = {"fluidsim.install_warp", "fluidsim.install_warp_from_file"}
+
+
+class _ObservedLayout:
+    """Forward native layout calls and record only completed operator creation."""
+
+    def __init__(self, layout, operators):
+        object.__setattr__(self, "_layout", layout)
+        object.__setattr__(self, "_operators", operators)
+
+    def __getattr__(self, name):
+        return getattr(self._layout, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._layout, name, value)
+
+    def row(self, *args, **kwargs):
+        return _ObservedLayout(self._layout.row(*args, **kwargs), self._operators)
+
+    def operator(self, identifier, *args, **kwargs):
+        properties = self._layout.operator(identifier, *args, **kwargs)
+        self._operators.add(identifier)
+        return properties
+
+
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument("--addon-module", default="fluidSim_warp_blender51")
@@ -72,17 +97,21 @@ try:
         assert not preferences.get_installed_warp_info()[0], "Start the no-Warp lane with empty owned storage"
         original_draw = preferences.FLUIDSIM_AP_preferences.draw
         original_buttons = preferences._draw_install_buttons
-        state = {"controls": False, "error": "", "ticks": 0}
+        state = {"controls": False, "operators": set(), "error": "", "ticks": 0}
 
         def buttons(box, text="Install Warp"):
-            # The real UILayout calls must complete before recording success.
-            original_buttons(box, text)
-            state["controls"] = True
+            operators = set()
+            original_buttons(_ObservedLayout(box, operators), text)
+            state["operators"].update(operators)
+            state["controls"] = _INSTALL_OPERATORS <= state["operators"]
 
         def draw(self, context):
             try:
+                state["controls"] = False
+                state["operators"] = set()
                 original_draw(self, context)
-                report["draws"].append({"controls": state["controls"]})
+                report["draws"].append({"controls": state["controls"],
+                                        "operators": sorted(state["operators"])})
             except Exception as exc:
                 state["error"] = repr(exc)
                 raise
