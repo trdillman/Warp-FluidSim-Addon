@@ -1,62 +1,43 @@
 # FluidSim 4.1 stabilization status — 6 November 2026
 
-Source remediation is proposed in seven draft fix PRs; the combined candidate passes the pinned CPU regression suite. Production release remains **NO-GO** until reviewed fixes are integrated and the exact candidate and installed packages pass certified target-host qualification. No release tag, production publication, or remote merge was performed by this remediation task.
+The original R1–R13 code repairs are present in the combined candidate. Production release remains **NO-GO** until the exact candidate and installed packages pass certified target-host qualification. This status distinguishes implemented repairs from runtime acceptance; historical test counts are not evidence for later product changes.
 
-The original review covered `80bf4aa`; refreshed master `f8d5b32` adds PR53's reviewed 4.0.1 performance reference. The original checkout and its untracked review/plan documents were preserved. Work uses separate branches/worktrees, with `codex/release-integration-20261106` as the reviewable combined candidate. It includes existing PR47 as the installer dependency; it does not include PR49/51/52 or merge anything to master.
+The original review covered `80bf4aa`. Master was refreshed to `f8d5b32` while preserving its untracked review/plan documents. The combined PR #61 candidate advanced to `d77d4bf`, including export, whitewater, Deck, visibility/lifecycle and optional GPU preview integrations. PR49/51/62 are already ancestors and must not be applied twice. PR #63 (`276fb87`) adds the installed installer matrix, CUDA continuation diagnostics and dedicated UI review. The UI follow-up is stacked on #63; no merge to master, release tag or publication is performed by this task.
 
-| Area | Finding | PR | Status |
-| --- | --- | --- | --- |
-| Build profile isolation | R5 | [#54](https://github.com/trdillman/Warp-FluidSim-Addon/pull/54) | Source review clean; certified package acceptance pending |
-| Installer retries / Preferences | R1, R9 | [#55](https://github.com/trdillman/Warp-FluidSim-Addon/pull/55), stacked on [#47](https://github.com/trdillman/Warp-FluidSim-Addon/pull/47) | Source review clean; certified foreground matrix pending |
-| Source checks / retained evidence | Task 1 | [#56](https://github.com/trdillman/Warp-FluidSim-Addon/pull/56) | Full CPU suite 3,338 passed, 345 skipped; Ruff clean |
-| Input identity / verified bytes | R2, R12 | [#58](https://github.com/trdillman/Warp-FluidSim-Addon/pull/58) | Source review clean; certified continuation/performance pending |
-| Frozen inputs / preview restoration | R3, R8 | [#59](https://github.com/trdillman/Warp-FluidSim-Addon/pull/59), stacked on #58 | Source review clean; host staging passes; actual CUDA bake/restore pending |
-| Paused display / cutover / fallback attributes | R6, R7, R13 | [#57](https://github.com/trdillman/Warp-FluidSim-Addon/pull/57) | Source review clean; native 5.2.1 cache diagnostic passes; certified CUDA/GUI pending |
-| Source/environment qualification binding | R4, R10, R11 | [#60](https://github.com/trdillman/Warp-FluidSim-Addon/pull/60), stacked on #57 and including #54 | Source review clean; actual GPU/runtime/package qualification pending |
+## Original findings
 
-## Combined verification
-
-Product/verifier source at `fb455288269946325a60eb7caccd1d6c472e9f0f`:
-
-- Full pinned Python 3.13.5 / Warp 1.19.0 suite: **3,544 passed, 345 skipped**, zero failures, 147.80 seconds. Skip reasons retained; missing CUDA/Blender cases are not passes.
-- Configured add-on Ruff: clean. In-memory compilation: **653 tracked Python files**, zero errors. Release metadata verification: passed, metadata only.
-- Shared Admission merge resolved preserving newer retirement cleanup and frozen-input restoration; focused integrated boundary tests: **124 passed**.
-- First aggregate run retained **nine failures**. Corrections kept the Live/counter/stride assertions, updated scoped doubles and declared settings access, retained the current changelog heading, and classified manual diagnostics. Final full run above verifies those corrections together.
-- Real production-gate invocation ran mandatory storage checks, then refused admission because reviewed certified executable provenance was absent (`BLENDER_SHA256`); exit 1, no authoritative production manifest. No fabricated provenance or hardware bypass was supplied.
-- Independent review fixes cover installer range/visible-control checks, inactive/domain identity semantics, secondary session cleanup, pre-cutover preview restoration, bounded immutable frame reads, Warp JIT headers, source-admission races and process-profile isolation.
-
-The following documentation-only commit records these results; it is not a new production qualification receipt. Exact commands, stdout, failed attempts and per-lane reports are retained in the evidence roots below.
-
-## Remaining acceptance implementation and execution
-
-| Boundary | Evidence available | Required before production release |
+| Finding | Repair and review PR | Remaining acceptance |
 | --- | --- | --- |
-| Installer | Host transport/ownership tests; actual RNA icons; installed no-Warp foreground script | Complete and run the native good/damaged/foreign/offline/cancel/repeated-click matrix on the final installed ZIP |
-| Frozen input continuation | Checkpoint/state tests; two fresh Blender processes staging real inputs | Complete and run actual CUDA ProductionBake uninterrupted/Resume/Re-bake and preview finish/cancel/admission/step-failure acceptance; direct SceneInputs staging does not cover this |
-| Qualification environment | Host negative controls; actual 5.2.1 scene stability, save/reopen and mutations | Approved 5.2.0 provenance, locked Warp/native payload observation, GPU/driver, paired budgets, GUI, exact installed archive and platform qualification |
-| Existing PR blockers | Existing owners report native evidence in #49/#51 | Independently review/integrate those fixes and rerun on the final source; their prior results do not certify this candidate |
+| R1 Preferences controls; R9 productive download retries | Supported icon and retained-progress retry budget; [#55](https://github.com/trdillman/Warp-FluidSim-Addon/pull/55), with #47 | Seven installed foreground scenarios on the final package |
+| R2 consumed input identity; R12 verified frame bytes | Resolved dependencies and schema coverage; bounded immutable read; [#58](https://github.com/trdillman/Warp-FluidSim-Addon/pull/58). Later integration includes consumed analytic FIELD volume values | Actual partial-bake/edit/refusal and representative performance on certified hardware |
+| R3 frozen inputs; R8 preview restoration | Persisted frozen state; original-frame restoration and failure cleanup; [#59](https://github.com/trdillman/Warp-FluidSim-Addon/pull/59) | CUDA ProductionBake continuation/preview restoration and reviewed compiled-emitter numerical policy |
+| R4 qualification identity; R10 performance environment; R11 exact runtime admission | Source/verifier/runtime fingerprints, admission invalidation and exact-runtime/provenance refusal; [#60](https://github.com/trdillman/Warp-FluidSim-Addon/pull/60) | Current-source, final-package GPU/GUI/performance campaign |
+| R5 inherited build profile | Private Blender profile and process environment; [#54](https://github.com/trdillman/Warp-FluidSim-Addon/pull/54) | Certified package build/install/profile integrity |
+| R6 paused cache display; R7 retirement failure; R13 fallback attributes | Retained publication, coherent cutover and cleanup, independent viewport attributes; [#57](https://github.com/trdillman/Warp-FluidSim-Addon/pull/57) | Installed foreground/CUDA behavior and fault recovery |
+| Original failing source checks | Current fixtures, declared-field scan and generated ownership map; [#56](https://github.com/trdillman/Warp-FluidSim-Addon/pull/56) | Re-run on each final changed candidate |
 
-## Integration and release sequence
+The independent follow-up audit and its source/test references are recorded in `ORIGINAL_FINDINGS_AUDIT_20261106.md`. UI U1–U3 are tracked separately in the [UI review](UI_WORKFLOW_REVIEW_20261106.md); their implementation and final verification are recorded in the UI follow-up report.
 
-1. Review the independent fix PRs and existing prerequisites. #55 is stacked on #47; merge #47 first and retarget #55. Cache continuation requires both #58 and #59 plus the shared Admission interface in #57. #60 includes the #54 helper and targets #57; retarget after its prerequisites merge. The combined candidate resolves shared-file overlaps and refreshes the derived ownership map.
-2. Include reviewed existing blockers: [#51](https://github.com/trdillman/Warp-FluidSim-Addon/pull/51) covers native export/depsgraph safety; [#49](https://github.com/trdillman/Warp-FluidSim-Addon/pull/49) covers whitewater acceptance revision tracking. Competing alternatives #50/#48 are not additional fixes to combine blindly. Review [#52](https://github.com/trdillman/Warp-FluidSim-Addon/pull/52) independently for Deck scope. None is merged by this task.
-3. Freeze the merged candidate and verifier source. Use the qualification inputs documented in the updated release procedure; refuse missing identity/provenance instead of reusing an old receipt.
-4. Run pinned source/CPU, exact certified Blender **5.2.0**, locked Warp **1.19.0**, CUDA, foreground GUI, nine-demo, four-demo performance, and installed exact-ZIP acceptance on each supported platform. Windows is the existing certified platform; Linux requires separate qualification.
-5. Complete the actual installer matrix (missing/good/damaged/foreign Warp, offline wheel, cancellation/repeated clicks), fresh-process animated frozen-input Resume/Re-bake, preview finish/cancel/failure restoration, paused cache edits, and fault-recovery acceptance. Diagnostic CPU/Blender 5.2.1 observations do not satisfy these target-host checks.
-6. Retain exact source/verifier/runtime/package digests, review the requirements-to-results matrix, and approve publication of the qualified bytes. Recheck unused version/tag before reserving 4.1.0; never retarget an existing tag or rebuild supposedly equivalent release bytes.
-7. After publication, verify clean consumer download/install and retain a rollback package and support triage checklist, as specified in the full plan.
+## Acceptance runners and evidence boundaries
 
-## Evidence limits
+- PR #63 defines seven isolated installed-profile installer scenarios: missing, good owned, damaged owned, foreign preloaded, offline local wheel, cancellation, and repeated clicks. The local wheel must match the lock. Actual foreground matrix execution remains pending; the native startup/import regression passed in Blender 5.2.1.
+- The six-process CUDA continuation runner uses actual BakeRun/ProductionBakeBackend, exact checkpoint/frozen-state/history assertions, cache-prefix controls and preview finish/cancel/failure cases. It retains numerical differences and deliberately reports unqualified until the compiled-emitter numerical policy is reviewed. Positive CUDA execution has not run on this host.
+- At PR #63 source `276fb87` (product/verifier `b80b76f`), the full pinned suite passed **3,731 tests, 345 skipped, 4 warnings**. That is the pre-UI-fix baseline. Missing GPU/GUI cases do not count as passes.
+- The dedicated UI review at product `d77d4bf` passed 370 focused host tests and real Blender 5.2.1 background setup/cache/save-reopen and Alembic/USD/VDB readback checks. Recorded layout draws establish bindings and emitted actions/text, not native visual rendering or interaction.
+- Existing native evidence from prior PRs is attributable only to its recorded source/runtime. It does not certify this final candidate or optional GPU preview.
 
-This host has no NVIDIA device/driver. Available Blender is 5.2.1, not certified 5.2.0. CPU and RNA/profile diagnostics are reported separately; skipped required hardware lanes remain unqualified. Cache identity hashing and immutable frame snapshots have measured overhead in the lane reports and need representative production performance review.
+## Release sequence
 
-Retained local evidence and review reports live under `/workspace/scratch/fluidsim-remediation-20261106`; the original review evidence is under `/workspace/scratch/fluidsim-review-80bf4aa-20261106`. Ownership, leases, budgets and retention are recorded. No evidence cleanup was performed.
+1. Review and integrate the combined fixes and follow-ups while preserving their dependency order. #63 targets #61; the UI follow-up targets #63. Do not replay older topic commits already present in #61.
+2. Freeze the product/verifier commit and exact distribution provenance. Follow [RELEASING.md](RELEASING.md); missing identity must refuse rather than reuse a stale receipt.
+3. Run source checks and the certified Blender **5.2.0**, locked Warp **1.19.0**, CUDA, foreground GUI, nine-demo and four-demo performance campaigns. Windows is the existing certification platform; Linux requires its own evidence.
+4. Complete installed exact-ZIP installer, bake/resume/re-bake, preview restoration, paused display, export, lifecycle and fault-recovery stories. Qualify the optional GPU preview separately before advertising it as accepted.
+5. Keep one writer per cache directory; concurrent writing is unsupported. Cross-process lock/refusal/recovery is not established by process-local guards or atomic file writes.
+6. Seal exact source/verifier/runtime/archive digests and the requirements-to-results matrix. Recheck version/tag availability and obtain publication signoff only after qualified artifacts exist. Never replace an existing tag or rebuild allegedly equivalent bytes.
+7. Verify consumer download/install after publication, retain rollback packages, and execute the support/rollback procedure in the full production plan.
 
-## Execution decisions
+## Evidence and retention
 
-- Authorized independent draft PRs and isolated worktrees preserve the original checkout. No remote merge, tag or release publication occurred.
-- Existing failing baseline checks were repaired as part of the requested remediation, with the original failures retained.
-- CPU and Blender 5.2.1 diagnostics support review only; certified hardware and the remaining native acceptance implementation are explicit release prerequisites.
-- Cloud skill helper scripts had no local executable path; equivalent brief, ledger, diff-package and review files were retained in the owned run root.
-- The POSIX open-inode replacement test is explicitly excluded on Windows because ordinary Windows opens lack delete sharing; universal bounded-read, growth/shrink and post-close replacement controls remain. Windows native acceptance is still required.
-- Evidence and worktrees were retained under the recorded storage budget instead of deleting them; this preserves failure proofs and user work at the cost of retained scratch storage.
+This host has no NVIDIA device/driver or usable foreground Blender session. Available Blender is 5.2.1 rather than the certified 5.2.0. No synthetic approval record or runtime bypass is supplied to the production gate. Source fixes and diagnostic runs do not close those limitations.
+
+Original evidence is retained under `/workspace/scratch/fluidsim-review-80bf4aa-20261106`; fixes, reviews, failed attempts and follow-up evidence are retained under `/workspace/scratch/fluidsim-remediation-20261106`. Original worktrees and user changes remain preserved. Storage records retain ownership, leases, budgets and retention; no cleanup was performed.
