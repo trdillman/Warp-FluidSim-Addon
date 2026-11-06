@@ -254,12 +254,17 @@ def test_skipped_surface_publish_preserves_existing_mesh(monkeypatch):
         lambda _scene, _name: None,
     )
     scene = SimpleNamespace(fluidsim=SimpleNamespace())
-    payload = SimpleNamespace(
-        surface_visible=True, publish_surface=False,
-        particles_visible=False, whitewater_visible=False,
-        whitewater_output_mode="COMBINED",
-        particle_radius=0.025,
-        whitewater_radius=0.015,
+    payload = output_publication.PublicationPayload(
+        voxel_size=0.1, surface_visible=True, publish_surface=False,
+        surface_attribute_mode="NONE",
+        surface_verts=np.empty((0, 3), dtype=np.float32),
+        surface_tris=np.empty((0, 3), dtype=np.int32), surface_attributes={},
+        particles_visible=False, particle_attribute_mode="NONE",
+        particle_radius=0.025, particles=np.empty((0, 3), dtype=np.float32),
+        particle_attributes={}, whitewater_visible=False,
+        whitewater_output_mode="COMBINED", whitewater_attribute_mode="NONE",
+        whitewater_radius=0.015, whitewater=np.empty((0, 3), dtype=np.float32),
+        whitewater_attributes={},
     )
 
     output_publication.publish_payload(scene, payload)

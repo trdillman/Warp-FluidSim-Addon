@@ -26,7 +26,7 @@ Two directions of flow exist, and a field uses one or the other:
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
-| PUBLISHED | 29 | the runtime publishes it where its reader looks |
+| PUBLISHED | 30 | the runtime publishes it where its reader looks |
 | PUBLISHED_MULTI | 0 | published and observed, but by more than one path |
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
@@ -34,7 +34,7 @@ Two directions of flow exist, and a field uses one or the other:
 | READ_ONLY | 27 | something reads it; nothing resolved writes it |
 | INTERNAL | 9 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **226** | |
+| **total** | **227** | |
 
 ## Mirrored panels
 
@@ -55,8 +55,8 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `capacity_show_alternatives` | PRESENTATION | scene | - | - | scene | scene | 0 | UI_STATE |
 | `surface_advanced_expanded` | PRESENTATION | - | - | - | - | scene | 0 | UNOBSERVED |
 | `liquid_view_mode` | OUTPUT | scene | - | - | scene | scene | 0 | UI_STATE |
-| `show_surface` | OUTPUT | - | scene | - | - | scene | 0 | READ_ONLY |
-| `show_particles` | OUTPUT | - | scene | - | - | scene | 0 | READ_ONLY |
+| `show_surface` | OUTPUT | - | scene | - | - | scene | 2 | READ_ONLY |
+| `show_particles` | OUTPUT | - | scene | - | - | scene | 2 | READ_ONLY |
 | `show_whitewater` | OUTPUT | scene | scene | - | scene | scene | 0 | OK |
 | `particle_display_fraction` | OUTPUT | scene | scene | - | - | scene | 1 | OK |
 | `particle_display_scale` | OUTPUT | scene | - | - | - | scene | 0 | WRITE_ONLY |
@@ -84,7 +84,8 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `bake_progress` | PRESENTATION | scene | scene | scene | - | scene | 2 | OK |
 | `bake_message` | PRESENTATION | - | scene | scene | scene | scene | 2 | PUBLISHED |
 | `show_overlay` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
-| `liquid_preview_enabled` | OUTPUT | scene | scene | scene | scene | scene | 1 | OK |
+| `liquid_display_mode` | OUTPUT | scene | scene | scene | - | scene | 3 | OK |
+| `liquid_preview_enabled` | OUTPUT | - | scene | scene | scene | scene | 5 | PUBLISHED |
 | `liquid_preview_scale` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
 | `liquid_preview_radius_multiplier` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
 | `liquid_preview_absorption` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
@@ -191,7 +192,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `species_mixing_rate` | LIVE | domain | domain | - | - | domain | 0 | OK |
 | `narrow_band_enabled` | RESET | domain | domain | - | domain | domain | 0 | OK |
 | `narrow_band_voxels` | RESET | domain | domain | - | - | domain | 0 | OK |
-| `surface_enabled` | SURFACE | domain | domain | - | domain | domain | 0 | OK |
+| `surface_enabled` | SURFACE | domain | domain | - | domain | domain | 2 | OK |
 | `particle_radius_scale` | SURFACE | domain | domain | - | - | domain | 0 | OK |
 | `surface_splat_radius` | SURFACE | domain | domain | - | - | domain | 0 | OK |
 | `surface_resolution_mode` | SURFACE | domain | domain | - | - | domain | 0 | OK |
