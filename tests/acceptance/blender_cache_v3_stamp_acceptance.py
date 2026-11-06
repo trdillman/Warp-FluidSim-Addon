@@ -266,6 +266,41 @@ def static_scene(root):
           and len(set(stamps.values())) == 1, result)
 
 
+def topology_edit_refusal(root):
+    """A real partial bake refuses changed connectivity before cache mutation."""
+    import hashlib
+    from fluidSim_warp_blender51.blender import production_bake
+
+    cache_dir = root / "topology"
+    scene = _open_coarse_scene(cache_dir)
+    _bake_partial(scene, START, 4, 2)
+    check("unchanged topology continuation is allowed", _decision(scene).allowed)
+    before = {str(path.relative_to(cache_dir)): hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in cache_dir.rglob("*") if path.is_file()}
+    paddle = bpy.data.objects[PADDLE]
+    mesh = paddle.data
+    loop = mesh.loops[0]
+    loop.vertex_index = (loop.vertex_index + 1) % len(mesh.vertices)
+    mesh.update()
+    bpy.context.view_layer.update()
+    for rebake in (None, START):
+        kwargs = {} if rebake is None else {"rebake_from": rebake}
+        decision = _decision(scene, **kwargs)
+        check("topology edit refuses continuation", not decision.allowed, decision)
+        backend = production_bake.ProductionBakeBackend()
+        try:
+            backend.initialize(scene, START, 4, resume=True, **kwargs)
+        except production_bake.ResumeRefused:
+            refused = True
+        else:
+            refused = False
+            backend.finish(scene)
+        check("topology refusal reaches initialization", refused)
+    after = {str(path.relative_to(cache_dir)): hashlib.sha256(path.read_bytes()).hexdigest()
+             for path in cache_dir.rglob("*") if path.is_file()}
+    check("topology refusal preserves every cache file", before == after)
+
+
 def legacy_cache(root):
     cache_dir = root / "legacy"
     scene = _open_coarse_scene(cache_dir)
@@ -291,6 +326,7 @@ def main(root):
     enable_repo_addon(str(REPO_ROOT), default_set=True, persistent=False)
     animated_scene(root)
     static_scene(root)
+    topology_edit_refusal(root)
     legacy_cache(root)
     _release_session()
 
