@@ -40,3 +40,15 @@ solver, scene inputs and CUDA cleanup continue. Focused owner/renderer/display
 tests passed 69 cases and replacement-retirement tests passed 97 cases. These
 CPU checks do not qualify the native SDK/PRK GPU path on Warp1.19; that runtime
 and the final full source/production gate remain outstanding.
+
+Final source follow-up:c6325d9c ran3686passes/350skips with3inventory failures.
+Regenerated the228-field ownership map and documented the optional native-GPU
+probe; all17affected inventory checks pass at67afc44d. The exact candidate built
+both archives with748package checks passing/6skipped and configured lint passing.
+Windows ZIP:cfe30227faf8735ba93a56b205fbc76d523e6a0ac5f10afa07887a90354d4fdc;
+Linux ZIP:df84a5c5e0963ad05f1ca29330f8a49b619232183bbf5f54d248259fb929f47c.
+The Windows ZIP installed in a new isolated Blender5.2 profile, installed the
+locked Warp1.19wheel, staged a forced repair, then a fresh process applied it and
+verified the extension-owned certified runtime. CUDA was hidden throughout.
+This closes the final-archive installer/restart scenario only. Production GPU/GUI,
+SDK/PRK and broader installer-negative scenarios remain unqualified.
