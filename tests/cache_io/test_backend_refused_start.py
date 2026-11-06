@@ -8,17 +8,32 @@ the backend was fully initialized.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
+
+import pytest
 
 from fluidSim_warp_blender51 import blender as blender_package
 from fluidSim_warp_blender51.blender.production_bake import ProductionBakeBackend
 
 
 def _scene(live=True):
-    return SimpleNamespace(
+    scene = SimpleNamespace(
         frame_current=7,
         fluidsim=SimpleNamespace(live=live),
     )
+    scene.frame_set = lambda frame: setattr(scene, "frame_current", int(frame))
+    return scene
+
+
+@pytest.fixture(autouse=True)
+def playback_contexts(monkeypatch):
+    # Refused admission restores playhead/Live under playback suppression.
+    # These host tests exercise restoration without importing Blender handlers.
+    monkeypatch.setattr(blender_package, "playback", SimpleNamespace(
+        suppress_frame_handlers=nullcontext,
+        suppress_mode_transitions=nullcontext,
+    ), raising=False)
 
 
 def _snapshot(monkeypatch, backend, scene):

@@ -1237,7 +1237,7 @@ def request_scene_update(scene, action: SceneUpdate):
                 SceneUpdate.SURFACE,
                 SceneUpdate.WHITEWATER,
             }:
-                if getattr(scene.fluidsim, "cache_playback_enabled", False):
+                if scene.fluidsim.cache_playback_enabled:
                     from . import playback
 
                     playback.refresh_current_cache_output(scene)
