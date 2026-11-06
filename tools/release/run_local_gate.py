@@ -16,7 +16,13 @@ import re
 import runpy
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+if __package__:
+    from .build_extension import _blender_process_environment
+else:
+    from build_extension import _blender_process_environment
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 ADDON = REPOSITORY / "fluidSim_warp_blender51"
@@ -74,7 +80,10 @@ def host_platform() -> str:
 def check_blender_version(blender: Path) -> str:
     certified = runpy.run_path(str(ADDON / "version.py"))["CERTIFIED_BLENDER_VERSION"]
     expected = ".".join(str(part) for part in certified)
-    first_line = subprocess.check_output([str(blender), "--version"], text=True).splitlines()[0]
+    with tempfile.TemporaryDirectory(prefix="fluidsim-version-profile-") as profile:
+        env = _blender_process_environment(os.environ, profile_dir=Path(profile))
+        first_line = subprocess.check_output(
+            [str(blender), "--version"], text=True, env=env).splitlines()[0]
     if first_line not in (f"Blender {expected}", f"Blender {expected} LTS"):
         raise RuntimeError(f"Expected Blender {expected}, got {first_line}")
     return expected
