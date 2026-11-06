@@ -1241,19 +1241,6 @@ def prepare_live_payload(scene, host, publish_surface=True):
     step = _display_stride(fs)
     positions = (host.positions_strided(step) if (fs.show_particles or viewport_particles or getattr(fs, "liquid_preview_enabled", False)) else
                  np.zeros((0, 3), dtype=np.float32))
-    particle_attributes = (
-        host.output_attributes(inventory, "particles", stride=step)
-        if fs.show_particles else {})
-    particle_key = _canonical_attribute_key(fs.particle_attribute_mode)
-    particle_values = None
-    if (fs.show_particles
-            and (particle_key is None
-                 or particle_key not in particle_attributes)):
-        particle_values = _particle_values(
-            solver, fs.particle_attribute_mode, positions, host=host,
-            stride=step)
-    particle_attributes = _merge_selected_attribute(
-        particle_attributes, fs.particle_attribute_mode, particle_values)
 
     ww_step = _whitewater_display_stride(fs)
     whitewater = (host.whitewater_strided(ww_step)
@@ -1301,6 +1288,23 @@ def prepare_live_payload(scene, host, publish_surface=True):
         viewport_particles = True
         if not len(positions):
             positions = host.positions_strided(step)
+    # Resolve the actual geometry first: an empty extracted surface can need
+    # particles even when both authored render flags are off. Their attributes
+    # must follow that viewport need, without enabling particle rendering.
+    particle_attributes = (
+        host.output_attributes(inventory, "particles", stride=step)
+        if fs.show_particles or viewport_particles else {})
+    particle_key = _canonical_attribute_key(fs.particle_attribute_mode)
+    particle_values = None
+    if ((fs.show_particles or viewport_particles)
+            and (particle_key is None
+                 or particle_key not in particle_attributes)):
+        particle_values = _particle_values(
+            solver, fs.particle_attribute_mode, positions, host=host,
+            stride=step)
+    particle_attributes = _merge_selected_attribute(
+        particle_attributes, fs.particle_attribute_mode, particle_values)
+
     voxel_size = float(solver.settings.voxel_size)
     policies = {p.name: p for p in output_family_policy(scene, voxel_size=voxel_size)}
     return PublicationPayload(

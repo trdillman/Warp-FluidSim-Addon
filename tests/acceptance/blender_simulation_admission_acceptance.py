@@ -243,6 +243,44 @@ def main():
         check(f"recovery after {label}",
               bpy.ops.fluidsim.initialize() == {"FINISHED"}, fs.status)
 
+    # Retirement can fail after Session already owns the replacement. Exercise
+    # real GPU owners, injecting only after their cleanup has executed.
+    for operation in ("initialize", "reset"):
+        for phase in ("inputs", "solver", "cuda"):
+            old = sess.solver
+            target = (sess.scene_inputs if phase == "inputs" else
+                      old if phase == "solver" else memory_safety)
+            method = ("clear" if phase == "inputs" else
+                      "release" if phase == "solver" else "release_cuda_memory")
+            original = getattr(target, method)
+            calls = []
+
+            def retire_then_fail(*args, _original=original, _phase=phase,
+                                 _calls=calls, **kwargs):
+                _calls.append(True)
+                result = _original(*args, **kwargs)
+                if len(_calls) == 1:
+                    raise RuntimeError(f"injected {_phase} retirement failure")
+                return result
+
+            setattr(target, method, retire_then_fail)
+            try:
+                try:
+                    getattr(sess, operation)(scene)
+                except RuntimeError as exc:
+                    check("retirement error surfaced", phase in str(exc), repr(exc))
+                else:
+                    raise RuntimeError("retirement fault did not fail")
+                check("retirement leaves inactive session", not sess.active)
+                check("retirement clears binding", sess.scene_identity is None)
+                check("retirement status truthful", "preserved" not in fs.status.lower())
+                check("old owner released only once", phase == "cuda" or len(calls) == 1)
+            finally:
+                setattr(target, method, original)
+            check(f"recovery after {operation}/{phase}",
+                  bpy.ops.fluidsim.initialize() == {"FINISHED"}, fs.status)
+            wp.synchronize()
+
     sess.release(scene)
     check("final cleanup", not sess.active)
     check("final CUDA pool flush observed", bool(cleanup_flushes),
