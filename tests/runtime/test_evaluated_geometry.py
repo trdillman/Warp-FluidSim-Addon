@@ -39,7 +39,7 @@ def test_mesh_release_on_failure_and_data_fallback_does_not_release_borrowed_dat
     assert released == [True]
 
 
-def test_identity_keeps_local_vertex_bytes_and_existing_topology_projection():
+def test_identity_copies_local_vertex_bytes_and_topology_before_release():
     class Vertices:
         def __len__(self):
             return 3
@@ -48,7 +48,7 @@ def test_identity_keeps_local_vertex_bytes_and_existing_topology_projection():
             assert name == "co"
             out[:] = np.arange(9)
 
-    mesh = SimpleNamespace(vertices=Vertices(), polygons=[object()])
+    mesh = SimpleNamespace(vertices=Vertices(), polygons=[SimpleNamespace(vertices=(0, 1, 2))])
     released = []
     evaluated = SimpleNamespace(
         type="MESH", to_mesh=lambda: mesh,
@@ -59,9 +59,8 @@ def test_identity_keeps_local_vertex_bytes_and_existing_topology_projection():
         "kind": "MESH", "vertex_count": 3,
         "vertex_bytes": np.arange(9, dtype=np.float32).tobytes(),
         "polygon_count": 1,
+        "topology": ((0, 1, 2),),
     }
-    # Cache compatibility: equal-count topology edits are intentionally not
-    # newly fingerprinted by this lifetime-only refactor.
-    mesh.polygons = [object()]
-    assert _geometry_record(obj, object()) == record
+    mesh.polygons = [SimpleNamespace(vertices=(0, 2, 1))]
+    assert _geometry_record(obj, object())["topology"] != record["topology"]
     assert released == [True, True]

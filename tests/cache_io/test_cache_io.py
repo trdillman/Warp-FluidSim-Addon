@@ -21,6 +21,7 @@ class _SourceObject(dict):
         properties = {
             "role": SimpleNamespace(type="ENUM", is_array=False),
             "source_status_message": SimpleNamespace(type="STRING", is_array=False),
+            "mesh_error": SimpleNamespace(type="STRING", is_array=False),
         }
         self.name = "Source"
         self.name_full = "Source"
@@ -35,6 +36,8 @@ class _SourceObject(dict):
         )
         self.fluidsim = SimpleNamespace(
             role="SOURCE",
+            enabled=True,
+            mesh_error="",
             source_status_message="",
             bl_rna=SimpleNamespace(properties=properties),
         )
@@ -206,3 +209,16 @@ def test_resume_can_rebuild_a_pre_d1_identity_bundle():
     assert {"scene_key": old_key, "settings_signature": old_settings,
             "source_signature": current["source_signature"]} in (
         legacy_signature_bundles(current, settings))
+
+
+def test_source_signature_ignores_mesh_error_but_follows_real_input():
+    source = _SourceObject()
+    scene = SimpleNamespace(objects=(source,))
+    before = source_signature(scene)
+    source.fluidsim.mesh_error = 'Diagnostic refreshed'
+    assert source_signature(scene) == before
+    source.matrix_world = tuple(
+        tuple(value + (1 if row == 0 and col == 3 else 0)
+              for col, value in enumerate(values))
+        for row, values in enumerate(source.matrix_world))
+    assert source_signature(scene) != before
