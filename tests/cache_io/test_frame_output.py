@@ -779,13 +779,13 @@ def test_live_payload_gathers_enabled_attributes_for_visible_outputs():
     payload = output_publication.prepare_live_payload(
         SimpleNamespace(fluidsim=split_settings(_live_settings())), host)
 
-    assert host.attribute_calls[:2] == [
-        ("particles", {"stride": 2}),
-        ("whitewater", {"stride": 1}),
-    ]
-    assert host.attribute_calls[2][0] == "surface"
+    assert len(host.attribute_calls) == 3
+    calls = dict(host.attribute_calls)
+    assert set(calls) == {"particles", "whitewater", "surface"}
+    assert calls["particles"] == {"stride": 2}
+    assert calls["whitewater"] == {"stride": 1}
     np.testing.assert_array_equal(
-        host.attribute_calls[2][1]["positions"], host.surface_mesh[0])
+        calls["surface"]["positions"], host.surface_mesh[0])
     assert set(payload.surface_attributes) == {"velocity", "motion"}
     assert set(payload.particle_attributes) == {"age"}
     assert set(payload.whitewater_attributes) == {"velocity"}
