@@ -16,6 +16,7 @@ _SOURCE_SIGNATURE_IGNORED_RNA = frozenset({
     "source_status_message",
     "source_status_emitted",
     "source_status_capacity_limited",
+    "mesh_error",
 })
 
 
@@ -153,11 +154,11 @@ def _volume_record(obj):
     }
 
 
-def _dependencies(obj, group, depsgraph):
+def _dependencies(obj, group, depsgraph, *, seed_only=False):
     from .scene_inputs import persistent_source_key
 
     refs = []
-    role = getattr(group, "role", "NONE")
+    role = "NONE" if seed_only else getattr(group, "role", "NONE")
     source_kind = getattr(group, "source_region_kind", "ANALYTIC")
     sink_kind = getattr(group, "sink_region_kind", "ANALYTIC")
     field_kind = getattr(group, "field_region_kind", "ANALYTIC")
@@ -187,24 +188,40 @@ def _dependencies(obj, group, depsgraph):
         else:
             record["payload"] = _geometry_record(ref, depsgraph, point_input=kind == "points")
         records.append(record)
-    domain = getattr(obj, "fluidsim_domain", None)
-    if (role == "DOMAIN" and getattr(domain, "height_enabled", False)
-            and getattr(domain, "height_back_mode", "FLAT") == "PROFILE"):
-        image = getattr(domain, "height_profile_image", None)
-        if image is not None:
-            from .scene_inputs import _height_profile
-
-            width, height = map(int, image.size[:2])
-            if width >= 2 and height >= 2:
-                pixels = np.empty(width * height * 4, dtype=np.float32)
-                if hasattr(image.pixels, "foreach_get"):
-                    image.pixels.foreach_get(pixels)
-                else:
-                    pixels[:] = image.pixels
-                profile = _height_profile(
-                    pixels, width, height, float(getattr(domain, "height_profile_scale", 1.0)))
-                records.append({"kind": "height_profile", "profile": profile})
     return tuple(records)
+
+
+def _height_source_record(scene):
+    """Follow the designated object owner used by gather_height_source."""
+    from .scene_access import active_domain_object, active_domain_settings
+    from .scene_inputs import persistent_source_key
+
+    domain = active_domain_settings(scene)
+    if (not getattr(domain, "height_enabled", False)
+            or getattr(domain, "height_back_mode", "FLAT") != "PROFILE"):
+        return None
+    image = getattr(domain, "height_profile_image", None)
+    if image is None:
+        return None
+    from .scene_inputs import _height_profile
+
+    width, height = map(int, image.size[:2])
+    if width < 2 or height < 2:
+        return None
+    pixels = np.empty(width * height * 4, dtype=np.float32)
+    if hasattr(image.pixels, "foreach_get"):
+        image.pixels.foreach_get(pixels)
+    else:
+        pixels[:] = image.pixels
+    profile = _height_profile(
+        pixels, width, height, float(getattr(domain, "height_profile_scale", 1.0)))
+    obj = active_domain_object(scene)
+    return {
+        "identity": persistent_source_key(obj) + ":height-profile",
+        "name_full": obj.name_full, "library": "", "role": "HEIGHT_PROFILE",
+        "properties": {}, "matrix_world": (),
+        "geometry": {"kind": "HEIGHT_PROFILE", "point_count": 0, "profile": profile},
+    }
 
 
 def _native_force_record(obj):
@@ -255,7 +272,8 @@ def _native_force_record(obj):
 def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
     from .scene_inputs import persistent_source_key
 
-    records = []
+    height = _height_source_record(scene)
+    records = [] if height is None else [height]
     for obj in scene.objects:
         native = _native_force_record(obj)
         if native is not None:
@@ -266,6 +284,12 @@ def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
                 getattr(group, "enabled", False)
                 and getattr(group, "auto_inject_seed", False)):
             continue
+        # Authored configuration remains identifiable while inactive, but no
+        # geometry or external file is consumed until production admits it.
+        enabled = bool(getattr(group, "enabled", False))
+        visible = not getattr(obj, "hide_viewport", False)
+        active = enabled and visible
+        seed_active = enabled and bool(getattr(group, "auto_inject_seed", False))
         records.append({
             "identity": persistent_source_key(obj),
             "name_full": obj.name_full,
@@ -274,9 +298,11 @@ def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
             "role": role,
             "properties": _rna_record(
                 group, ignored=_SOURCE_SIGNATURE_IGNORED_RNA),
-            "matrix_world": _matrix_record(_authored(obj)),
-            "geometry": _geometry_record(obj, depsgraph),
-            "dependencies": _dependencies(obj, group, depsgraph),
+            "matrix_world": _matrix_record(_authored(obj)) if active else (),
+            "geometry": (_geometry_record(obj, depsgraph) if active else
+                         {"kind": "INACTIVE", "point_count": 0}),
+            "dependencies": (_dependencies(obj, group, depsgraph, seed_only=not active)
+                             if active or seed_active else ()),
         })
     return tuple(records)
 

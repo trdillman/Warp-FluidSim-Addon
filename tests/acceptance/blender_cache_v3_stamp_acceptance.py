@@ -266,6 +266,33 @@ def static_scene(root):
           and len(set(stamps.values())) == 1, result)
 
 
+def height_profile_identity(root):
+    """Use actual object-owned domain RNA, whose simulation role is NONE."""
+    from fluidSim_warp_blender51.blender import cache_identity
+    from fluidSim_warp_blender51.blender.scene_access import active_domain_settings
+
+    scene = _open_coarse_scene(root / "height-profile-identity")
+    domain = scene.fluidsim.domain_object
+    check("designated domain has actual NONE role", domain.fluidsim.role == "NONE")
+    settings = active_domain_settings(scene)
+    image = bpy.data.images.new("Cache identity profile", width=2, height=2)
+    image.pixels[:] = [0.0, 0.0, 0.0, 1.0] * 4
+    image.update()
+    settings.height_enabled = True
+    settings.height_back_mode = "PROFILE"
+    settings.height_profile_image = image
+    scene.frame_set(START)
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    before = cache_identity.source_signature(scene, depsgraph)
+    stamp = cache_identity.source_frame_stamp(scene, depsgraph, START)
+    image.pixels[0] = 1.0
+    image.update()
+    check("actual domain pixel edit changes signature",
+          cache_identity.source_signature(scene, depsgraph) != before)
+    check("actual domain pixel edit changes frame stamp",
+          cache_identity.source_frame_stamp(scene, depsgraph, START) != stamp)
+
+
 def topology_edit_refusal(root):
     """A real partial bake refuses changed connectivity before cache mutation."""
     import hashlib
@@ -324,6 +351,7 @@ def legacy_cache(root):
 
 def main(root):
     enable_repo_addon(str(REPO_ROOT), default_set=True, persistent=False)
+    height_profile_identity(root)
     animated_scene(root)
     static_scene(root)
     topology_edit_refusal(root)
