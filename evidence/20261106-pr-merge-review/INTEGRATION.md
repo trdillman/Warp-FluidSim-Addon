@@ -1,0 +1,30 @@
+# Combined PR integration checks
+
+The candidate combines PR41, PR47–52, and PR54–62. PR61 contains the exact
+PR47 and PR54–60 heads; PR62 contains PR51 and PR56. Conflicts preserve the
+new qualification checks, painted Deck event routing, and display lifecycle reset.
+
+The first combined no-CUDA suite completed with 3435 passes, 349 skips and
+two failures. Both failures were old Deck fixtures replacing current_layout
+while the modal now reads event_layout. The original negative assertions were
+retained; the corrected Deck and gate-coverage suite passed 30 tests.
+
+Independent review found a consumed-input omission in PR61: an analytic field
+whose values come from VDB did not include that VDB in cache identity. Twelve
+content/transform/reference cases failed before repair, while twelve unused-input
+controls passed. The repair follows source-region precedence and pre-schema-3
+region interpretation. Expanded coverage includes both field roles, both sampling
+cadences, legacy schemas, unused volume controls and point-source precedence.
+The final focused identity/preview suite passed 123 tests on Windows with bundled
+Blender 5.2 Python and Warp1.19, CUDA hidden. Full integrated gates remain pending.
+
+Before PR61/62 were integrated, candidate99fa7e8b built and inspected both platform
+archives under Blender5.2.0 (fbe6228777e7); configured Ruff passed. The Windows
+archive SHA256 was3bed9cc77bd563f30f4c62a82144af16997692c58b475a1b72c4d91a458cdd90.
+This archive was installed using Blender's extension installer in a task-private
+profile. The exact Windows Warp1.19 wheel (134934525 bytes;
+bb4865dde4c2ae916d3d2a4e20ed1cd406e1d0a76ae722c3c574a9d43385c4d9) installed,
+then staged a forced repair while imported. A separate Blender5.2 process applied
+the repair and detected1.19.0 from the extension-owned .local directory. CUDA was
+hidden; no user profile was replaced. These checks close that recorded installer
+scenario only; they do not qualify the later integrated archive or GPU/GUI lanes.

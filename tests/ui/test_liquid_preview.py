@@ -987,13 +987,15 @@ def test_view_layer_write_is_deferred_out_of_the_frame_update(monkeypatch, hold_
     liquid_display.apply_viewport(scene)
     liquid_display.apply_viewport(scene)
     assert surface.calls == [] and particles.calls == []
-    assert timers == [liquid_display._flush_pending]
+    assert timers == ([] if hold_depth else [liquid_display._flush_pending])
     for _ in range(hold_depth):
         # A timer dispatched during an export must retain the request until
         # every nested exporter releases its visibility hold.
-        assert timers[0]() == 0.01
+        assert liquid_display._flush_pending() is None
+        assert liquid_display._PENDING == {scene.name}
         assert surface.calls == [] and particles.calls == []
         liquid_display.release_viewport()
+    assert timers == [liquid_display._flush_pending]
     assert timers.pop()() is None
     assert surface.calls == [(True, layers[0])] and particles.calls == [(True, layers[0])]
     liquid_display.apply_viewport(scene)  # nothing changed: nothing scheduled

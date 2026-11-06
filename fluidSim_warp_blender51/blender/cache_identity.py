@@ -155,18 +155,25 @@ def _volume_record(obj):
 
 
 def _dependencies(obj, group, depsgraph, *, seed_only=False):
-    from .scene_inputs import persistent_source_key
+    from .scene_inputs import legacy_region_kinds, persistent_source_key
 
     refs = []
     role = "NONE" if seed_only else getattr(group, "role", "NONE")
     source_kind = getattr(group, "source_region_kind", "ANALYTIC")
     sink_kind = getattr(group, "sink_region_kind", "ANALYTIC")
+    if int(getattr(group, "source_ui_schema_version", 0) or 0) < 3:
+        source_kind, sink_kind = legacy_region_kinds(group)
     field_kind = getattr(group, "field_region_kind", "ANALYTIC")
+    field_volume = (field_kind == "VOLUME_GRID"
+                    or getattr(group, "field_value_source", "CONSTANT") == "VOLUME_GRID")
+    # Native source regions take precedence over the legacy SOURCE/FIELD mode,
+    # exactly as gather_source_plans selects its consumed input.
+    field_input = (role == "FIELD" or (
+        role == "SOURCE" and getattr(group, "source_mode", "PARTICLES") == "FIELD"
+        and source_kind not in {"POINTS", "VOLUME_GRID"}))
     if ((role == "SOURCE" and source_kind == "VOLUME_GRID")
             or (role == "SINK" and sink_kind == "VOLUME_GRID")
-            or (role == "FIELD" and field_kind == "VOLUME_GRID")
-            or (role == "SOURCE" and getattr(group, "source_mode", "PARTICLES") == "FIELD"
-                and field_kind == "VOLUME_GRID")):
+            or (field_input and field_volume)):
         refs.append(("volume", getattr(group, "volume_input_object", None) or obj))
     elif role == "SOURCE" and source_kind == "POINTS":
         refs.append(("points", getattr(group, "point_input_object", None) or obj))

@@ -187,6 +187,71 @@ def test_schema_version_is_explicit_in_new_bundles():
     assert signature_bundle_from_records({}, ())['input_identity_schema_version'] == '2'
 
 
+@pytest.mark.parametrize('role', ['FIELD', 'SOURCE'])
+@pytest.mark.parametrize('schema', [2, 3])
+@pytest.mark.parametrize('cadence', ['FIRST_SIM_FRAME', 'EVERY_SIM_FRAME'])
+@pytest.mark.parametrize('value_source', ['VOLUME_GRID', 'CONSTANT'])
+@pytest.mark.parametrize('edit', ['content', 'transform', 'reference'])
+def test_analytic_field_volume_value_dependency(tmp_path, role, schema, cadence, value_source, edit):
+    from fluidSim_warp_blender51.blender.cache_identity import source_signature
+
+    owner = _Object('field', role=role)
+    owner.fluidsim.source_ui_schema_version = schema
+    # Pre-schema-3 files must ignore stale modern region selections.
+    owner.fluidsim.source_region_kind = 'POINTS' if schema < 3 else 'ANALYTIC'
+    owner.fluidsim.source_mode = 'FIELD'
+    owner.fluidsim.field_region_kind = 'ANALYTIC'
+    owner.fluidsim.field_value_source = value_source
+    owner.fluidsim.mesh_evaluation_mode = cadence
+    volume = _Object('volume', role='NONE')
+    volume.type = 'VOLUME'
+    path = tmp_path / 'values.vdb'
+    path.write_bytes(b'initial field values')
+    volume.data = SimpleNamespace(filepath=str(path), grids=SimpleNamespace(frame_filepath=''))
+    owner.fluidsim.volume_input_object = volume
+    scene = _scene(owner, volume)
+    before = (source_signature(scene), source_frame_stamp(scene, None, 1))
+    if edit == 'content':
+        path.write_bytes(b'changed field values')
+    elif edit == 'transform':
+        volume.matrix_world = _translated(2)
+    else:
+        replacement = _Object('replacement-volume', role='NONE')
+        replacement.type = 'VOLUME'
+        replacement.data = volume.data
+        owner.fluidsim.volume_input_object = replacement
+    after = (source_signature(scene), source_frame_stamp(scene, None, 1))
+    if value_source == 'VOLUME_GRID':
+        assert after[0] != before[0]
+        assert after[1] != before[1]
+    else:
+        assert after == before
+
+
+def test_point_source_precedes_unused_field_volume_value():
+    from fluidSim_warp_blender51.blender.cache_identity import source_signature
+
+    owner = _Object('source', role='SOURCE')
+    owner.fluidsim.source_mode = 'FIELD'
+    owner.fluidsim.source_region_kind = 'POINTS'
+    owner.fluidsim.field_value_source = 'VOLUME_GRID'
+    points = _Object('points', role='NONE')
+    points.type = 'POINTCLOUD'
+    points.data = SimpleNamespace(points=_Collection([SimpleNamespace(co=(0., 0., 0.))]))
+    owner.fluidsim.point_input_object = points
+    unused = _Object('unused-volume', role='NONE')
+    unused.type = 'VOLUME'
+    unused.data = SimpleNamespace(filepath='must-not-open-unused.vdb')
+    owner.fluidsim.volume_input_object = unused
+    scene = _scene(owner, points, unused)
+    before = (source_signature(scene), source_frame_stamp(scene, None, 1))
+    unused.data.filepath = 'another-unused.vdb'
+    assert (source_signature(scene), source_frame_stamp(scene, None, 1)) == before
+    points.data.points[0].co = (1., 0., 0.)
+    after = (source_signature(scene), source_frame_stamp(scene, None, 1))
+    assert after[0] != before[0] and after[1] != before[1]
+
+
 def test_unselected_dependency_does_not_contribute():
     owner = _Object('source', role='SOURCE')
     ref = _mesh_object('unused')
