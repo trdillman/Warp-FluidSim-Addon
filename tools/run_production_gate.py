@@ -165,6 +165,10 @@ SOURCE_REPORT_ACCEPTANCE = (
 # tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
+    "tests/acceptance/blender_installer_preferences_acceptance.py":
+        "installed foreground no-Warp Preferences workflow requires the final archive and private native profile; release installer matrix remains separately mandatory",
+    "tests/acceptance/blender_frozen_input_resume_acceptance.py":
+        "two-process host-staging diagnostic requires --phase and retained --state-root; it does not replace mandatory real Production Bake CUDA Resume/Re-bake qualification",
     "tests/acceptance/blender_41_ui_acceptance.py":
         "focused foreground UI review via launch_profile_safe_addon_review.py; requires a designated domain and profile-safe temporary add-on",
     "tests/acceptance/blender_deck_gizmo_realtime_acceptance.py":
