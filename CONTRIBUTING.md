@@ -64,9 +64,14 @@ If Blender is installed in a non-default location, override these paths:
 ```bash
 BLENDER_EXE="/mnt/c/Program Files/Blender Foundation/Blender 5.2/blender.exe" \
 BLENDER_PY="/mnt/c/Program Files/Blender Foundation/Blender 5.2/5.2/python/bin/python.exe" \
-PYTHONPATH="/path/to/warp-1.18.0-site" \
+PYTHONPATH="/path/to/warp-1.19.0-site" \
 python3 tools/run_production_gate.py --include-gui
 ```
+
+These path overrides do not satisfy qualification admission on their own.
+Provide the reviewed Blender distribution provenance and executable digest
+described in [RELEASING.md](docs/RELEASING.md). The target is Blender 5.2.0
+with locked Warp 1.19.0; a successful source check is not GPU/GUI certification.
 
 ## Artifact policy
 

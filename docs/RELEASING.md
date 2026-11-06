@@ -81,6 +81,19 @@ alongside the executable digest; supplying a digest alone does not establish it.
 
 ## What only the GPU gate proves
 
+### Cache-directory ownership
+
+Use a distinct cache directory for each independently running Blender process.
+Before Bake, Resume or Re-bake, stop any other process that can write that
+directory, including background jobs. Process-local bake guards do not provide
+a cross-process lock. Concurrent writers to one directory are unsupported;
+atomic frame/checkpoint writes do not make that workflow safe. Retain a copy
+of valuable caches before recovery or continuation experiments. Cross-process
+refusal/recovery must be implemented and exercised before concurrent writing
+can be advertised as supported.
+
+### Runtime evidence
+
 These are proven only by the gate:
 
 - the CUDA solver
