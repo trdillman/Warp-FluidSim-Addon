@@ -87,6 +87,9 @@ def save():
 
 
 try:
+    # Blender --python does not add the script directory to sys.path. Both
+    # matrix helpers live beside this file, independently of the launch cwd.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
     sys.path.insert(0, str(ROOT))
     if not args.diagnostic_background:
         from run_installer_preferences_matrix import SCENARIOS, require_owned_profile

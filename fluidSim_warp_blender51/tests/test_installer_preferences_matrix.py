@@ -208,3 +208,29 @@ def test_draw_proxy_preserves_native_rna_owner_and_observes_nested_controls():
     row.operator("fluidsim.refresh_runtime_probe")
     assert calls == [("prop", "device"), ("operator", "fluidsim.refresh_runtime_probe")]
     assert operators == {"fluidsim.refresh_runtime_probe"}
+
+
+def test_actual_blender_script_startup_loads_siblings_before_native_guard(tmp_path):
+    """Optional real-runtime regression; run with FLUIDSIM_INSTALLER_TEST_BLENDER."""
+    import json
+    import os
+    import subprocess
+    blender = os.environ.get("FLUIDSIM_INSTALLER_TEST_BLENDER")
+    if not blender:
+        pytest.skip("Set FLUIDSIM_INSTALLER_TEST_BLENDER for the actual Blender startup regression")
+    matrix = _matrix()
+    profile = tmp_path / "profile"
+    environment = matrix.profile_environment(profile)
+    report = tmp_path / "native-startup.json"
+    command = [blender, "--background", "--factory-startup", "--offline-mode",
+               "--python-exit-code", "1", "--python",
+               str(SCRIPT.with_name("blender_installer_preferences_acceptance.py")), "--",
+               "--scenario", "no-warp", "--profile-root", str(profile),
+               "--wheel", str(tmp_path / "unused-before-native-guard.whl"), "--json-out", str(report)]
+    completed = subprocess.run(command, cwd=tmp_path, env=environment, capture_output=True,
+                               text=True, timeout=60, check=False)
+    assert completed.returncode != 0, completed.stdout + completed.stderr
+    result = json.loads(report.read_text())
+    assert result["passed"] is False
+    assert "Native Preferences draw requires foreground Blender" in result["error"], result
+    assert "ModuleNotFoundError" not in completed.stdout + completed.stderr
