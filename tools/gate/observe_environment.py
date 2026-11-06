@@ -81,35 +81,46 @@ def scene_semantics(blend, root):
             return value
         if isinstance(value, set):
             return sorted(value)
+        if isinstance(value, dict):
+            return {str(key): encode(item, ancestry) for key, item in value.items()}
+        if isinstance(value, (tuple, list)):
+            return [encode(item, ancestry) for item in value]
         if isinstance(value, bpy.types.ID) and not expand_id:
             return {'id_type': value.bl_rna.identifier, 'name': value.name,
                     'library': value.library.filepath if value.library else None}
         if hasattr(value, 'bl_rna'):
-            pointer = value.as_pointer()
+            pointer = (value.bl_rna.identifier, value.as_pointer())
             if pointer in ancestry:
-                raise RuntimeError('recursive non-ID authored data cannot be compared')
+                return {'rna_cycle': ancestry.index(pointer)}
             result = {}
             for prop in value.bl_rna.properties:
                 name = prop.identifier
                 if name in ignored:
                     continue
                 child = getattr(value, name)
-                if prop.type == 'COLLECTION':
+                if prop.type == 'COLLECTION' or getattr(prop, 'is_array', False):
                     result[name] = [encode(item, (*ancestry, pointer)) for item in child]
-                elif getattr(prop, 'is_array', False):
-                    result[name] = list(child)
                 else:
                     result[name] = encode(child, (*ancestry, pointer))
-            if hasattr(value, 'keys'):
-                result['id_properties'] = {key: encode(value[key], (*ancestry, pointer))
-                                           for key in value.keys() if key != '_RNA_UI'}
+            try:
+                custom_keys = value.keys()
+            except TypeError:  # RNA structs without IDProperty storage expose a raising keys().
+                custom_keys = ()
+            result['id_properties'] = {key: encode(value[key], (*ancestry, pointer))
+                                       for key in custom_keys if key not in ('_RNA_UI', 'fluidsim_pending_epoch')}
             return result
         if hasattr(value, 'to_dict'):
             return {key: encode(item, ancestry) for key, item in value.to_dict().items()}
         if hasattr(value, 'to_list'):
             return value.to_list()
-        raise RuntimeError(f'unsupported authored value: {type(value).__name__}')
-    ignored_collections = {'screens', 'window_managers', 'workspaces'}
+        try:
+            iterator = iter(value)  # mathutils implements the sequence protocol, not __iter__.
+        except TypeError as exc:
+            raise RuntimeError(f'unsupported authored value: {type(value).__name__}') from exc
+        return [encode(item, ancestry) for item in iterator]
+    # all_ids repeats every collection, including excluded editor-only IDs.
+    # fluidsim_pending_epoch above is the random presentation nonce refreshed on load.
+    ignored_collections = {'all_ids', 'screens', 'window_managers', 'workspaces'}
     values = {prop.identifier: [encode(item, expand_id=True)
                                for item in getattr(bpy.data, prop.identifier)]
               for prop in bpy.data.bl_rna.properties

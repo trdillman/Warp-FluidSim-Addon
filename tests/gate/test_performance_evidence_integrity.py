@@ -59,10 +59,9 @@ def test_timeout_keeps_captured_child_output(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize('mutation', ['status', 'demos', 'referenceCommits'])
 def test_gate_rejects_altered_stored_summary(monkeypatch, tmp_path, mutation):
-    runs = _campaign()
-    report = evaluate_budget(runs)
-    report.update(runs=runs, gitHead='a' * 40, candidateInventorySha256=bench._inventory(tmp_path),
-                  referenceCommits=bench.REFERENCE_COMMITS)
+    from qualification_fixtures import context
+    report = _bound_report(tmp_path)
+    monkeypatch.setattr(gate, '_QUALIFICATION', context(tmp_path))
     report[mutation] = 'altered'
     path = tmp_path / 'artifacts/performance_budget/summary.json'
     path.parent.mkdir(parents=True)
@@ -84,6 +83,8 @@ def _stub_campaign(monkeypatch, tmp_path):
                  'performance_budget.py', 'run_production_gate.py'):
         (source / f'tools/{name}').write_text('# source')
     monkeypatch.setattr(bench.subprocess, 'check_output', lambda *a, **kw: 'a' * 40)
+    from qualification_fixtures import stub_measurement
+    binding = stub_measurement(monkeypatch, bench, source)
     import io
     import tarfile
     def archive(command, **kwargs):
@@ -101,6 +102,9 @@ def _stub_campaign(monkeypatch, tmp_path):
             return {}
         root = Path(args[0])
         row = next(runs)
+        row.update(warp=binding['observed_environment']['warp_version'],
+                   observed_environment=binding['observed_environment'],
+                   environment_fingerprint=binding['environment_fingerprint'])
         row.update(root=str(root), addon=str(root / 'fluidSim_warp_blender51/__init__.py'),
                    rootInventorySha256=bench._inventory(root), processId=123,
                    version=args[4] if row['label'] == 'baseline' else '2.0.0')
@@ -194,15 +198,20 @@ def _bound_report(root):
     report = evaluate_budget(runs)
     report.update(runs=runs, gitHead='a' * 40, candidateInventorySha256=inventory,
                   referenceCommits=bench.REFERENCE_COMMITS, frames=48, trials=8)
+    from qualification_fixtures import bind_report
+    bind_report(report, root)
     return report
 
 
 @pytest.mark.parametrize('field,value', [('gitHead', 'wrong'), ('candidateInventorySha256', 'wrong'),
                                        ('rootInventorySha256', 'wrong'), ('processId', 0), ('addon', 'wrong')])
 def test_gate_rejects_unbound_trial_provenance(monkeypatch, tmp_path, field, value):
+    from qualification_fixtures import context, retain
+    monkeypatch.setattr(gate, '_QUALIFICATION', context(tmp_path))
     report = _bound_report(tmp_path)
     candidate = next(run for run in report['runs'] if run['label'] == 'candidate')
     candidate[field] = value
+    retain(candidate)
     path = tmp_path / 'artifacts/performance_budget/summary.json'
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(report))
@@ -222,22 +231,30 @@ def test_runner_measures_only_selected_demos_and_carries_the_rest(monkeypatch, t
         if args[0] == '--extract':
             Path(out).write_text('{}')
             return {}
-        root, blend, _, frames, reference, payload = args
+        root, blend, _, _frames, reference, _payload = args
         demo = Path(blend).stem
         measured.append(demo)
         block, slot = map(int, re.search(r'_b(\d+)_s(\d+)_', Path(out).stem).groups())
         row = next(dict(run) for run in fixtures
                    if run['workload'] == demo and run['round'] == block and run['slot'] == slot)
+        from qualification_fixtures import context
+        binding = context(source)
+        row.update(warp=binding['observed_environment']['warp_version'],
+                   observed_environment=binding['observed_environment'],
+                   environment_fingerprint=binding['environment_fingerprint'])
         row.update(root=root, addon=str(Path(root) / 'fluidSim_warp_blender51/__init__.py'),
                    rootInventorySha256=bench._inventory(Path(root)), processId=123,
                    version=reference if row['label'] == 'baseline' else '2.0.0')
         return row
     monkeypatch.setattr(bench, '_run_trial', child)
-    prior = _bound_report(tmp_path / 'earlier')
+    prior = _bound_report(source)
     prior['gitHead'] = 'c' * 40
     for run in prior['runs']:
         if run['label'] == 'candidate':
             run['gitHead'] = 'c' * 40
+    from qualification_fixtures import retain
+    for run in prior['runs']:
+        retain(run)
     carried = tmp_path / 'carried.json'
     carried.write_text(json.dumps(prior))
     out = tmp_path / 'evidence'
@@ -257,3 +274,51 @@ def test_runner_refuses_a_demo_subset_without_carried_evidence(tmp_path):
     with pytest.raises(SystemExit):
         bench.demo_budget_main(['--blender', 'fake', '--out-dir', str(tmp_path),
                                 '--demos', 'paddle_stir'])
+
+
+@pytest.mark.parametrize('mutation,reason', [('dirty', 'dirty measurement'),
+    ('legacy', 'missing qualification provenance'), ('environment', 'environment_fingerprint'),
+    ('verifier', 'verifier_fingerprint'), ('raw_missing', 'retained trial report'),
+    ('reverted_solver', 'source_fingerprint')])
+def test_qualification_rejects_review_counterexamples(monkeypatch, tmp_path, mutation, reason):
+    from qualification_fixtures import context
+    report = _bound_report(tmp_path)
+    monkeypatch.setattr(gate, 'ROOT', tmp_path)
+    monkeypatch.setattr(gate, '_QUALIFICATION', context(tmp_path))
+    monkeypatch.setattr(gate, '_git_text', lambda *args: 'a' * 40 if args[0] == 'rev-parse' else '')
+    if mutation == 'dirty':
+        report['gitStatus'] = [' M fluidSim_warp_blender51/sim/solver.py']
+    elif mutation == 'legacy':
+        report.pop('run_id')
+    elif mutation in ('environment', 'verifier'):
+        current = dict(context(tmp_path), **{mutation + '_fingerprint': 'c' * 64})
+        monkeypatch.setattr(gate, '_QUALIFICATION', current)
+    elif mutation == 'raw_missing':
+        Path(report['runs'][0]['trial_artifact']).unlink()
+    else:
+        # Same HEAD, clean worktree, but the saved measurement used different code.
+        for run in report['runs']:
+            run['source_fingerprint'] = 'c' * 64
+    path = tmp_path / 'artifacts/performance_budget/summary.json'
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(report))
+    with pytest.raises(RuntimeError, match=reason):
+        gate._validate_performance_evidence(reuse=True)
+    reusable = gate._reusable_budget_demos()
+    if mutation == 'raw_missing':
+        assert report['runs'][0]['workload'] not in reusable
+    else:
+        assert reusable == frozenset()
+
+
+def test_interrupted_campaign_with_complete_raw_rows_cannot_be_promoted(monkeypatch, tmp_path):
+    from qualification_fixtures import context
+    report = _bound_report(tmp_path)
+    report.update(passed=False, status='incomplete')
+    path = tmp_path / 'artifacts/performance_budget/summary.json'
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(report))
+    monkeypatch.setattr(gate, 'ROOT', tmp_path)
+    monkeypatch.setattr(gate, '_QUALIFICATION', context(tmp_path))
+    monkeypatch.setattr(gate, '_git_text', lambda *args: 'a' * 40 if args[0] == 'rev-parse' else '')
+    assert gate._reusable_budget_demos() == frozenset()

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import runpy
 import subprocess
 import uuid
 from pathlib import Path
@@ -45,13 +46,13 @@ def source_files(root):
 
 
 def freeze_source(root):
-    dirty = _git(root, 'status', '--porcelain', '--untracked-files=all')
-    changed = [line[3:] for line in dirty.splitlines() if len(line) > 3]
-    # Strip quotes emitted by git for unusual names; ambiguity must fail closed.
-    if any(_relevant(name.strip('"')) for name in changed):
+    changed = _git(root, 'diff', '--no-renames', '--name-only', '-z', 'HEAD').split('\0')
+    changed += _git(root, 'ls-files', '--others', '--exclude-standard', '-z').split('\0')
+    if any(name and _relevant(name) for name in changed):
         raise RuntimeError('dirty product or verifier inputs; commit/revert before qualification')
     files = source_files(root)
     return {'git_head': _git(root, 'rev-parse', 'HEAD'), 'files': files,
+            'file_mtimes': {name: (Path(root) / name).stat().st_mtime_ns for name in files},
             'source_fingerprint': fingerprint({k: v for k, v in files.items()
                                                if not k.startswith(('tools/', 'tests/'))
                                                and k not in GENERATED_DEMOS}),
@@ -65,6 +66,8 @@ def check_source(root, frozen, before_semantics=None, after_semantics=None):
     current = source_files(root)
     changed = {name for name in current.keys() | frozen['files'].keys()
                if current.get(name) != frozen['files'].get(name)}
+    changed.update(name for name, stamp in frozen['file_mtimes'].items()
+                   if name not in GENERATED_DEMOS and (Path(root) / name).stat().st_mtime_ns != stamp)
     untracked = _git(root, 'ls-files', '--others', '--exclude-standard', '-z').split('\0')
     if changed - GENERATED_DEMOS or any(name and _relevant(name) for name in untracked):
         raise RuntimeError('product or verifier changed during qualification: ' + ', '.join(sorted(changed)))
@@ -79,20 +82,20 @@ def check_source(root, frozen, before_semantics=None, after_semantics=None):
     return exceptions
 
 
-def measurement_sources(root, demo):
+def measurement_sources(root, demo, semantics=None):
     """Immutable inputs; saved blend bytes are never inferred from a commit label."""
     root = Path(root)
     paths = list((root / 'fluidSim_warp_blender51').rglob('*'))
     paths += list((root / 'tools/demos').rglob('*')) if demo in ('dam_break', 'crown_splash') else []
     paths += [root / 'demos' / (demo + '.blend')]
-    return fingerprint({p.relative_to(root).as_posix(): sha256(p) for p in sorted(paths)
+    return fingerprint({p.relative_to(root).as_posix(): (semantics or {}).get(p.relative_to(root).as_posix(), sha256(p)) for p in sorted(paths)
                         if p.is_file() and _relevant(p.relative_to(root).as_posix())})
 
 
 def read_provenance(path, executable_sha256):
     try:
         value = json.loads(Path(path).read_text(encoding='utf-8'))
-        required = ('blender_archive_sha256', 'blender_executable_sha256', 'verifier_fingerprint')
+        required = ('blender_archive_sha256', 'blender_executable_sha256', 'bundled_python_sha256', 'verifier_fingerprint')
         if any(not isinstance(value.get(key), str) or len(value[key]) != 64
                or any(c not in '0123456789abcdef' for c in value[key]) for key in required):
             raise ValueError('missing SHA-256 identities')
@@ -117,6 +120,8 @@ def validate_binding(report, expected):
     observed = report.get('observed_environment')
     if not isinstance(observed, dict) or fingerprint(observed) != report['environment_fingerprint']:
         raise RuntimeError('observed environment provenance does not match its fingerprint')
+    if 'warp' in report and report['warp'] != observed.get('warp_version'):
+        raise RuntimeError('raw Warp version differs from observed environment')
     for name in BINDING_FIELDS:
         if expected.get(name) != report[name]:
             raise RuntimeError(f'{name} changed since measurement')
@@ -173,10 +178,15 @@ def observe_runtime(root, blender, python, env, directory, verifier_fingerprint)
     provenance = read_provenance(env.get('BLENDER_PROVENANCE', ''), approved)
     if provenance['verifier_fingerprint'] != verifier_fingerprint:
         raise RuntimeError('reviewed verifier_fingerprint differs; review and commit verifier before qualification')
+    if sha256(interpreter) != provenance['bundled_python_sha256']:
+        raise RuntimeError('bundled Python digest differs from approved distribution')
     if not interpreter.is_relative_to(executable.parent):
         raise RuntimeError('BLENDER_PY must be bundled inside the approved Blender distribution')
-    identity = {}
-    exec(compile((root / 'fluidSim_warp_blender51/version.py').read_text(), 'version.py', 'exec'), identity)
+    identity = runpy.run_path(str(root / 'fluidSim_warp_blender51/version.py'))
+    expected_blender = '.'.join(map(str, identity['CERTIFIED_BLENDER_VERSION']))
+    observed_version = subprocess.check_output([str(executable), '--version'], text=True, env=env).splitlines()[0]
+    if observed_version not in (f'Blender {expected_blender}', f'Blender {expected_blender} LTS'):
+        raise RuntimeError(f'qualification requires certified Blender {expected_blender}; observed {observed_version}')
     wheel = Path(env.get('FLUIDSIM_WARP_WHEEL', '')).resolve()
     if not wheel.is_file():
         raise RuntimeError('FLUIDSIM_WARP_WHEEL must name the retained locked wheel archive')
