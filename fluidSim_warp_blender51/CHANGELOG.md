@@ -4,8 +4,9 @@
 
 - Newly baked cache v3 manifests declare input identity schema 2. Source and
   frame identities include evaluated triangle connectivity, point coordinates,
-  selected mesh/point/volume dependencies, their transforms, and resolved VDB
-  sequence paths and content. Unselected role-NONE objects remain irrelevant.
+  selected mesh/point/volume dependencies, their transforms, resolved VDB
+  sequence paths and content, native force-field dependencies, and consumed
+  height-profile pixels. Unselected role-NONE objects remain irrelevant.
 - Older cache v3 manifests remain readable for playback. Resume and Re-bake
   require a fresh bake when the manifest lacks current input identity coverage;
   missing provenance is never inferred from the current scene.

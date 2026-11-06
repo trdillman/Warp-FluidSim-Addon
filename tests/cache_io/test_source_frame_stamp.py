@@ -194,3 +194,27 @@ def test_unselected_dependency_does_not_contribute():
     ref.data.vertices[0].co = (0, 0, 4)
     ref.matrix_world = _translated(3)
     assert source_frame_stamp(scene, None, 1) == before
+
+
+def test_native_force_reference_orientation_contributes():
+    wind = _Object('wind', role='NONE')
+    wind.hide_viewport = False
+    ref = _Object('velocity', role='NONE')
+    wind.field = SimpleNamespace(type='WIND', strength=1.0, source_object=ref)
+    scene = _scene(wind, ref)
+    before = source_frame_stamp(scene, None, 1)
+    ref.matrix_world = ((0., 0., 1., 0.), (0., 1., 0., 0.),
+                        (-1., 0., 0., 0.), (0., 0., 0., 1.))
+    assert source_frame_stamp(scene, None, 1) != before
+
+
+def test_height_profile_pixel_edit_contributes():
+    domain = _Object('domain', role='DOMAIN')
+    image = SimpleNamespace(size=(2, 2), pixels=[0.0, 0., 0., 1.] * 4)
+    domain.fluidsim_domain = SimpleNamespace(
+        height_enabled=True, height_back_mode='PROFILE', height_profile_image=image,
+        height_profile_scale=1.)
+    scene = _scene(domain)
+    before = source_frame_stamp(scene, None, 1)
+    image.pixels[0] = 1.0
+    assert source_frame_stamp(scene, None, 1) != before

@@ -163,13 +163,16 @@ def _dependencies(obj, group, depsgraph):
     field_kind = getattr(group, "field_region_kind", "ANALYTIC")
     if ((role == "SOURCE" and source_kind == "VOLUME_GRID")
             or (role == "SINK" and sink_kind == "VOLUME_GRID")
-            or (role == "FIELD" and field_kind == "VOLUME_GRID")):
+            or (role == "FIELD" and field_kind == "VOLUME_GRID")
+            or (role == "SOURCE" and getattr(group, "source_mode", "PARTICLES") == "FIELD"
+                and field_kind == "VOLUME_GRID")):
         refs.append(("volume", getattr(group, "volume_input_object", None) or obj))
     elif role == "SOURCE" and source_kind == "POINTS":
         refs.append(("points", getattr(group, "point_input_object", None) or obj))
-    elif (source_kind in {"MESH_SOLID", "MESH_SHELL"}
-          or sink_kind in {"MESH_SOLID", "MESH_SHELL"}
-          or getattr(group, "geometry_mode", "ANALYTIC") == "MESH"):
+    elif ((role == "SOURCE" and source_kind in {"MESH_SOLID", "MESH_SHELL"})
+          or (role == "SINK" and sink_kind in {"MESH_SOLID", "MESH_SHELL"})
+          or (role in {"SOURCE", "SINK"}
+              and getattr(group, "geometry_mode", "ANALYTIC") == "MESH")):
         refs.append(("mesh", getattr(group, "mesh_object", None) or obj))
     if getattr(group, "enabled", False) and getattr(group, "auto_inject_seed", False):
         refs.append(("points", obj))
@@ -184,7 +187,69 @@ def _dependencies(obj, group, depsgraph):
         else:
             record["payload"] = _geometry_record(ref, depsgraph, point_input=kind == "points")
         records.append(record)
+    domain = getattr(obj, "fluidsim_domain", None)
+    if (role == "DOMAIN" and getattr(domain, "height_enabled", False)
+            and getattr(domain, "height_back_mode", "FLAT") == "PROFILE"):
+        image = getattr(domain, "height_profile_image", None)
+        if image is not None:
+            from .scene_inputs import _height_profile
+
+            width, height = map(int, image.size[:2])
+            if width >= 2 and height >= 2:
+                pixels = np.empty(width * height * 4, dtype=np.float32)
+                if hasattr(image.pixels, "foreach_get"):
+                    image.pixels.foreach_get(pixels)
+                else:
+                    pixels[:] = image.pixels
+                profile = _height_profile(
+                    pixels, width, height, float(getattr(domain, "height_profile_scale", 1.0)))
+                records.append({"kind": "height_profile", "profile": profile})
     return tuple(records)
+
+
+def _native_force_record(obj):
+    """Only native Blender fields admitted by SceneInputs affect identity."""
+    from .scene_inputs import _guide_control_points, _normalized_axis, persistent_source_key
+
+    field = getattr(obj, "field", None)
+    kind = getattr(field, "type", "NONE")
+    supported = {"WIND", "FORCE", "VORTEX", "MAGNET", "HARMONIC", "CHARGE",
+                 "LENNARDJ", "TEXTURE", "GUIDE", "BOID", "TURBULENCE", "DRAG", "FLUID_FLOW"}
+    if (kind not in supported or getattr(obj, "hide_viewport", False)
+            or not getattr(field, "apply_to_location", True)):
+        return None
+    strength = float(getattr(field, "strength", 0.0))
+    drag = float(getattr(field, "linear_drag", strength))
+    quadratic = float(getattr(field, "quadratic_drag", 0.0))
+    texture = getattr(field, "texture", None)
+    if (strength == 0.0 and kind not in {"GUIDE", "BOID"}
+            and not (kind == "DRAG" and (drag != 0.0 or quadratic != 0.0))):
+        return None
+    if kind == "TEXTURE" and texture is None:
+        return None
+    if (getattr(field, "use_max_distance", False)
+            and float(getattr(field, "distance_max", 0.0)) <= 0.0):
+        return None
+    matrix = np.asarray(obj.matrix_world, dtype=np.float64)
+    payload = {name: getattr(field, name, None) for name in (
+        "type", "shape", "texture_mode", "use_global_coords", "use_smoke_density",
+        "seed", "strength", "use_min_distance", "distance_min", "use_max_distance",
+        "distance_max", "falloff_power", "flow", "noise", "size", "rest_length",
+        "harmonic_damping", "linear_drag", "quadratic_drag", "guide_minimum",
+        "guide_free", "guide_clump_amount")}
+    payload["texture_name"] = getattr(texture, "name", "")
+    ref = getattr(field, "source_object", None)
+    if ref is not None:
+        payload["source_object"] = persistent_source_key(ref)
+        payload["source_matrix"] = _matrix_record(ref.matrix_world)
+    if kind == "GUIDE":
+        payload["guide_points"] = _guide_control_points(obj, matrix, _normalized_axis(matrix))
+    return {
+        "identity": persistent_source_key(obj) + ":native-field",
+        "name_full": obj.name_full, "library": "", "role": "NATIVE_FIELD",
+        "properties": {}, "matrix_world": _matrix_record(obj.matrix_world),
+        "geometry": {"kind": "NATIVE_FIELD", "point_count": 0, "payload": payload},
+    }
 
 
 def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
@@ -192,6 +257,9 @@ def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
 
     records = []
     for obj in scene.objects:
+        native = _native_force_record(obj)
+        if native is not None:
+            records.append(native)
         group = getattr(obj, "fluidsim", None)
         role = str(getattr(group, "role", "NONE")) if group is not None else "NONE"
         if role == "NONE" and not (
