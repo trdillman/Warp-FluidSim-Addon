@@ -55,15 +55,15 @@ class Warp118CertificationTests(unittest.TestCase):
     def test_117_loads_as_older_than_certified_with_a_warning(self):
         status, message = warp_runtime.warp_version_support("1.17.0")
         self.assertEqual(status, "older")
-        self.assertIn("older than the certified 1.19.0", message)
+        self.assertIn("older than the locked 1.19.0", message)
         probe = _probe(_fake_warp("1.17.0", driver=(12, 9)))
         self.assertTrue(probe.available)
-        self.assertIn("older than the certified", probe.warning)
+        self.assertIn("older than the locked", probe.warning)
 
     def test_118_still_loads_as_older_than_certified(self):
         status, message = warp_runtime.warp_version_support("1.18.0")
         self.assertEqual(status, "older")
-        self.assertIn("older than the certified 1.19.0", message)
+        self.assertIn("older than the locked 1.19.0", message)
 
     def test_below_floor_and_other_major_stay_unsupported(self):
         self.assertEqual(warp_runtime.warp_version_support("1.16.0")[0], "unsupported")

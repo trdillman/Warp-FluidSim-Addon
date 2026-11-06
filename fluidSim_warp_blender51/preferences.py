@@ -97,12 +97,12 @@ def _refresh_runtime(prefs):
 
 
 class FLUIDSIM_OT_install_warp(bpy.types.Operator):
-    """Download and install the certified NVIDIA Warp runtime from PyPI."""
+    """Download and install the version-locked NVIDIA Warp runtime from PyPI."""
 
     bl_idname = "fluidsim.install_warp"
     bl_label = "Install Warp"
     bl_description = (
-        "Download and install the certified NVIDIA Warp runtime. "
+        "Download and install the version-locked NVIDIA Warp runtime. "
         "Requires an internet connection"
     )
     bl_options = {"INTERNAL"}
@@ -137,12 +137,12 @@ class FLUIDSIM_OT_install_warp(bpy.types.Operator):
 
 
 class FLUIDSIM_OT_install_warp_from_file(bpy.types.Operator):
-    """Install the certified NVIDIA Warp wheel from a file on this computer."""
+    """Install the version-locked NVIDIA Warp wheel from a local file."""
 
     bl_idname = "fluidsim.install_warp_from_file"
     bl_label = "Install Warp from File"
     bl_description = (
-        "Install the certified NVIDIA Warp wheel from a .whl file you downloaded "
+        "Install the version-locked NVIDIA Warp wheel from a .whl file you downloaded "
         "yourself. FluidSim checks the file's size and SHA-256 before installing. "
         "No internet connection needed"
     )
@@ -260,7 +260,8 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
     def draw(self, context):
         layout = self.layout
         box = layout.box()
-        box.label(text="Runtime", icon="GPU")
+        box.label(text="Runtime", icon="SYSTEM")
+        box.label(text=f"Locked Warp {CERTIFIED_WARP_VERSION}; full GPU qualification pending.")
 
         active_override = developer_override_active(
             str(getattr(self, "developer_warp_path", "") or "")
@@ -285,7 +286,7 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
                 _draw_install_buttons(box)
                 box.label(
                     text=(
-                        f"Downloads certified NVIDIA Warp {CERTIFIED_WARP_VERSION} "
+                        f"Downloads version-locked NVIDIA Warp {CERTIFIED_WARP_VERSION} "
                         "(CUDA 13; needs an NVIDIA R580 or newer driver) from PyPI."
                     )
                 )
@@ -319,8 +320,8 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
                         icon="FILE_REFRESH",
                     )
                     repair.force_reinstall = True
-                if status == "unsupported":
-                    _draw_install_buttons(box, "Install Certified Warp")
+                if status in ("older", "unsupported"):
+                    _draw_install_buttons(box, "Upgrade to Locked Warp")
 
         authoring = layout.box()
         authoring.label(text="Custom Effects", icon="MODIFIER")

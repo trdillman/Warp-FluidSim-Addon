@@ -1,0 +1,83 @@
+{
+  "tested_product_commit": "9d63d62a5f3db641c38d0a3b388f36c149b6bb6a",
+  "package_scope": "bounded build with --skip-lint, not production acceptance",
+  "files": {
+    "commands.json": {
+      "size": 1228,
+      "sha256": "889cf3b714d6258716673e2326debcb38b49acb49036b4d0e2e2ba3b643fa8fa"
+    },
+    "native-corrupt-wheel.json": {
+      "size": 261,
+      "sha256": "9d143180a57115692d15ce58f098ffc7d1d782f1189089d83ebbf750d335f114"
+    },
+    "native-file-picker.json": {
+      "size": 78,
+      "sha256": "99c66bd80412f78ef87c4d1e71851e12c06b7ff03ab07356c59a73656f9ed345"
+    },
+    "native-offline-rejections.json": {
+      "size": 658,
+      "sha256": "f6bf27b63d271fa242759ac5f55abc202f1d04b6b20351b8defdea37b8fe090f"
+    },
+    "native-owned118.json": {
+      "size": 1235,
+      "sha256": "f5ba9a4b2c5e640f24b84308003b1826e7eaa26b7400ac3f220096ba1bd8e14e"
+    },
+    "native-preferences.txt": {
+      "size": 38483,
+      "sha256": "bb25983070abb33c7ad2b0dfa21110d097a55fc4c5400bd1def4fec3e0a807bf"
+    },
+    "package-bounded.json": {
+      "size": 692,
+      "sha256": "b653f16ecdf6e91b3a4fad55025860befd99e7c9a9c2e96a4f5df204da2d4ea8"
+    },
+    "package-final.txt": {
+      "size": 19840,
+      "sha256": "d85b82688cdf5cd48675ee1239792dd4e90a0b7a73e640b8738df72ad25f6ca9"
+    },
+    "package.json": {
+      "size": 168,
+      "sha256": "ace71a862da8e74e30d04515d9c251bed5c11e74fa8e57b8a81380ce668cc196"
+    },
+    "PLAN.md": {
+      "size": 1619,
+      "sha256": "b7ed6750aeb6bb141c16aaa4aaec1e85a86ec6bcd2f8378ed9112d4abbb4a0d0"
+    },
+    "preferences-before.png": {
+      "size": 59783,
+      "sha256": "3400bce9db62dfccf93b57b920cf966e15a2a7b1aa5e244eb241bdfe1264cf20"
+    },
+    "preferences-missing.png": {
+      "size": 87308,
+      "sha256": "eaf49b8d950a29cf1bf629a07efcab947e92328dce99e28438f92153e0514b5c"
+    },
+    "preferences-owned118-final.png": {
+      "size": 91034,
+      "sha256": "f486cd014dffcb10e41521102bbe79c5571276e5d0fa490be2b6a2dece5af061"
+    },
+    "preferences-owned118.png": {
+      "size": 91034,
+      "sha256": "f486cd014dffcb10e41521102bbe79c5571276e5d0fa490be2b6a2dece5af061"
+    },
+    "production-gate.txt": {
+      "size": 28639,
+      "sha256": "b49ad98b30b680a167c068a683ac11dadb043922229fa2c84adb19bda4f922af"
+    },
+    "regressions.txt": {
+      "size": 912,
+      "sha256": "cac77cea2cc26035a34e8cf2a54bead6221e0c9dafe806efcc63ff06c88c6437"
+    },
+    "REPORT.md": {
+      "size": 7170,
+      "sha256": "c26a7a1d5b761b9be11703fc114cff1f84cc8d1c57fd4866cd2832db4bbc845a"
+    },
+    "run_checks.py": {
+      "size": 1877,
+      "sha256": "3e4598dad689a8fb219b8652bc22161b9d466c264bb50207ac8799e1d39d4347"
+    },
+    "whitewater118.txt": {
+      "size": 1362,
+      "sha256": "1cbe185d91d37c2e91f4abd8296b9f11f76961abe48058725e9ddd5ca8767482"
+    }
+  },
+  "hash_mode": "UTF-8 LF-normalized Git text; raw PNG bytes"
+}
