@@ -8,6 +8,7 @@ stops working. Every such read in the add-on must name a field declared on a
 
 import ast
 import pathlib
+import sys
 
 PKG = pathlib.Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 
@@ -15,7 +16,7 @@ PKG = pathlib.Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51"
 SETTINGS_NAMES = {"fs", "settings", "scene_fs", "domain_fs", "ds", "dfs",
                   "domain_settings", "sfs", "src_fs"}
 # Non-field attributes read defensively on those objects.
-NON_FIELD_ATTRIBUTES = {"__dataclass_fields__", "bl_rna", "id_data"}
+NON_FIELD_ATTRIBUTES = {"__dataclass_fields__", "bl_rna", "id_data", "is_property_set"}
 
 
 def _annotated_fields(path, predicate):
@@ -60,3 +61,18 @@ def test_defaulted_settings_reads_name_declared_fields():
     stale = [f"{path}:{line} {name}" for path, line, name in reads
              if name not in declared]
     assert stale == []
+
+
+def test_settings_scanner_keeps_unknown_fields_visible(tmp_path, monkeypatch):
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        'getattr(fs, "is_property_set", None)\n'
+        'getattr(fs, "voxel_szie", 0.1)\n', encoding="utf-8")
+    declared = _declared_fields()
+    monkeypatch.setattr(sys.modules[__name__], "PKG", tmp_path)
+
+    reads = list(_defaulted_settings_reads())
+
+    assert reads == [("sample.py", 1, "is_property_set"),
+                     ("sample.py", 2, "voxel_szie")]
+    assert [name for _path, _line, name in reads if name not in declared] == ["voxel_szie"]

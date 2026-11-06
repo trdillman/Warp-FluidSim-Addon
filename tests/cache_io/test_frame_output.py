@@ -1208,7 +1208,17 @@ def test_publisher_only_path_poisons_actual_solver_warp_and_blender_entrypoints(
 
 
 def test_output_cost_counters_separate_all_four_phases(monkeypatch):
+    import sys
+    import types
+
+    from fluidSim_warp_blender51 import blender
     from fluidSim_warp_blender51.blender import output_publication
+
+    # This counter test creates no outputs. Keep Blender material imports
+    # scoped to the test instead of relying on another test's bpy stub.
+    materials = types.ModuleType("fluidSim_warp_blender51.blender.materials")
+    monkeypatch.setitem(sys.modules, materials.__name__, materials)
+    monkeypatch.setattr(blender, "materials", materials, raising=False)
 
     fs = SimpleNamespace(
         show_surface=False, surface_enabled=False, surface_attribute_mode="NONE",

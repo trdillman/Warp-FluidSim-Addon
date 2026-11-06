@@ -139,7 +139,7 @@ def test_scene_properties_root_order_and_context_are_stable():
         ("FLUIDSIM_PT_scene_outputs", 80, False),
         ("FLUIDSIM_PT_scene_diagnostics", 100, True),
     )
-    for class_name, order, closed in roots:
+    for class_name, order, _closed in roots:
         block = _class_block(source, class_name)
         assert f"bl_order = {order}" in block
         # Every Properties panel starts expanded so all settings are visible.
