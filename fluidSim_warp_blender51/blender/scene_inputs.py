@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -23,6 +25,211 @@ class SceneEvaluation:
     height_source: object
     seeds: tuple
     session_generation: int
+
+
+@dataclass(frozen=True)
+class FrozenInputState:
+    """Portable host snapshots; no Blender pointers or device allocations.
+
+    The checkpoint's existing scalar mapping holds metadata and its ordinary
+    named-array inventory holds the bytes. Schema 1 records only frozen inputs;
+    per-frame collider motion history must be primed at the restore frame.
+    """
+
+    metadata: dict
+    arrays: dict[str, np.ndarray]
+    schema_version: int = 1
+
+    def validated(self):
+        from ..io.checkpoint import FROZEN_INPUT_ARRAY_PREFIX
+
+        try:
+            metadata = json.loads(json.dumps(self.metadata, allow_nan=False))
+        except (ValueError, TypeError) as exc:
+            raise ValueError("invalid frozen input metadata") from exc
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version != 1
+            or not isinstance(self.arrays, dict)
+            or not isinstance(metadata, dict)
+            or set(metadata) != {"schema_version", "records"}
+            or type(metadata["schema_version"]) is not int
+            or metadata["schema_version"] != 1
+            or not isinstance(metadata["records"], list)
+        ):
+            raise ValueError("unsupported frozen input schema")
+        arrays = {}
+        for name, value in self.arrays.items():
+            array = np.asarray(value)
+            if (
+                not isinstance(name, str)
+                or not name.startswith(FROZEN_INPUT_ARRAY_PREFIX)
+                or array.dtype.kind not in "biuf"
+                or not np.all(np.isfinite(array))
+            ):
+                raise ValueError("invalid frozen input array")
+            array = np.array(array, copy=True, order="C")
+            array.setflags(write=False)
+            arrays[name] = array
+        seen, used = set(), set()
+        for record in metadata["records"]:
+            if not isinstance(record, dict) or set(record) != {"key", "kind", "arrays", "values"}:
+                raise ValueError("invalid frozen input record")
+            key = record["key"]
+            if (
+                not isinstance(key, list)
+                or len(key) != 3
+                or any(not isinstance(v, str) or not v for v in key)
+                or tuple(key) in seen
+            ):
+                raise ValueError("invalid or duplicate frozen input identity")
+            seen.add(tuple(key))
+            kind, fields, values = record["kind"], record["arrays"], record["values"]
+            if not isinstance(fields, dict) or not isinstance(values, dict):
+                raise ValueError("invalid frozen input fields")
+            for name in fields.values():
+                if not isinstance(name, str) or name not in arrays or name in used:
+                    raise ValueError("missing or duplicate frozen input array")
+                used.add(name)
+            if kind == "MESH":
+                if (
+                    key[0] not in {"FROZEN_SOURCE_MESH", "STATIC_MESH"}
+                    or set(fields) != {"vertices", "triangles"}
+                    or set(values) != {"force_center", "had_degenerate"}
+                ):
+                    raise ValueError("invalid frozen mesh fields")
+                vertices, triangles = arrays[fields["vertices"]], arrays[fields["triangles"]]
+                if (
+                    vertices.dtype != np.float32
+                    or vertices.ndim != 2
+                    or vertices.shape[1:] != (3,)
+                    or triangles.dtype != np.int32
+                    or triangles.ndim != 2
+                    or triangles.shape[1:] != (3,)
+                    or not len(vertices)
+                    or not len(triangles)
+                    or np.any(triangles < 0)
+                    or np.any(triangles >= len(vertices))
+                    or np.asarray(values["force_center"]).shape != (3,)
+                    or not np.all(np.isfinite(values["force_center"]))
+                    or not isinstance(values["had_degenerate"], bool)
+                ):
+                    raise ValueError("invalid frozen mesh geometry")
+            elif kind == "POINTS":
+                if key[1] != kind or set(fields) != {"positions"} or values:
+                    raise ValueError("invalid frozen point fields")
+                points = arrays[fields["positions"]]
+                if points.dtype != np.float32 or points.ndim != 2 or points.shape[1:] != (3,):
+                    raise ValueError("invalid frozen point geometry")
+            elif kind == "VOLUME":
+                if (
+                    key[1] != kind
+                    or fields
+                    or set(values) != {"filepath", "transform", "sha256"}
+                    or not isinstance(values["filepath"], str)
+                    or not values["filepath"]
+                    or np.asarray(values["transform"]).shape != (16,)
+                    or not np.all(np.isfinite(values["transform"]))
+                    or not isinstance(values["sha256"], str)
+                    or len(values["sha256"]) != 64
+                    or any(c not in "0123456789abcdef" for c in values["sha256"])
+                ):
+                    raise ValueError("invalid frozen volume placement")
+            elif kind == "ANALYTIC":
+                if (
+                    key[1] != kind
+                    or fields
+                    or set(values) != {"position", "rotation", "half_extents", "radius", "height"}
+                ):
+                    raise ValueError("invalid frozen analytic placement")
+                for name, shape in (
+                    ("position", (3,)),
+                    ("rotation", (4,)),
+                    ("half_extents", (3,)),
+                    ("radius", ()),
+                    ("height", ()),
+                ):
+                    value = np.asarray(values[name])
+                    if (
+                        value.shape != shape
+                        or value.dtype.kind not in "iuf"
+                        or not np.all(np.isfinite(value))
+                    ):
+                        raise ValueError("invalid frozen analytic placement")
+            else:
+                raise ValueError("unknown frozen input kind")
+        if used != set(arrays):
+            raise ValueError("unreferenced frozen input arrays")
+        return FrozenInputState(metadata, arrays)
+
+    def validate_dependencies(self):
+        """External VDB data must still be the bytes originally captured."""
+        from ..io.cache_schema import sha256_file
+
+        for record in self.metadata["records"]:
+            if record["kind"] == "VOLUME":
+                values = record["values"]
+                path = Path(values["filepath"])
+                if not path.is_file() or sha256_file(path) != values["sha256"]:
+                    raise ValueError("Volume dependency changed or disappeared; restart the bake")
+
+
+def frozen_input_keys(scene):
+    """Persistent roster expected by the same frozen-input gather lanes."""
+    from ..sim import rigid_scene
+
+    result = set()
+    for obj in scene.objects:
+        pg = getattr(obj, "fluidsim", None)
+        if pg is None or not getattr(pg, "enabled", False) or getattr(obj, "hide_viewport", False):
+            continue
+        role = getattr(pg, "role", "NONE")
+        if role == "COLLIDER":
+            if getattr(obj, "type", None) == "MESH" and rigid_scene.is_static_collider(obj):
+                result.add(("STATIC_MESH", persistent_source_key(obj), "FIRST_SIM_FRAME"))
+            continue
+        if getattr(pg, "mesh_evaluation_mode", "FIRST_SIM_FRAME") == "EVERY_SIM_FRAME":
+            continue
+        identity = persistent_source_key(obj)
+        schema = int(getattr(pg, "source_ui_schema_version", 0) or 0)
+        source_region = getattr(pg, "source_region_kind", "ANALYTIC") if schema >= 3 else "ANALYTIC"
+        sink_region = getattr(pg, "sink_region_kind", "ANALYTIC") if schema >= 3 else "ANALYTIC"
+        if uses_native_source_plan(pg):
+            if role == "SOURCE" and source_region == "POINTS":
+                dependency = getattr(pg, "point_input_object", None) or obj
+                kind = "POINTS"
+            elif (
+                (role == "SOURCE" and source_region == "VOLUME_GRID")
+                or (role == "SINK" and sink_region == "VOLUME_GRID")
+                or getattr(pg, "field_region_kind", "ANALYTIC") == "VOLUME_GRID"
+                or getattr(pg, "field_value_source", "CONSTANT") == "VOLUME_GRID"
+            ):
+                dependency = getattr(pg, "volume_input_object", None) or obj
+                kind = "VOLUME"
+            else:
+                dependency, kind = obj, "ANALYTIC"
+            result.add((identity, kind, persistent_source_key(dependency)))
+        elif role in {"SOURCE", "SINK"}:
+            if int(getattr(pg, "source_ui_schema_version", 0) or 0) >= 3:
+                region = getattr(
+                    pg, "source_region_kind" if role == "SOURCE" else "sink_region_kind", "ANALYTIC"
+                )
+            else:
+                region = legacy_region_kinds(pg)[role == "SINK"]
+            if region in {"MESH_SOLID", "MESH_SHELL"}:
+                dependency = getattr(pg, "mesh_object", None) or obj
+                result.add(("FROZEN_SOURCE_MESH", identity, persistent_source_key(dependency)))
+    return result
+
+
+def validate_frozen_scene(state, scene):
+    """Refuse stale/missing snapshots before admission replaces any solver."""
+    state = state.validated()
+    state.validate_dependencies()
+    saved = {tuple(record["key"]) for record in state.metadata["records"]}
+    if saved != frozen_input_keys(scene):
+        raise ValueError("Frozen input roster differs from the scene; restart the bake")
+    return state
 
 
 def _effective_source_target(scene, pg) -> int:
@@ -426,12 +633,124 @@ class SceneInputs:
         # First Sim Frame point/volume/field inputs captured for this
         # lifecycle; see _native_plan_input.
         self._native_plan_inputs = {}
+        self._native_plan_keys = set()
+        self._frozen_volume_hashes = {}
         self._native_plan_regions = {}
         self._sync_generation = 0
         # Compatibility alias for older diagnostics/tests.
         self._collider_mesh_cache = self._evaluated_mesh_cache
         self.evaluated_mesh_cache_stats = {"rebuilds": 0, "reuses": 0}
         self.collider_mesh_cache_stats = self.evaluated_mesh_cache_stats
+
+    def export_frozen_state(self) -> FrozenInputState:
+        """Copy frozen CPU inputs into deterministic, portable checkpoint slots."""
+        from ..io.cache_schema import sha256_file
+        from ..io.checkpoint import FROZEN_INPUT_ARRAY_PREFIX
+
+        records, arrays = [], {}
+
+        def record(key, kind, values, **channels):
+            fields = {}
+            for field, value in sorted(channels.items()):
+                name = f"{FROZEN_INPUT_ARRAY_PREFIX}{len(records):06d}_{field}"
+                arrays[name] = value
+                fields[field] = name
+            records.append(dict(key=list(key), kind=kind, values=values, arrays=fields))
+
+        for key, entry in sorted(self._evaluated_mesh_cache.items(), key=lambda item: str(item[0])):
+            if key[0] in {"FROZEN_SOURCE_MESH", "STATIC_MESH"}:
+                record(
+                    key,
+                    "MESH",
+                    dict(
+                        force_center=list(entry["force_center"]),
+                        had_degenerate=bool(entry["had_degenerate"]),
+                    ),
+                    vertices=entry["vertices"],
+                    triangles=entry["triangles"],
+                )
+        for key, value in sorted(self._native_plan_inputs.items()):
+            kind = key[1]
+            if kind == "POINTS":
+                record(key, kind, {}, positions=value)
+            elif kind == "VOLUME":
+                filepath, transform = value
+                digest = self._frozen_volume_hashes.get(key)
+                if digest is None:
+                    digest = sha256_file(filepath)
+                    self._frozen_volume_hashes[key] = digest
+                record(key, kind, dict(filepath=filepath, transform=list(transform), sha256=digest))
+            else:
+                record(key, kind, value)
+        state = FrozenInputState(dict(schema_version=1, records=records), arrays).validated()
+        state.validate_dependencies()
+        return state
+
+    def restore_frozen_state(self, state: FrozenInputState) -> None:
+        """Install validated host snapshots before admission evaluates the scene.
+
+        Mesh placeholders are materialized on the admitted device by the
+        established staging seam. Dynamic motion history is deliberately empty.
+        """
+        state = state.validated()
+        state.validate_dependencies()
+        meshes, native, volume_hashes = {}, {}, {}
+        for record in state.metadata["records"]:
+            key, kind = tuple(record["key"]), record["kind"]
+            fields, values = record["arrays"], record["values"]
+            if kind == "MESH":
+                vertices, triangles = (
+                    state.arrays[fields["vertices"]],
+                    state.arrays[fields["triangles"]],
+                )
+                low, high = _referenced_bounds(vertices, triangles)
+                meshes[key] = dict(
+                    vertices=vertices,
+                    triangles=triangles,
+                    force_center=tuple(values["force_center"]),
+                    had_degenerate=values["had_degenerate"],
+                    aabb_min=low,
+                    aabb_max=high,
+                    watertight=None,
+                    watertight_tris=triangles,
+                    mesh=StagedMesh(),
+                    device="cpu",
+                    signature=None,
+                    data_id=None,
+                    matrix_signature=None,
+                    sync_generation=None,
+                    frame=None,
+                )
+                if key[0] == "FROZEN_SOURCE_MESH":
+                    shared = next(
+                        (
+                            entry
+                            for other, entry in meshes.items()
+                            if other != key
+                            and other[0] == key[0]
+                            and other[2] == key[2]
+                            and np.array_equal(entry["vertices"], vertices)
+                            and np.array_equal(entry["triangles"], triangles)
+                            and tuple(entry["force_center"]) == tuple(values["force_center"])
+                        ),
+                        None,
+                    )
+                    if shared is not None:
+                        meshes[key] = shared
+            elif kind == "POINTS":
+                native[key] = state.arrays[fields["positions"]]
+            elif kind == "VOLUME":
+                native[key] = (values["filepath"], tuple(values["transform"]))
+                volume_hashes[key] = values["sha256"]
+            else:
+                native[key] = {
+                    name: tuple(value) if isinstance(value, list) else value
+                    for name, value in values.items()
+                }
+        self.clear()
+        self._evaluated_mesh_cache.update(meshes)
+        self._native_plan_inputs.update(native)
+        self._frozen_volume_hashes.update(volume_hashes)
 
     def begin_sync(self):
         """Return a token that deduplicates extraction within one scene sync."""
@@ -469,10 +788,11 @@ class SceneInputs:
             if include_auto_seeds:
                 from . import sources
                 seeds = tuple(sources.prepare_auto_seeds(scene, depsgraph))
-            if staged:
+            if staged or any(isinstance(e.get("mesh"), StagedMesh)
+                             for e in self._evaluated_mesh_cache.values()):
                 # Register bindings before admission performs fallible planning.
                 self.materialize_device_meshes(
-                    descriptors, colliders, "cpu", staged=True)
+                    descriptors, colliders, "cpu" if staged else self.device, staged=staged)
             return SceneEvaluation(
                 descriptors, plans, colliders, force_fields, height_source,
                 seeds, self._session_generation)
@@ -778,10 +1098,18 @@ class SceneInputs:
                 evaluation_mode = getattr(
                     pg, "mesh_evaluation_mode",
                     MeshEvaluationMode.FIRST_SIM_FRAME.name)
-                cache_key = (
-                    "EVALUATED_MESH", _object_identity(mesh_obj), evaluation_mode)
+                cache_key = (("FROZEN_SOURCE_MESH", persistent_source_key(obj),
+                              persistent_source_key(mesh_obj))
+                             if evaluation_mode == MeshEvaluationMode.FIRST_SIM_FRAME.name
+                             else ("EVALUATED_MESH", _object_identity(mesh_obj), evaluation_mode))
                 source_cache_keys.add(cache_key)
                 entry = self._evaluated_mesh_cache.get(cache_key)
+                if entry is None and evaluation_mode == MeshEvaluationMode.FIRST_SIM_FRAME.name:
+                    # Owners that reference one frozen mesh share its upload.
+                    entry = next((value for key, value in self._evaluated_mesh_cache.items()
+                                  if key[0] == "FROZEN_SOURCE_MESH" and key[2] == cache_key[2]), None)
+                    if entry is not None:
+                        self._evaluated_mesh_cache[cache_key] = entry
                 if (entry is None
                         and evaluation_mode == MeshEvaluationMode.FIRST_SIM_FRAME.name
                         and not capture_first_mesh):
@@ -951,13 +1279,18 @@ class SceneInputs:
             return capture()
         entry = self._native_plan_inputs.get(cache_key)
         if entry is None:
-            entry = self._native_plan_inputs[cache_key] = capture()
+            entry = capture()
+            if cache_key[1] == "VOLUME" and Path(entry[0]).is_file():
+                from ..io.cache_schema import sha256_file
+                self._frozen_volume_hashes[cache_key] = sha256_file(entry[0])
+            self._native_plan_inputs[cache_key] = entry
         return entry
 
     def _prune_native_plan_inputs(self):
         for cache_key in list(self._native_plan_inputs):
             if cache_key not in self._native_plan_keys:
                 del self._native_plan_inputs[cache_key]
+                self._frozen_volume_hashes.pop(cache_key, None)
         for cache_key in list(self._native_plan_regions):
             if cache_key not in self._native_plan_keys:
                 del self._native_plan_regions[cache_key]
@@ -1001,7 +1334,7 @@ class SceneInputs:
                       != "EVERY_SIM_FRAME")
             cadence = (SourceEvaluationCadence.FIRST_SIM_FRAME if frozen
                        else SourceEvaluationCadence.EVERY_SIM_FRAME)
-            volume_key = (identity, "VOLUME", _object_identity(
+            volume_key = (identity, "VOLUME", persistent_source_key(
                 self._volume_input_object(obj, pg)))
 
             def volume_placement(obj=obj, pg=pg, volume_key=volume_key):
@@ -1012,7 +1345,7 @@ class SceneInputs:
             try:
                 if role == "SOURCE" and source_region == "POINTS":
                     point_obj = getattr(pg, "point_input_object", None) or obj
-                    point_key = (identity, "POINTS", _object_identity(point_obj))
+                    point_key = (identity, "POINTS", persistent_source_key(point_obj))
 
                     def capture_points(point_obj=point_obj):
                         positions = np.array(
@@ -1073,7 +1406,7 @@ class SceneInputs:
                         placement=volume_placement()) if use_volume
                         else self._analytic_region_plan(
                             obj, pg, placement=self._native_plan_input(
-                                (identity, "ANALYTIC", _object_identity(obj)),
+                                (identity, "ANALYTIC", persistent_source_key(obj)),
                                 frozen, lambda: self._analytic_placement(obj))))
                     lifecycle = SourceLifecycle.EVERY_FRAME
                     payload_kind = {
@@ -1311,7 +1644,8 @@ class SceneInputs:
             # Reset) and never re-read, so animating the object cannot move it.
             static = rigid_scene.is_static_collider(obj)
             cache_key = (
-                "STATIC_MESH" if static else "EVALUATED_MESH", object_id,
+                "STATIC_MESH" if static else "EVALUATED_MESH",
+                persistent_source_key(obj) if static else object_id,
                 MeshEvaluationMode.FIRST_SIM_FRAME.name if static
                 else MeshEvaluationMode.EVERY_SIM_FRAME.name)
             collider_cache_keys.add(cache_key)

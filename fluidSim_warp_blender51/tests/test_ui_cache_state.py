@@ -24,7 +24,7 @@ def _manifest(*, frame_end: int = 10, solver_version: str = VERSION_STRING) -> C
         checkpoint_interval=1,
         effect_signature="4" * 64,
         effect_inventory=(),
-        source_schema_version=1,
+        source_schema_version=1, input_identity_schema_version=2,
         transfer_mode="FLIP",
         grid_spec={
             "resolution_divisions": 64, "voxel_size": 0.0625,
@@ -149,3 +149,18 @@ def test_production_bake_restarts_a_fluidsim_2x_cache_with_the_rebake_message(tm
     assert state.action == "RESTART"
     assert state.destructive is True
     assert state.message == LEGACY_2X_CACHE_MESSAGE
+
+
+def test_legacy_identity_is_playable_but_ui_requires_restart(tmp_path):
+    from dataclasses import replace
+
+    manifest = replace(_manifest(), input_identity_schema_version=0)
+    path = tmp_path / 'fluidsim_cache.json'
+    write_manifest_atomic(path, manifest)
+    before = path.read_bytes()
+    action = production_bake_action(tmp_path)
+    assert action.action == 'RESTART'
+    assert action.warning
+    assert 'input identity' in action.message
+    assert 'playback' in action.message
+    assert path.read_bytes() == before

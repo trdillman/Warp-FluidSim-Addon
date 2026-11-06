@@ -101,6 +101,13 @@ def _production_bake_action(path: Path) -> ProductionBakeAction:
         )
     if manifest is None:
         return ProductionBakeAction("START", "No cache manifest exists")
+    from ..io.cache import INPUT_IDENTITY_SCHEMA_VERSION
+
+    if manifest.input_identity_schema_version != INPUT_IDENTITY_SCHEMA_VERSION:
+        return ProductionBakeAction(
+            "RESTART", "This cache lacks the current complete input identity. "
+            "Restart is required to continue; existing frames remain available "
+            "for playback and export.", destructive=True, warning=True)
     if not resumable_solver_version(manifest.solver_version, VERSION_STRING):
         return ProductionBakeAction(
             "RESTART",

@@ -519,6 +519,7 @@ class ProductionBakeBackend:
         self._original_frame = None
         self._original_live = False
         self._original_session_payload = None
+        self._original_frozen_state = None
         self._original_session_signatures = None
         self._original_reinit_signature = None
         self._original_session_active = False
@@ -574,6 +575,12 @@ class ProductionBakeBackend:
             return ResumeDecision(
                 False, None, "NO_CACHE", "No cache manifest exists to resume"
             )
+        from ..io.cache import INPUT_IDENTITY_SCHEMA_VERSION
+
+        if manifest.input_identity_schema_version != INPUT_IDENTITY_SCHEMA_VERSION:
+            return ResumeDecision(False, None, "INPUT_IDENTITY_SCHEMA_REQUIRED",
+                "This cache lacks the current complete input identity. Restart the bake; "
+                "existing frames remain available for playback and export.")
         if not self._compatible_solver_version(
             manifest.solver_version, VERSION_STRING
         ):
@@ -799,6 +806,7 @@ class ProductionBakeBackend:
         self._original_session_active = bool(self.sess.owns_scene(scene))
         self._snapshot_open = True
         if self._original_session_active:
+            self._original_frozen_state = self.sess.scene_inputs.export_frozen_state()
             signatures = cache_identity.signature_bundle(
                 scene, self._bpy().context.evaluated_depsgraph_get()
             )
@@ -846,10 +854,7 @@ class ProductionBakeBackend:
             raise RuntimeError("production bake backend is already initialized")
         if rebake_from is not None and not resume:
             raise ValueError("a re-bake continues an existing cache; pass resume=True")
-        self._snapshot_live_state(scene)
-        scene.fluidsim.live = False
         self.base_dir = self.cache_path(scene)
-        self.base_dir.mkdir(parents=True, exist_ok=True)
         self.signatures = self._signatures_at(scene, int(start))
         self.effect_signature, self.effect_inventory = self._effect_identity_at(
             scene, int(start))
@@ -890,8 +895,6 @@ class ProductionBakeBackend:
             if existing is not None and not restart:
                 raise ValueError(
                     "cache data already exists; use Resume or explicit Restart")
-            if restart:
-                self._clear_for_restart(self.base_dir)
 
         # Admission evaluates the scene at its current frame. Pin it so the
         # bake does not depend on where the playhead was: the start frame for a
@@ -902,11 +905,40 @@ class ProductionBakeBackend:
         admission_frame = int(start) if last_committed is None else int(last_committed)
         if resume and last_committed is None:
             admission_frame = int(self.manifest.frame_start)
+        payload = None
+        frozen_state = None
+        if last_committed is not None:
+            entry = self.manifest.frames[last_committed]
+            payload = read_checkpoint(
+                self.base_dir / entry.checkpoint_file,
+                expected_sha256=entry.checkpoint_sha256,
+                expected_size=entry.checkpoint_size,
+                expected_frame=last_committed,
+                expected_settings_signature=self.manifest.settings_signature,
+                expected_source_signature=self.manifest.source_signature,
+                expected_effect_signature=self.manifest.effect_signature)
+            frozen_state = self._at_frame(scene, admission_frame,
+                lambda: self._resume_frozen_inputs(scene, payload))
+        self._snapshot_live_state(scene)
+        scene.fluidsim.live = False
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        if restart:
+            self._clear_for_restart(self.base_dir)
         with playback.suppress_frame_handlers():
             if int(scene.frame_current) != admission_frame:
                 scene.frame_set(admission_frame)
             depsgraph = self._bpy().context.evaluated_depsgraph_get()
-            self.sess.initialize(scene, depsgraph=depsgraph)
+            previous_solver = getattr(self.sess, "solver", None)
+            try:
+                self.sess.initialize(scene, depsgraph=depsgraph,
+                    **({"frozen_input_state": frozen_state} if frozen_state is not None else {}))
+            except Exception:
+                # Admission may fail after authority transferred and the new
+                # solver was released. A preflight refusal instead preserves
+                # the original solver and must not rebuild that live preview.
+                self._session_replaced = (
+                    getattr(self.sess, "solver", None) is not previous_solver)
+                raise
             # The live session is gone from here on: any failure below must
             # restore it, not just the Live flag.
             self._session_replaced = True
@@ -918,16 +950,6 @@ class ProductionBakeBackend:
             if resume:
                 last = self.manifest.last_committed_frame
                 if last is not None:
-                    entry = self.manifest.frames[last]
-                    payload = read_checkpoint(
-                        self.base_dir / entry.checkpoint_file,
-                        expected_sha256=entry.checkpoint_sha256,
-                        expected_size=entry.checkpoint_size,
-                        expected_frame=last,
-                        expected_settings_signature=self.manifest.settings_signature,
-                        expected_source_signature=self.manifest.source_signature,
-                        expected_effect_signature=self.manifest.effect_signature,
-                    )
                     restore_solver(self.sess.solver, payload)
                     # The restored state already carries the INITIALIZATION
                     # effects applied up to frame `last` (a timeline frame).
@@ -954,7 +976,31 @@ class ProductionBakeBackend:
         self._initialized = True
         return next_frame
 
+    @staticmethod
+    def _resume_frozen_inputs(scene, payload):
+        from ..io.checkpoint import frozen_inputs
+        from .scene_inputs import FrozenInputState, frozen_input_keys, validate_frozen_scene
+
+        try:
+            extension = frozen_inputs(payload)
+            if extension is None:
+                # Absence is provably safe only when no current lane needs a
+                # historical snapshot. Never recapture at the checkpoint frame.
+                if frozen_input_keys(scene):
+                    raise ResumeRefused(ResumeDecision(False, None,
+                        "FROZEN_INPUT_STATE_REQUIRED",
+                        "This checkpoint has no frozen scene inputs. Restart the bake; "
+                        "its committed frames remain playable."))
+                extension = ({"schema_version": 1, "records": []}, {})
+            return validate_frozen_scene(FrozenInputState(*extension), scene)
+        except ResumeRefused:
+            raise
+        except (ValueError, TypeError, KeyError, OSError) as exc:
+            raise ResumeRefused(ResumeDecision(False, None,
+                "FROZEN_INPUT_STATE_INVALID", f"Cannot restore frozen inputs: {exc}")) from exc
+
     def _new_manifest(self, start: int, end: int) -> CacheManifestV3:
+        from ..io.cache import INPUT_IDENTITY_SCHEMA_VERSION
         from .sources import SOURCE_SCHEMA_VERSION
 
         return CacheManifestV3.new(
@@ -968,6 +1014,7 @@ class ProductionBakeBackend:
             effect_signature=self.effect_signature,
             effect_inventory=self.effect_inventory,
             source_schema_version=SOURCE_SCHEMA_VERSION,
+            input_identity_schema_version=INPUT_IDENTITY_SCHEMA_VERSION,
             transfer_mode=ParticleSampleType(
                 int(self.sess.solver.settings.sample_type)).name,
             grid_spec=_grid_spec_record(self.sess.solver.quality),
@@ -1058,6 +1105,9 @@ class ProductionBakeBackend:
             effect_signature=self.effect_signature,
             effect_inventory=self.effect_inventory,
         )
+        from ..io.checkpoint import attach_frozen_inputs
+        frozen_state = self.sess.scene_inputs.export_frozen_state()
+        checkpoint = attach_frozen_inputs(checkpoint, frozen_state.metadata, frozen_state.arrays)
         if checkpoint.frame != frame:
             raise ValueError("captured checkpoint frame does not match frame output")
         checkpoint_path = (
@@ -1112,9 +1162,16 @@ class ProductionBakeBackend:
                     "the preview")
             elif self._original_session_active and self._original_session_payload is not None:
                 with playback.suppress_frame_handlers():
+                    if self._original_frame is not None:
+                        scene.frame_set(self._original_frame)
+                    frozen_state = self._original_frozen_state
+                    if frozen_state is not None:
+                        from .scene_inputs import validate_frozen_scene
+                        frozen_state = validate_frozen_scene(frozen_state, scene)
                     self.sess.initialize(
                         scene,
                         depsgraph=self._bpy().context.evaluated_depsgraph_get(),
+                        **({"frozen_input_state": frozen_state} if frozen_state is not None else {}),
                     )
                     self.sess.sync_scene(
                         scene, self._bpy().context.evaluated_depsgraph_get())
@@ -1123,6 +1180,14 @@ class ProductionBakeBackend:
                 self.sess.release(scene)
         except Exception as exc:  # restoration is part of the contract
             restore_error = exc
+            # A failed restoration must not leave the baking solver posing as
+            # the old preview, nor let the Live callback silently re-admit it.
+            released_for_edits = True
+            self.restore_notice = "Preview inputs could not be restored; Initialize to restart the preview"
+            try:
+                self.sess.release(scene)
+            except Exception as release_exc:
+                restore_error = RuntimeError(f"{exc}; release failed: {release_exc}")
         finally:
             if self._original_frame is not None:
                 try:
@@ -1185,10 +1250,18 @@ class ProductionBakeBackend:
         if self._initialized or self._session_replaced:
             self._restore_original_state(scene)
         elif self._snapshot_open:
-            # initialize() raised after snapshotting (a refused resume, a 2.x
-            # cache, existing data): it had already switched live playback off.
-            self._snapshot_open = False
-            scene.fluidsim.live = self._original_live
+            # Admission refused before replacing the original session. Undo
+            # the temporary playhead/Live changes without re-admitting it.
+            from . import playback
+
+            try:
+                with playback.suppress_frame_handlers():
+                    if self._original_frame is not None:
+                        scene.frame_set(self._original_frame)
+            finally:
+                self._snapshot_open = False
+                with playback.suppress_mode_transitions():
+                    scene.fluidsim.live = self._original_live
 
 
 def run_synchronous(

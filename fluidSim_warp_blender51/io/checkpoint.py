@@ -9,7 +9,7 @@ format-1 checkpoint is refused, never migrated.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import io
 import json
@@ -397,3 +397,33 @@ def restore_solver(solver, payload: CheckpointPayload) -> None:
             "source_state": dict(payload.source_state),
         }
     )
+
+
+# Optional format-2 extension inside the already extensible scalar/array maps.
+# Old readers preserve these values and solver restore ignores the namespace.
+FROZEN_INPUT_STATE_KEY = "blender_frozen_inputs"
+FROZEN_INPUT_ARRAY_PREFIX = "blender_frozen_"
+
+
+def attach_frozen_inputs(payload: CheckpointPayload, metadata, arrays) -> CheckpointPayload:
+    """Bind Blender-owned state to the same source identity and file digest."""
+    if any(not isinstance(name, str) or not name.startswith(FROZEN_INPUT_ARRAY_PREFIX)
+           for name in arrays):
+        raise ValueError("invalid frozen input array namespace")
+    merged = {name: value for name, value in payload.arrays.items()
+              if not name.startswith(FROZEN_INPUT_ARRAY_PREFIX)}
+    merged.update(arrays)
+    return replace(payload, arrays=merged, scalars={
+        **payload.scalars, FROZEN_INPUT_STATE_KEY: _json_safe(metadata)}).validated()
+
+
+def frozen_inputs(payload: CheckpointPayload):
+    """Return optional portable state; absence never means an empty snapshot."""
+    metadata = payload.scalars.get(FROZEN_INPUT_STATE_KEY)
+    arrays = {name: value for name, value in payload.arrays.items()
+              if name.startswith(FROZEN_INPUT_ARRAY_PREFIX)}
+    if metadata is None:
+        if arrays:
+            raise ValueError("frozen input arrays have no metadata")
+        return None
+    return _json_safe(metadata), arrays
