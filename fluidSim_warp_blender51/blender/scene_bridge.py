@@ -290,11 +290,13 @@ class Session:
             scene, depsgraph, operation=operation)
 
     def initialize(self, scene, *, depsgraph=None,
-                   ignore_memory_safeguard=False):
+                   ignore_memory_safeguard=False, frozen_input_state=None):
         """Admit one coherent Blender scene into a running Solver Session."""
         return self._admission().initialize(
             scene, depsgraph=depsgraph,
-            ignore_memory_safeguard=ignore_memory_safeguard)
+            ignore_memory_safeguard=ignore_memory_safeguard,
+            **({"frozen_input_state": frozen_input_state}
+               if frozen_input_state is not None else {}))
 
     def owns_scene(self, scene):
         return bool(
