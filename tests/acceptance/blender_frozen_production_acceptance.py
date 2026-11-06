@@ -22,12 +22,14 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT / "tests" / "support"))
 from _frozen_acceptance_contract import (
     array_differences,
     assert_exact_state,
     qualification_status,
     require_cuda,
 )
+from _test_device import script_device
 
 START, PARTIAL, END, PREVIEW = 1, 3, 6, 5
 
@@ -494,7 +496,7 @@ def main(args):
         print("FROZEN-PRODUCTION-DIAGNOSTIC", json.dumps(report), flush=True)
 
 
-if __name__ == "__main__":
+def arguments(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--phase",
@@ -502,6 +504,9 @@ if __name__ == "__main__":
         choices=("preflight", "baseline", "partial", "resume", "rebake", "preview"),
     )
     parser.add_argument("--state-root", required=True, type=Path)
-    parser.add_argument("--device", default="cuda:0")
-    args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
-    raise SystemExit(main(args))
+    parser.add_argument("--device", default=script_device())
+    return parser.parse_args(argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(arguments(sys.argv[sys.argv.index("--") + 1 :])))

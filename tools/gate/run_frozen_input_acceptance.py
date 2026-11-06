@@ -16,6 +16,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests" / "support"))
+from _test_device import script_device
+
 from tools.release.build_extension import _blender_process_environment
 
 PHASES = ("preflight", "baseline", "partial", "resume", "rebake", "preview")
@@ -84,10 +87,14 @@ def run_phases(blender, state_root, device, *, execute=subprocess.run):
         )
 
 
-if __name__ == "__main__":
+def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--blender", required=True)
     parser.add_argument("--state-root", type=Path, required=True)
-    parser.add_argument("--device", default="cuda:0")
-    args = parser.parse_args()
+    parser.add_argument("--device", default=script_device())
+    return parser.parse_args(argv)
+
+
+if __name__ == "__main__":
+    args = arguments()
     raise SystemExit(run_phases(args.blender, args.state_root, args.device))

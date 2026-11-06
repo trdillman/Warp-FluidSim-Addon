@@ -107,8 +107,9 @@ def test_successful_process_without_phase_evidence_fails(tmp_path):
     )
 
 
+@pytest.mark.parametrize("selected", ["cpu", "cuda:2"])
 def test_real_phase_entrypoint_records_cuda_refusal_without_touching_addon(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, selected
 ):
     import sys
 
@@ -125,12 +126,10 @@ def test_real_phase_entrypoint_records_cuda_refusal_without_touching_addon(
     )
     for name in ("CONFIG", "SCRIPTS", "EXTENSIONS", "DATAFILES"):
         monkeypatch.setenv("BLENDER_USER_" + name, str(tmp_path / name))
-    assert (
-        module.main(
-            SimpleNamespace(state_root=tmp_path, phase="baseline", device="cuda:0")
-        )
-        == 1
-    )
+    monkeypatch.setenv("FLUIDSIM_TEST_DEVICE", selected)
+    args = module.arguments(["--phase", "baseline", "--state-root", str(tmp_path)])
+    assert args.device == selected
+    assert module.main(args) == 1
     report = json.loads((tmp_path / "baseline-report.json").read_text())
     assert report["status"] == "failed"
     assert "CUDA_REQUIRED" in report["error"]
@@ -214,3 +213,51 @@ def test_runner_discards_foreign_environment_paths_but_keeps_source_imports(
 
     assert runner.run_phases("blender", evidence, "cuda:0", execute=execute) == 1
     assert len(captured) == 1
+
+
+@pytest.mark.parametrize("selected", ["cuda:2", "cpu"])
+def test_phase_default_device_uses_shared_override(tmp_path, monkeypatch, selected):
+    monkeypatch.setenv("FLUIDSIM_TEST_DEVICE", selected)
+    phase = load(
+        "tests/acceptance/blender_frozen_production_acceptance.py", "frozen_phase"
+    )
+    args = phase.arguments(["--phase", "preflight", "--state-root", str(tmp_path)])
+    assert args.device == selected
+    explicit = phase.arguments(
+        ["--phase", "preflight", "--state-root", str(tmp_path), "--device", "cuda:3"]
+    )
+    assert explicit.device == "cuda:3"
+
+
+@pytest.mark.parametrize("selected", ["cuda:2", "cpu"])
+def test_launcher_default_device_uses_shared_override(tmp_path, monkeypatch, selected):
+    monkeypatch.setenv("FLUIDSIM_TEST_DEVICE", selected)
+    launcher = load("tools/gate/run_frozen_input_acceptance.py", "frozen_runner")
+    args = launcher.arguments(["--blender", "blender", "--state-root", str(tmp_path)])
+    assert args.device == selected
+    explicit = launcher.arguments(
+        ["--blender", "blender", "--state-root", str(tmp_path), "--device", "cuda:3"]
+    )
+    assert explicit.device == "cuda:3"
+
+
+def test_launcher_imports_shared_selector_from_unrelated_cwd(tmp_path, monkeypatch):
+    import os
+    import subprocess
+    import sys
+
+    monkeypatch.setenv("PYTHONPATH", "")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools/gate/run_frozen_input_acceptance.py"),
+            "--help",
+        ],
+        cwd=tmp_path,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--device" in result.stdout
