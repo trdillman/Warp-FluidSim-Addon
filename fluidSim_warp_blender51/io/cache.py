@@ -44,6 +44,7 @@ from .cache_schema import (
 )
 
 CACHE_FORMAT_VERSION = 3
+INPUT_IDENTITY_SCHEMA_VERSION = 2
 # Markers of a cache written by FluidSim 1.0 (format 1). They are recognized
 # only to refuse the directory with a clear message. A 2.x directory (manifest
 # format 2) is recognized the same way and refused with LEGACY_2X_CACHE_MESSAGE;
@@ -93,7 +94,11 @@ _LEGACY_SIGNATURE_DEVICES = ("cuda:0", "cuda:1", "cuda:2", "cuda:3",
                              "cuda", "cpu", "")
 def _digest(h, value):
     """Feed one setting value into the running hash."""
-    if isinstance(value, np.ndarray):
+    if isinstance(value, dict):
+        _digest_properties(h, value)
+    elif isinstance(value, bytes):
+        h.update(value)
+    elif isinstance(value, np.ndarray):
         h.update(np.ascontiguousarray(value).tobytes())
     elif isinstance(value, Enum):
         h.update(repr(value.value).encode())
@@ -136,7 +141,7 @@ def scene_key_from_records(settings, scene_objects) -> str:
 def source_signature_from_records(source_records) -> str:
     """Hash plain source records into a process-independent signature."""
     h = hashlib.sha256()
-    h.update(b"fluidsim-source-signature-v2|")
+    h.update(b"fluidsim-source-signature-v3|")
     for record in sorted(source_records, key=lambda value: value["name_full"]):
         h.update(
             f"{record['identity']}|{record['name_full']}|{record['library']}|"
@@ -144,7 +149,10 @@ def source_signature_from_records(source_records) -> str:
         )
         _digest_properties(h, record["properties"])
         _digest(h, record["matrix_world"])
+        _digest(h, record.get("dependencies", ()))
         geometry = record["geometry"]
+        _digest(h, {key: value for key, value in geometry.items()
+                    if key not in {"kind", "vertex_count", "vertex_bytes", "polygon_count", "point_count"}})
         if geometry["kind"] == "MESH":
             h.update(f"verts={geometry['vertex_count']}|".encode("utf-8"))
             h.update(geometry["vertex_bytes"])
@@ -171,7 +179,10 @@ def source_frame_stamp_from_records(source_records) -> str:
     for record in source_records:
         h = hashlib.sha256()
         _digest(h, record["matrix_world"])
+        _digest(h, record.get("dependencies", ()))
         geometry = record["geometry"]
+        _digest(h, {key: value for key, value in geometry.items()
+                    if key not in {"kind", "vertex_count", "vertex_bytes", "polygon_count", "point_count"}})
         if geometry["kind"] == "MESH":
             h.update(f"verts={geometry['vertex_count']}|".encode("utf-8"))
             h.update(geometry["vertex_bytes"])
@@ -182,7 +193,7 @@ def source_frame_stamp_from_records(source_records) -> str:
                     "utf-8"))
         parts.append((str(record["identity"]), h.hexdigest()))
     outer = hashlib.sha256()
-    outer.update(b"fluidsim-source-frame-stamp-v1|")
+    outer.update(b"fluidsim-source-frame-stamp-v2|")
     for identity, digest in sorted(parts):
         outer.update(f"{identity}|{digest}|".encode("utf-8"))
     return outer.hexdigest()
@@ -203,8 +214,11 @@ def _bundle(settings_signature: str, source_signature: str) -> dict[str, str]:
 
 def signature_bundle_from_records(settings, source_records) -> dict[str, str]:
     """Return the cache identity bundle from adapter-produced records."""
-    return _bundle(settings_record(settings)["signature"],
-                   source_signature_from_records(source_records))
+    return {
+        **_bundle(settings_record(settings)["signature"],
+                  source_signature_from_records(source_records)),
+        "input_identity_schema_version": str(INPUT_IDENTITY_SCHEMA_VERSION),
+    }
 
 
 def legacy_signature_bundles(bundle: dict[str, str], settings) -> tuple[dict[str, str], ...]:

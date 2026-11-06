@@ -108,3 +108,89 @@ def test_stamp_refuses_to_hash_another_frames_scene_under_this_frames_name():
 
     with pytest.raises(ValueError, match="frame_set"):
         source_frame_stamp(scene, None, 8)
+
+
+class _Collection(list):
+    def foreach_get(self, name, target):
+        import numpy as np
+        target[:] = np.asarray([getattr(item, name) for item in self]).reshape(-1)
+
+
+def _mesh_object(key):
+    obj = _Object(key)
+    obj.type = 'MESH'
+    obj.data = SimpleNamespace(
+        vertices=_Collection([SimpleNamespace(co=point) for point in
+                              [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]]),
+        polygons=[SimpleNamespace(vertices=(0, 1, 2)), SimpleNamespace(vertices=(0, 2, 3))],
+    )
+    return obj
+
+
+def test_stamp_follows_triangle_connectivity_with_same_counts():
+    obj = _mesh_object('mesh')
+    scene = _scene(obj)
+    before = source_frame_stamp(scene, None, 1)
+    obj.data.polygons[0].vertices = (0, 1, 3)
+    obj.data.polygons[1].vertices = (1, 2, 3)
+    assert source_frame_stamp(scene, None, 1) != before
+
+
+def test_stamp_follows_same_count_point_movement():
+    obj = _Object('points')
+    obj.type = 'POINTCLOUD'
+    obj.data.points = _Collection([SimpleNamespace(co=(0, 0, 0))])
+    scene = _scene(obj)
+    before = source_frame_stamp(scene, None, 1)
+    obj.data.points[0].co = (1, 0, 0)
+    assert source_frame_stamp(scene, None, 1) != before
+
+
+@pytest.mark.parametrize('edit', ['geometry', 'transform', 'replacement'])
+def test_referenced_untagged_mesh_contributes(edit):
+    owner = _Object('source', role='SOURCE')
+    ref = _mesh_object('reference')
+    ref.fluidsim.role = 'NONE'
+    owner.fluidsim.geometry_mode = 'MESH'
+    owner.fluidsim.mesh_object = ref
+    scene = _scene(owner, ref)
+    before = source_frame_stamp(scene, None, 1)
+    if edit == 'geometry':
+        ref.data.vertices[0].co = (0, 0, 1)
+    elif edit == 'transform':
+        ref.matrix_world = _translated(2)
+    else:
+        owner.fluidsim.mesh_object = _mesh_object('replacement')
+    assert source_frame_stamp(scene, None, 1) != before
+
+
+def test_volume_same_path_content_change_contributes(tmp_path):
+    owner = _Object('source', role='SOURCE')
+    owner.fluidsim.source_region_kind = 'VOLUME_GRID'
+    volume = _Object('volume', role='NONE')
+    volume.type = 'VOLUME'
+    path = tmp_path / 'input.vdb'
+    path.write_bytes(b'first content')
+    volume.data = SimpleNamespace(filepath=str(path), grids=SimpleNamespace(frame_filepath=''))
+    owner.fluidsim.volume_input_object = volume
+    scene = _scene(owner, volume)
+    before = source_frame_stamp(scene, None, 1)
+    path.write_bytes(b'other content')
+    assert source_frame_stamp(scene, None, 1) != before
+
+
+def test_schema_version_is_explicit_in_new_bundles():
+    from fluidSim_warp_blender51.io.cache import signature_bundle_from_records
+    assert signature_bundle_from_records({}, ())['input_identity_schema_version'] == '2'
+
+
+def test_unselected_dependency_does_not_contribute():
+    owner = _Object('source', role='SOURCE')
+    ref = _mesh_object('unused')
+    ref.fluidsim.role = 'NONE'
+    owner.fluidsim.mesh_object = ref
+    scene = _scene(owner, ref)
+    before = source_frame_stamp(scene, None, 1)
+    ref.data.vertices[0].co = (0, 0, 4)
+    ref.matrix_world = _translated(3)
+    assert source_frame_stamp(scene, None, 1) == before

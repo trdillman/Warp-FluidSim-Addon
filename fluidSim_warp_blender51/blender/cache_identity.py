@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 import numpy as np
+
+from ..io.cache import INPUT_IDENTITY_SCHEMA_VERSION as INPUT_IDENTITY_SCHEMA_VERSION
 
 _HASHABLE_RNA_TYPES = frozenset({"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"})
 _SOURCE_SIGNATURE_IGNORED_RNA = frozenset({
@@ -72,11 +77,18 @@ def scene_key(scene) -> str:
         _settings_record(scene), _scene_object_records(scene))
 
 
-def _geometry_record(obj, depsgraph) -> dict:
+def _geometry_record(obj, depsgraph, *, point_input=False) -> dict:
     from .evaluated_geometry import EvaluatedGeometry
 
     geometry = EvaluatedGeometry(obj, depsgraph)
     evaluated = geometry.evaluated
+    particle_systems = getattr(evaluated, "particle_systems", ())
+    if point_input and particle_systems and len(particle_systems[0].particles):
+        particles = particle_systems[0].particles
+        coordinates = np.empty(len(particles) * 3, dtype=np.float32)
+        particles.foreach_get("location", coordinates)
+        return {"kind": "PARTICLES", "point_count": len(particles),
+                "point_bytes": coordinates.tobytes()}
     if getattr(evaluated, "type", None) == "MESH":
         with geometry.mesh(data_fallback=True, tolerate_release_error=True) as mesh:
             vertices = getattr(mesh, "vertices", ())
@@ -88,12 +100,91 @@ def _geometry_record(obj, depsgraph) -> dict:
                 "vertex_count": len(vertices),
                 "vertex_bytes": coords.tobytes(),
                 "polygon_count": len(getattr(mesh, "polygons", ())),
+                "topology": _mesh_topology(mesh),
             }
     data = getattr(evaluated, "data", None)
+    points = getattr(data, "points", ())
+    coordinates = np.empty(len(points) * 3, dtype=np.float32)
+    if len(points):
+        attributes = getattr(data, "attributes", None)
+        position = attributes.get("position") if attributes is not None else None
+        if position is not None:
+            position.data.foreach_get("vector", coordinates)
+        else:
+            points.foreach_get("co", coordinates)
     return {
         "kind": getattr(evaluated, "type", ""),
-        "point_count": len(getattr(data, "points", ())),
+        "point_count": len(points),
+        "point_bytes": coordinates.tobytes(),
     }
+
+
+def _mesh_topology(mesh):
+    """Copy the evaluated triangles before the temporary mesh is released."""
+    if hasattr(mesh, "calc_loop_triangles"):
+        mesh.calc_loop_triangles()
+        triangles = mesh.loop_triangles
+        indices = np.empty(len(triangles) * 3, dtype=np.int32)
+        triangles.foreach_get("vertices", indices)
+        return indices.tobytes()
+    # Data-only adapters retain polygon boundaries as well as connectivity.
+    return tuple(tuple(int(index) for index in polygon.vertices)
+                 for polygon in getattr(mesh, "polygons", ()))
+
+
+def _volume_record(obj):
+    data = obj.data
+    grids = getattr(data, "grids", None)
+    path = str(getattr(grids, "frame_filepath", "") or data.filepath)
+    try:
+        import bpy
+        path = bpy.path.abspath(path, library=getattr(obj, "library", None))
+    except ImportError:
+        path = str(Path(path).resolve())
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {
+        "path": path,
+        "content_sha256": digest.hexdigest(),
+        "sequence": {name: getattr(data, name, None) for name in
+                     ("is_sequence", "frame_start", "frame_duration", "frame_offset", "sequence_mode")},
+    }
+
+
+def _dependencies(obj, group, depsgraph):
+    from .scene_inputs import persistent_source_key
+
+    refs = []
+    role = getattr(group, "role", "NONE")
+    source_kind = getattr(group, "source_region_kind", "ANALYTIC")
+    sink_kind = getattr(group, "sink_region_kind", "ANALYTIC")
+    field_kind = getattr(group, "field_region_kind", "ANALYTIC")
+    if ((role == "SOURCE" and source_kind == "VOLUME_GRID")
+            or (role == "SINK" and sink_kind == "VOLUME_GRID")
+            or (role == "FIELD" and field_kind == "VOLUME_GRID")):
+        refs.append(("volume", getattr(group, "volume_input_object", None) or obj))
+    elif role == "SOURCE" and source_kind == "POINTS":
+        refs.append(("points", getattr(group, "point_input_object", None) or obj))
+    elif (source_kind in {"MESH_SOLID", "MESH_SHELL"}
+          or sink_kind in {"MESH_SOLID", "MESH_SHELL"}
+          or getattr(group, "geometry_mode", "ANALYTIC") == "MESH"):
+        refs.append(("mesh", getattr(group, "mesh_object", None) or obj))
+    if getattr(group, "enabled", False) and getattr(group, "auto_inject_seed", False):
+        refs.append(("points", obj))
+    records = []
+    for kind, ref in refs:
+        record = {
+            "kind": kind, "identity": persistent_source_key(ref),
+            "matrix_world": _matrix_record(_authored(ref)),
+        }
+        if kind == "volume":
+            record["payload"] = _volume_record(ref)
+        else:
+            record["payload"] = _geometry_record(ref, depsgraph, point_input=kind == "points")
+        records.append(record)
+    return tuple(records)
 
 
 def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
@@ -103,7 +194,9 @@ def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
     for obj in scene.objects:
         group = getattr(obj, "fluidsim", None)
         role = str(getattr(group, "role", "NONE")) if group is not None else "NONE"
-        if role == "NONE":
+        if role == "NONE" and not (
+                getattr(group, "enabled", False)
+                and getattr(group, "auto_inject_seed", False)):
             continue
         records.append({
             "identity": persistent_source_key(obj),
@@ -115,6 +208,7 @@ def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
                 group, ignored=_SOURCE_SIGNATURE_IGNORED_RNA),
             "matrix_world": _matrix_record(_authored(obj)),
             "geometry": _geometry_record(obj, depsgraph),
+            "dependencies": _dependencies(obj, group, depsgraph),
         })
     return tuple(records)
 
