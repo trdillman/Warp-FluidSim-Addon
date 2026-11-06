@@ -90,6 +90,13 @@ def main():
             elif prop.type != "COLLECTION":
                 values[name] = value
         Path(out).write_text(json.dumps(values, sort_keys=True, indent=2), encoding="utf-8")
+        if f'demos/{blend.name}' in inventory_module.q.GENERATED_DEMOS:
+            spec = importlib.util.spec_from_file_location('snapshot_semantics',
+                Path(__file__).with_name('gate') / 'observe_environment.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.q.atomic_json(Path(out).with_suffix('.semantics.json'),
+                {'semantic_fingerprint': module.scene_semantics(blend, root)})
         print("DEMO-SETTINGS-EXTRACT-PASS", flush=True)
         return
     payload_bytes = Path(payload_path).read_bytes()
@@ -163,7 +170,17 @@ def main():
             raise RuntimeError("demo produced no liquid particles")
         if inventory_module._inventory(root) != root_inventory:
             raise RuntimeError('selected source changed during the trial')
-        report = {"root": str(root), "addon": addon.__file__,
+        request = os.environ.get('FLUIDSIM_ENVIRONMENT_REQUEST')
+        if not request:
+            raise RuntimeError('missing observed environment admission request')
+        environment_spec = importlib.util.spec_from_file_location('trial_environment',
+            Path(__file__).with_name('gate') / 'observe_environment.py')
+        environment_module = importlib.util.module_from_spec(environment_spec)
+        environment_spec.loader.exec_module(environment_module)
+        observed = environment_module.observe(json.loads(Path(request).read_text()))
+        report = {"observed_environment": observed,
+                  "environment_fingerprint": environment_module.q.fingerprint(observed),
+                  "root": str(root), "addon": addon.__file__,
                   "processId": os.getpid(), "rootInventorySha256": root_inventory,
                   "version": version.VERSION_STRING, "referenceVersion": reference,
                   "blend": str(blend), "blendSha256": hashlib.sha256(blend.read_bytes()).hexdigest(),

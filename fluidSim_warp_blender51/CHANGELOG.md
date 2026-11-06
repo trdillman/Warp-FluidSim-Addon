@@ -4,6 +4,17 @@
 
 ### Changes
 
+- Newly baked cache v3 manifests declare input identity schema 2. Source and
+  frame identities include evaluated triangle connectivity, point coordinates,
+  selected mesh/point/volume dependencies, their transforms, resolved VDB
+  sequence paths and content, native force-field dependencies, and consumed
+  height-profile pixels. Unselected role-NONE objects remain irrelevant.
+- Older cache v3 manifests remain readable for playback. Resume and Re-bake
+  require a fresh bake when the manifest lacks current input identity coverage;
+  missing provenance is never inferred from the current scene.
+- Frame playback verifies and parses one immutable byte snapshot, preventing a
+  concurrent file replacement from substituting unverified payload bytes.
+
 - **Warp 1.19.0** is now the build Install Warp downloads (same CUDA 13 build and
   driver floor as 1.18). Warp 1.17.0 and 1.18.0 still load, with a warning.
   The 1.19 GPU gate has not been run yet.

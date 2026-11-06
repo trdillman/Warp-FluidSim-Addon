@@ -1632,7 +1632,8 @@ def test_output_refresh_updates_existing_outputs_without_active_solver(monkeypat
         fake_viewport.refresh_existing_output_settings,
     )
     scene_bridge.session().solver = None
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        status="", cache_playback_enabled=False))
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.OUTPUT)
 

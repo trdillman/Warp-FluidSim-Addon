@@ -88,23 +88,87 @@ These are proven only by the gate:
 - live viewport playback
 - the foreground GUI acceptance lane
 
-Run the gate on the release commit from the repository root. Run it detached,
-with a durable log, and don't touch Blender windows while it runs:
+Run the gate from a clean, committed release candidate. Commit verifier changes
+before requesting approval or measuring a budget. Product and verifier inputs
+are frozen at admission; a changed HEAD or changed source during the run
+prevents a receipt. The only generated-file exception is `demos/dam_break.blend`
+and `demos/crown_splash.blend`: changed bytes require equal observed authored
+scene semantics before and after rebuilding. The receipt records both byte
+hashes and that semantic fingerprint. Unsupported semantic data fails closed.
+An add-on-code change never qualifies for this exception.
 
-```bash
-python -u tools/run_production_gate.py --include-gui > artifacts/production_gate.log 2>&1
+Qualification requires an approved Blender executable digest and a reviewed
+JSON distribution record outside the checkout. The record must contain:
+
+```json
+{
+  "blender_download_url": "https://download.blender.org/release/Blender5.2/<official-archive>.tar.xz",
+  "blender_archive_sha256": "<64 lowercase hexadecimal characters>",
+  "blender_executable_sha256": "<64 lowercase hexadecimal characters>",
+  "bundled_python_sha256": "<64 lowercase hexadecimal characters>",
+  "verifier_fingerprint": "<64 lowercase hexadecimal characters>",
+  "reviewed_by": "<reviewer identity>"
+}
 ```
 
-It prints `FULL-PRODUCTION-GATE-PASS` when it succeeds. It then writes
-`artifacts/production_gate_manifest.json`, which records:
+Use the official `.zip` URL for Windows. Retain the official archive and its
+published checksum alongside this record; writing a JSON assertion is not an
+independent verification of the distribution. The verifier fingerprint includes
+tracked tools and tests, including the evaluator and pinned baseline. Obtain it
+from the committed checkout for review:
 
-- the commit
-- the FluidSim version
-- the Blender executable
-- the sha256 of the demo analysis report
+```bash
+python -c 'from tools.gate.qualification import freeze_source; from pathlib import Path; print(freeze_source(Path.cwd())["verifier_fingerprint"])'
+```
 
-Every run deletes the old manifest first, and only a passing `--include-gui`
-run writes a new one.
+Set the following variables to absolute paths and reviewed values. The retained
+Warp archive must match `tools/release/wheels.lock.json`; the loaded Warp source
+and native files, including JIT headers, must match that archive. Python bytecode and caches are not
+compared. `PYTHONPATH` must contain the certified installed Warp plus pytest.
+
+```bash
+export BLENDER_EXE="/path/to/certified-blender/blender"
+export BLENDER_PY="/path/to/certified-blender/5.2/python/bin/python3.13"
+export BLENDER_SHA256="<approved executable SHA-256>"
+export BLENDER_PROVENANCE="/owned/evidence/blender-provenance.json"
+export FLUIDSIM_WARP_WHEEL="/owned/downloads/<locked-host-Warp-wheel>.whl"
+export PYTHONPATH="/owned/runtime/warp-1.19.0-site"
+python -u tools/run_production_gate.py --include-gui --measure-budget > artifacts/production_gate.log 2>&1
+```
+
+Use the equivalent environment assignments on Windows and its bundled
+`python.exe`. The gate rejects Blender 5.1 and any build other than the certified
+version in `version.py`. An available Blender 5.2.1 used for diagnostic checks
+does not qualify a 5.2.0 release contract. The bundled Python must belong to the
+approved distribution and match Blender's observed Python version/prefix.
+`nvidia-smi` must be available to record the actual driver for the observed
+Warp GPU UUID. Do not touch Blender windows while foreground acceptance runs.
+
+Each production invocation owns private absolute Blender configuration, scripts,
+extensions, datafiles, temporary files and caches. Caller profile overrides are
+replaced; configured `PYTHONPATH` is retained for this source gate, while
+`PYTHONHOME` and `PYTHONSTARTUP` are removed. The observed bundled Python prefix
+must remain inside the approved distribution.
+
+Approval policy and measurement are separate records. The gate observes Blender
+version/build/executable hash, Python identity, Warp version/distribution/loaded
+path/locked-wheel hash, OS/architecture, GPU UUID/model and driver. It repeats
+source and runtime checks before issuing a receipt. Every invocation, including
+`--quick`, moves the previous current manifest into its own new
+`artifacts/qualification_runs/<run_id>/prior_manifest.json` before storage
+admission. A storage or admission failure therefore leaves no current passing
+manifest. Existing evidence is retained, not rewritten as a new pass.
+
+A successful full run prints `FULL-PRODUCTION-GATE-PASS` and atomically writes
+both its retained run manifest and `artifacts/production_gate_manifest.json`.
+The receipt contains the commit, FluidSim version, `run_id`,
+`source_fingerprint`, `verifier_fingerprint`, `environment_fingerprint`, the
+observed environment and separate compatibility policy, demo-analysis hash,
+generated-demo exceptions, and the path/hash of the retained performance report.
+The report's raw trial paths and hashes must still resolve. Preserve each
+`artifacts/performance_budget/runs/<attempt_id>/` directory with its summary,
+raw reports, settings and logs, including failed attempts. A later measurement
+uses a new directory and cannot overwrite a previous run's raw evidence.
 
 Validation is scoped to what changed. The release needs one passing
 `--include-gui` run on the release commit, and its `demo_artifact_sha256` must
@@ -113,15 +177,23 @@ results changed and needs an explanation, not a rerun). Demo bakes are bitwise
 deterministic since d2a6b6d, so repeating the run proves nothing new; the old
 three-consecutive-passes rule is retired.
 
-The paired performance budget is only measured when it has to be. By default the gate reuses
-`artifacts/performance_budget/summary.json` when it passed and no budget
-source changed since the commit it measured: the add-on (minus its docs and
-Markdown), `tools/repo_addon_loader.py`, the benchmark tools, the budget evaluator,
-`tools/demos`, and the saved paddle/vortex scenes that the gate does not rebuild.
-Documentation, rebuilt dam/crown blends and test-only commits therefore keep the
-measured budget. The manifest records `performance_budget_reused` and
-`performance_budget_measured_at`. `--measure-budget` forces a fresh
-measurement; `--reuse-budget` fails instead of measuring.
+The paired performance budget reuses only a completed passing measurement with
+required provenance and retained raw reports. Each reused demo must match the
+current source inputs, verifier and observed environment; legacy evidence,
+missing reports, a different GPU/driver/Blender/Warp/platform, or changed verifier
+requires new measurement. The current pinned comparison is release 4.0.1, as
+recorded in `REFERENCE_COMMITS` and `REFERENCE_VERSIONS`. Candidate modifications
+must not silently replace baseline or policy pins: those files belong to the
+reviewed verifier fingerprint. Numerical thresholds are unchanged.
+
+Documentation-only commits may reuse matching evidence. A generated demo can
+reuse only matching semantic inputs; saved workload or verifier changes require
+measurement. An interrupted campaign cannot be promoted merely because its raw
+rows happen to pass. Revalidation never edits an earlier receipt's SHA or verdict.
+The manifest records `performance_budget_reused` and the measured commit per
+demo. `--measure-budget` forces fresh measurement; `--reuse-budget` fails instead
+of measuring. Warp 1.19 still needs actual GPU/GUI qualification; source and
+CPU-only tests are not that evidence.
 
 A measurement stops each demo early when its first ABBA and BAAB blocks (four
 trials per variant) settle it: the order-balanced host ratio clears the budget

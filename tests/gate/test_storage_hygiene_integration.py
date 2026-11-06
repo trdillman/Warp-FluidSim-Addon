@@ -49,6 +49,8 @@ class ProductionStorageTests(unittest.TestCase):
              patch.object(gate, '_check_certified_warp', return_value='warp-root'), \
              patch.object(gate, '_validate_performance_evidence', return_value={}), \
              patch.object(gate, '_reusable_budget_demos', return_value=frozenset()), \
+             patch.object(gate, '_admit_qualification'), \
+             patch.object(gate, '_finish_qualification'), \
              contextlib.redirect_stderr(stream), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(gate.main([]), 0)
         report = stream.getvalue()

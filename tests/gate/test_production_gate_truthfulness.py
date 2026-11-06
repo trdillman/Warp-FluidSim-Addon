@@ -22,6 +22,8 @@ def test_production_gate_pass_defaults_to_headless_without_gui(monkeypatch, caps
                  expect_marker=None):
         calls.append((label, command, env, reject_output, expect_marker))
 
+    monkeypatch.setattr(run_production_gate, "_admit_qualification", lambda *args: None)
+    monkeypatch.setattr(run_production_gate, "_finish_qualification", lambda *args: None)
     monkeypatch.setattr(run_production_gate, "_run", fake_run)
     monkeypatch.setattr(run_production_gate, "_check_no_tracked_npz", lambda: None)
     monkeypatch.setattr(
@@ -100,6 +102,8 @@ def test_production_gate_include_gui_requires_foreground_gui_acceptance(
                  expect_marker=None):
         calls.append((label, command, env, reject_output, expect_marker))
 
+    monkeypatch.setattr(run_production_gate, "_admit_qualification", lambda *args: None)
+    monkeypatch.setattr(run_production_gate, "_finish_qualification", lambda *args: None)
     monkeypatch.setattr(run_production_gate, "_run", fake_run)
     monkeypatch.setattr(run_production_gate, "_check_no_tracked_npz", lambda: None)
     monkeypatch.setattr(run_production_gate, "_check_no_tracked_ignored_files", lambda: None)
