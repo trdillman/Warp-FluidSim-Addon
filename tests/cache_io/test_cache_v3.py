@@ -12,6 +12,7 @@ import ast
 import dataclasses
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -706,6 +707,10 @@ def test_frame_changed_after_opened_size_check_uses_bounded_read(
     assert reads == [expected_size + 1]
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX open-inode replacement requires delete sharing absent from ordinary Windows file opens",
+)
 def test_path_replacement_after_open_reads_the_original_handle(tmp_path, monkeypatch):
     _write_v3_cache(tmp_path, _frame_npz())
     frame_path = tmp_path / 'frames' / 'frame_000001.npz'
