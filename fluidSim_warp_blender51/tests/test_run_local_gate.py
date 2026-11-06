@@ -136,3 +136,20 @@ def test_local_gate_accepts_certified_blender_lts_banner(tmp_path, monkeypatch):
     expected = ".".join(map(str, version.CERTIFIED_BLENDER_VERSION))
     monkeypatch.setattr(run_local_gate.subprocess, "check_output", lambda command, **kwargs: f"Blender {expected} LTS\n")
     assert run_local_gate.check_blender_version(blender) == expected
+
+
+def test_blender_version_probe_uses_private_profile(tmp_path, monkeypatch):
+    expected = ".".join(map(str, version.CERTIFIED_BLENDER_VERSION))
+    calls = []
+    monkeypatch.setenv("BLENDER_USER_EXTENSIONS", str(tmp_path / "consumer"))
+    monkeypatch.setenv("PYTHONPATH", "/developer/warp")
+
+    def probe(command, **kwargs):
+        calls.append(kwargs["env"])
+        assert Path(kwargs["env"]["BLENDER_USER_EXTENSIONS"]).is_dir()
+        return f"Blender {expected}\n"
+
+    monkeypatch.setattr(run_local_gate.subprocess, "check_output", probe)
+    assert run_local_gate.check_blender_version(tmp_path / "blender") == expected
+    assert "PYTHONPATH" not in calls[0]
+    assert not Path(calls[0]["BLENDER_USER_EXTENSIONS"]).exists()
