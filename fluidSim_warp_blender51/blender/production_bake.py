@@ -928,8 +928,17 @@ class ProductionBakeBackend:
             if int(scene.frame_current) != admission_frame:
                 scene.frame_set(admission_frame)
             depsgraph = self._bpy().context.evaluated_depsgraph_get()
-            self.sess.initialize(scene, depsgraph=depsgraph,
-                **({"frozen_input_state": frozen_state} if frozen_state is not None else {}))
+            previous_solver = getattr(self.sess, "solver", None)
+            try:
+                self.sess.initialize(scene, depsgraph=depsgraph,
+                    **({"frozen_input_state": frozen_state} if frozen_state is not None else {}))
+            except Exception:
+                # Admission may fail after authority transferred and the new
+                # solver was released. A preflight refusal instead preserves
+                # the original solver and must not rebuild that live preview.
+                self._session_replaced = (
+                    getattr(self.sess, "solver", None) is not previous_solver)
+                raise
             # The live session is gone from here on: any failure below must
             # restore it, not just the Live flag.
             self._session_replaced = True
@@ -1241,10 +1250,18 @@ class ProductionBakeBackend:
         if self._initialized or self._session_replaced:
             self._restore_original_state(scene)
         elif self._snapshot_open:
-            # initialize() raised after snapshotting (a refused resume, a 2.x
-            # cache, existing data): it had already switched live playback off.
-            self._snapshot_open = False
-            scene.fluidsim.live = self._original_live
+            # Admission refused before replacing the original session. Undo
+            # the temporary playhead/Live changes without re-admitting it.
+            from . import playback
+
+            try:
+                with playback.suppress_frame_handlers():
+                    if self._original_frame is not None:
+                        scene.frame_set(self._original_frame)
+            finally:
+                self._snapshot_open = False
+                with playback.suppress_mode_transitions():
+                    scene.fluidsim.live = self._original_live
 
 
 def run_synchronous(

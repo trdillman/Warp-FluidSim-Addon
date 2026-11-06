@@ -446,3 +446,61 @@ def test_failed_preview_input_restore_releases_bake_solver_and_keeps_live_suppre
     assert session.released == [scene]
     assert scene.frame_current == 5
     assert session.initialized_at == []
+
+
+@pytest.mark.parametrize('cutover', [False, True])
+def test_admission_failure_restores_frame_and_only_rebuilds_replaced_preview(
+        backend, monkeypatch, cutover):
+    scene = _Scene(frame=37, live=True)
+    original_solver = object()
+    session = _Session(scene)
+    session.solver = original_solver
+    _snapshot(backend, session)
+    original_snapshot = backend._snapshot_live_state
+
+    def snapshot(scene):
+        original_snapshot(scene)
+        backend._original_session_active = True
+        backend._original_session_payload = 'preview checkpoint'
+
+    backend._snapshot_live_state = snapshot
+    backend._held_settings_changed = lambda _scene: False
+    attempts = []
+
+    def initialize(scene, depsgraph=None):
+        attempts.append(scene.frame_current)
+        if len(attempts) == 1:
+            if cutover:
+                # R7's committed replacement retirement failure releases its
+                # candidate through Session before propagating the error.
+                session.solver = None
+            raise RuntimeError('retirement failed' if cutover else 'preflight refused')
+        session.solver = object()
+
+    session.initialize = initialize
+    restored = []
+    monkeypatch.setattr(production_bake, 'restore_solver',
+                        lambda solver, payload: restored.append((solver, payload)))
+    transitions = []
+
+    @contextlib.contextmanager
+    def suppressed_transitions():
+        transitions.append(scene.frame_current)
+        yield
+
+    monkeypatch.setattr(blender_package.playback, 'suppress_mode_transitions',
+                        suppressed_transitions, raising=False)
+    with pytest.raises(RuntimeError, match='failed|refused'):
+        backend.initialize(scene, 5, 9)
+    backend.fail(scene, RuntimeError('admission failed'))
+    assert scene.frame_current == 37
+    assert scene.fluidsim.live is True
+    assert not backend._snapshot_open
+    if cutover:
+        assert attempts == [5, 37]
+        assert restored == [(session.solver, 'preview checkpoint')]
+    else:
+        assert attempts == [5]
+        assert session.solver is original_solver
+        assert restored == []
+        assert transitions == [37]
