@@ -123,7 +123,7 @@ python -c 'from tools.gate.qualification import freeze_source; from pathlib impo
 
 Set the following variables to absolute paths and reviewed values. The retained
 Warp archive must match `tools/release/wheels.lock.json`; the loaded Warp source
-and native files must match that archive. Python bytecode and caches are not
+and native files, including JIT headers, must match that archive. Python bytecode and caches are not
 compared. `PYTHONPATH` must contain the certified installed Warp plus pytest.
 
 ```bash
@@ -143,6 +143,12 @@ does not qualify a 5.2.0 release contract. The bundled Python must belong to the
 approved distribution and match Blender's observed Python version/prefix.
 `nvidia-smi` must be available to record the actual driver for the observed
 Warp GPU UUID. Do not touch Blender windows while foreground acceptance runs.
+
+Each production invocation owns private absolute Blender configuration, scripts,
+extensions, datafiles, temporary files and caches. Caller profile overrides are
+replaced; configured `PYTHONPATH` is retained for this source gate, while
+`PYTHONHOME` and `PYTHONSTARTUP` are removed. The observed bundled Python prefix
+must remain inside the approved distribution.
 
 Approval policy and measurement are separate records. The gate observes Blender
 version/build/executable hash, Python identity, Warp version/distribution/loaded

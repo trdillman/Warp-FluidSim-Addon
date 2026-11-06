@@ -91,12 +91,16 @@ def test_wrong_warp_and_uncertified_blender_are_rejected():
     from tools.gate import qualification as q
     policy = {'blender_version': [5, 2, 0], 'warp_version': '1.19.0',
               'blender_sha256': 'a' * 64, 'python_sha256': 'b' * 64,
-              'warp_wheel_sha256': 'c' * 64, 'python_prefix': '/blender/python'}
+              'warp_wheel_sha256': 'c' * 64, 'python_prefix': '/blender/python',
+              'distribution_root': '/blender'}
     observed = dict(policy, gpu_uuid='GPU-1', gpu_model='NVIDIA test', driver='600.1',
                     warp_distribution='1.19.0', warp_loaded_path='/site/warp/__init__.py',
                     blender_build='build', platform='Linux', architecture='x86_64',
                     python_version='3.13.0', python_executable='/blender/python/bin/python3.13')
     q.validate_environment(observed, policy)
+    with pytest.raises(RuntimeError, match='outside approved distribution'):
+        q.validate_environment(dict(observed, python_prefix='/foreign/python'),
+                               dict(policy, python_prefix='/foreign/python'))
     for field, value in (('warp_version', '1.17.0'), ('blender_version', [5, 1, 0]),
                          ('python_prefix', '/foreign/python')):
         with pytest.raises(RuntimeError, match=field):
@@ -158,3 +162,37 @@ def test_midrun_edit_then_revert_still_invalidates_admission(tmp_path):
     path.write_bytes(old)
     with pytest.raises(RuntimeError, match='changed during'):
         q.check_source(root, frozen)
+
+
+def test_source_edit_during_admission_is_not_frozen_as_clean(tmp_path, monkeypatch):
+    from tools.gate import qualification as q
+    root = repo(tmp_path)
+    original = q._git
+    def git(*args):
+        if args[1:] == ('ls-files', '-z'):
+            (root / 'fluidSim_warp_blender51/sim/solver.py').write_text('dirty during admission')
+        return original(*args)
+    monkeypatch.setattr(q, '_git', git)
+    with pytest.raises(RuntimeError, match='dirty product|changed during admission'):
+        q.freeze_source(root)
+
+
+def test_loaded_warp_headers_must_match_locked_wheel(tmp_path):
+    import zipfile
+
+    from tools.gate.observe_environment import verify_warp_payload
+    installed = tmp_path / 'site/warp'
+    (installed / 'native').mkdir(parents=True)
+    (installed / '__init__.py').write_bytes(b'# source')
+    (installed / 'native/builtin.h').write_bytes(b'locked header')
+    wheel = tmp_path / 'warp.whl'
+    with zipfile.ZipFile(wheel, 'w') as archive:
+        archive.writestr('warp/__init__.py', b'# source')
+        archive.writestr('warp/native/builtin.h', b'locked header')
+    original = verify_warp_payload(wheel, installed / '__init__.py')
+    (installed / '__pycache__').mkdir()
+    (installed / '__pycache__/runtime.pyc').write_bytes(b'mutable cache')
+    assert verify_warp_payload(wheel, installed / '__init__.py') == original
+    (installed / 'native/builtin.h').write_bytes(b'mutated header')
+    with pytest.raises(RuntimeError, match='loaded Warp payload differs.*builtin.h'):
+        verify_warp_payload(wheel, installed / '__init__.py')

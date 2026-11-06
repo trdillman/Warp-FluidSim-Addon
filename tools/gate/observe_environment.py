@@ -16,18 +16,15 @@ q = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(q)
 
 
-def observe(request):
-    import bpy
-    import warp as wp
-
-    wheel = Path(request['wheel'])
-    loaded = Path(wp.__file__).resolve()
-    # Check source/native payloads, never mutable bytecode or cache directories.
+def verify_warp_payload(wheel, loaded):
+    """Bind all installed wheel payloads, including native JIT headers."""
+    loaded = Path(loaded).resolve()
     payloads = {}
     with zipfile.ZipFile(wheel) as archive:
         for name in archive.namelist():
             path = Path(name)
-            if path.parts[0] != 'warp' or path.suffix not in ('.py', '.so', '.dll', '.pyd', '.dylib'):
+            if (name.endswith('/') or path.parts[0] != 'warp'
+                    or '__pycache__' in path.parts or path.suffix == '.pyc'):
                 continue
             actual = loaded.parent.parent / path
             expected = hashlib.sha256(archive.read(name)).hexdigest()
@@ -36,6 +33,16 @@ def observe(request):
             payloads[name] = expected
     if not payloads:
         raise RuntimeError('wheel contains no verifiable Warp payload')
+    return q.fingerprint(payloads)
+
+
+def observe(request):
+    import bpy
+    import warp as wp
+
+    wheel = Path(request['wheel'])
+    loaded = Path(wp.__file__).resolve()
+    payload_fingerprint = verify_warp_payload(wheel, loaded)
     wp.init()
     device = wp.get_device('cuda:0')
     if not device.is_cuda or not device.uuid:
@@ -53,7 +60,7 @@ def observe(request):
             'warp_version': str(wp.__version__),
             'warp_distribution': importlib.metadata.version('warp-lang'),
             'warp_wheel_sha256': q.sha256(wheel), 'warp_loaded_path': str(loaded),
-            'warp_payload_fingerprint': q.fingerprint(payloads),
+            'warp_payload_fingerprint': payload_fingerprint,
             'platform': platform.system(), 'architecture': platform.machine(),
             'gpu_uuid': device.uuid, 'gpu_model': device.name,
             'driver': drivers[device.uuid], 'cuda_driver': list(wp.get_cuda_driver_version())}
@@ -97,6 +104,20 @@ def scene_semantics(blend, root):
                 name = prop.identifier
                 if name in ignored:
                     continue
+                # Reading attribute data can materialize SINGLE into ARRAY;
+                # the fully expanded values below are the authored identity.
+                if isinstance(value, bpy.types.Attribute) and name == 'storage_type':
+                    continue
+                if prop.type == 'POINTER':
+                    base = prop.fixed_type
+                    while base and base.identifier != 'PropertyGroup':
+                        base = base.base
+                    if base and not value.is_property_set(name):
+                        # Reading an absent group materializes it. A subsequent
+                        # save would stamp schema data onto non-domain objects.
+                        # Preserve authored absence without mutating the scene.
+                        result[name] = {'rna_unset': True}
+                        continue
                 child = getattr(value, name)
                 if prop.type == 'COLLECTION' or getattr(prop, 'is_array', False):
                     result[name] = [encode(item, (*ancestry, pointer)) for item in child]
@@ -106,8 +127,9 @@ def scene_semantics(blend, root):
                 custom_keys = value.keys()
             except TypeError:  # RNA structs without IDProperty storage expose a raising keys().
                 custom_keys = ()
-            result['id_properties'] = {key: encode(value[key], (*ancestry, pointer))
-                                       for key in custom_keys if key not in ('_RNA_UI', 'fluidsim_pending_epoch')}
+            result['id_properties'] = {
+                key: encode(value[key], (*ancestry, pointer)) for key in custom_keys
+                if key not in ('_RNA_UI', 'fluidsim_pending_epoch')}
             return result
         if hasattr(value, 'to_dict'):
             return {key: encode(item, ancestry) for key, item in value.to_dict().items()}

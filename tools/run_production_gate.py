@@ -11,11 +11,10 @@ Control surface
 - Default: headless/background validation only, ending in HEADLESS-GATE-PASS.
 - --include-gui or FLUIDSIM_FULL_GUI_ACCEPTANCE=1: also runs the interactive
   GUI acceptance lane, ending in FULL-PRODUCTION-GATE-PASS.
-- Performance budget reuse (default): each demo's saved runs are reused while
-  the add-on, benchmark harness and that demo's saved workload are unchanged
-  since they were measured; only the other demos are timed again. When no demo
-  needs timing (only the evaluator, docs or rebuilt bytes changed) the saved
-  raw runs are re-judged with the current evaluator and nothing is measured.
+- Performance budget reuse (default): a demo's completed, retained trials can
+  be reused only while its authored inputs, the verifier and the observed
+  runtime match. Verifier changes require remeasurement; equivalent rebuilt
+  demo bytes require explicit semantic proof. Prior receipts stay immutable.
   The manifest records each demo's measured commit.
 - --reuse-budget: fail rather than time any demo. --measure-budget: time all.
 - --quick: fast tier for localized changes (QUICK-GATE-PASS). Skips the demo
@@ -33,10 +32,9 @@ Control surface
   and the user site otherwise), so a stray user-site Warp can never shadow the
   certified one. The gate refuses to start unless Blender's Python imports
   exactly version.py's CERTIFIED_WARP_VERSION.
-- Blender lanes run with BLENDER_USER_EXTENSIONS set to
-  artifacts/gate_blender_user_extensions, so --factory-startup never syncs
-  (deletes) the wheels of the user's installed extensions. A caller-set
-  BLENDER_USER_EXTENSIONS or BLENDER_USER_RESOURCES is kept instead.
+- Blender lanes use private absolute configuration, scripts, extensions,
+  datafiles and cache paths under the invocation directory. Caller profile
+  and Python home/startup overrides cannot redirect qualification.
 
 Debug surface
 -------------
@@ -251,17 +249,17 @@ def _check_certified_warp(python, env):
 
 
 def _env():
-    env = os.environ.copy()
+    from tools.release.build_extension import _blender_process_environment
+    profile = (_RUN_DIRECTORY or ROOT / 'artifacts' / 'gate') / 'blender-profile'
+    env = _blender_process_environment(os.environ, profile_dir=profile, allow_source_imports=True)
+    for key in ('BLENDER_USER_RESOURCES', 'PYTHONHOME', 'PYTHONSTARTUP'):
+        env.pop(key, None)
     extra = env.get("PYTEST_PATH", DEFAULT_PYTEST_PATH)
     if extra:
         existing = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = extra if not existing else extra + os.pathsep + existing
     # A user-site Warp must never shadow the certified one on PYTHONPATH.
     env["PYTHONNOUSERSITE"] = "1"
-    # Keep a caller's own profile: BLENDER_USER_EXTENSIONS would override the
-    # extensions dir of a BLENDER_USER_RESOURCES clean profile.
-    if not (env.get("BLENDER_USER_EXTENSIONS") or env.get("BLENDER_USER_RESOURCES")):
-        env["BLENDER_USER_EXTENSIONS"] = str(GATE_BLENDER_USER_EXTENSIONS)
     return env
 
 

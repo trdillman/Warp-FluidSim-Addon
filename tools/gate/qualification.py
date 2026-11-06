@@ -45,14 +45,29 @@ def source_files(root):
     return {name: sha256(root / name) for name in sorted(names) if name and _relevant(name)}
 
 
-def freeze_source(root):
+def _dirty_inputs(root):
     changed = _git(root, 'diff', '--no-renames', '--name-only', '-z', 'HEAD').split('\0')
     changed += _git(root, 'ls-files', '--others', '--exclude-standard', '-z').split('\0')
-    if any(name and _relevant(name) for name in changed):
+    return {name for name in changed if name and _relevant(name)}
+
+
+def _require_clean(root):
+    if _dirty_inputs(root):
         raise RuntimeError('dirty product or verifier inputs; commit/revert before qualification')
+
+
+def freeze_source(root):
+    head = _git(root, 'rev-parse', 'HEAD')
+    _require_clean(root)
+    names = _git(root, 'ls-files', '-z').split('\0')
+    mtimes = {name: (Path(root) / name).stat().st_mtime_ns
+              for name in names if name and _relevant(name)}
     files = source_files(root)
-    return {'git_head': _git(root, 'rev-parse', 'HEAD'), 'files': files,
-            'file_mtimes': {name: (Path(root) / name).stat().st_mtime_ns for name in files},
+    _require_clean(root)
+    if (head != _git(root, 'rev-parse', 'HEAD') or files.keys() != mtimes.keys()
+            or any((Path(root) / name).stat().st_mtime_ns != stamp for name, stamp in mtimes.items())):
+        raise RuntimeError('product or verifier changed during admission')
+    return {'git_head': head, 'files': files, 'file_mtimes': mtimes,
             'source_fingerprint': fingerprint({k: v for k, v in files.items()
                                                if not k.startswith(('tools/', 'tests/'))
                                                and k not in GENERATED_DEMOS}),
@@ -63,6 +78,8 @@ def freeze_source(root):
 def check_source(root, frozen, before_semantics=None, after_semantics=None):
     if _git(root, 'rev-parse', 'HEAD') != frozen['git_head']:
         raise RuntimeError('HEAD changed during qualification')
+    if _dirty_inputs(root) - GENERATED_DEMOS:
+        raise RuntimeError('product or verifier changed during qualification: dirty tracked or untracked inputs')
     current = source_files(root)
     changed = {name for name in current.keys() | frozen['files'].keys()
                if current.get(name) != frozen['files'].get(name)}
@@ -166,11 +183,14 @@ def validate_environment(observed, policy):
             raise RuntimeError(f'missing observed environment identity: {field}')
     if observed['warp_distribution'].split('+')[0] != policy['warp_version']:
         raise RuntimeError('observed warp_distribution differs from approved policy')
+    if not Path(observed['python_prefix']).resolve().is_relative_to(Path(policy['distribution_root']).resolve()):
+        raise RuntimeError('observed Python prefix is outside approved distribution')
 
 
 def observe_runtime(root, blender, python, env, directory, verifier_fingerprint):
     """Observe the approved executable, its Python and the actual loaded Warp/GPU."""
     root, directory = Path(root), Path(directory)
+    env = {key: value for key, value in env.items() if key not in ('PYTHONHOME', 'PYTHONSTARTUP')}
     executable, interpreter = Path(blender).resolve(), Path(python).resolve()
     approved = env.get('BLENDER_SHA256', '')
     if not approved or sha256(executable) != approved:
@@ -201,6 +221,7 @@ def observe_runtime(root, blender, python, env, directory, verifier_fingerprint)
     policy = {'blender_version': list(identity['CERTIFIED_BLENDER_VERSION']),
               'warp_version': identity['CERTIFIED_WARP_VERSION'],
               'warp_distribution': identity['CERTIFIED_WARP_DISTRIBUTION'],
+              'distribution_root': str(executable.parent),
               'blender_sha256': approved, 'python_sha256': sha256(interpreter),
               'warp_wheel_sha256': entry['sha256'], 'python_prefix': str(Path(bundled['prefix']).resolve())}
     request = {'wheel': str(wheel), 'python': str(interpreter)}

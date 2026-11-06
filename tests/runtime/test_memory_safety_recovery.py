@@ -508,6 +508,10 @@ def _gate_lanes(monkeypatch, *, drop=None):
         "_run": run,
         "_reusable_budget_demos": reached_budget,
         "_env": lambda: {},
+        # This test executes lane dispatch only; qualification admission has
+        # separate real-source and environment negative-control coverage.
+        "_admit_qualification": lambda *_args: None,
+        "_finish_qualification": lambda *_args: None,
         "_clear_gate_manifest": lambda: None,
         "_print_gate_metadata": lambda *_args: None,
         "_check_no_tracked_npz": lambda: None,
