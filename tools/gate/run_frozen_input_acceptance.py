@@ -11,9 +11,13 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from tools.release.build_extension import _blender_process_environment
+
 PHASES = ("preflight", "baseline", "partial", "resume", "rebake", "preview")
 
 
@@ -24,12 +28,14 @@ def run_phases(blender, state_root, device, *, execute=subprocess.run):
         raise ValueError(
             "Use a new state-root; existing evidence must not be overwritten"
         )
-    env = os.environ.copy()
-    for name in ("CONFIG", "SCRIPTS", "EXTENSIONS", "DATAFILES"):
-        profile = root / "profile" / name.lower()
-        profile.mkdir(parents=True, exist_ok=True)
-        env["BLENDER_USER_" + name] = str(profile)
-    env["WARP_CACHE_PATH"] = str(root / "warp-cache")
+    source_env = os.environ.copy()
+    # Source diagnostics may use an explicit dependency PYTHONPATH, but must
+    # not replace Blender's Python home or execute a caller's startup script.
+    for name in ("PYTHONHOME", "PYTHONSTARTUP"):
+        source_env.pop(name, None)
+    env = _blender_process_environment(
+        source_env, profile_dir=root / "profile", allow_source_imports=True
+    )
     reports = []
     status = "failed"
     try:

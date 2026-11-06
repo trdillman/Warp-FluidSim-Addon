@@ -173,3 +173,44 @@ def test_import_boundary_checks_solver_arrays_and_lifecycle_exactly():
     actual.arrays["particle_position"][0, 0] += 0.001
     with pytest.raises(AssertionError):
         phase.assert_restored(expected, actual)
+
+
+def test_runner_discards_foreign_environment_paths_but_keeps_source_imports(
+    tmp_path, monkeypatch
+):
+    runner = load("tools/gate/run_frozen_input_acceptance.py", "frozen_runner")
+    owned_names = (
+        "BLENDER_USER_CONFIG",
+        "BLENDER_USER_SCRIPTS",
+        "BLENDER_USER_EXTENSIONS",
+        "BLENDER_USER_DATAFILES",
+        "PYTHONUSERBASE",
+        "WARP_CACHE_PATH",
+        "XDG_CACHE_HOME",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+    )
+    for name in owned_names:
+        monkeypatch.setenv(name, str(tmp_path / "foreign" / name))
+    monkeypatch.setenv("PYTHONHOME", "/foreign/python-home")
+    monkeypatch.setenv("PYTHONSTARTUP", "/foreign/startup.py")
+    monkeypatch.setenv("PYTHONPATH", "/explicit/source-dependencies")
+    evidence = tmp_path / "evidence"
+    captured = []
+
+    def execute(_command, **kwargs):
+        env = kwargs["env"]
+        captured.append(env)
+        assert "PYTHONHOME" not in env
+        assert "PYTHONSTARTUP" not in env
+        assert env["PYTHONPATH"] == "/explicit/source-dependencies"
+        for name in owned_names:
+            path = Path(env[name])
+            assert path.is_absolute()
+            assert path.is_relative_to(evidence / "profile")
+            assert path.is_dir()
+        return SimpleNamespace(returncode=1)
+
+    assert runner.run_phases("blender", evidence, "cuda:0", execute=execute) == 1
+    assert len(captured) == 1
