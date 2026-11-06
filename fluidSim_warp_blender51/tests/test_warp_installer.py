@@ -871,12 +871,17 @@ class _ScriptedServer:
     def __call__(self, request, timeout=None):
         self.ranges.append(request.get_header("Range"))
         status, body, error = self.script.pop(0)
+        offset = int(request.get_header("Range").split("=")[1].split("-")[0]) if status == 206 else 0
+        content_range = f"bytes {offset}-{len(self.payload) - 1}/{len(self.payload)}"
 
         class Response:
             def __init__(self):
                 self.status = status
                 self.data = body
                 self.pos = 0
+
+            def getheader(self, name):
+                return content_range if name == "Content-Range" else None
 
             def read(self, size):
                 if self.pos >= len(self.data) and error is not None:
@@ -974,7 +979,7 @@ def test_download_wheel_does_not_spin_on_a_short_clean_response(tmp_path, monkey
     from fluidSim_warp_blender51 import warp_installer
 
     payload = b"y" * 1000
-    attempts = warp_installer._DOWNLOAD_ATTEMPTS
+    attempts = warp_installer._DOWNLOAD_ATTEMPTS + 1
     server = _ScriptedServer(payload, [(200, payload[:10], None)] * attempts)
     monkeypatch.setattr(warp_installer, "urlopen", server)
     monkeypatch.setattr(warp_installer.time, "sleep", lambda _s: None)
@@ -1272,3 +1277,74 @@ def test_refresh_available_runtime_reschedules_deferred_prewarm(monkeypatch):
     preferences._refresh_runtime(None)
 
     assert registered == [prewarm_timer._background_prewarm]
+
+
+def _segmented_download(tmp_path, monkeypatch, payload, script):
+    from fluidSim_warp_blender51 import warp_installer
+    server = _ScriptedServer(payload, script)
+    monkeypatch.setattr(warp_installer, "urlopen", server)
+    monkeypatch.setattr(warp_installer.time, "sleep", lambda _s: None)
+    dest = tmp_path / "segmented.whl"
+    warp_installer._download_wheel(
+        "https://files.pythonhosted.org/warp.whl", dest,
+        expected_sha256=hashlib.sha256(payload).hexdigest(), expected_size=len(payload),
+    )
+    assert dest.read_bytes() == payload
+    assert not dest.with_name(dest.name + ".part").exists()
+    return server
+
+
+def test_productive_sub_megabyte_interruptions_complete(tmp_path, monkeypatch):
+    payload = bytes(range(256)) * 8192 + b"end"
+    segments = [payload[i:i + 65_536] for i in range(0, len(payload), 65_536)]
+    script = [(200 if i == 0 else 206, segment, ConnectionResetError())
+              for i, segment in enumerate(segments)]
+    server = _segmented_download(tmp_path, monkeypatch, payload, script)
+    assert len(server.ranges) > 8
+
+
+@pytest.mark.parametrize("segment_size", [1, 65_536, 1024 * 1024 - 1, 1024 * 1024])
+def test_productive_segment_boundaries_reset_no_progress(tmp_path, monkeypatch, segment_size):
+    payload = b"x" * (segment_size * 10 + 1)
+    script = [(200 if i == 0 else 206, payload[i:i + segment_size], ConnectionResetError())
+              for i in range(0, len(payload), segment_size)]
+    _segmented_download(tmp_path, monkeypatch, payload, script)
+
+
+def test_productive_recovery_resets_no_progress_streak(tmp_path, monkeypatch):
+    script = [(200, b"", ConnectionResetError())] * 7
+    script += [(200, b"a", ConnectionResetError())]
+    script += [(206, b"", ConnectionResetError())] * 7
+    script += [(206, b"b", None)]
+    _segmented_download(tmp_path, monkeypatch, b"ab", script)
+
+
+def test_http_200_restarts_without_high_water_progress_are_bounded(tmp_path, monkeypatch):
+    from fluidSim_warp_blender51 import warp_installer
+    payload = b"x" * (2 * 1024 * 1024)
+    server = _ScriptedServer(payload, [(200, payload[:1024 * 1024], ConnectionResetError())] * 10)
+    monkeypatch.setattr(warp_installer, "urlopen", server)
+    monkeypatch.setattr(warp_installer.time, "sleep", lambda _s: None)
+    with pytest.raises(RuntimeError, match="Install from File"):
+        warp_installer._download_wheel(
+            "https://files.pythonhosted.org/warp.whl", tmp_path / "warp.whl",
+            expected_sha256=hashlib.sha256(payload).hexdigest(), expected_size=len(payload),
+        )
+    assert len(server.ranges) == 9  # Productive first response, then eight stalled attempts.
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("content_range", [None, "bytes 0-9/20", "bytes 10-19/21", "nonsense"])
+def test_resumed_download_rejects_wrong_content_range(tmp_path, monkeypatch, content_range):
+    from fluidSim_warp_blender51 import warp_installer
+    part = tmp_path / "wheel.part"
+    part.write_bytes(b"a" * 10)
+    response = mock.MagicMock()
+    response.status = 206
+    response.getheader.return_value = content_range
+    response.__enter__.return_value = response
+    response.read.side_effect = [b"b" * 10, b""]
+    monkeypatch.setattr(warp_installer, "urlopen", lambda *a, **kw: response)
+    with pytest.raises(RuntimeError, match="Content-Range"):
+        warp_installer._download_range("https://example.com/wheel", part, 10, 20, None)
+    assert part.read_bytes() == b"a" * 10

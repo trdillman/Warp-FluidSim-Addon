@@ -129,6 +129,18 @@ def _download_range(
     """Append bytes from ``offset`` to ``temp``; restart if the server ignores Range."""
     request = Request(url, headers={"Range": f"bytes={offset}-"} if offset else {})
     with urlopen(request, timeout=_READ_TIMEOUT_SECONDS) as response:
+        if getattr(response, "status", 200) == 206:
+            content_range = response.getheader("Content-Range")
+            prefix = f"bytes {offset}-"
+            try:
+                interval, total = content_range.split("/")
+                end = int(interval.removeprefix(prefix))
+                valid = (content_range.startswith(prefix) and int(total) == expected_size
+                         and offset <= end < expected_size)
+            except (AttributeError, TypeError, ValueError):
+                valid = False
+            if not valid:
+                raise RuntimeError(f"Invalid wheel Content-Range: {content_range!r}")
         if offset and getattr(response, "status", 200) != 206:
             offset = 0  # The server sent the whole file: start over.
         size = offset
@@ -164,6 +176,7 @@ def _download_wheel(
     temp.unlink(missing_ok=True)
     try:
         failures = 0
+        high_water = 0
         last_error: Exception | None = None
         while True:
             size = temp.stat().st_size if temp.exists() else 0
@@ -186,7 +199,11 @@ def _download_wheel(
                     continue
                 last_error = RuntimeError(f"the server ended the file at {received} bytes")
             received = temp.stat().st_size if temp.exists() else 0
-            failures = 1 if received >= size + _CHUNK_SIZE else failures + 1
+            # Count only attempts that fail to extend retained bytes. Comparing
+            # against the previous attempt lets repeated HTTP-200 restarts
+            # masquerade as progress after a shorter restart.
+            failures = 0 if received > high_water else failures + 1
+            high_water = max(high_water, received)
             if failures < _DOWNLOAD_ATTEMPTS:
                 time.sleep(_RETRY_DELAY_SECONDS * failures)
 
