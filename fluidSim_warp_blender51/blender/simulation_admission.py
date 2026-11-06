@@ -22,6 +22,14 @@ from .scene_inputs import SceneInputs
 from .solver_settings import build_settings, domain_transform
 
 
+class ReplacementRetirementError(RuntimeError):
+    """Authority transferred, but retiring the previous runtime failed.
+
+    The candidate belongs to Session already; Admission must release through
+    Session rather than discard it as an uncommitted candidate.
+    """
+
+
 def capacity_blocking_message(blockers):
     """Render bounded, actionable source-capacity blockers for UI/errors."""
     details = []
@@ -679,6 +687,15 @@ class SimulationAdmission:
         if callable(clear):
             clear()
 
+    def _release_failed_cutover(self, scene, error):
+        # Binding may still identify the previous scene. Global release is
+        # intentional here: the replacement already owns this Session.
+        try:
+            self.session.force_release(scene=scene, preserve_error=True)
+        except Exception as cleanup_error:
+            error.add_note(f"Replacement cleanup also failed: {cleanup_error!r}")
+        scene.fluidsim.status = "Replacement failed after cutover; solver released"
+
     def initialize(self, scene, *, depsgraph=None, ignore_memory_safeguard=False,
                    frozen_input_state=None):
         from ..diagnostics.profiler import Profiler
@@ -748,7 +765,10 @@ class SimulationAdmission:
             # objects in cleared traceback cycles before Session ownership is
             # established. Collect them before returning the failure.
             gc.collect()
-            if replacement_committed:
+            if isinstance(exc, ReplacementRetirementError):
+                candidate = None
+                self._release_failed_cutover(scene, exc)
+            elif replacement_committed:
                 self.session.release(scene, preserve_error=True)
             elif candidate is not None:
                 discard_prepared_solver(candidate)
@@ -807,7 +827,10 @@ class SimulationAdmission:
         except Exception as exc:
             self.session.set_error(scene, repr(exc))
             traceback.clear_frames(exc.__traceback__)
-            if not replacement_committed:
+            if isinstance(exc, ReplacementRetirementError):
+                candidate = None
+                self._release_failed_cutover(scene, exc)
+            elif not replacement_committed:
                 scene.fluidsim.status = "Reset blocked — live solver preserved"
             elif replacement_committed:
                 self.session.release(scene, preserve_error=True)

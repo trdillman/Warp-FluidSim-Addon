@@ -2,7 +2,6 @@
 from types import SimpleNamespace
 
 import pytest
-
 from test_scene_bridge_settings import _install_scene_bridge_stubs
 
 

@@ -12,16 +12,20 @@ from types import SimpleNamespace
 
 import bpy
 
+from ..sim.effects.runtime import EffectExecutionError
 from .scene_access import (
     active_domain_settings,
     scene_get,
     scene_identity,
     scene_set,
 )
-from ..sim.effects.runtime import EffectExecutionError
 from .scene_inputs import SceneInputs
 from .simulation_admission import (
-    capacity_blocking_message, narrow_band_refusal, rigid_refusal)
+    ReplacementRetirementError,
+    capacity_blocking_message,
+    narrow_band_refusal,
+    rigid_refusal,
+)
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
@@ -186,7 +190,8 @@ class Session:
         ``candidate`` has already passed admission. The retired solver, its
         device memory and the superseded scene inputs are released here.
         ``admitted_effects`` are the effect instances the candidate was
-        admitted with.
+        admitted with. A retirement failure raises ReplacementRetirementError:
+        ownership has transferred even though this call did not return.
         """
         old_solver = self.solver
         old_inputs = self.scene_inputs
@@ -195,15 +200,27 @@ class Session:
         self.device = device
         self.scene_inputs = scene_inputs
         self.admitted_effects = admitted_effects
+        failures = []
+
+        def retire(operation):
+            try:
+                operation()
+            except Exception as exc:
+                failures.append(exc)
+
         if old_inputs is not scene_inputs:
-            old_inputs.clear()
+            retire(old_inputs.clear)
         if old_solver is not None:
             retired_device = getattr(old_solver, "device", None)
             release = getattr(old_solver, "release", None)
             if callable(release):
-                release()
+                retire(release)
             from ..sim.memory_safety import release_cuda_memory
-            release_cuda_memory(retired_device)
+            retire(lambda: release_cuda_memory(retired_device))
+        if failures:
+            raise ReplacementRetirementError(
+                "Solver replacement committed; previous runtime retirement failed: "
+                + "; ".join(str(exc) for exc in failures)) from failures[0]
 
     def _clear_runtime(self):
         solver = self.solver
