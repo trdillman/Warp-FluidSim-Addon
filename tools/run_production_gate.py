@@ -26,6 +26,8 @@ Control surface
   parallel. Every step prints its wall time, summarised at the end and in
   artifacts/gate_timing.json.
 - BLENDER_EXE, BLENDER_PY, and PYTEST_PATH override runtime resolution.
+- BLENDER_SHA256, BLENDER_PROVENANCE and FLUIDSIM_WARP_WHEEL provide the
+  reviewed distribution and retained locked wheel required for observed admission.
 - Warp comes from PYTHONPATH. Every lane runs with PYTHONNOUSERSITE=1 and
   Blender lanes pass --python-use-system-env (Blender 5.2 ignores PYTHONPATH
   and the user site otherwise), so a stray user-site Warp can never shadow the
@@ -54,6 +56,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -62,15 +65,9 @@ sys.path.insert(0, str(ROOT))
 if os.name == "nt":
     DEFAULT_BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe"
     DEFAULT_BLENDER_PY = r"C:\Program Files\Blender Foundation\Blender 5.2\5.2\python\bin\python.exe"
-    if not os.path.exists(DEFAULT_BLENDER_EXE):
-        DEFAULT_BLENDER_EXE = r"C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
-        DEFAULT_BLENDER_PY = r"C:\Program Files\Blender Foundation\Blender 5.1\5.1\python\bin\python.exe"
 else:
     DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/blender.exe"
     DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.2/5.2/python/bin/python.exe"
-    if not os.path.exists(DEFAULT_BLENDER_EXE):
-        DEFAULT_BLENDER_EXE = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe"
-        DEFAULT_BLENDER_PY = "/mnt/c/Program Files/Blender Foundation/Blender 5.1/5.1/python/bin/python.exe"
 DEFAULT_PYTEST_PATH = ""
 BLENDER_FAILURE_MARKERS = (
     "Traceback (most recent call last):",
@@ -147,6 +144,8 @@ BACKGROUND_ACCEPTANCE = (
 )
 # Acceptance scripts that take --json-out: (label, script, report path, marker).
 REPORT_ACCEPTANCE = (
+    ("paused cache output acceptance", "tests/acceptance/blender_paused_cache_output_acceptance.py",
+     "artifacts/paused_cache_output_acceptance.json", "PAUSED-CACHE-OUTPUT-ACCEPTANCE-PASS"),
     ("allocation accounting acceptance", "tests/acceptance/blender_allocation_accounting_acceptance.py",
      "artifacts/allocation_accounting_acceptance.json", "ALLOCATION-ACCOUNTING-ACCEPTANCE-PASS"),
     ("Phase 3 source UI acceptance", "tests/acceptance/blender_phase3_source_ui_acceptance.py",
@@ -400,6 +399,7 @@ def _run_parallel(steps, max_workers=4):
 # initialized in the process, and earlier batch scripts initialize it, so
 # these always run alone in a fresh Blender.
 CUDA_HIDDEN_ACCEPTANCE = frozenset({
+    "tests/acceptance/blender_paused_cache_output_acceptance.py",
     "tests/acceptance/blender_alembic_export_acceptance.py",
     "tests/acceptance/blender_collider_body_type_acceptance.py",
     "tests/acceptance/blender_rigid_publication_acceptance.py",
@@ -558,6 +558,96 @@ def _print_gate_metadata(blender_exe, blender_py, include_gui, env):
     print(f"gui_acceptance: {'included' if include_gui else 'not-run-headless-gate'}")
 
 
+_QUALIFICATION = None
+_FROZEN_SOURCE = None
+_RUN_DIRECTORY = None
+_RUN_ID = None
+_FINAL_SOURCE_FILES = None
+
+
+def _begin_invocation():
+    """Archive the previous receipt before any fallible admission step."""
+    from tools.gate import qualification as q
+    global _RUN_ID, _RUN_DIRECTORY, _QUALIFICATION, _FROZEN_SOURCE, _FINAL_SOURCE_FILES
+    _RUN_ID = uuid.uuid4().hex
+    _RUN_DIRECTORY = ROOT / "artifacts/qualification_runs" / _RUN_ID
+    _RUN_DIRECTORY.mkdir(parents=True, exist_ok=False)
+    _QUALIFICATION = _FROZEN_SOURCE = _FINAL_SOURCE_FILES = None
+    if GATE_MANIFEST.exists():
+        os.replace(GATE_MANIFEST, _RUN_DIRECTORY / "prior_manifest.json")
+    q.atomic_json(_RUN_DIRECTORY / "invocation.json", {"run_id": _RUN_ID, "status": "admitting"})
+
+
+def _demo_semantics(blender_exe, env):
+    from tools.gate import qualification as q
+    result = {}
+    for relative in sorted(q.GENERATED_DEMOS):
+        report = _RUN_DIRECTORY / (Path(relative).stem + "-semantics.json")
+        report.unlink(missing_ok=True)
+        subprocess.run(_blender(blender_exe, "--background", "--factory-startup",
+            "--python-exit-code", "1", "--python", str(ROOT / "tools/gate/observe_environment.py"),
+            "--", "--scene", str(ROOT), str(ROOT / relative), str(report)),
+            cwd=ROOT, env=env, check=True)
+        result[relative] = json.loads(report.read_text())["semantic_fingerprint"]
+    return result
+
+
+def _admit_qualification(blender_exe, blender_py, env, quick=False):
+    from tools.gate import qualification as q
+    global _QUALIFICATION, _FROZEN_SOURCE
+    _FROZEN_SOURCE = q.freeze_source(ROOT)
+    runtime = q.observe_runtime(ROOT, blender_exe, blender_py, env, _RUN_DIRECTORY,
+                                _FROZEN_SOURCE["verifier_fingerprint"])
+    _QUALIFICATION = dict(runtime, run_id=_RUN_ID, gitStatus=[],
+        source_fingerprint=_FROZEN_SOURCE["source_fingerprint"],
+        verifier_fingerprint=_FROZEN_SOURCE["verifier_fingerprint"],
+        environment_request=str(_RUN_DIRECTORY / "environment-request.json"),
+        generated_semantics={} if quick else _demo_semantics(blender_exe, env))
+    context = _RUN_DIRECTORY / "context.json"
+    q.atomic_json(context, dict(_QUALIFICATION, frozen_source=_FROZEN_SOURCE))
+    env["FLUIDSIM_QUALIFICATION_CONTEXT"] = str(context)
+
+
+def _finish_qualification(blender_exe, blender_py, env):
+    global _FINAL_SOURCE_FILES
+    from tools.gate import qualification as q
+    if _QUALIFICATION is None or _FROZEN_SOURCE is None:
+        raise RuntimeError("missing qualification admission")
+    semantics = _demo_semantics(blender_exe, env) if _QUALIFICATION["generated_semantics"] else {}
+    changes = q.check_source(ROOT, _FROZEN_SOURCE, _QUALIFICATION["generated_semantics"], semantics)
+    final_files = q.source_files(ROOT)
+    observed = q.observe_runtime(ROOT, blender_exe, blender_py, env, _RUN_DIRECTORY / "final",
+                                 _FROZEN_SOURCE["verifier_fingerprint"])
+    if observed["environment_fingerprint"] != _QUALIFICATION["environment_fingerprint"]:
+        raise RuntimeError("observed environment changed during qualification")
+    q.check_source(ROOT, _FROZEN_SOURCE, _QUALIFICATION["generated_semantics"], semantics)
+    if q.source_files(ROOT) != final_files:
+        raise RuntimeError("source changed during final environment observation")
+    _FINAL_SOURCE_FILES = final_files
+    _QUALIFICATION["generated_demo_exceptions"] = changes
+    _QUALIFICATION["final_source_fingerprint"] = q.fingerprint(final_files)
+
+
+def _assert_receipt_inputs():
+    from tools.gate import qualification as q
+    if _FROZEN_SOURCE is not None:
+        q.check_source(ROOT, _FROZEN_SOURCE, _QUALIFICATION["generated_semantics"],
+                       _QUALIFICATION["generated_semantics"])
+    if (_FINAL_SOURCE_FILES is None or _FROZEN_SOURCE is None
+            or q.source_files(ROOT) != _FINAL_SOURCE_FILES
+            or _git_text("rev-parse", "HEAD") != _FROZEN_SOURCE["git_head"]):
+        raise RuntimeError("source changed or final qualification is missing; no receipt issued")
+
+
+def _expected_budget_binding(demo=None):
+    from tools.gate import qualification as q
+    if _QUALIFICATION is None:
+        raise RuntimeError("missing current observed environment qualification provenance")
+    return dict(_QUALIFICATION, source_fingerprint=(
+        q.measurement_sources(ROOT, demo, _QUALIFICATION.get("generated_semantics"))
+        if demo else _QUALIFICATION["source_fingerprint"]))
+
+
 def _clear_gate_manifest():
     try:
         GATE_MANIFEST.unlink()
@@ -645,7 +735,16 @@ def _reusable_budget_demos():
         report = json.loads((ROOT / PERFORMANCE_SUMMARY).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return frozenset()
-    if not isinstance(report, dict) or not isinstance(report.get("runs"), list):
+    if (not isinstance(report, dict) or not isinstance(report.get("runs"), list)
+            or report.get("passed") is not True):
+        return frozenset()
+    from tools.gate import qualification as q
+    try:
+        # The summary may combine demos measured on different source commits.
+        # Each raw demo below must independently match its current exact inputs.
+        expected = dict(_expected_budget_binding(), source_fingerprint=report.get('source_fingerprint'))
+        q.validate_binding(report, expected)
+    except RuntimeError:
         return frozenset()
     verdict = evaluate_budget(report["runs"])
     if verdict["status"] == "invalid":
@@ -660,6 +759,13 @@ def _reusable_budget_demos():
     for demo in DEMOS:
         measured_head = _demo_provenance(report, demo)[0]
         if demo not in failing and not _budget_sources_changed_since(measured_head, demo):
+            try:
+                for run in report['runs']:
+                    if run['workload'] == demo:
+                        q.validate_binding(run, _expected_budget_binding(demo))
+                        q.retained_trial(run)
+            except RuntimeError:
+                continue
             reusable.add(demo)
     return frozenset(reusable)
 
@@ -677,16 +783,8 @@ def _blamed_demo(reason, runs, demos):
 
 
 def _rejudge_budget():
-    """Re-judge the saved raw runs with the current evaluator; no Blender run."""
-    from tools.performance_budget import DEMOS, evaluate_budget
-    path = ROOT / PERFORMANCE_SUMMARY
-    report = json.loads(path.read_text(encoding="utf-8"))
-    provenance = {demo: _demo_provenance(report, demo) for demo in DEMOS}
-    report.pop("error", None)
-    report.update(evaluate_budget(report["runs"]),
-                  demoMeasuredAt={demo: head for demo, (head, _) in provenance.items()},
-                  demoInventory={demo: inventory for demo, (_, inventory) in provenance.items()})
-    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    """Verify an unchanged qualified measurement without rewriting its receipt."""
+    return _validate_performance_evidence(reuse=True)
 
 
 def _carry_prior_budget():
@@ -702,6 +800,11 @@ def _validate_performance_evidence(reuse=False):
     from tools.performance_budget import DEMOS, evaluate_budget
     performance = ROOT / PERFORMANCE_SUMMARY
     report = json.loads(performance.read_text(encoding="utf-8"))
+    from tools.gate import qualification as q
+    expected = _expected_budget_binding()
+    if reuse:
+        expected = dict(expected, source_fingerprint=report.get('source_fingerprint'))
+    q.validate_binding(report, expected)
     if report.get("passed") is not True:
         raise RuntimeError("missing passing performance budget evidence for this HEAD")
     head = _git_text("rev-parse", "HEAD")
@@ -731,7 +834,14 @@ def _validate_performance_evidence(reuse=False):
     if report.get("referenceCommits") != REFERENCE_COMMITS:
         raise RuntimeError("performance reference commits differ from pinned releases")
     observed_sources = {}
+    measurement_ids = {}
     for run in report['runs']:
+        q.validate_binding(run, _expected_budget_binding(run['workload']))
+        q.retained_trial(run)
+        demo = run['workload']
+        if demo in measurement_ids and measurement_ids[demo] != run['run_id']:
+            raise RuntimeError('raw trials mix different measurement run IDs')
+        measurement_ids[demo] = run['run_id']
         baseline = run['label'] == 'baseline'
         measured_head, measured_inventory = provenance[run['workload']]
         expected_head = REFERENCE_COMMITS[run['referenceVersion']] if baseline else measured_head
@@ -761,8 +871,11 @@ def _write_gate_manifest(blender_exe, warp_version=None, reuse_budget=False):
     if not artifact.is_file():
         raise RuntimeError(f"missing generated demo artifact: {artifact}")
     digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-    performance = ROOT / PERFORMANCE_SUMMARY
+    performance = Path(report["retained_summary"])
+    if json.loads(performance.read_text(encoding="utf-8")) != report:
+        raise RuntimeError("retained measurement summary differs from selected evidence")
     manifest = {
+        **_QUALIFICATION,
         "gate_run_at": _dt.datetime.now(_dt.UTC).isoformat(),
         "gate_verdict": "FULL-PRODUCTION-GATE-PASS",
         "git_head": _git_text("rev-parse", "HEAD"),
@@ -772,16 +885,17 @@ def _write_gate_manifest(blender_exe, warp_version=None, reuse_budget=False):
         "include_gui": True,
         "demo_artifact": "artifacts/demo_analysis/analysis_report.json",
         "demo_artifact_sha256": digest,
-        "performance_artifact": "artifacts/performance_budget/summary.json",
+        "performance_artifact": str(performance),
         "performance_artifact_sha256": hashlib.sha256(performance.read_bytes()).hexdigest(),
         "performance_reference_commits": report["referenceCommits"],
         "performance_budget_reused": bool(reuse_budget),
         "performance_budget_measured_at": {
             demo: _demo_provenance(report, demo)[0] for demo in report_demos},
     }
-    GATE_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    GATE_MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n",
-                             encoding="utf-8")
+    from tools.gate import qualification as q
+    _assert_receipt_inputs()
+    q.atomic_json(_RUN_DIRECTORY / "manifest.json", manifest)
+    q.atomic_json(GATE_MANIFEST, manifest)
 
 
 def main(argv=None):
@@ -791,6 +905,7 @@ def main(argv=None):
     global _GATE_START
     _GATE_START = time.perf_counter()
     STEP_TIMES.clear()
+    _begin_invocation()
     with production_storage(ROOT):
         try:
             return _production_main(argv)
@@ -840,9 +955,8 @@ def _production_main(argv=None):
         args.include_gui or os.environ.get("FLUIDSIM_FULL_GUI_ACCEPTANCE") == "1")
     env = _env()
 
-    if not args.quick:  # a quick run is no evidence, so it leaves a full run's manifest alone
-        _clear_gate_manifest()
     _print_gate_metadata(blender_exe, blender_py, include_gui, env)
+    _admit_qualification(blender_exe, blender_py, env, args.quick)
     _run("git whitespace", ["git", "diff", "--check"])
     _check_no_tracked_npz()
     _check_no_tracked_ignored_files()
@@ -879,6 +993,7 @@ def _production_main(argv=None):
         "tests/acceptance/_phase2_source_acceptance_common.py",
         "tests/acceptance/_offscreen_view3d.py",
         *(script for script, _ in BACKGROUND_ACCEPTANCE),
+        *(script for _label, script, _report, _marker in REPORT_ACCEPTANCE),
         *(f"tests/acceptance/blender_{capability}_acceptance.py"
           for capability, _ in SOURCE_REPORT_ACCEPTANCE),
         *(f"tools/release/validate_{check}_blender.py"
@@ -935,6 +1050,7 @@ def _production_main(argv=None):
     if args.quick:
         release_validators()
         _run_acceptance_batch(blender_exe, env, entries)
+        _finish_qualification(blender_exe, blender_py, env)
         _print_quick_pass()
         return 0
 
@@ -1075,6 +1191,7 @@ def _production_main(argv=None):
             _validate_performance_evidence(reuse=True)
         else:
             _validate_performance_evidence()
+    _finish_qualification(blender_exe, blender_py, env)
     if include_gui:
         _write_gate_manifest(
             blender_exe, _version_constant("CERTIFIED_WARP_VERSION"), reuse_budget)

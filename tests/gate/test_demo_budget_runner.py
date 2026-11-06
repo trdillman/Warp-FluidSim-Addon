@@ -117,6 +117,8 @@ def _run_release(monkeypatch, tmp_path, fixtures, extra=()):
                    "performance_budget.py", "run_production_gate.py"):
         (source / "tools" / script).write_text("# source child")
     monkeypatch.setattr(bench.subprocess, "check_output", lambda *a, **kw: "head\n")
+    from qualification_fixtures import stub_measurement
+    binding = stub_measurement(monkeypatch, bench, source, head="head")
     archives = []
     def archive(command, *, cwd, check):
         assert Path(cwd) == source  # Snapshots are not Git repositories.
@@ -145,6 +147,9 @@ def _run_release(monkeypatch, tmp_path, fixtures, extra=()):
         block, slot = map(int, match.groups())
         row = next(dict(run) for run in fixtures if run["workload"] == demo
                    and run["round"] == block and run["slot"] == slot)
+        row.update(warp=binding['observed_environment']['warp_version'],
+                   observed_environment=binding['observed_environment'],
+                   environment_fingerprint=binding['environment_fingerprint'])
         row["root"] = root
         row["addon"] = str(Path(root) / 'fluidSim_warp_blender51/__init__.py')
         row["rootInventorySha256"] = bench._inventory(Path(root))
