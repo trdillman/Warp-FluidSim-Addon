@@ -67,6 +67,9 @@ def release_viewport():
 
 def apply_viewport(scene, *, deferred=True):
     if _HELD:
+        # Outputs can be created while an exporter owns visibility. Remember
+        # the scene so its current policy is restored after the final hold.
+        _defer_view_layer_write(scene)
         return
     from . import output_publication as output
     mode = getattr(getattr(scene, "fluidsim", None), "liquid_display_mode", None)
@@ -138,6 +141,9 @@ def _defer_view_layer_write(scene):
 def _flush_pending():
     import bpy
 
+    if _HELD:
+        # Keep both the timer and its requests alive across nested exports.
+        return 0.01
     names = set(_PENDING)
     _PENDING.clear()
     for scene in bpy.data.scenes:

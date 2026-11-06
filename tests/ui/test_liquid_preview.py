@@ -953,11 +953,14 @@ def test_export_hold_keeps_display_policy_from_rehiding_outputs(monkeypatch):
     assert len(surface.calls) == len(particles.calls) == 1
 
 
-def test_view_layer_write_is_deferred_out_of_the_frame_update(monkeypatch):
+@pytest.mark.parametrize("hold_depth", [0, 1, 2])
+def test_view_layer_write_is_deferred_out_of_the_frame_update(monkeypatch, hold_depth):
     """Changing a base's hide flag inside the frame-change handler crashed
     Blender 5.2.0 (deg_check_base_in_depsgraph), so a changed flag is written
     from a timer instead, and an unchanged one schedules nothing."""
     from fluidSim_warp_blender51.blender import liquid_display, output_publication
+    monkeypatch.setattr(liquid_display, "_HELD", 0)
+    monkeypatch.setattr(liquid_display, "_PENDING", set())
     class Obj:
         name = "liquid"
         def __init__(self):
@@ -979,10 +982,18 @@ def test_view_layer_write_is_deferred_out_of_the_frame_update(monkeypatch):
     monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
     monkeypatch.setattr(output_publication, "output_object", lambda _scene, name:
                         surface if name == output_publication.SURFACE_NAME else particles)
+    for _ in range(hold_depth):
+        liquid_display.hold_viewport()
     liquid_display.apply_viewport(scene)
     liquid_display.apply_viewport(scene)
     assert surface.calls == [] and particles.calls == []
     assert timers == [liquid_display._flush_pending]
+    for _ in range(hold_depth):
+        # A timer dispatched during an export must retain the request until
+        # every nested exporter releases its visibility hold.
+        assert timers[0]() == 0.01
+        assert surface.calls == [] and particles.calls == []
+        liquid_display.release_viewport()
     assert timers.pop()() is None
     assert surface.calls == [(True, layers[0])] and particles.calls == [(True, layers[0])]
     liquid_display.apply_viewport(scene)  # nothing changed: nothing scheduled
