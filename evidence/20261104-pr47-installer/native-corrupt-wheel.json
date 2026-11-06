@@ -1,0 +1,6 @@
+{
+  "success": false,
+  "message": "corrupt.whl is not the locked Warp wheel for this computer. Download warp_lang-1.19.0-py3-none-win_amd64.whl from pypi.org/project/warp-lang/1.19.0/#files and choose that file",
+  "version": "",
+  "already_installed": false
+}

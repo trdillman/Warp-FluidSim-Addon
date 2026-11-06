@@ -129,6 +129,20 @@ def _download_range(
     """Append bytes from ``offset`` to ``temp``; restart if the server ignores Range."""
     request = Request(url, headers={"Range": f"bytes={offset}-"} if offset else {})
     with urlopen(request, timeout=_READ_TIMEOUT_SECONDS) as response:
+        response_end = None
+        if getattr(response, "status", 200) == 206:
+            content_range = response.getheader("Content-Range")
+            prefix = f"bytes {offset}-"
+            try:
+                interval, total = content_range.split("/")
+                end = int(interval.removeprefix(prefix))
+                valid = (content_range.startswith(prefix) and int(total) == expected_size
+                         and offset <= end < expected_size)
+            except (AttributeError, TypeError, ValueError):
+                valid = False
+            if not valid:
+                raise RuntimeError(f"Invalid wheel Content-Range: {content_range!r}")
+            response_end = end + 1
         if offset and getattr(response, "status", 200) != 206:
             offset = 0  # The server sent the whole file: start over.
         size = offset
@@ -136,14 +150,20 @@ def _download_range(
             handle.seek(offset)
             handle.truncate()
             while chunk := response.read(_CHUNK_SIZE):
-                handle.write(chunk)
                 size += len(chunk)
                 if size > expected_size:
                     raise RuntimeError(
                         f"Downloaded wheel is larger than the locked {expected_size} bytes"
                     )
+                if response_end is not None and size > response_end:
+                    raise RuntimeError("Wheel body exceeds declared Content-Range end")
+                handle.write(chunk)
                 if progress_callback:
                     progress_callback(size, expected_size)
+            if response_end is not None and size < response_end:
+                # Keep the received prefix: a short response can resume just
+                # like an interrupted read, but is not a complete range.
+                raise OSError("Wheel body ended before declared Content-Range end")
             handle.flush()
             os.fsync(handle.fileno())
 
@@ -164,6 +184,7 @@ def _download_wheel(
     temp.unlink(missing_ok=True)
     try:
         failures = 0
+        high_water = 0
         last_error: Exception | None = None
         while True:
             size = temp.stat().st_size if temp.exists() else 0
@@ -186,7 +207,11 @@ def _download_wheel(
                     continue
                 last_error = RuntimeError(f"the server ended the file at {received} bytes")
             received = temp.stat().st_size if temp.exists() else 0
-            failures = 1 if received >= size + _CHUNK_SIZE else failures + 1
+            # Count only attempts that fail to extend retained bytes. Comparing
+            # against the previous attempt lets repeated HTTP-200 restarts
+            # masquerade as progress after a shorter restart.
+            failures = 0 if received > high_water else failures + 1
+            high_water = max(high_water, received)
             if failures < _DOWNLOAD_ATTEMPTS:
                 time.sleep(_RETRY_DELAY_SECONDS * failures)
 
@@ -588,12 +613,12 @@ def get_installed_warp_info() -> tuple[bool, str]:
         if version is not None:
             status, _message = warp_version_support(version)
             if status == "certified":
-                return True, f"Warp {version} (certified)"
+                return True, f"Warp {version} (version-locked; GPU qualification pending)"
             if status == "untested":
-                return True, f"Warp {version} (newer than certified {CERTIFIED_WARP_VERSION})"
+                return True, f"Warp {version} (newer than locked {CERTIFIED_WARP_VERSION})"
             if status == "older":
-                return True, f"Warp {version} (older than certified {CERTIFIED_WARP_VERSION})"
-            return True, f"Warp {version} (incompatible; certified is {CERTIFIED_WARP_VERSION})"
+                return True, f"Warp {version} (older than locked {CERTIFIED_WARP_VERSION})"
+            return True, f"Warp {version} (incompatible; locked is {CERTIFIED_WARP_VERSION})"
     return False, "Warp is not installed"
 
 
@@ -646,7 +671,7 @@ def install_warp(
                     success=True,
                     message=(
                         f"Warp {owned_version} is already installed. It is newer than the "
-                        f"certified {CERTIFIED_WARP_VERSION} and has not been tested "
+                        f"locked {CERTIFIED_WARP_VERSION} and has not been tested "
                         "with FluidSim."
                     ),
                     version=owned_version,
@@ -676,7 +701,7 @@ def install_warp(
         host = _host_platform() or "unknown"
         return InstallResult(
             success=False,
-            message=f"No certified Warp wheel is published for this platform ({host})",
+            message=f"No locked Warp wheel is published for this platform ({host})",
         )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -691,7 +716,7 @@ def install_warp(
                 return InstallResult(
                     success=False,
                     message=(
-                        f"{wheel_path.name} is not the certified Warp wheel for this "
+                        f"{wheel_path.name} is not the locked Warp wheel for this "
                         f"computer. Download {wheel_info.filename} from "
                         "pypi.org/project/warp-lang/"
                         f"{CERTIFIED_WARP_VERSION}/#files and choose that file"
@@ -779,7 +804,7 @@ def install_warp(
         return InstallResult(
             success=False,
             message=(
-                "Installation finished, but the certified Warp files are missing "
+                "Installation finished, but the locked Warp files are missing "
                 "from this extension's directory."
             ),
         )

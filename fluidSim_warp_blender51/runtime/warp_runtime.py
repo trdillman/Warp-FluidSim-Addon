@@ -81,7 +81,7 @@ def warp_version_support(version: str) -> tuple[str, str]:
         return (
             "unsupported",
             f"FluidSim requires NVIDIA Warp {MIN_WARP_VERSION} or newer "
-            f"{certified[0]}.x (certified: {CERTIFIED_WARP_VERSION}), but loaded "
+            f"{certified[0]}.x (locked: {CERTIFIED_WARP_VERSION}), but loaded "
             f"{version or 'an unknown version'}. Blender extensions share the "
             "top-level warp module in one Python process. Align enabled "
             "extensions on a compatible Warp version or run them in separate "
@@ -92,13 +92,13 @@ def warp_version_support(version: str) -> tuple[str, str]:
     if loaded > certified:
         return (
             "untested",
-            f"Warp {version} is newer than the certified {CERTIFIED_WARP_VERSION} "
+            f"Warp {version} is newer than the locked {CERTIFIED_WARP_VERSION} "
             "and has not been tested with FluidSim.",
         )
     if loaded < certified:
         return (
             "older",
-            f"Warp {version} is older than the certified {CERTIFIED_WARP_VERSION}. "
+            f"Warp {version} is older than the locked {CERTIFIED_WARP_VERSION}. "
             "It still works; Install Warp in Add-on Preferences upgrades it.",
         )
     return "certified", ""
@@ -319,7 +319,7 @@ def runtime_status_for_device(
     if state.warning:
         older = parse_warp_version(state.warp_version) or (0, 0, 0)
         certified = parse_warp_version(CERTIFIED_WARP_VERSION) or (0, 0, 0)
-        status += (" (older than certified Warp)" if older < certified
+        status += (" (older than locked Warp)" if older < certified
                    else " (untested Warp version)")
     return True, status
 
