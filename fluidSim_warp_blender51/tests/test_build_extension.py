@@ -640,7 +640,9 @@ def test_installed_smoke_runs_like_an_artist_launch_and_uninstalls(tmp_path: Pat
         tmp_path / "repo",
         script,
         runner=fake_run,
-        extra_env={"PYTHONPATH": "/validation/warp-site"},
+        extra_env={"PYTHONPATH": "/validation/warp-site",
+                   "PYTHONHOME": "/developer/python",
+                   "BLENDER_USER_EXTENSIONS": str(tmp_path / "foreign")},
     )
     background = [command for command in commands if "--background" in command]
     assert len(background) == 2
@@ -649,6 +651,11 @@ def test_installed_smoke_runs_like_an_artist_launch_and_uninstalls(tmp_path: Pat
     # inside the isolated profile.
     assert all("--python-use-system-env" not in command for command in background)
     assert all("PYTHONPATH" not in env for env in environments)
+    assert all("PYTHONHOME" not in env for env in environments)
+    for suffix, relative in (("CONFIG", "config"), ("SCRIPTS", "scripts"),
+                             ("EXTENSIONS", "extensions"), ("DATAFILES", "datafiles")):
+        expected = str(tmp_path / "repo-profile" / relative)
+        assert all(env[f"BLENDER_USER_{suffix}"] == expected for env in environments)
     expected_cache = str(tmp_path / "repo-profile" / "warp-cache")
     assert all(env.get("WARP_CACHE_PATH") == expected_cache for env in environments)
     assert (tmp_path / "repo-profile" / "warp-cache").is_dir()
