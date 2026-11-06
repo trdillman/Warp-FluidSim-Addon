@@ -21,7 +21,7 @@ import warp as wp  # noqa: E402
 
 from fluidSim_warp_blender51.sim.enums import SurfaceUpdateCadence  # noqa: E402
 from fluidSim_warp_blender51.sim.fields import SparseGrid  # noqa: E402
-from fluidSim_warp_blender51.sim.solver import SolverSettings  # noqa: E402
+from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings  # noqa: E402
 from fluidSim_warp_blender51.sim.surface import SurfacePipeline  # noqa: E402
 from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem  # noqa: E402
 
@@ -59,17 +59,11 @@ def _render_disabled_sdf_acceptance(device, grid):
         def _phase(self, _name):
             return nullcontext()
 
-        def mark_liquid_state_changed(self):
-            # Same contract as FluidSolver: every substep that moves particles
-            # advances the liquid revision (_sanitize_particles), and the SDF
-            # cache is keyed on that revision, not on the clock.
-            self.liquid_state_revision += 1
-            self.surface.invalidate_particle_state()
-
     solver = FakeSolver()
-    solver.liquid_state_revision = 0
     solver.frame = 0
     solver.sim_time = 0.0
+    solver.liquid_state_revision = 0
+    solver._host_frame_cache = None
     solver._nvox = grid.voxel_capacity
     solver.particles = type("Particles", (), {"count": count})()
     solver.device = device
@@ -81,7 +75,9 @@ def _render_disabled_sdf_acceptance(device, grid):
     assert surface.after_substep() is True
     first = surface.sdf.data.numpy().copy()
     wp.copy(positions, wp.array([(0.6, 0.6, 0.6)], dtype=wp.vec3, device=device))
-    solver.mark_liquid_state_changed()
+    # Surface freshness follows liquid_state_revision, which the real solver
+    # advances when it advects particles; do what that mutation owner does.
+    FluidSolver.mark_liquid_state_changed(solver)
     solver.sim_time = 0.1
     assert surface.after_substep() is True
     second = surface.sdf.data.numpy().copy()

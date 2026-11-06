@@ -14,7 +14,7 @@ from collections import defaultdict
 
 DEMOS = ("crown_splash", "dam_break", "paddle_stir", "chromatic_vortex")
 # Every demo is compared with the previous release.
-REFERENCE_VERSIONS = {demo: "3.2.1" for demo in DEMOS}
+REFERENCE_VERSIONS = {demo: "4.0.1" for demo in DEMOS}
 BUDGET_RATIO = 1.05
 MIN_TRIALS_PER_VARIANT = 8
 # Sequential stopping: the first ABBA and BAAB blocks (four trials per
