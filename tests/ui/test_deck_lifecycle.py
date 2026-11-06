@@ -398,7 +398,7 @@ def test_double_click_cannot_dispatch_replacement_cancel_control(monkeypatch):
     replacement = modal.controls.BAKE_PROGRESS
     item = modal.bar.Item((10.0, 10.0, 40.0, 40.0), "button", replacement, "Cancel Bake")
     layout = modal.bar.BarLayout(card=(0.0, 0.0, 300.0, 50.0), items=(item,))
-    monkeypatch.setattr(modal.bar, "current_layout", lambda _ctx: layout)
+    monkeypatch.setattr(modal.bar, "event_layout", lambda _ctx: layout)
     operator.modal(context, _event("LEFTMOUSE", 120, 20, "DOUBLE_CLICK"))
     assert ran == [original]
     assert operator.modal(context, _event("LEFTMOUSE", 120, 20, "RELEASE")) == {"RUNNING_MODAL"}
@@ -410,6 +410,6 @@ def test_double_click_does_not_pause_new_playback(monkeypatch):
     operator.modal(context, _event("LEFTMOUSE", 120, 20, "RELEASE"))
     item = modal.bar.Item((10., 10., 40., 40.), "button", modal.controls.PAUSE, "Pause")
     layout = modal.bar.BarLayout(card=(0., 0., 300., 50.), items=(item,))
-    monkeypatch.setattr(modal.bar, "current_layout", lambda _ctx: layout)
+    monkeypatch.setattr(modal.bar, "event_layout", lambda _ctx: layout)
     operator.modal(context, _event("LEFTMOUSE", 120, 20, "DOUBLE_CLICK"))
     assert ran == [modal.controls.PLAY]

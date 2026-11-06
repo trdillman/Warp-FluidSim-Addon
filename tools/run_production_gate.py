@@ -166,6 +166,10 @@ SOURCE_REPORT_ACCEPTANCE = (
 # tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
+    "tests/acceptance/blender_installer_preferences_acceptance.py": (
+        "Foreground Preferences draw in an isolated installed-extension profile; "
+        "run missing-Warp and certified-runtime lanes and require passed=true in "
+        "the JSON report (process exit alone does not establish acceptance)."),
     "tests/acceptance/blender_pr41_safety_acceptance.py": (
         "Standalone RNA deletion/recreation and save/reopen stress probe; run in "
         "an isolated factory-startup process, not the shared acceptance batch."),
