@@ -308,3 +308,141 @@ def test_a_complete_bake_stays_complete_and_says_initialize_is_needed():
 
     assert controller.status is BakeStatus.COMPLETE
     assert notice in controller.message
+
+
+def test_preview_restoration_primes_original_frame_before_admission(backend, monkeypatch):
+    """A preview at5 must not capture inputs/history from bake-end20."""
+    scene = _Scene(frame=20, live=False)
+    session = _Session(scene)
+    session.solver = object()
+    backend.sess = session
+    backend._original_frame = 5
+    backend._original_live = False
+    backend._original_session_active = True
+    backend._original_session_payload = object()
+    backend._held_settings_changed = lambda _scene: False
+    monkeypatch.setattr(production_bake, 'restore_solver', lambda *_args: None)
+    backend._restore_original_state(scene)
+    assert session.initialized_at == [5]
+    assert scene.frame_current == 5
+
+
+def _resume_with_frozen_points(backend, monkeypatch, tmp_path, *, foreign=False):
+    import numpy as np
+    from fluidSim_warp_blender51.blender import scene_inputs
+    from fluidSim_warp_blender51.io import checkpoint
+
+    key = ('source', 'POINTS', 'dependency')
+    original = scene_inputs.SceneInputs()
+    original._native_plan_input(key, True, lambda: np.array([[1, 0, 0]], np.float32))
+    state = original.export_frozen_state()
+    payload = checkpoint.attach_frozen_inputs(
+        checkpoint.CheckpointPayload(10, .5, 'settings', 'sources'), state.metadata, state.arrays)
+    path = tmp_path / 'checkpoint.npz'
+    digest = checkpoint.write_checkpoint_atomic(path, payload)
+    entry = SimpleNamespace(checkpoint_file='checkpoint.npz', checkpoint_sha256=digest,
+                            checkpoint_size=path.stat().st_size)
+    manifest = SimpleNamespace(last_committed_frame=10, frame_start=1, frame_end=20,
+        effect_signature='', settings_signature='settings', source_signature='sources', frames={10: entry})
+    monkeypatch.setattr(production_bake, 'load_manifest', lambda _path: manifest)
+    monkeypatch.setattr(scene_inputs, 'frozen_input_keys', lambda _scene:
+                        {('foreign', 'POINTS', 'dependency')} if foreign else {key})
+    backend.resume_decision = lambda *_a, **_k: SimpleNamespace(allowed=True, resume_frame=11)
+    backend._effect_identity_at = lambda *_a: ('', ())
+    restored = []
+    monkeypatch.setattr(production_bake, 'restore_solver', lambda solver, saved: restored.append(saved.frame))
+
+    class Session(_Session):
+        def __init__(self, scene):
+            super().__init__(scene)
+            self.solver = SimpleNamespace(frame=10)
+            self.scene_inputs = None
+            self.dynamic_history_frame = None
+
+        def initialize(self, scene, depsgraph=None, frozen_input_state=None):
+            super().initialize(scene, depsgraph)
+            self.scene_inputs = scene_inputs.SceneInputs()
+            if frozen_input_state is not None:
+                self.scene_inputs.restore_frozen_state(frozen_input_state)
+            self.points = self.scene_inputs._native_plan_input(key, True,
+                lambda: np.array([[scene.frame_current, 0, 0]], np.float32))
+            self.dynamic_history_frame = scene.frame_current
+
+    scene = _Scene(frame=37)
+    session = Session(scene)
+    _snapshot(backend, session)
+    return scene, session, restored, path
+
+
+def test_resume_restores_frozen_points_but_primes_dynamic_history_at_checkpoint(backend, monkeypatch, tmp_path):
+    scene, session, restored, _path = _resume_with_frozen_points(backend, monkeypatch, tmp_path)
+    assert backend.initialize(scene, 1, 20, resume=True) == 11
+    assert session.initialized_at == [10]
+    assert session.points.tolist() == [[1, 0, 0]]
+    assert session.dynamic_history_frame == 10
+    assert restored == [10]
+
+
+def test_foreign_frozen_object_id_refuses_before_replacing_preview_or_cache(backend, monkeypatch, tmp_path):
+    scene, session, restored, path = _resume_with_frozen_points(
+        backend, monkeypatch, tmp_path, foreign=True)
+    before = path.read_bytes()
+    snapshot = []
+    backend._snapshot_live_state = lambda _scene: snapshot.append(True)
+    with pytest.raises(production_bake.ResumeRefused, match='FROZEN_INPUT_STATE_INVALID'):
+        backend.initialize(scene, 1, 20, resume=True)
+    assert session.initialized_at == []
+    assert snapshot == []
+    assert restored == []
+    assert path.read_bytes() == before
+    assert scene.frame_current == 37
+    assert scene.fluidsim.live
+
+
+@pytest.mark.parametrize('finish', ['finish', 'cancel', 'fail'])
+def test_preview_frozen_state_and_original_frame_return_on_every_terminal_path(
+        backend, monkeypatch, tmp_path, finish):
+    scene, session, restored, _path = _resume_with_frozen_points(backend, monkeypatch, tmp_path)
+    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
+    import numpy as np
+
+    key = ('source', 'POINTS', 'dependency')
+    inputs = SceneInputs()
+    inputs._native_plan_input(key, True, lambda: np.array([[1, 0, 0]], np.float32))
+    backend.sess = session
+    backend._original_frame = 5
+    backend._original_live = False
+    backend._original_session_active = True
+    backend._original_session_payload = SimpleNamespace(frame=5)
+    backend._original_frozen_state = inputs.export_frozen_state()
+    backend._held_settings_changed = lambda _scene: False
+    backend._initialized = True
+    scene.frame_set(20)
+    getattr(backend, finish)(scene, *([RuntimeError('injected failure')] if finish == 'fail' else []))
+    assert session.initialized_at == [5]
+    assert session.points.tolist() == [[1, 0, 0]]
+    assert session.dynamic_history_frame == 5
+    assert restored == [5]
+    assert scene.frame_current == 5
+
+
+def test_failed_preview_input_restore_releases_bake_solver_and_keeps_live_suppressed(
+        backend, monkeypatch, tmp_path):
+    scene, session, _restored, _path = _resume_with_frozen_points(
+        backend, monkeypatch, tmp_path, foreign=True)
+    from fluidSim_warp_blender51.blender.scene_inputs import FrozenInputState
+
+    backend.sess = session
+    backend._original_frame = 5
+    backend._original_live = True
+    backend._original_session_active = True
+    backend._original_session_payload = SimpleNamespace(frame=5)
+    backend._original_frozen_state = FrozenInputState({'schema_version': 1, 'records': []}, {})
+    backend._held_settings_changed = lambda _scene: False
+    monkeypatch.setattr(blender_package.playback, 'suppress_mode_transitions',
+                        contextlib.nullcontext, raising=False)
+    with pytest.raises(RuntimeError, match='could not restore pre-bake live state'):
+        backend._restore_original_state(scene)
+    assert session.released == [scene]
+    assert scene.frame_current == 5
+    assert session.initialized_at == []

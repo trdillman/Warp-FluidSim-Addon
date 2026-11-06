@@ -627,3 +627,15 @@ def test_frame_parses_the_verified_snapshot_when_path_is_replaced(tmp_path, monk
     result = cache.read_frame(str(tmp_path), 1)
     assert len(result['positions']) == 3
     assert frame_path.read_bytes() == b'unverified replacement'
+
+
+def test_input_identity_revision_is_optional_for_old_frame_cache_readability():
+    raw = _manifest().to_dict()
+    raw.pop('input_identity_schema_version', None)
+    old = CacheManifestV3.from_dict(raw)
+    assert old.input_identity_schema_version == 0
+    from dataclasses import replace
+    current = replace(old, input_identity_schema_version=2)
+    assert CacheManifestV3.from_dict(current.to_dict()).input_identity_schema_version == 2
+    with pytest.raises(ValueError, match='input_identity_schema_version'):
+        replace(old, input_identity_schema_version=True).validate()
