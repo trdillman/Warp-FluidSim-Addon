@@ -7,50 +7,70 @@ import json
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
-from . import effect_library, effects
 from ..sim.effects.enums import TrustState
 from ..sim.effects.fields import FIELD_SPECS
 from ..sim.effects.source import generate_kernel_source
 from ..sim.effects.templates import starter_template_items
-
+from . import effect_library, effects
 
 _TRUSTED_STATES = frozenset(
     {TrustState.BUILT_IN_TRUSTED.value, TrustState.LOCAL_TRUSTED.value}
 )
 
-# Instance ids the developer has opted to keep trusted across edits *this
-# session only*.  This is process-global and is cleared on ``unregister`` (add-on
-# reload / Blender restart), so it can never outlive the session or be persisted
-# into a shipped .blend.  It never bypasses the exact-SHA trust gate: it only
-# spares an opted-in author the Review & Trust dialog on every edit; the drifted
-# digest is still re-trusted through the real ``trust_effect`` path.
-_SESSION_TRUST: set[str] = set()
+# Keep reviewed RNA identities alive for this process; never key by serialized IDs alone.
+_SESSION_TRUST: dict = {}
 
 
-def set_session_trust(instance_id: str, enabled: bool) -> None:
-    """Opt an effect instance into (or out of) session-scoped edit trust."""
+def _identity(value):
+    pointer = getattr(value, "as_pointer", None)
+    return pointer() if pointer else id(value)
+
+
+def _trust_key(item):
+    owner = getattr(item, "id_data", None)
+    return (_identity(owner), _identity(item), str(item.instance_id))
+
+
+def set_session_trust(item, enabled: bool) -> None:
+    key = _trust_key(item)
     if enabled:
-        _SESSION_TRUST.add(str(instance_id))
+        _SESSION_TRUST[key] = (getattr(item, "id_data", None), item)
     else:
-        _SESSION_TRUST.discard(str(instance_id))
+        _SESSION_TRUST.pop(key, None)
 
 
-def session_trust_enabled(instance_id: str) -> bool:
-    """Whether this instance is currently opted into session edit trust."""
-    return str(instance_id) in _SESSION_TRUST
+def session_trust_enabled(item) -> bool:
+    key = _trust_key(item)
+    retained = _SESSION_TRUST.get(key)
+    if retained is None:
+        return False
+    try:
+        # A retained Python wrapper does not keep removed RNA storage alive.
+        # Check it before accepting a native address that Blender may recycle.
+        valid = _trust_key(retained[1]) == key and _identity(retained[0]) == key[0]
+    except ReferenceError:
+        valid = False
+    if not valid:
+        _SESSION_TRUST.pop(key, None)
+    return valid
+
+
+@bpy.app.handlers.persistent
+def _clear_session_trust_on_load(_unused):
+    _SESSION_TRUST.clear()
 
 
 def reprompt_trust_required(item) -> bool:
     """Whether the Review & Trust dialog must re-prompt for this effect."""
     if item.trust_state in _TRUSTED_STATES:
         return False
-    return not session_trust_enabled(item.instance_id)
+    return not session_trust_enabled(item)
 
 
 def session_retrust_pending(item) -> bool:
     """A session-trusted instance whose digest drifted untrusted after an edit."""
     return (
-        session_trust_enabled(item.instance_id)
+        session_trust_enabled(item)
         and item.trust_state not in _TRUSTED_STATES
     )
 
@@ -264,7 +284,7 @@ class FLUIDSIM_OT_effect_session_trust(bpy.types.Operator):
         if self.enable and not self.acknowledged:
             self.report({"WARNING"}, "Acknowledge authorship to enable session trust")
             return {"CANCELLED"}
-        set_session_trust(item.instance_id, self.enable)
+        set_session_trust(item, self.enable)
         if self.enable:
             apply_session_trust(context.scene)
             self.report({"INFO"}, "Editing this effect is trusted for this session")
@@ -551,9 +571,16 @@ class FLUIDSIM_OT_effect_test_sandbox(bpy.types.Operator):
             return {"CANCELLED"}
         effects.rebuild_definition_json(context.scene, item)
         instance = effects.effect_instance_from_pg(context.scene, item)
+        # Compiling imports the generated module and the test launches it, so
+        # this runs effect code exactly like Test Draft and needs the same trust.
+        apply_session_trust(context.scene)
+        reason = effects.untrusted_source_reason(context.scene, instance)
+        if reason:
+            self.report({"ERROR"}, reason)
+            return {"CANCELLED"}
+        from ..preferences import configured_device
         from ..sim.effects.compiler import compile_effect
         from ..sim.effects.sandbox import sandbox_test
-        from ..preferences import configured_device
         device = configured_device() or "cpu"
         try:
             compiled = compile_effect(instance, device=device)
@@ -689,7 +716,7 @@ class FLUIDSIM_PT_effect_warp_code(bpy.types.Panel):
 
         # Scoped "trust while editing"
         session = trust.row(align=True)
-        if session_trust_enabled(item.instance_id):
+        if session_trust_enabled(item):
             if session_retrust_pending(item):
                 session.label(text="Edit changed the digest — re-trust to run.", icon="FILE_REFRESH")
             else:
@@ -875,6 +902,8 @@ def register():
     from ..unregister_guard import register_classes
 
     register_classes(CLASSES)
+    if _clear_session_trust_on_load not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_clear_session_trust_on_load)
 
 
 def unregister():
@@ -882,4 +911,6 @@ def unregister():
 
     # D9: session edit-trust never outlives the add-on; drop it on reload.
     _SESSION_TRUST.clear()
+    if _clear_session_trust_on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_clear_session_trust_on_load)
     unregister_classes(CLASSES)

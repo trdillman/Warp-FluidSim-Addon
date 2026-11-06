@@ -2,6 +2,8 @@
 
 _SYNCING = False
 MODES = ("PREVIEW", "SURFACE", "OFF")
+_HELD = 0
+_PENDING = set()
 
 
 def cycle(settings):
@@ -47,7 +49,28 @@ def viewport_families(scene, surface_enabled):
     return bool(ordinary and surface_enabled), bool(ordinary and not surface_enabled)
 
 
-def apply_viewport(scene):
+def hold_viewport():
+    """Let an exporter own output visibility until ``release_viewport``.
+
+    Export un-hides the objects it samples and runs frame updates; the display
+    policy must not re-hide them from per-frame publication in the middle of
+    those updates (Blender 5.2.0 crashes in the depsgraph).
+    """
+    global _HELD
+    _HELD += 1
+
+
+def release_viewport():
+    global _HELD
+    _HELD = max(0, _HELD - 1)
+
+
+def apply_viewport(scene, *, deferred=True):
+    if _HELD:
+        # Outputs can be created while an exporter owns visibility. Remember
+        # the scene so its current policy is restored after the final hold.
+        _defer_view_layer_write(scene)
+        return
     from . import output_publication as output
     mode = getattr(getattr(scene, "fluidsim", None), "liquid_display_mode", None)
     if mode is None:
@@ -59,6 +82,7 @@ def apply_viewport(scene):
     surface = output.output_object(scene, output.SURFACE_NAME)
     if show_surface and (surface is None or not len(getattr(getattr(surface, "data", None), "vertices", (1,)))):
         show_surface, show_particles = False, True
+    changes = []
     for name, hidden in ((output.SURFACE_NAME, not show_surface),
                          (output.PARTICLES_NAME, not show_particles)):
         obj = output.output_object(scene, name)
@@ -72,13 +96,60 @@ def apply_viewport(scene):
             output._set_hidden(obj, not render_visible, viewport=False)
             if not hidden:
                 output._set_hidden(obj, False, render=False)
+            # hide_set re-tags the depsgraph even for an equal value, so only
+            # flags that actually change are written.
             layers = getattr(scene, "view_layers", ())
             if layers:
                 for layer in layers:
-                    if obj.name in layer.objects:
-                        obj.hide_set(hidden, view_layer=layer)
-            else:
-                obj.hide_set(hidden)
+                    if obj.name in layer.objects and obj.hide_get(view_layer=layer) != hidden:
+                        changes.append((obj, layer, hidden))
+            elif obj.hide_get() != hidden:
+                changes.append((obj, None, hidden))
+    if not changes:
+        return
+    if deferred and _defer_view_layer_write(scene):
+        return
+    for obj, layer, hidden in changes:
+        if layer is None:
+            obj.hide_set(hidden)
+        else:
+            obj.hide_set(hidden, view_layer=layer)
+
+
+def _defer_view_layer_write(scene):
+    """Queue the view-layer write for a timer; False when it must run now.
+
+    Per-frame publication runs inside the frame-change handler, i.e. during the
+    depsgraph update. Changing a base's hide flag there (typically when the
+    output objects were just created) crashed Blender 5.2.0 in
+    deg_check_base_in_depsgraph, so the write waits until the update is over.
+    """
+    name = getattr(scene, "name", None)
+    try:
+        import bpy
+        timers = bpy.app.timers
+        if not isinstance(name, str):
+            return False
+        _PENDING.add(name)
+        if not timers.is_registered(_flush_pending):
+            timers.register(_flush_pending, first_interval=0.0)
+        return True
+    except Exception:  # noqa: BLE001 - no usable timer: write immediately
+        return False
+
+
+def _flush_pending():
+    import bpy
+
+    if _HELD:
+        # Keep both the timer and its requests alive across nested exports.
+        return 0.01
+    names = set(_PENDING)
+    _PENDING.clear()
+    for scene in bpy.data.scenes:
+        if scene.name in names:
+            apply_viewport(scene, deferred=False)
+    return None
 
 
 def restore_scene(scene):

@@ -334,3 +334,58 @@ def test_validation_keeps_mixed_ast_issue_order_and_locations():
         ("PRINT_FORBIDDEN", 3, 1),
         ("UNKNOWN_NAME", 3, 1),
     ]
+
+
+# Review finding, 2026-10-26: the validator parses with Python's line rules but
+# the generator re-split the body with str.splitlines(), which also breaks on
+# U+2028 and friends, so text hidden after one inside a comment became a real
+# statement the validator never saw.
+_HIDDEN_BREAKS = (" ", " ", "\x85", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e")
+
+
+def test_non_newline_line_breaks_are_rejected():
+    for char in _HIDDEN_BREAKS:
+        instance = _instance(f"value = strength  # note{char}_alive[_tid + 1] = 0")
+        assert "LINE_BREAK_FORBIDDEN" in _codes(instance), repr(char)
+
+
+def test_generated_source_keeps_python_line_structure():
+    import ast
+
+    from fluidsim_testpkg.sim.effects.source import generate_kernel_source
+
+    instance = _instance("value = strength  # note value = 2.0")
+    generated = generate_kernel_source(instance, 0)
+    kernel_def = next(
+        node for node in ast.parse(generated.source).body
+        if isinstance(node, ast.FunctionDef))
+    user_lines = generated.source.split("\n")
+    assert not any(line.strip() == "value = 2.0" for line in user_lines)
+    assert kernel_def.body  # still parses as one kernel
+
+
+# Review finding, 2026-10-26: wp.static(...) is evaluated by Python at kernel
+# declaration, and wp.__dict__ reaches builtins, so either one lets effect
+# source run host code.
+def test_wp_static_is_rejected():
+    instance = _instance("value = wp.static(1.0)")
+    assert "ATTRIBUTE_ACCESS_FORBIDDEN" in _codes(instance)
+
+
+def test_private_and_dunder_wp_attributes_are_rejected():
+    for source in (
+        'value = wp.__dict__["__builtins__"]',
+        "value = wp._src",
+        "value = C.__class__",
+    ):
+        assert "ATTRIBUTE_ACCESS_FORBIDDEN" in _codes(_instance(source)), source
+
+
+def test_wp_submodules_are_rejected():
+    for source in ("value = wp.config", "value = wp.types"):
+        assert "ATTRIBUTE_ACCESS_FORBIDDEN" in _codes(_instance(source)), source
+
+
+def test_ordinary_wp_builtins_stay_allowed():
+    instance = _instance("value = wp.sin(strength) + wp.length(wp.vec3(1.0, 0.0, 0.0))")
+    assert "ATTRIBUTE_ACCESS_FORBIDDEN" not in _codes(instance)

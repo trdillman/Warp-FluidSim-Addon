@@ -40,6 +40,22 @@
 
 ### Fixes
 
+- **Custom effects can no longer run hidden or host-side code.** The
+  effect checker now rejects Unicode line breaks such as U+2028 (they hid
+  code inside a comment from the check), `wp.static(...)`, private `wp`
+  attributes and `wp` submodules. Test in Sandbox now requires the effect's
+  exact source to be trusted, like Test Draft and Compile & Apply.
+- **Free, Move and Rename Cache refuse a folder that also holds other
+  files.** A Cache Path of `//` (the .blend's own folder) made Free Cache
+  delete the .blend and everything beside it; these tools now name the
+  extra files and stop.
+- **Varying viscosity is solved correctly.** The implicit viscosity solve
+  used each cell's own viscosity on both sides of a face, which is not a
+  valid system for conjugate gradients when viscosity varies (Viscosity
+  from Particles). Each face now uses the mean of its two cells; uniform
+  viscosity is unchanged.
+- **A quick second click on a Liquid Deck button works.** Blender reports
+  it as a double-click, which the bar ignored.
 - **Cache tools are greyed out when there is nothing to manage or a bake
   is writing the cache.** Free, Move, Rename and Remove Orphans were
   offered with no cache on disk and during a Production Bake, so the

@@ -328,3 +328,144 @@ def test_restart_allows_new_empty_or_recognized_cache_directories(tmp_path):
 
     for path in (missing, empty, cache):
         assert require_restartable_cache_directory(path, RESTART_ENTRIES) == path.resolve()
+
+
+# Review finding, 2026-10-26: Free/Move removed the whole cache folder once it
+# held a manifest or frame files, never checking for anything else, so a Cache
+# Path of "//" (the .blend's own folder) freed the .blend with it.
+def test_free_refuses_a_cache_folder_holding_foreign_files(tmp_path):
+    folder = tmp_path / "project"
+    _make_cache(folder)
+    (folder / "scene.blend").write_bytes(b"BLENDER")
+    (folder / "textures").mkdir()
+    (folder / "textures" / "wood.png").write_bytes(b"png")
+    before = _tree(folder)
+
+    with pytest.raises(ValueError, match="scene.blend"):
+        free_cache(folder)
+
+    assert _tree(folder) == before
+
+
+def test_move_refuses_a_cache_folder_holding_foreign_files(tmp_path):
+    folder = tmp_path / "project"
+    _make_cache(folder)
+    (folder / "scene.blend").write_bytes(b"BLENDER")
+    before = _tree(folder)
+
+    with pytest.raises(ValueError, match="scene.blend"):
+        move_cache(folder, tmp_path / "moved")
+
+    assert _tree(folder) == before
+    assert not (tmp_path / "moved").exists()
+
+
+def test_free_still_removes_a_cache_with_logs_temps_and_os_files(tmp_path):
+    folder = tmp_path / "cache"
+    _make_cache(folder)
+    (folder / "logs").mkdir()
+    (folder / "logs" / "bake.log").write_text("ok", encoding="utf-8")
+    (folder / "fluidsim_cache.json.tmp").write_text("{}", encoding="utf-8")
+    (folder / "Thumbs.db").write_bytes(b"")
+
+    assert free_cache(folder) is None
+    assert not folder.exists()
+
+
+def test_rename_refuses_a_cache_folder_holding_foreign_files(tmp_path):
+    folder = tmp_path / "project"
+    _make_cache(folder)
+    (folder / "scene.blend").write_bytes(b"BLENDER")
+
+    with pytest.raises(ValueError, match="scene.blend"):
+        rename_cache(folder, "renamed")
+
+    assert (folder / "scene.blend").is_file()
+
+
+@pytest.mark.parametrize("metadata_name", [".DS_Store", "Thumbs.db"])
+@pytest.mark.parametrize("operation", ["free", "move", "rename"])
+def test_os_metadata_does_not_require_a_lowercase_alias(tmp_path, monkeypatch,
+                                                       metadata_name, operation):
+    folder = tmp_path / "cache"
+    _make_cache(folder)
+    (folder / metadata_name).write_bytes(b"OS metadata")
+    original_exists = Path.exists
+
+    def case_sensitive_exists(path):
+        if path.parent == folder and path.name == metadata_name.lower():
+            return False
+        return original_exists(path)
+
+    # Model the absent lowercase alias on Windows too; the metadata file is
+    # real, and the actual guarded whole-directory operations still run.
+    monkeypatch.setattr(Path, "exists", case_sensitive_exists)
+    if operation == "free":
+        free_cache(folder)
+        assert not folder.exists()
+    elif operation == "move":
+        destination = move_cache(folder, tmp_path / "moved")
+        assert (destination / metadata_name).read_bytes() == b"OS metadata"
+    else:
+        destination = rename_cache(folder, "renamed")
+        assert (destination / metadata_name).read_bytes() == b"OS metadata"
+
+
+@pytest.mark.parametrize("relative", ["notes.tmp", "frames/render.png", "checkpoints/scene.blend", "logs/assets/wood.png", "frames/frame_fake.npz"])
+@pytest.mark.parametrize("operation", ["free", "move", "rename"])
+def test_whole_cache_preserves_nested_foreign_data(tmp_path, relative, operation):
+    folder = tmp_path / "cache"
+    _make_cache(folder)
+    foreign = folder / relative
+    foreign.parent.mkdir(parents=True, exist_ok=True)
+    foreign.write_bytes(b"precious unrelated data")
+    before = _tree(folder)
+    with pytest.raises(ValueError):
+        if operation == "free":
+            free_cache(folder)
+        elif operation == "move":
+            move_cache(folder, tmp_path / "moved")
+        else:
+            rename_cache(folder, "renamed")
+    assert _tree(folder) == before
+    assert foreign.read_bytes() == b"precious unrelated data"
+    assert not (tmp_path / "moved").exists()
+    assert not (tmp_path / "renamed").exists()
+
+
+@pytest.mark.parametrize("operation", ["free", "move", "rename"])
+def test_whole_cache_accepts_interrupted_writer_files(tmp_path, operation):
+    folder = tmp_path / "cache"
+    _make_cache(folder)
+    for directory, prefix in (("frames", "frame"), ("checkpoints", "checkpoint")):
+        (folder / directory / (prefix + "_000001.npz.abcd1234.tmp")).write_bytes(b"partial")
+    if operation == "free":
+        free_cache(folder)
+        assert not folder.exists()
+    elif operation == "move":
+        destination = move_cache(folder, tmp_path / "moved")
+        assert (destination / "frames/frame_000001.npz.abcd1234.tmp").read_bytes() == b"partial"
+    else:
+        destination = rename_cache(folder, "renamed")
+        assert (destination / "frames/frame_000001.npz.abcd1234.tmp").read_bytes() == b"partial"
+
+
+@pytest.mark.parametrize("operation", ["free", "move", "rename"])
+def test_whole_cache_refuses_distinct_uppercase_directory(tmp_path, operation):
+    folder = tmp_path / "cache"
+    _make_cache(folder)
+    upper = folder / "FRAMES"
+    upper.mkdir(exist_ok=True)
+    if upper.samefile(folder / "frames"):
+        pytest.skip("filesystem is case insensitive")
+    foreign = upper / "frame_000001.npz"
+    foreign.write_bytes(b"unrelated")
+    before = _tree(folder)
+    with pytest.raises(ValueError, match="FRAMES"):
+        if operation == "free":
+            free_cache(folder)
+        elif operation == "move":
+            move_cache(folder, tmp_path / "moved")
+        else:
+            rename_cache(folder, "renamed")
+    assert _tree(folder) == before

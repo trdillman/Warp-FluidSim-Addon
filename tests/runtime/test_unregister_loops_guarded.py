@@ -62,6 +62,7 @@ def _permissive_bpy(unregister_class):
         return module
 
     bpy = _module("bpy")
+    bpy.app = SimpleNamespace(handlers=SimpleNamespace(persistent=lambda fn: fn, load_post=[]))
     bpy.types = SimpleNamespace()
     for kind in ("Operator", "Panel", "UIList", "AddonPreferences", "PropertyGroup",
                  "Menu", "Header", "Object", "Scene", "Text", "Material", "Image"):

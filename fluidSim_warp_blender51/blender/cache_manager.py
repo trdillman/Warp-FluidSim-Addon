@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import os
-from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import uuid
+from dataclasses import dataclass
+from pathlib import Path
 
 from ..io.cache import (
     CACHE_FORMAT_VERSION,
@@ -93,6 +93,53 @@ def _require_managed_cache_directory(path: Path | str) -> Path:
     base = Path(path).expanduser().resolve()
     if not is_managed_cache_directory(base):
         raise ValueError(f"not a recognized FluidSim cache directory: {base}")
+    return base
+
+
+def foreign_cache_entries(path: Path | str) -> tuple[str, ...]:
+    """Reject foreign descendants, links and unexpected entry types before mutation."""
+    base = Path(path)
+    foreign = []
+    files = {"fluidsim_cache.json", "fluidsim_sequence.json", "fluidsim_cache.json.tmp",
+             "fluidsim_sequence.json.tmp"}
+    os_metadata = {"thumbs.db", "desktop.ini", ".ds_store"}
+    patterns = {"frames": r"frame_-?[0-9]+\.(?:npz|tmp|tmp\.npz|npz\.tmp|npz\.[a-z0-9_]+\.tmp)",
+                "checkpoints": r"checkpoint_-?[0-9]+\.(?:npz|tmp|tmp\.npz|npz\.tmp|npz\.[a-z0-9_]+\.tmp)",
+                "logs": r"bake\.log"}
+    for entry in base.iterdir():
+        name = entry.name.lower()
+        canonical = base / name
+        # Lowercasing alone must not claim a distinct directory on POSIX.
+        same_name = entry.name == name or (canonical.exists() and entry.samefile(canonical))
+        linked = entry.is_symlink() or getattr(entry, "is_junction", lambda: False)()
+        if not linked and same_name and name in patterns and entry.is_dir():
+            for child in entry.iterdir():
+                if (child.is_symlink() or getattr(child, "is_junction", lambda: False)()
+                        or not child.is_file() or not re.fullmatch(patterns[name], child.name)):
+                    foreign.append(child.relative_to(base).as_posix())
+        elif not linked and entry.is_file() and (
+                name in os_metadata or (same_name and (
+                    name in files or re.fullmatch(r"fluidsim_-?[0-9]+\.npz", name)))):
+            continue
+        else:
+            foreign.append(entry.name)
+    return tuple(sorted(foreign))
+
+
+def _require_whole_cache_directory(path: Path | str) -> Path:
+    """Refuse to delete or move a folder that also holds other data.
+
+    Free and Move act on the whole folder, so a Cache Path pointing at a
+    shared folder (``//`` is the .blend's own folder) must not take the
+    .blend and everything beside it along.
+    """
+    base = _require_managed_cache_directory(path)
+    foreign = foreign_cache_entries(base)
+    if foreign:
+        shown = ", ".join(foreign[:5]) + (" ..." if len(foreign) > 5 else "")
+        raise ValueError(
+            f"{base} also holds files FluidSim did not write ({shown}); "
+            "set Cache Path to a folder of its own before freeing or moving it")
     return base
 
 
@@ -272,7 +319,7 @@ def free_cache(path: Path | str) -> Path | None:
     path = assert_cache_path_mutable(path)
     if not path.exists():
         return None
-    path = _require_managed_cache_directory(path)
+    path = _require_whole_cache_directory(path)
     trash = path.with_name(f".{path.name}.fluidsim-trash-{uuid.uuid4().hex}")
     os.replace(path, trash)
     try:
@@ -310,7 +357,7 @@ def move_cache(source: Path | str, destination: Path | str) -> Path:
     destination = assert_cache_path_mutable(destination)
     if not source.is_dir():
         raise FileNotFoundError(f"cache source does not exist: {source}")
-    source = _require_managed_cache_directory(source)
+    source = _require_whole_cache_directory(source)
     if destination.exists():
         raise FileExistsError(f"cache destination already exists: {destination}")
     # Freeing the source after publishing would delete a destination nested
@@ -344,7 +391,7 @@ def validate_leaf_name(name: str) -> str:
 
 def rename_cache(path: Path | str, name: str) -> Path:
     path = assert_cache_path_mutable(path)
-    path = _require_managed_cache_directory(path)
+    path = _require_whole_cache_directory(path)
     name = validate_leaf_name(name)
     destination = path.with_name(name)
     assert_cache_path_mutable(destination)

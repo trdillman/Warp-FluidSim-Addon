@@ -416,3 +416,41 @@ def test_unbind_parameter_key_handles_legacy_fallback_keys(effects_mod):
         definition.kernels[0],
     )
     assert result.parameter_keys == ()
+
+
+# Review finding, 2026-10-26: "Test in Sandbox" compiled (importing the
+# generated module) and launched an effect with no trust check, unlike Test
+# Draft and Compile & Apply, so an imported, untrusted effect ran on one click.
+def _sandbox_instance():
+    from fluidsim_testpkg.sim.effects.schema import EffectDefinitionV2, EffectInstanceV2
+
+    definition = EffectDefinitionV2(
+        effect_id="test.sandbox_trust", version="1.0.0", name="Sandbox Trust",
+        summary="s", description="d", category="Tests", author="Tests",
+        license="GPL-3.0-or-later",
+        parameters=(ParameterDefinitionV2("strength", "Strength", ParameterKind.FLOAT, 1.0),),
+        kernels=(KernelDefinitionV2(
+            kernel_id="kernel", label="Kernel", domain=EffectDomain.PARTICLES,
+            stage=EffectStage.BEFORE_EMISSION, cadence=EffectCadence.EVERY_SUBSTEP,
+            source="value = strength", parameter_keys=("strength",)),),
+    )
+    return EffectInstanceV2("sandbox-1", definition)
+
+
+def test_untrusted_source_reason_reads_the_trust_store(effects_mod, monkeypatch, tmp_path):
+    from fluidsim_testpkg.sim.effects.trust import TrustStore, content_trust_digest
+
+    store = TrustStore(tmp_path / "trust.json")
+    monkeypatch.setattr(effects_mod, "trust_store_for_scene", lambda _scene=None: store)
+    instance = _sandbox_instance()
+
+    assert "not trusted" in effects_mod.untrusted_source_reason(None, instance)
+    store.trust(content_trust_digest(instance.definition), "Sandbox Trust")
+    assert effects_mod.untrusted_source_reason(None, instance) == ""
+
+
+def test_test_sandbox_checks_trust_before_compiling():
+    source = WORKSPACE.read_text(encoding="utf-8")
+    body = source.split("class FLUIDSIM_OT_effect_test_sandbox", 1)[1].split("\nclass ", 1)[0]
+    assert "untrusted_source_reason(" in body
+    assert body.index("untrusted_source_reason(") < body.index("compile_effect(")

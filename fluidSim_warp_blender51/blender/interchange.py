@@ -48,7 +48,7 @@ import bpy
 from bpy.props import IntProperty, StringProperty
 
 from ..io import cache, cache_schema
-from . import output_publication, playback, production_bake, rigid_publication
+from . import liquid_display, output_publication, playback, production_bake, rigid_publication
 
 SURFACE_KIND = output_publication.SURFACE_NAME
 
@@ -272,6 +272,7 @@ class _SceneState:
         self.active = self.view_layer.objects.active
         self.hidden = [(obj, bool(obj.hide_viewport), bool(obj.hide_get()))
                        for obj in self.objects]
+        self._display_held = False
 
     def enter(self, plan):
         scene = self.scene
@@ -286,6 +287,10 @@ class _SceneState:
             fs.live = True
         # A stale cursor would skip republishing the current frame.
         playback.clear_cache_cursors()
+        # The export owns output visibility until restore(): per-frame
+        # publication must not re-apply the viewport display policy meanwhile.
+        liquid_display.hold_viewport()
+        self._display_held = True
 
         for obj in self.view_layer.objects:
             obj.select_set(False)
@@ -344,9 +349,15 @@ class _SceneState:
                 # Pops cursors and, if live was on, re-enters live simulation.
                 playback.set_cache_playback_enabled(scene, False)
 
+        def release_display():
+            if self._display_held:
+                self._display_held = False
+                liquid_display.release_viewport()
+
         attempt("selection", restore_selection)
         attempt("frame", restore_frame)
         attempt("playback mode", restore_modes)
+        attempt("display policy", release_display)
         return problems
 
 

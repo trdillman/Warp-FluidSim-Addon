@@ -807,6 +807,8 @@ def test_display_modes_change_only_liquid_viewport_objects(monkeypatch):
             self.hide_render = False
         def hide_set(self, value):
             self.hidden = value
+        def hide_get(self):
+            return self.hidden
 
     surface, particles, whitewater = Obj(), Obj(), Obj()
     objects = {output_publication.SURFACE_NAME: surface,
@@ -881,6 +883,8 @@ def test_display_applies_to_each_scene_view_layer(monkeypatch):
             self.calls = []
         def hide_set(self, value, *, view_layer):
             self.calls.append((value, view_layer))
+        def hide_get(self, *, view_layer):
+            return next((v for v, l in reversed(self.calls) if l is view_layer), None)
     surface, particles = Obj(), Obj()
     layers = [SimpleNamespace(objects={"liquid"}), SimpleNamespace(objects={"liquid"})]
     scene = SimpleNamespace(fluidsim=SimpleNamespace(liquid_display_mode="OFF"), view_layers=layers)
@@ -889,6 +893,111 @@ def test_display_applies_to_each_scene_view_layer(monkeypatch):
     liquid_display.apply_viewport(scene)
     assert surface.calls == [(True, layers[0]), (True, layers[1])]
     assert particles.calls == [(True, layers[0]), (True, layers[1])]
+
+
+def test_display_writes_view_layer_visibility_only_when_it_changes(monkeypatch):
+    """hide_set re-tags the depsgraph even for an equal value; publication runs
+    per frame and inside Alembic export's frame updates, which crashed Blender
+    5.2.0 (deg_check_base_in_depsgraph), so unchanged flags must not be rewritten."""
+    from fluidSim_warp_blender51.blender import liquid_display, output_publication
+    class Obj:
+        name = "liquid"
+        def __init__(self):
+            self.calls = []
+        def hide_set(self, value, *, view_layer):
+            self.calls.append((value, view_layer))
+        def hide_get(self, *, view_layer):
+            return next((v for v, l in reversed(self.calls) if l is view_layer), None)
+    surface, particles = Obj(), Obj()
+    layers = [SimpleNamespace(objects={"liquid"}), SimpleNamespace(objects={"liquid"})]
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(liquid_display_mode="OFF"), view_layers=layers)
+    monkeypatch.setattr(output_publication, "output_object", lambda _scene, name:
+                        surface if name == output_publication.SURFACE_NAME else particles)
+    monkeypatch.setattr(output_publication, "_domain_settings",
+                        lambda _scene: SimpleNamespace(surface_enabled=True))
+    liquid_display.apply_viewport(scene)
+    assert len(surface.calls) == len(particles.calls) == 2
+    for _ in range(3):
+        liquid_display.apply_viewport(scene)
+    assert len(surface.calls) == len(particles.calls) == 2
+    scene.fluidsim.liquid_display_mode = "SURFACE"
+    liquid_display.apply_viewport(scene)
+    assert [c[0] for c in surface.calls[2:]] == [False, False]
+
+
+def test_export_hold_keeps_display_policy_from_rehiding_outputs(monkeypatch):
+    """Exporters un-hide the objects they sample; per-frame publication must not
+    re-apply the display policy until they release (it crashed Blender 5.2.0)."""
+    from fluidSim_warp_blender51.blender import liquid_display, output_publication
+    class Obj:
+        name = "liquid"
+        def __init__(self):
+            self.calls = []
+        def hide_set(self, value, *, view_layer):
+            self.calls.append((value, view_layer))
+        def hide_get(self, *, view_layer):
+            return next((v for v, l in reversed(self.calls) if l is view_layer), None)
+    surface, particles = Obj(), Obj()
+    layers = [SimpleNamespace(objects={"liquid"})]
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(liquid_display_mode="OFF"), view_layers=layers)
+    monkeypatch.setattr(output_publication, "output_object", lambda _scene, name:
+                        surface if name == output_publication.SURFACE_NAME else particles)
+    liquid_display.hold_viewport()
+    try:
+        liquid_display.apply_viewport(scene)
+        assert surface.calls == [] and particles.calls == []
+    finally:
+        liquid_display.release_viewport()
+    liquid_display.release_viewport()  # an unbalanced release never goes negative
+    liquid_display.apply_viewport(scene)
+    assert len(surface.calls) == len(particles.calls) == 1
+
+
+@pytest.mark.parametrize("hold_depth", [0, 1, 2])
+def test_view_layer_write_is_deferred_out_of_the_frame_update(monkeypatch, hold_depth):
+    """Changing a base's hide flag inside the frame-change handler crashed
+    Blender 5.2.0 (deg_check_base_in_depsgraph), so a changed flag is written
+    from a timer instead, and an unchanged one schedules nothing."""
+    from fluidSim_warp_blender51.blender import liquid_display, output_publication
+    monkeypatch.setattr(liquid_display, "_HELD", 0)
+    monkeypatch.setattr(liquid_display, "_PENDING", set())
+    class Obj:
+        name = "liquid"
+        def __init__(self):
+            self.calls = []
+        def hide_set(self, value, *, view_layer):
+            self.calls.append((value, view_layer))
+        def hide_get(self, *, view_layer):
+            return next((v for v, l in reversed(self.calls) if l is view_layer), False)
+    surface, particles = Obj(), Obj()
+    layers = [SimpleNamespace(objects={"liquid"})]
+    scene = SimpleNamespace(name="Scene", view_layers=layers,
+                            fluidsim=SimpleNamespace(liquid_display_mode="OFF"))
+    timers = []
+    fake_bpy = SimpleNamespace(
+        app=SimpleNamespace(timers=SimpleNamespace(
+            is_registered=lambda fn: fn in timers,
+            register=lambda fn, **_kw: timers.append(fn))),
+        data=SimpleNamespace(scenes=[scene]))
+    monkeypatch.setitem(sys.modules, "bpy", fake_bpy)
+    monkeypatch.setattr(output_publication, "output_object", lambda _scene, name:
+                        surface if name == output_publication.SURFACE_NAME else particles)
+    for _ in range(hold_depth):
+        liquid_display.hold_viewport()
+    liquid_display.apply_viewport(scene)
+    liquid_display.apply_viewport(scene)
+    assert surface.calls == [] and particles.calls == []
+    assert timers == [liquid_display._flush_pending]
+    for _ in range(hold_depth):
+        # A timer dispatched during an export must retain the request until
+        # every nested exporter releases its visibility hold.
+        assert timers[0]() == 0.01
+        assert surface.calls == [] and particles.calls == []
+        liquid_display.release_viewport()
+    assert timers.pop()() is None
+    assert surface.calls == [(True, layers[0])] and particles.calls == [(True, layers[0])]
+    liquid_display.apply_viewport(scene)  # nothing changed: nothing scheduled
+    assert timers == []
 
 
 def test_particle_only_legacy_scene_migrates_to_preview(monkeypatch):
@@ -962,6 +1071,8 @@ def test_no_mesh_fallback_unhides_particles_without_enabling_render(monkeypatch,
         hide_render = True
         def hide_set(self, hidden):
             self.hidden = hidden
+        def hide_get(self):
+            return getattr(self, "hidden", None)
 
     surface, particles = Obj(), Obj()
     monkeypatch.setattr(output, "output_object", lambda _scene, name:
@@ -996,6 +1107,8 @@ def test_paused_cache_keeps_both_representations_for_mode_changes(monkeypatch, i
         hide_render = True
         def hide_set(self, hidden):
             self.hidden = hidden
+        def hide_get(self):
+            return getattr(self, "hidden", None)
     surface, particles = Obj(), Obj()
     surface.data = SimpleNamespace(vertices=payload.surface_verts)
     monkeypatch.setattr(output, "output_object", lambda _scene, name:

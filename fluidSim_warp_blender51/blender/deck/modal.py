@@ -140,9 +140,17 @@ class FLUIDSIM_OT_deck_modal(bpy.types.Operator):
                 self.press_on_bar = False
                 return {"RUNNING_MODAL"} if over and started_here else {"PASS_THROUGH"}
             self.press_on_bar = over
+            if event.value == "PRESS":
+                self.pressed_control = item.control if over and item is not None else None
+            elif (item is None or item.control != getattr(self, "pressed_control", None)):
+                # The first click changed the slot (e.g. Bake -> Cancel Bake).
+                # Consume the paired click without dispatching a different action.
+                return {"RUNNING_MODAL"} if over else {"PASS_THROUGH"}
             if not over:
                 return {"PASS_THROUGH"}
-            if item is not None and item.control is not None and event.value == "PRESS":
+            # A second click inside the double-click time arrives as DOUBLE_CLICK.
+            if (item is not None and item.control is not None
+                    and event.value in {"PRESS", "DOUBLE_CLICK"}):
                 ready, reason = controls.control_status(bpy.context, item.control)
                 if ready:
                     controls.run_control(bpy.context, item.control, report=self.report)
