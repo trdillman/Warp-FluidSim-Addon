@@ -560,9 +560,12 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
     _write_project(tmp_path)
     output = tmp_path / "dist"
     commands: list[list[str]] = []
+    environments = []
 
     def fake_run(command: list[str], cwd: Path, *, env=None):
         commands.append(command)
+        if "--command" in command:
+            environments.append(dict(env or {}))
         if "--command" in command and command[
             command.index("--command") + 1 : command.index("--command") + 3
         ] == ["extension", "build"]:
@@ -591,6 +594,16 @@ def test_build_runs_all_gates_and_emits_checksums(tmp_path: Path):
     assert any("extension build --split-platforms" in command for command in flattened)
     package_commands = [command for command in commands if "--command" in command]
     assert len(package_commands) == 2
+    assert len(environments) == 2
+    assert environments[0] == environments[1]
+    for key in ("BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS",
+                "BLENDER_USER_EXTENSIONS", "BLENDER_USER_DATAFILES",
+                "PYTHONUSERBASE", "WARP_CACHE_PATH", "TEMP", "TMP", "TMPDIR",
+                "XDG_CACHE_HOME"):
+        assert Path(environments[0][key]).is_absolute()
+        assert not Path(environments[0][key]).exists()  # owned build profile cleaned
+    assert "PYTHONPATH" not in environments[0]
+    assert "PYTHONHOME" not in environments[0]
     assert all("--factory-startup" in command for command in package_commands)
     assert all("--background" in command for command in package_commands)
     assert all("--offline-mode" in command for command in package_commands)
@@ -627,7 +640,9 @@ def test_installed_smoke_runs_like_an_artist_launch_and_uninstalls(tmp_path: Pat
         tmp_path / "repo",
         script,
         runner=fake_run,
-        extra_env={"PYTHONPATH": "/validation/warp-site"},
+        extra_env={"PYTHONPATH": "/validation/warp-site",
+                   "PYTHONHOME": "/developer/python",
+                   "BLENDER_USER_EXTENSIONS": str(tmp_path / "foreign")},
     )
     background = [command for command in commands if "--background" in command]
     assert len(background) == 2
@@ -635,7 +650,12 @@ def test_installed_smoke_runs_like_an_artist_launch_and_uninstalls(tmp_path: Pat
     # Smoke setup places the locked wheel in this extension's owned directory
     # inside the isolated profile.
     assert all("--python-use-system-env" not in command for command in background)
-    assert all(env.get("PYTHONPATH") == "/validation/warp-site" for env in environments)
+    assert all("PYTHONPATH" not in env for env in environments)
+    assert all("PYTHONHOME" not in env for env in environments)
+    for suffix, relative in (("CONFIG", "config"), ("SCRIPTS", "scripts"),
+                             ("EXTENSIONS", "extensions"), ("DATAFILES", "datafiles")):
+        expected = str(tmp_path / "repo-profile" / relative)
+        assert all(env[f"BLENDER_USER_{suffix}"] == expected for env in environments)
     expected_cache = str(tmp_path / "repo-profile" / "warp-cache")
     assert all(env.get("WARP_CACHE_PATH") == expected_cache for env in environments)
     assert (tmp_path / "repo-profile" / "warp-cache").is_dir()
@@ -707,3 +727,57 @@ def test_release_metadata_writes_are_atomic_and_strict(tmp_path: Path):
         build_extension._write_json_report(report_path, {"invalid": float("nan")})
     assert json.loads(report_path.read_text(encoding="utf-8"))["status"] == "passed"
     assert list(output.glob(".*.tmp")) == []
+
+
+def test_profile_environment_scrubs_imports_and_allows_explicit_source_lane(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    source = {"PYTHONPATH": "/developer/warp", "PYTHONHOME": "/developer/python"}
+    installed = build_extension._blender_process_environment(source, profile_dir=Path("profile"))
+    source_lane = build_extension._blender_process_environment(
+        source, profile_dir=Path("source-profile"), allow_source_imports=True)
+    assert "PYTHONPATH" not in installed and "PYTHONHOME" not in installed
+    assert source_lane["PYTHONPATH"] == source["PYTHONPATH"]
+    assert source_lane["PYTHONHOME"] == source["PYTHONHOME"]
+    assert Path(installed["BLENDER_USER_CONFIG"]).is_absolute()
+    assert source == {"PYTHONPATH": "/developer/warp", "PYTHONHOME": "/developer/python"}
+
+
+@pytest.mark.parametrize("fail_at", [None, "validate", "build"])
+def test_build_preserves_consumer_inventory_and_cleans_only_owned_profile(tmp_path, monkeypatch, fail_at):
+    import subprocess
+
+    root = tmp_path / "addon"
+    _write_project(root)
+    output = tmp_path / "dist"
+    consumer = tmp_path / "consumer"
+    sentinel = consumer / "extensions" / ".local" / "lib" / "sentinel.whl"
+    sentinel.parent.mkdir(parents=True)
+    sentinel.write_bytes(b"consumer-wheel")
+    for key in ("CONFIG", "SCRIPTS", "EXTENSIONS", "DATAFILES"):
+        monkeypatch.setenv(f"BLENDER_USER_{key}", str(consumer / key.lower()))
+    monkeypatch.setenv("PYTHONPATH", "/developer/warp")
+    before = {p.relative_to(consumer): p.read_bytes() for p in consumer.rglob("*") if p.is_file()}
+    profiles = []
+
+    def runner(command, cwd, *, env=None):
+        profiles.append(Path(env["BLENDER_USER_EXTENSIONS"]).parent)
+        assert profiles[-1].is_dir()
+        assert profiles[-1] != consumer
+        assert "PYTHONPATH" not in env
+        if fail_at in command:
+            raise subprocess.CalledProcessError(19, command)
+        if "build" in command:
+            for platform in ("linux-x64", "windows-x64"):
+                _write_package(output / f"fluidsim_warp-{VERSION}-{platform.replace('-', '_')}.zip",
+                               platform=platform)
+
+    kwargs = dict(runner=runner, run_python_checks=False,
+                  demo_source=_write_demo_sources(tmp_path / "demos"))
+    if fail_at:
+        with pytest.raises(subprocess.CalledProcessError):
+            build_extension.build(root, Path("blender"), output, **kwargs)
+    else:
+        build_extension.build(root, Path("blender"), output, **kwargs)
+    assert profiles and len(set(profiles)) == 1
+    assert all(not profile.exists() for profile in profiles)
+    assert before == {p.relative_to(consumer): p.read_bytes() for p in consumer.rglob("*") if p.is_file()}

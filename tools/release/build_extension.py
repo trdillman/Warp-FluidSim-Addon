@@ -120,10 +120,17 @@ def _run(command: list[str], cwd: Path, *, env: Mapping[str, str] | None = None)
 def _blender_process_environment(
     source: Mapping[str, str],
     *,
+    profile_dir: Path | None = None,
+    allow_source_imports: bool = False,
     os_name: str | None = None,
     compiled_platform: str | None = None,
 ) -> dict[str, str]:
-    """Return an environment with truthful Windows architecture metadata.
+    """Repair architecture metadata and optionally isolate Blender state.
+
+    A supplied profile owns Blender directories, caches and temporary files.
+    Installed/package lanes discard developer Python import overrides; only
+    explicit source lanes may retain them. Without a profile, consumer-facing
+    install tools keep their selected profile.
 
     Blender's extension installer derives its platform suffix through
     ``platform.machine()``. Managed shells can omit
@@ -131,6 +138,25 @@ def _blender_process_environment(
     even though Python's compiled platform remains authoritative.
     """
     env = {str(key): str(value) for key, value in source.items()}
+    if profile_dir is not None:
+        profile_dir = Path(profile_dir).resolve()
+        isolated_paths = {
+            "BLENDER_USER_CONFIG": "config",
+            "BLENDER_USER_SCRIPTS": "scripts",
+            "BLENDER_USER_EXTENSIONS": "extensions",
+            "BLENDER_USER_DATAFILES": "datafiles",
+            "PYTHONUSERBASE": "python-user-base",
+            "WARP_CACHE_PATH": "warp-cache",
+            "XDG_CACHE_HOME": "cache",
+            "TEMP": "temp", "TMP": "temp", "TMPDIR": "temp",
+        }
+        for key, relative in isolated_paths.items():
+            path = profile_dir / relative
+            path.mkdir(parents=True, exist_ok=True)
+            env[key] = str(path)
+        if not allow_source_imports:
+            for key in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP"):
+                env.pop(key, None)
     active_os = os.name if os_name is None else str(os_name)
     if active_os != "nt" or env.get("PROCESSOR_ARCHITECTURE"):
         return env
@@ -859,25 +885,29 @@ def build(
         "--background",
         "--offline-mode",
     ]
-    runner(
-        [*blender_package_prefix, "--command", "extension", "validate", str(root)],
-        root,
-    )
-    runner(
-        [
-            *blender_package_prefix,
-            "--command",
-            "extension",
-            "build",
-            "--split-platforms",
-            "--source-dir",
-            str(root),
-            "--output-dir",
-            str(output),
-            "--verbose",
-        ],
-        root,
-    )
+    with tempfile.TemporaryDirectory(prefix="fluidsim-package-profile-") as profile:
+        env = _blender_process_environment(os.environ, profile_dir=Path(profile))
+        runner(
+            [*blender_package_prefix, "--command", "extension", "validate", str(root)],
+            root,
+            env=env,
+        )
+        runner(
+            [
+                *blender_package_prefix,
+                "--command",
+                "extension",
+                "build",
+                "--split-platforms",
+                "--source-dir",
+                str(root),
+                "--output-dir",
+                str(output),
+                "--verbose",
+            ],
+            root,
+            env=env,
+        )
     packages = sorted(output.glob(f"{source.extension_id}-{source.version}-*.zip"))
     expected_names = {
         f"{source.extension_id}-{source.version}-{platform.replace('-', '_')}.zip"
@@ -923,31 +953,14 @@ def run_installed_script(
     if profile_dir.exists():
         shutil.rmtree(profile_dir)
     profile_dir.mkdir(parents=True)
-    env = _blender_process_environment(os.environ)
-    isolated_paths = {
-        "BLENDER_USER_CONFIG": profile_dir / "config",
-        "BLENDER_USER_SCRIPTS": profile_dir / "scripts",
-        "BLENDER_USER_EXTENSIONS": profile_dir / "extensions",
-        "BLENDER_USER_DATAFILES": profile_dir / "datafiles",
-        "PYTHONUSERBASE": profile_dir / "python-user-base",
-        "WARP_CACHE_PATH": profile_dir / "warp-cache",
-        "TEMP": profile_dir / "temp",
-        "TMP": profile_dir / "temp",
-    }
-    for path in isolated_paths.values():
-        path.mkdir(parents=True, exist_ok=True)
+    env = _blender_process_environment(
+        {**os.environ, **(extra_env or {})}, profile_dir=profile_dir)
     if runner is _run:
         _provision_smoke_warp(
-            isolated_paths["BLENDER_USER_EXTENSIONS"]
-            / ".user"
-            / "fluidsim_ci"
-            / "fluidsim_warp"
-            / ".local"
+            Path(env["BLENDER_USER_EXTENSIONS"])
+            / ".user" / "fluidsim_ci" / "fluidsim_warp" / ".local"
         )
-    env.update({key: str(path) for key, path in isolated_paths.items()})
     env["FLUIDSIM_CI_REPOSITORY"] = str(repo_dir)
-    if extra_env:
-        env.update({str(key): str(value) for key, value in extra_env.items()})
 
     cwd = script.parent
     runner(
@@ -1027,21 +1040,9 @@ def run_installed_smoke(
             raise RuntimeError(f"installed smoke did not record two passing runs: {report}")
 
     profile_dir = Path(repo_dir).resolve().parent / f"{Path(repo_dir).name}-profile"
-    env = _blender_process_environment(os.environ)
-    isolated_paths = {
-        "BLENDER_USER_CONFIG": profile_dir / "config",
-        "BLENDER_USER_SCRIPTS": profile_dir / "scripts",
-        "BLENDER_USER_EXTENSIONS": profile_dir / "extensions",
-        "BLENDER_USER_DATAFILES": profile_dir / "datafiles",
-        "PYTHONUSERBASE": profile_dir / "python-user-base",
-        "WARP_CACHE_PATH": profile_dir / "warp-cache",
-        "TEMP": profile_dir / "temp",
-        "TMP": profile_dir / "temp",
-    }
-    env.update({key: str(path) for key, path in isolated_paths.items()})
+    env = _blender_process_environment(
+        {**os.environ, **(extra_env or {})}, profile_dir=profile_dir)
     env["FLUIDSIM_CI_REPOSITORY"] = str(Path(repo_dir).resolve())
-    if extra_env:
-        env.update({str(key): str(value) for key, value in extra_env.items()})
     runner(
         [
             str(blender),
