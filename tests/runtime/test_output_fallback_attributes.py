@@ -48,6 +48,9 @@ def world(monkeypatch):
         def hide_set(self, hidden, **_kwargs):
             self.hidden = hidden
 
+        def hide_get(self, **_kwargs):
+            return self.hidden
+
     objects = {}
 
     def ensure(_scene, name, *_args):
