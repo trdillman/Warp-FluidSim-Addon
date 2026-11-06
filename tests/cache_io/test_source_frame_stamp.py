@@ -32,10 +32,13 @@ class _Object(dict):
         self.name_full = key
         self.library = None
         self.type = "EMPTY"
+        self.hide_viewport = False
         self.data = SimpleNamespace(points=())
         self.matrix_world = _IDENTITY
         self.fluidsim = SimpleNamespace(
             role=role,
+            enabled=True,
+            source_ui_schema_version=3,
             friction=0.5,
             bl_rna=SimpleNamespace(properties=properties),
         )
@@ -209,7 +212,52 @@ def test_native_force_reference_orientation_contributes():
 
 
 def test_height_profile_pixel_edit_contributes():
-    domain = _Object('domain', role='DOMAIN')
+    domain = _Object('domain', role='NONE')
+    image = SimpleNamespace(size=(2, 2), pixels=[0.0, 0., 0., 1.] * 4)
+    domain.fluidsim_domain = SimpleNamespace(
+        height_enabled=True, height_back_mode='PROFILE', height_profile_image=image,
+        height_profile_scale=1.)
+    scene = _scene(domain)
+    scene.fluidsim = SimpleNamespace(domain_object=domain)
+    from fluidSim_warp_blender51.blender.cache_identity import source_signature
+    before = source_frame_stamp(scene, None, 1)
+    before_signature = source_signature(scene)
+    image.pixels[0] = 1.0
+    assert source_frame_stamp(scene, None, 1) != before
+    assert source_signature(scene) != before_signature
+
+
+@pytest.mark.parametrize("inactive", ["disabled", "hidden"])
+@pytest.mark.parametrize("exists", [False, True])
+def test_inactive_volume_does_not_read_or_hash_external_bytes(tmp_path, inactive, exists):
+    owner = _Object('source', role='SOURCE')
+    owner.fluidsim.source_region_kind = 'VOLUME_GRID'
+    volume = _Object('volume', role='NONE')
+    volume.type = 'VOLUME'
+    path = tmp_path / 'unused.vdb'
+    if exists:
+        path.write_bytes(b'initial')
+    volume.data = SimpleNamespace(filepath=str(path), grids=SimpleNamespace(frame_filepath=''))
+    owner.fluidsim.volume_input_object = volume
+    if inactive == 'disabled':
+        owner.fluidsim.enabled = False
+    else:
+        owner.hide_viewport = True
+    scene = _scene(owner, volume)
+    from fluidSim_warp_blender51.blender.cache_identity import source_signature
+    before = source_frame_stamp(scene, None, 1)
+    before_signature = source_signature(scene)
+    path.write_bytes(b'changed unused content')
+    assert source_frame_stamp(scene, None, 1) == before
+    assert source_signature(scene) == before_signature
+    owner.fluidsim.enabled = True
+    owner.hide_viewport = False
+    assert source_frame_stamp(scene, None, 1) != before
+    assert source_signature(scene) != before_signature
+
+
+def test_unselected_domain_profile_does_not_contribute():
+    domain = _Object('other-domain', role='NONE')
     image = SimpleNamespace(size=(2, 2), pixels=[0.0, 0., 0., 1.] * 4)
     domain.fluidsim_domain = SimpleNamespace(
         height_enabled=True, height_back_mode='PROFILE', height_profile_image=image,
@@ -217,4 +265,18 @@ def test_height_profile_pixel_edit_contributes():
     scene = _scene(domain)
     before = source_frame_stamp(scene, None, 1)
     image.pixels[0] = 1.0
+    assert source_frame_stamp(scene, None, 1) == before
+
+
+def test_hidden_automatic_seed_points_still_follow_seed_consumer():
+    owner = _mesh_object('hidden-seed')
+    owner.fluidsim.role = 'SOURCE'
+    owner.fluidsim.auto_inject_seed = True
+    owner.fluidsim.source_region_kind = 'VOLUME_GRID'
+    owner.hide_viewport = True
+    # Production excludes hidden source plans, but prepare_auto_seeds still
+    # consumes enabled seed points. The inactive volume path must stay unused.
+    scene = _scene(owner)
+    before = source_frame_stamp(scene, None, 1)
+    owner.data.vertices[0].co = (0, 0, 2)
     assert source_frame_stamp(scene, None, 1) != before
