@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased cache input identity repair
+## 4.1.0 — Static colliders, rigid contact and five new demos
+
+### Changes
 
 - Newly baked cache v3 manifests declare input identity schema 2. Source and
   frame identities include evaluated triangle connectivity, point coordinates,
@@ -12,10 +14,6 @@
   missing provenance is never inferred from the current scene.
 - Frame playback verifies and parses one immutable byte snapshot, preventing a
   concurrent file replacement from substituting unverified payload bytes.
-
-## 4.1.0 — Static colliders, rigid contact and five new demos
-
-### Changes
 
 - **Warp 1.19.0** is now the build Install Warp downloads (same CUDA 13 build and
   driver floor as 1.18). Warp 1.17.0 and 1.18.0 still load, with a warning.
