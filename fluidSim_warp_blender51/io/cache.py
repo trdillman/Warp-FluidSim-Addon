@@ -743,7 +743,14 @@ def _read_v3_frame(base_dir: str, frame: int) -> dict | None:
     # Verify and parse the same immutable bytes. Reopening the pathname after
     # verification permits a concurrent replacement to bypass the checksum.
     try:
-        snapshot = path.read_bytes()
+        with path.open("rb") as handle:
+            actual_size = os.fstat(handle.fileno()).st_size
+            if actual_size != entry.frame_size:
+                raise ValueError(f"frame {frame} size mismatch for {path}: "
+                                 f"{actual_size} != {entry.frame_size}")
+            # The opened file can grow after fstat. Read at most one byte past
+            # the committed size, then reject any changed-length snapshot.
+            snapshot = handle.read(entry.frame_size + 1)
     except OSError as exc:
         raise ValueError(f"frame {frame} is missing or unreadable: {path}") from exc
     if len(snapshot) != entry.frame_size:

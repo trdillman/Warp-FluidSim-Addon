@@ -639,3 +639,86 @@ def test_frame_parses_the_verified_snapshot_when_path_is_replaced(
             assert np.all(replaced['positions'] == 42)
     else:
         assert frame_path.read_bytes() == b'unverified replacement'
+
+
+def _intercept_frame_reads(monkeypatch, frame_path, before_read):
+    original_open = Path.open
+
+    class FrameReader:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def fileno(self):
+            return self.handle.fileno()
+
+        def read(self, size=-1):
+            before_read(size)
+            return self.handle.read(size)
+
+    def intercepted_open(path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        if path == frame_path:
+            return FrameReader(handle)
+        return handle
+
+    monkeypatch.setattr(Path, 'open', intercepted_open)
+    return original_open
+
+
+def test_oversized_frame_is_refused_before_reading_body(tmp_path, monkeypatch):
+    _write_v3_cache(tmp_path, _frame_npz())
+    frame_path = tmp_path / 'frames' / 'frame_000001.npz'
+    with frame_path.open('r+b') as handle:
+        handle.truncate(1 << 30)  # Sparse corruption; never allocate/read its body.
+
+    def reject_body_read(_size):
+        pytest.fail('oversized frame body was read before its size was refused')
+
+    _intercept_frame_reads(monkeypatch, frame_path, reject_body_read)
+    with pytest.raises(ValueError, match='size mismatch'):
+        cache.read_frame(str(tmp_path), 1)
+
+
+@pytest.mark.parametrize('size_delta', [-1, 20])
+def test_frame_changed_after_opened_size_check_uses_bounded_read(
+        tmp_path, monkeypatch, size_delta):
+    _write_v3_cache(tmp_path, _frame_npz())
+    frame_path = tmp_path / 'frames' / 'frame_000001.npz'
+    expected_size = frame_path.stat().st_size
+    original_open = Path.open
+    reads = []
+
+    def resize_before_read(size):
+        assert size == expected_size + 1, 'snapshot read must be bounded'
+        reads.append(size)
+        with original_open(frame_path, 'r+b') as writer:
+            writer.truncate(expected_size + size_delta)
+
+    _intercept_frame_reads(monkeypatch, frame_path, resize_before_read)
+    with pytest.raises(ValueError, match='size mismatch'):
+        cache.read_frame(str(tmp_path), 1)
+    assert reads == [expected_size + 1]
+
+
+def test_path_replacement_after_open_reads_the_original_handle(tmp_path, monkeypatch):
+    _write_v3_cache(tmp_path, _frame_npz())
+    frame_path = tmp_path / 'frames' / 'frame_000001.npz'
+    expected_size = frame_path.stat().st_size
+    replacement_path = tmp_path / 'replacement.npz'
+    replacement = _frame_npz()
+    replacement['positions'].fill(42)
+    np.savez(replacement_path, **replacement)
+
+    def replace_before_read(size):
+        assert size == expected_size + 1, 'snapshot read must be bounded'
+        replacement_path.replace(frame_path)
+
+    _intercept_frame_reads(monkeypatch, frame_path, replace_before_read)
+    result = cache.read_frame(str(tmp_path), 1)
+    assert np.all(result['positions'] == 0)
