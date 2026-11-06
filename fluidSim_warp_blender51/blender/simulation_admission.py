@@ -693,8 +693,13 @@ class SimulationAdmission:
         try:
             self.session.force_release(scene=scene, preserve_error=True)
         except Exception as cleanup_error:
-            error.add_note(f"Replacement cleanup also failed: {cleanup_error!r}")
-        scene.fluidsim.status = "Replacement failed after cutover; solver released"
+            detail = f"Replacement cleanup also failed: {cleanup_error!r}"
+            error.add_note(detail)
+            self.session.set_error(scene, f"{error!r}; {detail}")
+            scene.fluidsim.status = (
+                "Replacement failed after cutover; solver inactive, cleanup incomplete")
+        else:
+            scene.fluidsim.status = "Replacement failed after cutover; solver released"
 
     def initialize(self, scene, *, depsgraph=None, ignore_memory_safeguard=False,
                    frozen_input_state=None):

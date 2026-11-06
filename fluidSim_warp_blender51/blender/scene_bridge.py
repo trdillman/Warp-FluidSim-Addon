@@ -224,23 +224,41 @@ class Session:
 
     def _clear_runtime(self):
         solver = self.solver
+        inputs = self.scene_inputs
         device = getattr(solver, "device", None) or self.device
+        # Sever authority before fallible resource cleanup. Every remaining
+        # owner is attempted even if a solver subsystem fails to release.
         self.solver = None
-        if solver is not None:
-            if hasattr(solver, "release"):
-                solver.release()
         self.profiler = None
         self.begin_run(reported_growth_capacity=0)
-        self.scene_inputs.clear()
         self.device = None
         self.bind_scene(None, "")
         self.admitted_effects = ()
         self.sync_refusal = ""
         self._clear_capacity_plan()
         self.particle_capacity_notice_scene_identity = None
+        failures = []
+        try:
+            if solver is not None and hasattr(solver, "release"):
+                solver.release()
+        except Exception as exc:
+            failures.append(exc)
+        try:
+            inputs.clear()
+        except Exception as exc:
+            failures.append(exc)
+            # A failed input owner cannot become the next run's gather state.
+            self.scene_inputs = SceneInputs()
         del solver
         from ..sim.memory_safety import release_cuda_memory
-        release_cuda_memory(device)
+        try:
+            release_cuda_memory(device)
+        except Exception as exc:
+            failures.append(exc)
+        if failures:
+            raise RuntimeError(
+                "Solver inactive; resource cleanup incomplete: "
+                + "; ".join(str(exc) for exc in failures)) from failures[0]
 
     def set_error(self, scene, message):
         self.error = str(message)
