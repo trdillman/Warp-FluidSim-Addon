@@ -1237,6 +1237,11 @@ def request_scene_update(scene, action: SceneUpdate):
                 SceneUpdate.SURFACE,
                 SceneUpdate.WHITEWATER,
             }:
+                if getattr(scene.fluidsim, "cache_playback_enabled", False):
+                    from . import playback
+
+                    playback.refresh_current_cache_output(scene)
+                    return
                 # Cache/export playback leaves Blender output objects behind
                 # even when no live solver session exists. Keep their material
                 # and visibility settings responsive without inventing geometry.
