@@ -233,7 +233,7 @@ def _legacy_footprint(legacy_plan, compiler, context, settings):
 def capture_snapshot(
         scene, settings, resources, *, depsgraph=None, scene_identity=None,
         scene_key="", effect_builder=lambda _scene: (),
-        additional_transaction_bytes=0):
+        additional_transaction_bytes=0, frozen_input_state=None):
     """Gather and compile one evaluated scene exactly once.
 
     The compiler is always released.  The returned SceneInputs owner is either
@@ -251,6 +251,8 @@ def capture_snapshot(
     inputs = SceneInputs()
     compiler = SourceCompiler()
     try:
+        if frozen_input_state is not None:
+            inputs.restore_frozen_state(frozen_input_state)
         evaluation = inputs.evaluate(
             scene, depsgraph, device=settings.device, staged=True,
             include_auto_seeds=True)
@@ -395,7 +397,7 @@ class SimulationAdmission:
 
     def _plan_scene(
             self, scene, settings, resources, *, depsgraph=None,
-            additional_transaction_bytes=0):
+            additional_transaction_bytes=0, frozen_input_state=None):
         from . import cache_identity
 
         return capture_snapshot(
@@ -404,6 +406,8 @@ class SimulationAdmission:
             scene_key=cache_identity.scene_key(scene),
             effect_builder=self._effect_builder,
             additional_transaction_bytes=additional_transaction_bytes,
+            **({"frozen_input_state": frozen_input_state}
+               if frozen_input_state is not None else {}),
         )
 
     def _replan_snapshot(
@@ -434,7 +438,7 @@ class SimulationAdmission:
     def _preflight(self, scene, *, depsgraph=None, runtime_capacity=None,
                    ignore_memory_safeguard=False,
                    defer_particle_growth=False, operation=None,
-                   applied_allocation=None):
+                   applied_allocation=None, frozen_input_state=None):
         from ..sim.memory_safety import vram_snapshot
 
         if operation is None:
@@ -460,7 +464,9 @@ class SimulationAdmission:
         live_solver_bytes = self._live_solver_bytes()
         snapshot = self._plan_scene(
             scene, settings, resources, depsgraph=depsgraph,
-            additional_transaction_bytes=live_solver_bytes)
+            additional_transaction_bytes=live_solver_bytes,
+            **({"frozen_input_state": frozen_input_state}
+               if frozen_input_state is not None else {}))
         snapshot.settings = settings
         if not hasattr(snapshot, "frame_start"):
             snapshot.frame_start = int(getattr(scene, "frame_start", 1))
@@ -673,7 +679,8 @@ class SimulationAdmission:
         if callable(clear):
             clear()
 
-    def initialize(self, scene, *, depsgraph=None, ignore_memory_safeguard=False):
+    def initialize(self, scene, *, depsgraph=None, ignore_memory_safeguard=False,
+                   frozen_input_state=None):
         from ..diagnostics.profiler import Profiler
         from . import cache_identity
 
@@ -686,7 +693,9 @@ class SimulationAdmission:
                 else "INITIALIZE")
             snapshot, initial_growth = self._preflight(
                 scene, depsgraph=depsgraph, operation=operation,
-                ignore_memory_safeguard=ignore_memory_safeguard)
+                ignore_memory_safeguard=ignore_memory_safeguard,
+                **({"frozen_input_state": frozen_input_state}
+                   if frozen_input_state is not None else {}))
             validate = getattr(snapshot, "assert_evaluation_valid", None)
             if callable(validate):
                 validate(scene)
