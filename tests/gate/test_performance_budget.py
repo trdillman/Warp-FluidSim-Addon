@@ -216,7 +216,7 @@ def test_solver_timer_contract_is_required_exactly(value):
 
 
 def test_every_demo_is_compared_with_the_previous_release():
-	assert set(REFERENCE_VERSIONS.values()) == {"3.2.1"}
+	assert set(REFERENCE_VERSIONS.values()) == {"4.0.1"}
 
 
 def test_wrong_reference_is_invalid():
