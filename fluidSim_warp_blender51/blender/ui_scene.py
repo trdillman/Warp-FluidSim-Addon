@@ -909,17 +909,9 @@ class FLUIDSIM_PT_scene_outputs(FluidSimScenePanel, bpy.types.Panel):
 
     def draw(self, context):
         layout = _layout(self)
-        fs = context.scene.fluidsim
-        surface = fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"}
-        particles = fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"}
-        active = []
-        if surface:
-            active.append("Surface")
-        if particles:
-            active.append("Particles")
-        if _whitewater_enabled(context) and fs.show_whitewater:
-            active.append("Whitewater")
-        layout.label(text="Visible: " + (", ".join(active) if active else "None"), icon="HIDE_OFF")
+        from .liquid_display import viewport_summary
+
+        layout.label(text="Liquid Viewport: " + viewport_summary(context.scene), icon="HIDE_OFF")
         # Basic master switch for the export inventory (spec §8); the
         # per-attribute toggles live in the Advanced-only children.
         draw_property(layout, _domain_owner(context), "export_attributes")
@@ -1041,6 +1033,7 @@ def draw_cache_playback(layout, context):
             layout.operator("fluidsim.preview_pause", text="Pause", icon="PAUSE")
         else:
             layout.operator("screen.animation_play", text="Play", icon="PLAY")
+        layout.operator("fluidsim.cache_playback_stop", text="Exit Cache Playback", icon="LOOP_BACK")
     else:
         layout.operator("fluidsim.cache_preview_start", text="Play Cache", icon="PLAY")
     layout.label(text="Cache playback does not allocate the solver.", icon="INFO")

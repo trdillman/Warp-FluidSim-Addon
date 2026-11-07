@@ -17,7 +17,7 @@ import bpy
 
 from ..panels import draw_pending_apply, draw_transport, runtime_ui_state
 from .scene_access import active_domain_settings
-from .ui_common import activity_ui_state, draw_status_message
+from .ui_common import activity_ui_state, draw_activity_status, draw_status_message
 from .ui_stages import (
     draw_guided_setup_buttons,
     draw_quality,
@@ -140,7 +140,7 @@ class FLUIDSIM_PT_header_popover(bpy.types.Panel):
 
         state = activity_ui_state(scene)
         runtime_ready, runtime_message = runtime_ui_state()
-        layout.label(text=state["label"], icon=state["icon"])
+        draw_activity_status(layout, scene, state)
 
         domain = active_domain_settings(scene)
         if domain is None:
