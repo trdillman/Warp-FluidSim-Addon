@@ -139,7 +139,7 @@ def test_probe_loads_newer_untested_warp_with_a_warning(monkeypatch):
     monkeypatch.setattr(warp_runtime, "_import_warp", lambda: NewerWarp)
     probe = warp_runtime.probe_runtime(force=True)
     assert probe.available is True
-    assert "newer than the certified 1.19.0" in probe.warning
+    assert "newer than the locked 1.19.0" in probe.warning
     ready, status = warp_runtime.runtime_status_for_device("cuda:0", probe=probe)
     assert ready is True
     assert status.endswith("(untested Warp version)")

@@ -19,6 +19,7 @@ Run it with the Python that has the Warp you want to test on its path.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -28,7 +29,12 @@ import sys
 import tarfile
 import tempfile
 import time
+import uuid
 from pathlib import Path
+
+_qspec = importlib.util.spec_from_file_location("_qualification", Path(__file__).with_name("gate") / "qualification.py")
+q = importlib.util.module_from_spec(_qspec)
+_qspec.loader.exec_module(q)
 
 WORKLOADS = ("plain", "visc", "st", "visc_st")
 EMIT_FRAMES = 4
@@ -41,6 +47,8 @@ def _inventory(root):
     paths = list((root / "fluidSim_warp_blender51").rglob("*"))
     paths += [root / "demos" / f"{demo}.blend" for demo in
               ("dam_break", "crown_splash", "paddle_stir", "chromatic_vortex")]
+    paths += list((root / "tools/gate").rglob("*.py"))
+    paths += list((root / "tools/demos").rglob("*"))
     paths += [root / "tools" / name for name in
               ("repo_addon_loader.py", "benchmark_demo_trial.py", "benchmark_versions.py",
                "performance_budget.py", "run_production_gate.py")]
@@ -65,6 +73,10 @@ def _snapshot_candidate(source, destination):
     for name in ("repo_addon_loader.py", "benchmark_demo_trial.py", "benchmark_versions.py",
                  "performance_budget.py", "run_production_gate.py"):
         shutil.copy2(source / "tools" / name, destination / "tools" / name)
+    shutil.copytree(source / "tools/gate", destination / "tools/gate")
+    if (source / "tools/demos").is_dir():
+        shutil.copytree(source / "tools/demos", destination / "tools/demos",
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     if before != _inventory(source) or before != _inventory(destination):
         raise RuntimeError("candidate changed during snapshot; rerun with stable source")
     return before
@@ -123,6 +135,37 @@ def _validate_trial_identity(run, root, inventory):
         raise RuntimeError('observed child source/addon/process identity differs from selected snapshot')
 
 
+def _measurement_context(candidate, blender, out_dir, env):
+    context_path = env.get("FLUIDSIM_QUALIFICATION_CONTEXT")
+    if context_path:
+        context = json.loads(Path(context_path).read_text(encoding="utf-8"))
+        q.check_source(candidate, context["frozen_source"], context["generated_semantics"],
+                       context["generated_semantics"])
+        q.validate_binding(context, context)
+        return context
+    frozen = q.freeze_source(candidate)
+    runtime = q.observe_runtime(candidate, blender, env.get("BLENDER_PY", ""), env,
+                                out_dir / "admission", frozen["verifier_fingerprint"])
+    return dict(runtime, frozen_source=frozen, run_id=uuid.uuid4().hex, gitStatus=[],
+                source_fingerprint=frozen["source_fingerprint"],
+                verifier_fingerprint=frozen["verifier_fingerprint"], generated_semantics={},
+                environment_request=str(out_dir / "admission/environment-request.json"))
+
+
+def _snapshot_measurement_sources(candidate, demo, context, payload):
+    semantics = {}
+    name = f'demos/{demo}.blend'
+    if name in context.get('generated_semantics', {}):
+        try:
+            observed = json.loads(payload.with_suffix('.semantics.json').read_text())['semantic_fingerprint']
+        except (OSError, ValueError, KeyError) as exc:
+            raise RuntimeError('missing snapshot semantic observation') from exc
+        if observed != context['generated_semantics'][name]:
+            raise RuntimeError('measured snapshot semantic identity differs from admission')
+        semantics[name] = observed
+    return q.measurement_sources(candidate, demo, semantics)
+
+
 def demo_budget_main(argv):
     """Release lane: exact saved workloads, pinned references, fresh ABBA trials."""
     from tools.performance_budget import (
@@ -166,22 +209,37 @@ def demo_budget_main(argv):
     out_dir = Path(args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     summary_path = out_dir / "summary.json"
+    evidence_dir = out_dir / "runs" / uuid.uuid4().hex
+    evidence_dir.mkdir(parents=True, exist_ok=False)
+    if summary_path.exists():
+        shutil.copy2(summary_path, evidence_dir / "prior-summary.json")
     summary_path.unlink(missing_ok=True)
-    env = os.environ.copy()
+    from tools.release.build_extension import _blender_process_environment
+    env = _blender_process_environment(os.environ, profile_dir=evidence_dir / 'blender-profile',
+                                       allow_source_imports=True)
+    for key in ('BLENDER_USER_RESOURCES', 'PYTHONHOME', 'PYTHONSTARTUP'):
+        env.pop(key, None)
     env["PYTHONNOUSERSITE"] = "1"
-    env["BLENDER_USER_EXTENSIONS"] = str(out_dir / "blender_user_extensions")
+    context = _measurement_context(candidate, args.blender, out_dir, env)
+    env["FLUIDSIM_ENVIRONMENT_REQUEST"] = context["environment_request"]
+    for run in carried_runs:
+        expected = dict(context, source_fingerprint=q.measurement_sources(
+            candidate, run['workload'], context.get('generated_semantics')))
+        q.validate_binding(run, expected)
+        q.retained_trial(run)
     runs = list(carried_runs)
     inventory = None
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=candidate, text=True).strip()
-    status = subprocess.check_output(["git", "status", "--porcelain"], cwd=candidate, text=True)
     def checkpoint(verdict):
-        report = dict(verdict, gitHead=head, gitStatus=status.splitlines(), referenceCommits=REFERENCE_COMMITS,
+        report = dict(context, **verdict, gitHead=head, gitStatus=[], referenceCommits=REFERENCE_COMMITS,
+                      retained_summary=str(evidence_dir / "summary.json"),
                       trials=args.trials, frames=args.frames, runs=runs,
                       candidateInventorySha256=inventory,
                       demoMeasuredAt={demo: measured_at.get(demo, head) for demo in REFERENCE_VERSIONS},
                       demoInventory={demo: inventories.get(demo, inventory)
                                      for demo in REFERENCE_VERSIONS},
                       measurementKind="saved_demo_scene_bridge_with_stage_sync")
+        _checkpoint_summary(evidence_dir / "summary.json", report)
         _checkpoint_summary(summary_path, report)
     checkpoint({'passed': False, 'status': 'incomplete'})
     try:
@@ -203,19 +261,20 @@ def demo_budget_main(argv):
                 if demo not in measure:
                     continue
                 blend = candidate / "demos" / f"{demo}.blend"
-                payload = out_dir / f"{demo}_settings.json"
+                payload = evidence_dir / f"{demo}_settings.json"
                 extract_command = [args.blender, "--python-use-system-env", "--background",
                                    "--factory-startup", "--python-exit-code", "1", "--python",
                                    str(candidate / "tools" / "benchmark_demo_trial.py"), "--",
                                    "--extract", str(candidate), str(blend), str(payload)]
                 _run_trial(extract_command, payload, env=env, cwd=candidate,
                            expect_marker="DEMO-SETTINGS-EXTRACT-PASS")
+                measured_sources = _snapshot_measurement_sources(candidate, demo, context, payload)
                 for block, slot, label in schedule:
                     root = roots[reference] if label == "baseline" else candidate
                     root_inventory = _inventory(root)
                     if _inventory(candidate) != inventory:
                         raise RuntimeError('candidate snapshot changed during measurement')
-                    out = out_dir / f"{demo}_b{block}_s{slot}_{label}.json"
+                    out = evidence_dir / f"{demo}_b{block}_s{slot}_{label}.json"
                     # Never accept a stale trial after an abnormal child exit.
                     out.unlink(missing_ok=True)
                     command = [args.blender, "--python-use-system-env", "--background",
@@ -229,21 +288,32 @@ def demo_budget_main(argv):
                         raise RuntimeError('candidate snapshot changed during measurement')
                     if run["version"] != (reference if label == "baseline" else _candidate_version(candidate)):
                         raise RuntimeError("runtime add-on version does not match selected checkout")
-                    run.update(label=label, round=block, slot=slot, workload=demo,
+                    if run.get('environment_fingerprint') != context['environment_fingerprint']:
+                        raise RuntimeError('observed child environment differs from qualification')
+                    run.update(source_fingerprint=measured_sources,
+                               verifier_fingerprint=context['verifier_fingerprint'], run_id=context['run_id'],
+                               gitStatus=[], label=label, round=block, slot=slot, workload=demo,
                                gitHead=REFERENCE_COMMITS[reference] if label == "baseline" else head,
                                candidateInventorySha256=inventory)
-                    out.write_text(json.dumps(run, indent=2), encoding="utf-8")
+                    q.atomic_json(out, run)
+                    run.update(trial_artifact=str(out), trial_sha256=q.sha256(out))
                     runs.append(run)
                     checkpoint({'passed': False, 'status': 'incomplete'})
                     print(f"{demo} block={block} slot={slot} {label}: trial recorded", flush=True)
                     if block == 1 and slot == 3 and not args.full_schedule:
                         early = evaluate_budget([r for r in runs if r["workload"] == demo],
                                                 demos=(demo,))
-                        status = early.get("demos", {}).get(demo, {}).get("status")
-                        if status in ("pass", "regression"):
-                            print(f"{demo}: early-stop {status} after the first ABBA and BAAB blocks",
+                        demo_status = early.get("demos", {}).get(demo, {}).get("status")
+                        if demo_status in ("pass", "regression"):
+                            print(f"{demo}: early-stop {demo_status} after the first ABBA and BAAB blocks",
                                   flush=True)
                             break
+        q.check_source(source_root, context['frozen_source'], context['generated_semantics'],
+                       context['generated_semantics'])
+        for run in runs:
+            q.validate_binding(run, dict(context, source_fingerprint=q.measurement_sources(
+                source_root, run['workload'], context['generated_semantics'])))
+            q.retained_trial(run)
         verdict = evaluate_budget(runs)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         verdict = {"passed": False, "status": "invalid", "error": str(exc)}

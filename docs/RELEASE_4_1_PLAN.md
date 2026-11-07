@@ -1,5 +1,11 @@
 # 4.1.0 Plan: Archive Review and Integration
 
+> Historical archive review, not the current release checklist. The November
+> stabilization status is in [REMEDIATION_STATUS_20261106.md](REMEDIATION_STATUS_20261106.md)
+> and qualification requirements are in [RELEASING.md](RELEASING.md).
+> The current target is Warp 1.19.0, not the historical 1.18.0 target below;
+> current GPU/GUI and final-package qualification remain outstanding.
+
 > Scope decision, 2026-11-01: ST-FLIP is permanently retired from all project
 > scope. Native GPU interop and particle-surface rendering APIs are reactivated
 > for recovered-source review and a new implementation/validation plan; their

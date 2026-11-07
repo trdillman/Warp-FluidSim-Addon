@@ -34,7 +34,7 @@ def _write_cache(base: Path, frames: int) -> None:
     manifest = cache_schema.CacheManifestV3.new(
         solver_version=VERSION_STRING, scene_key="key", settings_signature=SIG,
         source_signature=SOURCE_SIGNATURE, frame_start=1, frame_end=frames + 5,
-        source_schema_version=1, transfer_mode="FLIP",
+        source_schema_version=1, input_identity_schema_version=2, transfer_mode="FLIP",
         grid_spec={"resolution_divisions": 16, "voxel_size": 0.1,
                    "domain_size": [1.6, 1.6, 1.6], "leaf_dim": 8},
         narrow_band={"enabled": False, "band_voxels": 0.0},
@@ -169,3 +169,18 @@ def test_single_read_checkpoint_matches_a_file_read(tmp_path):
         checkpoint.read_checkpoint(path, expected_sha256=digest, expected_size=size + 1)
     with pytest.raises(ValueError, match="checkpoint checksum mismatch"):
         checkpoint.read_checkpoint(path, expected_sha256="0" * 64, expected_size=size)
+
+
+def test_legacy_identity_refused_before_checkpoint_or_scene_work(backend, monkeypatch):
+    from dataclasses import replace
+
+    path = cache_schema.manifest_path(backend.base)
+    manifest = cache_schema.load_manifest(path)
+    cache_schema.write_manifest_atomic(path, replace(manifest, input_identity_schema_version=0))
+    before = path.read_bytes()
+    backend._signatures_at = lambda *_args: pytest.fail('must refuse before evaluating the scene')
+    monkeypatch.setattr(production_bake, 'read_checkpoint', lambda *_a, **_k:
+                        pytest.fail('must refuse before checkpoint reads'))
+    decision = backend.resume_decision(SimpleNamespace())
+    assert decision.code == 'INPUT_IDENTITY_SCHEMA_REQUIRED'
+    assert path.read_bytes() == before

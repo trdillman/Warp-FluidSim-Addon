@@ -85,6 +85,7 @@ CAPACITY_RNA = {
 
 def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
     fake_bpy = types.ModuleType("bpy")
+    fake_bpy.app = SimpleNamespace(handlers=SimpleNamespace(persistent=lambda fn: fn, load_post=[]))
 
     class _Operator:
         _poll_message = ""
@@ -143,6 +144,10 @@ def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
     fake_bpy.types.Material = object
     fake_bpy.types.Image = object
     fake_bpy.path = SimpleNamespace(abspath=lambda value: value)
+    fake_bpy.data = SimpleNamespace(collections={}, objects={})
+    output = sys.modules.get("fluidSim_warp_blender51.blender.output_publication")
+    if output is not None:
+        monkeypatch.setattr(output, "bpy", fake_bpy)
     fake_bpy.context = SimpleNamespace(
         preferences=SimpleNamespace(
             addons={
@@ -1631,7 +1636,8 @@ def test_output_refresh_updates_existing_outputs_without_active_solver(monkeypat
         fake_viewport.refresh_existing_output_settings,
     )
     scene_bridge.session().solver = None
-    scene = SimpleNamespace(fluidsim=SimpleNamespace(status=""))
+    scene = SimpleNamespace(fluidsim=SimpleNamespace(
+        status="", cache_playback_enabled=False))
 
     _pending_module().request_scene_update(scene, _pending_module().SceneUpdate.OUTPUT)
 
@@ -2204,7 +2210,8 @@ def _draw_launcher(
         lambda _device, probe=None: (runtime_ready, "CUDA ready" if runtime_ready else "no CUDA"),
     )
     monkeypatch.setattr(
-        scene_bridge, "session", lambda: SimpleNamespace(active=session_active)
+        scene_bridge, "session", lambda: SimpleNamespace(
+            active=session_active, current_error=lambda _scene: "")
     )
     context = SimpleNamespace(
         scene=SimpleNamespace(fluidsim=SimpleNamespace(live=playing)),
@@ -4828,9 +4835,19 @@ def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
     assert effect_workspace.session_retrust_pending(untrusted) is False
 
     # Opting the instance into session trust suppresses the re-prompt for it...
-    effect_workspace.set_session_trust("effect-1", True)
-    assert effect_workspace.session_trust_enabled("effect-1") is True
+    effect_workspace.set_session_trust(untrusted, True)
+    assert effect_workspace.session_trust_enabled(untrusted) is True
     assert effect_workspace.reprompt_trust_required(untrusted) is False
+    replacement = SimpleNamespace(instance_id="effect-1", trust_state=TrustState.UNTRUSTED_IMPORTED.value)
+    assert effect_workspace.reprompt_trust_required(replacement) is True
+    scene = SimpleNamespace(fluidsim_effects=SimpleNamespace(items=[replacement]))
+    calls = []
+    monkeypatch.setattr(effect_workspace.effects, "trust_effect", lambda *args: calls.append(args))
+    assert effect_workspace.apply_session_trust(scene) == 0
+    assert calls == []
+    untrusted.id_data = object()
+    assert effect_workspace.session_trust_enabled(untrusted) is False
+    del untrusted.id_data
     # ...but the SHA gate stays: the drifted digest is flagged, not auto-run.
     assert effect_workspace.session_retrust_pending(untrusted) is True
     # Scope is per-instance: the sibling still needs the prompt.
@@ -4840,8 +4857,10 @@ def test_session_trust_suppresses_reprompt_within_a_session(monkeypatch):
     assert effect_workspace.reprompt_trust_required(trusted) is False
     assert effect_workspace.session_retrust_pending(trusted) is False
 
-    effect_workspace.set_session_trust("effect-1", False)
-    assert effect_workspace.session_trust_enabled("effect-1") is False
+    effect_workspace._clear_session_trust_on_load(None)
+    assert effect_workspace.session_trust_enabled(untrusted) is False
+    effect_workspace.set_session_trust(untrusted, False)
+    assert effect_workspace.session_trust_enabled(untrusted) is False
     assert effect_workspace.reprompt_trust_required(untrusted) is True
 
 

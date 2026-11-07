@@ -1,0 +1,25 @@
+{
+  "status": "passed",
+  "before_save": {
+    "owner_active": true,
+    "prk_count": 5984,
+    "preview_output_hidden": true
+  },
+  "after_load": {
+    "owner_none": true,
+    "retirement_pending": false,
+    "retired_count": 0,
+    "restart_required": false,
+    "error": null,
+    "persistent_handler": true,
+    "output_visible": true
+  },
+  "restart": {
+    "initialize": "FINISHED",
+    "step": "FINISHED",
+    "count": 5984,
+    "owner_active": true,
+    "prk_count": 5984
+  },
+  "owner_module_sha256": "8ca4b40e96462585866ded85e832c5bb60537a8ccc871e348d54e30f0bb352d8"
+}

@@ -1,0 +1,16 @@
+{
+  "missing": {
+    "success": false,
+    "message": "missing.whl is not the locked Warp wheel for this computer. Download warp_lang-1.19.0-py3-none-win_amd64.whl from pypi.org/project/warp-lang/1.19.0/#files and choose that file",
+    "version": "",
+    "already_installed": false
+  },
+  "wrong_version": {
+    "success": false,
+    "message": "warp_lang-1.18.0-py3-none-win_amd64.whl is not the locked Warp wheel for this computer. Download warp_lang-1.19.0-py3-none-win_amd64.whl from pypi.org/project/warp-lang/1.19.0/#files and choose that file",
+    "version": "",
+    "already_installed": false
+  },
+  "preserved118": true,
+  "online_access": false
+}

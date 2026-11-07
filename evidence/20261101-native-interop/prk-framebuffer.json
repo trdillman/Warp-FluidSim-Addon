@@ -1,0 +1,44 @@
+{
+  "result": {
+    "samples": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      [
+        1.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      [
+        1.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "negative": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "count": 3,
+    "revision": 0,
+    "strategy_calls": 1
+  },
+  "error": null,
+  "close": "completed",
+  "blender_build": "fbe6228777e7",
+  "backend": "VULKAN",
+  "warp_version": "1.18.0",
+  "warp_path": "C:\\workspace\\interop-acceptance-20261101\\site-packages\\warp\\__init__.py",
+  "sdk_version": "0.1.0a3.dev0",
+  "sdk_path": "C:\\workspace\\interop-acceptance-20261101\\site-packages\\blender_vulkan_interop\\__init__.py",
+  "prk_version": "0.1.0",
+  "prk_path": "C:\\workspace\\interop-acceptance-20261101\\site-packages\\prk\\__init__.py",
+  "qualification": "synthetic GPU inputs; not solver lifecycle"
+}

@@ -50,3 +50,14 @@ Desktop.ini
 
 # graft local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Retained review evidence already tracked in master; other logs stay ignored.
+!/evidence/20261103-deck-integration/baseline-deck.log
+!/evidence/20261103-deck-integration/combined-final-focused.log
+!/evidence/20261103-deck-integration/combined-output-contracts.log
+!/evidence/20261103-deck-integration/final-lifecycle.log
+!/evidence/20261103-deck-integration/own-deck.log
+!/evidence/20261103-liquid-display-cycle/focused-pytest.log
+!/evidence/20261101-native-interop/broader-cpu-partial.log
+!/evidence/20261101-native-interop/parent-cpu-before-load-fix.log
+!/evidence/20261101-native-interop/parent-cpu-review.log

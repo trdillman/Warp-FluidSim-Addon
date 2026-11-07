@@ -404,7 +404,8 @@ def _draw_launcher(addon, monkeypatch, *, state_id="IDLE", owns_scene=False,
     monkeypatch.setattr(panels, "runtime_status_for_device", lambda _device, probe=None: (
         runtime_ready, status or ("CUDA ready" if runtime_ready else "no CUDA")))
     monkeypatch.setattr(
-        addon.scene_bridge, "session", lambda: SimpleNamespace(active=owns_scene))
+        addon.scene_bridge, "session", lambda: SimpleNamespace(
+            active=owns_scene, current_error=lambda _scene: status))
     context = SimpleNamespace(
         scene=_scene(status=status), screen=SimpleNamespace(is_animation_playing=False))
     panel = panels.FLUIDSIM_PT_viewport_status()
@@ -508,6 +509,10 @@ def _gate_lanes(monkeypatch, *, drop=None):
         "_run": run,
         "_reusable_budget_demos": reached_budget,
         "_env": lambda: {},
+        # This test executes lane dispatch only; qualification admission has
+        # separate real-source and environment negative-control coverage.
+        "_admit_qualification": lambda *_args: None,
+        "_finish_qualification": lambda *_args: None,
         "_clear_gate_manifest": lambda: None,
         "_print_gate_metadata": lambda *_args: None,
         "_check_no_tracked_npz": lambda: None,

@@ -82,6 +82,12 @@ def test_status_explains_a_property_with_no_settings_group(deck, monkeypatch):
 def _wheel(deck):
     operator = deck.wheel.FLUIDSIM_OT_radial_wheel()
     operator.handle = object()
+    context = deck.bpy.context
+    context.region = SimpleNamespace(width=1000, height=800)
+    operator.region = context.region
+    operator.centre = (500, 400)
+    operator.painted = (context.scene, 1000, 800, deck.bar._ui_scale(context),
+                        operator.centre, deck.wheel.stage_controls(context, "SETUP"))
     operator.reports = []
     operator.report = lambda kind, message: operator.reports.append((kind, message))
     return operator

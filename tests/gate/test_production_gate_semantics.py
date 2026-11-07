@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -17,6 +18,8 @@ SPEC.loader.exec_module(run_production_gate)
 
 def _stub_gate(monkeypatch, commands=None):
     labels = []
+    monkeypatch.setattr(run_production_gate, "_admit_qualification", lambda *args: None)
+    monkeypatch.setattr(run_production_gate, "_finish_qualification", lambda *args: None)
 
     def run(label, command, env=None, reject_output=False, expect_marker=None):
         labels.append(label)
@@ -106,10 +109,15 @@ def _write_passing_budget(monkeypatch, tmp_path, status="", diff="", head="abc12
                    rootInventorySha256=inventory if run['label'] == 'candidate' else 'b' * 64,
                    gitHead='abc123' if run['label'] == 'candidate' else REFERENCE_COMMITS[run['referenceVersion']],
                    candidateInventorySha256=inventory)
-    performance.write_text(json.dumps(dict(evaluate_budget(runs), gitHead="abc123",
-                                       candidateInventorySha256=_inventory(tmp_path),
-                                       runs=runs,
-                                       referenceCommits=REFERENCE_COMMITS)))
+    from qualification_fixtures import bind_report
+    report = dict(evaluate_budget(runs), gitHead="abc123",
+                  candidateInventorySha256=_inventory(tmp_path), runs=runs,
+                  referenceCommits=REFERENCE_COMMITS)
+    binding = bind_report(report, tmp_path)
+    monkeypatch.setattr(run_production_gate, "_QUALIFICATION", binding)
+    monkeypatch.setattr(run_production_gate, "_assert_receipt_inputs", lambda: None)
+    monkeypatch.setattr(run_production_gate, "_RUN_DIRECTORY", tmp_path / "run")
+    performance.write_text(json.dumps(report))
     manifest = tmp_path / "artifacts" / "production_gate_manifest.json"
     monkeypatch.setattr(run_production_gate, "ROOT", tmp_path)
     monkeypatch.setattr(run_production_gate, "GATE_MANIFEST", manifest)
@@ -187,17 +195,15 @@ def test_budget_flags_are_exclusive(capsys):
         run_production_gate.main(["--reuse-budget", "--measure-budget"])
 
 
-def test_reused_budget_survives_rebuilt_demo_bytes(monkeypatch, tmp_path):
-    manifest = _write_passing_budget(monkeypatch, tmp_path)
+def test_reused_budget_rejects_changed_demo_without_semantic_proof(monkeypatch, tmp_path):
+    _write_passing_budget(monkeypatch, tmp_path)
     (tmp_path / "demos").mkdir()
-    (tmp_path / "demos" / "dam_break.blend").write_bytes(b"rebuilt")
-
+    (tmp_path / "demos/dam_break.blend").write_bytes(b"rebuilt")
     import pytest
     with pytest.raises(RuntimeError, match="bytes changed"):
         run_production_gate._validate_performance_evidence()
-    run_production_gate._write_gate_manifest("blender-exe", "1.17.0", True)
-
-    assert json.loads(manifest.read_text(encoding="utf-8"))["performance_budget_reused"] is True
+    with pytest.raises(RuntimeError, match="source_fingerprint"):
+        run_production_gate._write_gate_manifest("blender-exe", "1.19.0", True)
 
 
 def test_reused_budget_rejects_modified_sources(monkeypatch, tmp_path):
@@ -380,8 +386,10 @@ def test_gate_blender_lanes_isolate_user_extensions(monkeypatch):
 
     assert run_production_gate.main(["--include-gui"]) == 0
 
-    private = run_production_gate.GATE_BLENDER_USER_EXTENSIONS
-    assert private.is_relative_to(ROOT / "artifacts")
+    record = json.loads((run_production_gate._RUN_DIRECTORY / "private_profile.json").read_text())
+    private = Path(record["profile_directory"]) / "extensions"
+    assert private.is_absolute()
+    assert private.is_dir()
     blender_lanes = [label for label, cmd in commands.items() if cmd[0] == "blender-exe"]
     assert len(blender_lanes) >= 20
     assert any("--factory-startup" in commands[label] for label in blender_lanes)
@@ -389,16 +397,38 @@ def test_gate_blender_lanes_isolate_user_extensions(monkeypatch):
         assert envs[label]["BLENDER_USER_EXTENSIONS"] == str(private), label
 
 
-def test_gate_keeps_a_caller_blender_profile(monkeypatch):
-    # Any BLENDER_USER_* variable overrides BLENDER_USER_RESOURCES, so the gate
-    # must not point extensions away from a caller's own clean profile.
-    monkeypatch.delenv("BLENDER_USER_EXTENSIONS", raising=False)
-    monkeypatch.setenv("BLENDER_USER_RESOURCES", "clean-profile")
-    assert "BLENDER_USER_EXTENSIONS" not in run_production_gate._env()
+def test_windows_profile_is_unique_created_and_outside_long_checkout(monkeypatch, tmp_path):
+    monkeypatch.setattr(run_production_gate.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(run_production_gate, "_RUN_DIRECTORY", tmp_path / "long-checkout" / "run")
+    first = run_production_gate._profile_directory(windows=True)
+    second = run_production_gate._profile_directory(windows=True)
+    assert first != second
+    for private in (first, second):
+        assert private.parent == tmp_path.resolve()
+        assert private.name.startswith("fsq-")
+        assert private.is_dir()
+        assert not private.is_relative_to(run_production_gate._RUN_DIRECTORY)
 
-    monkeypatch.delenv("BLENDER_USER_RESOURCES")
-    monkeypatch.setenv("BLENDER_USER_EXTENSIONS", "caller-extensions")
-    assert run_production_gate._env()["BLENDER_USER_EXTENSIONS"] == "caller-extensions"
+
+def test_gate_owns_profile_and_only_preserves_explicit_import_paths(monkeypatch, tmp_path):
+    monkeypatch.setattr(run_production_gate, "_RUN_DIRECTORY", tmp_path)
+    monkeypatch.setenv("BLENDER_USER_RESOURCES", "unsafe-caller-profile")
+    monkeypatch.setenv("BLENDER_USER_EXTENSIONS", "unsafe-caller-extensions")
+    monkeypatch.setenv("PYTHONPATH", "/configured/warp")
+    monkeypatch.setenv("PYTEST_PATH", "/configured/pytest")
+    monkeypatch.setenv("PYTHONHOME", "/foreign/python")
+    monkeypatch.setenv("PYTHONSTARTUP", "/foreign/startup.py")
+    env = run_production_gate._env()
+    record = json.loads((tmp_path / "private_profile.json").read_text())
+    private = Path(record["profile_directory"])
+    for key in ("BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_EXTENSIONS",
+                "BLENDER_USER_DATAFILES", "PYTHONUSERBASE", "WARP_CACHE_PATH",
+                "XDG_CACHE_HOME", "TEMP", "TMP", "TMPDIR"):
+        assert Path(env[key]).is_relative_to(private)
+        assert Path(env[key]).is_dir()
+    assert "BLENDER_USER_RESOURCES" not in env
+    assert "PYTHONHOME" not in env and "PYTHONSTARTUP" not in env
+    assert env["PYTHONPATH"].split(os.pathsep) == ["/configured/pytest", "/configured/warp"]
 
 
 def test_gate_refuses_an_uncertified_warp(monkeypatch, capsys):
@@ -512,7 +542,10 @@ def test_every_cuda_hiding_acceptance_script_runs_alone():
         path.relative_to(root).as_posix()
         for path in (root / "tests" / "acceptance").glob("blender_*.py")
         if 'os.environ["CUDA_VISIBLE_DEVICES"] = "-1"' in path.read_text(encoding="utf-8")}
-    assert hiding == run_production_gate.CUDA_HIDDEN_ACCEPTANCE
+    # Cache acceptance blocks importing Warp altogether and also needs its own
+    # interpreter, even though it does not set CUDA_VISIBLE_DEVICES itself.
+    no_warp = {"tests/acceptance/blender_paused_cache_output_acceptance.py"}
+    assert hiding | no_warp == run_production_gate.CUDA_HIDDEN_ACCEPTANCE
 
 
 def test_parallel_steps_print_in_order_and_raise_the_first_failure(monkeypatch, capsys):
@@ -555,20 +588,22 @@ def _budget_with_demo_heads(monkeypatch, tmp_path, *, head="def456", diff="", fr
     report["demoInventory"] = {demo: report["candidateInventorySha256"] for demo in DEMOS}
     if not passed:
         report.update(passed=False, status="invalid", demos={}, reasons=["older evaluator"])
+    from qualification_fixtures import retain
+    for run in report['runs']:
+        retain(run)
+    from tools.gate import qualification as q
+    q.atomic_json(report["retained_summary"], report)
     path.write_text(json.dumps(report), encoding="utf-8")
     return path, manifest
 
 
-def test_evaluator_only_change_rejudges_the_saved_runs(monkeypatch, tmp_path):
-    """A checker change re-judges the raw runs; it never needs a Blender run."""
-    path, _ = _budget_with_demo_heads(monkeypatch, tmp_path, diff="tools/performance_budget.py",
+def test_evaluator_change_requires_new_measurement(monkeypatch, tmp_path):
+    """A verifier change cannot promote a report from a different evaluator."""
+    _path, _ = _budget_with_demo_heads(monkeypatch, tmp_path, diff="tools/performance_budget.py",
                                       passed=False)
-    assert run_production_gate._reusable_budget_demos() == frozenset(DEMOS)
-
-    run_production_gate._rejudge_budget()
-
-    assert json.loads(path.read_text(encoding="utf-8"))["passed"] is True
-    assert run_production_gate._validate_performance_evidence(reuse=True)["passed"] is True
+    binding = dict(run_production_gate._QUALIFICATION, verifier_fingerprint="c" * 64)
+    monkeypatch.setattr(run_production_gate, "_QUALIFICATION", binding)
+    assert run_production_gate._reusable_budget_demos() == frozenset()
 
 
 def test_only_the_demo_whose_input_changed_is_remeasured(monkeypatch, tmp_path):

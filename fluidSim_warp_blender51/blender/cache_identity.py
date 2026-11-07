@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 import numpy as np
+
+from ..io.cache import INPUT_IDENTITY_SCHEMA_VERSION as INPUT_IDENTITY_SCHEMA_VERSION
 
 _HASHABLE_RNA_TYPES = frozenset({"BOOLEAN", "INT", "FLOAT", "STRING", "ENUM"})
 _SOURCE_SIGNATURE_IGNORED_RNA = frozenset({
@@ -11,6 +16,7 @@ _SOURCE_SIGNATURE_IGNORED_RNA = frozenset({
     "source_status_message",
     "source_status_emitted",
     "source_status_capacity_limited",
+    "mesh_error",
 })
 
 
@@ -72,11 +78,18 @@ def scene_key(scene) -> str:
         _settings_record(scene), _scene_object_records(scene))
 
 
-def _geometry_record(obj, depsgraph) -> dict:
+def _geometry_record(obj, depsgraph, *, point_input=False) -> dict:
     from .evaluated_geometry import EvaluatedGeometry
 
     geometry = EvaluatedGeometry(obj, depsgraph)
     evaluated = geometry.evaluated
+    particle_systems = getattr(evaluated, "particle_systems", ())
+    if point_input and particle_systems and len(particle_systems[0].particles):
+        particles = particle_systems[0].particles
+        coordinates = np.empty(len(particles) * 3, dtype=np.float32)
+        particles.foreach_get("location", coordinates)
+        return {"kind": "PARTICLES", "point_count": len(particles),
+                "point_bytes": coordinates.tobytes()}
     if getattr(evaluated, "type", None) == "MESH":
         with geometry.mesh(data_fallback=True, tolerate_release_error=True) as mesh:
             vertices = getattr(mesh, "vertices", ())
@@ -88,23 +101,202 @@ def _geometry_record(obj, depsgraph) -> dict:
                 "vertex_count": len(vertices),
                 "vertex_bytes": coords.tobytes(),
                 "polygon_count": len(getattr(mesh, "polygons", ())),
+                "topology": _mesh_topology(mesh),
             }
     data = getattr(evaluated, "data", None)
+    points = getattr(data, "points", ())
+    coordinates = np.empty(len(points) * 3, dtype=np.float32)
+    if len(points):
+        attributes = getattr(data, "attributes", None)
+        position = attributes.get("position") if attributes is not None else None
+        if position is not None:
+            position.data.foreach_get("vector", coordinates)
+        else:
+            points.foreach_get("co", coordinates)
     return {
         "kind": getattr(evaluated, "type", ""),
-        "point_count": len(getattr(data, "points", ())),
+        "point_count": len(points),
+        "point_bytes": coordinates.tobytes(),
+    }
+
+
+def _mesh_topology(mesh):
+    """Copy the evaluated triangles before the temporary mesh is released."""
+    if hasattr(mesh, "calc_loop_triangles"):
+        mesh.calc_loop_triangles()
+        triangles = mesh.loop_triangles
+        indices = np.empty(len(triangles) * 3, dtype=np.int32)
+        triangles.foreach_get("vertices", indices)
+        return indices.tobytes()
+    # Data-only adapters retain polygon boundaries as well as connectivity.
+    return tuple(tuple(int(index) for index in polygon.vertices)
+                 for polygon in getattr(mesh, "polygons", ()))
+
+
+def _volume_record(obj):
+    data = obj.data
+    grids = getattr(data, "grids", None)
+    path = str(getattr(grids, "frame_filepath", "") or data.filepath)
+    try:
+        import bpy
+        path = bpy.path.abspath(path, library=getattr(obj, "library", None))
+    except ImportError:
+        path = str(Path(path).resolve())
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {
+        "path": path,
+        "content_sha256": digest.hexdigest(),
+        "sequence": {name: getattr(data, name, None) for name in
+                     ("is_sequence", "frame_start", "frame_duration", "frame_offset", "sequence_mode")},
+    }
+
+
+def _dependencies(obj, group, depsgraph, *, seed_only=False):
+    from .scene_inputs import legacy_region_kinds, persistent_source_key
+
+    refs = []
+    role = "NONE" if seed_only else getattr(group, "role", "NONE")
+    source_kind = getattr(group, "source_region_kind", "ANALYTIC")
+    sink_kind = getattr(group, "sink_region_kind", "ANALYTIC")
+    if int(getattr(group, "source_ui_schema_version", 0) or 0) < 3:
+        source_kind, sink_kind = legacy_region_kinds(group)
+    field_kind = getattr(group, "field_region_kind", "ANALYTIC")
+    field_volume = (field_kind == "VOLUME_GRID"
+                    or getattr(group, "field_value_source", "CONSTANT") == "VOLUME_GRID")
+    # Native source regions take precedence over the legacy SOURCE/FIELD mode,
+    # exactly as gather_source_plans selects its consumed input.
+    field_input = (role == "FIELD" or (
+        role == "SOURCE" and getattr(group, "source_mode", "PARTICLES") == "FIELD"
+        and source_kind not in {"POINTS", "VOLUME_GRID"}))
+    if ((role == "SOURCE" and source_kind == "VOLUME_GRID")
+            or (role == "SINK" and sink_kind == "VOLUME_GRID")
+            or (field_input and field_volume)):
+        refs.append(("volume", getattr(group, "volume_input_object", None) or obj))
+    elif role == "SOURCE" and source_kind == "POINTS":
+        refs.append(("points", getattr(group, "point_input_object", None) or obj))
+    elif ((role == "SOURCE" and source_kind in {"MESH_SOLID", "MESH_SHELL"})
+          or (role == "SINK" and sink_kind in {"MESH_SOLID", "MESH_SHELL"})
+          or (role in {"SOURCE", "SINK"}
+              and getattr(group, "geometry_mode", "ANALYTIC") == "MESH")):
+        refs.append(("mesh", getattr(group, "mesh_object", None) or obj))
+    if getattr(group, "enabled", False) and getattr(group, "auto_inject_seed", False):
+        refs.append(("points", obj))
+    records = []
+    for kind, ref in refs:
+        record = {
+            "kind": kind, "identity": persistent_source_key(ref),
+            "matrix_world": _matrix_record(_authored(ref)),
+        }
+        if kind == "volume":
+            record["payload"] = _volume_record(ref)
+        else:
+            record["payload"] = _geometry_record(ref, depsgraph, point_input=kind == "points")
+        records.append(record)
+    return tuple(records)
+
+
+def _height_source_record(scene):
+    """Follow the designated object owner used by gather_height_source."""
+    from .scene_access import active_domain_object, active_domain_settings
+    from .scene_inputs import persistent_source_key
+
+    domain = active_domain_settings(scene)
+    if (not getattr(domain, "height_enabled", False)
+            or getattr(domain, "height_back_mode", "FLAT") != "PROFILE"):
+        return None
+    image = getattr(domain, "height_profile_image", None)
+    if image is None:
+        return None
+    from .scene_inputs import _height_profile
+
+    width, height = map(int, image.size[:2])
+    if width < 2 or height < 2:
+        return None
+    pixels = np.empty(width * height * 4, dtype=np.float32)
+    if hasattr(image.pixels, "foreach_get"):
+        image.pixels.foreach_get(pixels)
+    else:
+        pixels[:] = image.pixels
+    profile = _height_profile(
+        pixels, width, height, float(getattr(domain, "height_profile_scale", 1.0)))
+    obj = active_domain_object(scene)
+    return {
+        "identity": persistent_source_key(obj) + ":height-profile",
+        "name_full": obj.name_full, "library": "", "role": "HEIGHT_PROFILE",
+        "properties": {}, "matrix_world": (),
+        "geometry": {"kind": "HEIGHT_PROFILE", "point_count": 0, "profile": profile},
+    }
+
+
+def _native_force_record(obj):
+    """Only native Blender fields admitted by SceneInputs affect identity."""
+    from .scene_inputs import _guide_control_points, _normalized_axis, persistent_source_key
+
+    field = getattr(obj, "field", None)
+    kind = getattr(field, "type", "NONE")
+    supported = {"WIND", "FORCE", "VORTEX", "MAGNET", "HARMONIC", "CHARGE",
+                 "LENNARDJ", "TEXTURE", "GUIDE", "BOID", "TURBULENCE", "DRAG", "FLUID_FLOW"}
+    if (kind not in supported or getattr(obj, "hide_viewport", False)
+            or not getattr(field, "apply_to_location", True)):
+        return None
+    strength = float(getattr(field, "strength", 0.0))
+    drag = float(getattr(field, "linear_drag", strength))
+    quadratic = float(getattr(field, "quadratic_drag", 0.0))
+    texture = getattr(field, "texture", None)
+    if (strength == 0.0 and kind not in {"GUIDE", "BOID"}
+            and not (kind == "DRAG" and (drag != 0.0 or quadratic != 0.0))):
+        return None
+    if kind == "TEXTURE" and texture is None:
+        return None
+    if (getattr(field, "use_max_distance", False)
+            and float(getattr(field, "distance_max", 0.0)) <= 0.0):
+        return None
+    matrix = np.asarray(obj.matrix_world, dtype=np.float64)
+    payload = {name: getattr(field, name, None) for name in (
+        "type", "shape", "texture_mode", "use_global_coords", "use_smoke_density",
+        "seed", "strength", "use_min_distance", "distance_min", "use_max_distance",
+        "distance_max", "falloff_power", "flow", "noise", "size", "rest_length",
+        "harmonic_damping", "linear_drag", "quadratic_drag", "guide_minimum",
+        "guide_free", "guide_clump_amount")}
+    payload["texture_name"] = getattr(texture, "name", "")
+    ref = getattr(field, "source_object", None)
+    if ref is not None:
+        payload["source_object"] = persistent_source_key(ref)
+        payload["source_matrix"] = _matrix_record(ref.matrix_world)
+    if kind == "GUIDE":
+        payload["guide_points"] = _guide_control_points(obj, matrix, _normalized_axis(matrix))
+    return {
+        "identity": persistent_source_key(obj) + ":native-field",
+        "name_full": obj.name_full, "library": "", "role": "NATIVE_FIELD",
+        "properties": {}, "matrix_world": _matrix_record(obj.matrix_world),
+        "geometry": {"kind": "NATIVE_FIELD", "point_count": 0, "payload": payload},
     }
 
 
 def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
     from .scene_inputs import persistent_source_key
 
-    records = []
+    height = _height_source_record(scene)
+    records = [] if height is None else [height]
     for obj in scene.objects:
+        native = _native_force_record(obj)
+        if native is not None:
+            records.append(native)
         group = getattr(obj, "fluidsim", None)
         role = str(getattr(group, "role", "NONE")) if group is not None else "NONE"
-        if role == "NONE":
+        if role == "NONE" and not (
+                getattr(group, "enabled", False)
+                and getattr(group, "auto_inject_seed", False)):
             continue
+        # Authored configuration remains identifiable while inactive, but no
+        # geometry or external file is consumed until production admits it.
+        enabled = bool(getattr(group, "enabled", False))
+        visible = not getattr(obj, "hide_viewport", False)
+        active = enabled and visible
+        seed_active = enabled and bool(getattr(group, "auto_inject_seed", False))
         records.append({
             "identity": persistent_source_key(obj),
             "name_full": obj.name_full,
@@ -113,8 +305,11 @@ def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
             "role": role,
             "properties": _rna_record(
                 group, ignored=_SOURCE_SIGNATURE_IGNORED_RNA),
-            "matrix_world": _matrix_record(_authored(obj)),
-            "geometry": _geometry_record(obj, depsgraph),
+            "matrix_world": _matrix_record(_authored(obj)) if active else (),
+            "geometry": (_geometry_record(obj, depsgraph) if active else
+                         {"kind": "INACTIVE", "point_count": 0}),
+            "dependencies": (_dependencies(obj, group, depsgraph, seed_only=not active)
+                             if active or seed_active else ()),
         })
     return tuple(records)
 

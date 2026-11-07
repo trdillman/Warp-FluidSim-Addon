@@ -100,7 +100,7 @@ _LIVE_REGISTRY_FIELDS = frozenset({
 })
 _OUTPUT_REGISTRY_FIELDS = frozenset({
     "liquid_view_mode", "show_surface", "show_particles", "show_whitewater",
-    "particle_display_fraction", "particle_display_scale",
+    "particle_display_fraction", "particle_display_scale", "gpu_particle_preview",
     "surface_attribute_mode", "particle_attribute_mode",
     "whitewater_attribute_mode", "whitewater_display_scale",
     "whitewater_display_fraction",
@@ -1237,6 +1237,11 @@ def request_scene_update(scene, action: SceneUpdate):
                 SceneUpdate.SURFACE,
                 SceneUpdate.WHITEWATER,
             }:
+                if scene.fluidsim.cache_playback_enabled:
+                    from . import playback
+
+                    playback.refresh_current_cache_output(scene)
+                    return
                 # Cache/export playback leaves Blender output objects behind
                 # even when no live solver session exists. Keep their material
                 # and visibility settings responsive without inventing geometry.

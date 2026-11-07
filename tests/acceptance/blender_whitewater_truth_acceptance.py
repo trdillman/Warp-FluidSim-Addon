@@ -21,7 +21,7 @@ import warp as wp  # noqa: E402
 
 from fluidSim_warp_blender51.sim.enums import SurfaceUpdateCadence  # noqa: E402
 from fluidSim_warp_blender51.sim.fields import SparseGrid  # noqa: E402
-from fluidSim_warp_blender51.sim.solver import SolverSettings  # noqa: E402
+from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings  # noqa: E402
 from fluidSim_warp_blender51.sim.surface import SurfacePipeline  # noqa: E402
 from fluidSim_warp_blender51.sim.whitewater import WhitewaterSystem  # noqa: E402
 
@@ -62,6 +62,8 @@ def _render_disabled_sdf_acceptance(device, grid):
     solver = FakeSolver()
     solver.frame = 0
     solver.sim_time = 0.0
+    solver.liquid_state_revision = 0
+    solver._host_frame_cache = None
     solver._nvox = grid.voxel_capacity
     solver.particles = type("Particles", (), {"count": count})()
     solver.device = device
@@ -73,9 +75,23 @@ def _render_disabled_sdf_acceptance(device, grid):
     assert surface.after_substep() is True
     first = surface.sdf.data.numpy().copy()
     wp.copy(positions, wp.array([(0.6, 0.6, 0.6)], dtype=wp.vec3, device=device))
+    # Surface freshness follows liquid_state_revision, which the real solver
+    # advances when it advects particles; do what that mutation owner does.
+    FluidSolver.mark_liquid_state_changed(solver)
     solver.sim_time = 0.1
     assert surface.after_substep() is True
     second = surface.sdf.data.numpy().copy()
+
+    # Clock advances alone must not rebuild: without a liquid edit the key holds.
+    stale_key = surface.solver_sdf_key
+    builds = []
+    real_build_sdf = surface.build_sdf
+    surface.build_sdf = lambda *a, **k: (builds.append(1), real_build_sdf(*a, **k))[1]
+    solver.sim_time = 0.2
+    assert surface.after_substep() is True
+    assert surface.solver_sdf_key == stale_key
+    assert not builds, "a clock-only advance must not rebuild the solver SDF"
+    del surface.build_sdf
 
     assert surface.solver_sdf_key is not None
     assert surface.mesh_cache is None

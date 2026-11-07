@@ -197,8 +197,10 @@ def check_two_scene_collection_behavior():
               shared[0] is not None and shared[0] == shared[1])
         scenes[1].fluidsim.show_particles = False
         output_publication.refresh_existing_output_settings(scenes[1])
-        check("shared collection visibility is shared",
-              shared[0].hide_viewport and shared[0].hide_render)
+        # Render visibility is authored per scene and shared through the one
+        # tagged object; viewport visibility belongs to the display policy
+        # (liquid_display), which shows particles when there is no surface.
+        check("shared collection visibility is shared", shared[0].hide_render)
         shared_collection = bpy.data.collections.get(shared_name)
         scenes[1].collection.children.unlink(shared_collection)
         output_publication.output_object(

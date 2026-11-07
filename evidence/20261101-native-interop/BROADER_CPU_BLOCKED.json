@@ -1,0 +1,11 @@
+{
+  "status": "BLOCKED",
+  "command": "CUDA_VISIBLE_DEVICES=-1 FLUIDSIM_TEST_DEVICE=cpu python -m pytest -q -m not-cuda",
+  "completed": false,
+  "observed_log_progress": "12%",
+  "review_stated_reason": "The test run unexpectedly contacts an untrusted telemetry endpoint, potentially exporting environment or test metadata without explicit destination authorization.",
+  "endpoint_identified": false,
+  "diagnosis_scope": "unproven; review reason retained, no source-level attribution",
+  "full_suite_pass_claimed": false,
+  "safer_validation": "focused CPU suites and real isolated Blender acceptance retained; no telemetry retry"
+}

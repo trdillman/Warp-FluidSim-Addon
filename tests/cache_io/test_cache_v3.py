@@ -12,6 +12,7 @@ import ast
 import dataclasses
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -612,3 +613,129 @@ def test_truncated_before_drops_the_changed_frames_and_keeps_the_rest():
     assert manifest.truncated_before(99) == manifest
     with pytest.raises(ValueError, match="before the first frame"):
         manifest.truncated_before(0)
+
+
+@pytest.mark.parametrize("valid_replacement", [False, True])
+def test_frame_parses_the_verified_snapshot_when_path_is_replaced(
+        tmp_path, monkeypatch, valid_replacement):
+    _write_v3_cache(tmp_path, _frame_npz())
+    original_load = np.load
+    frame_path = tmp_path / 'frames' / 'frame_000001.npz'
+
+    def replace_before_parse(file, *args, **kwargs):
+        if valid_replacement:
+            replacement = _frame_npz()
+            replacement["positions"].fill(42)
+            np.savez(frame_path, **replacement)
+        else:
+            frame_path.write_bytes(b'unverified replacement')
+        return original_load(file, *args, **kwargs)
+
+    monkeypatch.setattr(np, 'load', replace_before_parse)
+    result = cache.read_frame(str(tmp_path), 1)
+    assert len(result['positions']) == 3
+    assert np.all(result['positions'] == 0)
+    if valid_replacement:
+        with original_load(frame_path, allow_pickle=False) as replaced:
+            assert np.all(replaced['positions'] == 42)
+    else:
+        assert frame_path.read_bytes() == b'unverified replacement'
+
+
+def test_input_identity_revision_is_optional_for_old_frame_cache_readability():
+    raw = _manifest().to_dict()
+    raw.pop('input_identity_schema_version', None)
+    old = CacheManifestV3.from_dict(raw)
+    assert old.input_identity_schema_version == 0
+    from dataclasses import replace
+    current = replace(old, input_identity_schema_version=2)
+    assert CacheManifestV3.from_dict(current.to_dict()).input_identity_schema_version == 2
+    with pytest.raises(ValueError, match='input_identity_schema_version'):
+        replace(old, input_identity_schema_version=True).validate()
+
+
+def _intercept_frame_reads(monkeypatch, frame_path, before_read):
+    original_open = Path.open
+
+    class FrameReader:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def fileno(self):
+            return self.handle.fileno()
+
+        def read(self, size=-1):
+            before_read(size)
+            return self.handle.read(size)
+
+    def intercepted_open(path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        if path == frame_path:
+            return FrameReader(handle)
+        return handle
+
+    monkeypatch.setattr(Path, 'open', intercepted_open)
+    return original_open
+
+
+def test_oversized_frame_is_refused_before_reading_body(tmp_path, monkeypatch):
+    _write_v3_cache(tmp_path, _frame_npz())
+    frame_path = tmp_path / 'frames' / 'frame_000001.npz'
+    with frame_path.open('r+b') as handle:
+        handle.truncate(1 << 30)  # Sparse corruption; never allocate/read its body.
+
+    def reject_body_read(_size):
+        pytest.fail('oversized frame body was read before its size was refused')
+
+    _intercept_frame_reads(monkeypatch, frame_path, reject_body_read)
+    with pytest.raises(ValueError, match='size mismatch'):
+        cache.read_frame(str(tmp_path), 1)
+
+
+@pytest.mark.parametrize('size_delta', [-1, 20])
+def test_frame_changed_after_opened_size_check_uses_bounded_read(
+        tmp_path, monkeypatch, size_delta):
+    _write_v3_cache(tmp_path, _frame_npz())
+    frame_path = tmp_path / 'frames' / 'frame_000001.npz'
+    expected_size = frame_path.stat().st_size
+    original_open = Path.open
+    reads = []
+
+    def resize_before_read(size):
+        assert size == expected_size + 1, 'snapshot read must be bounded'
+        reads.append(size)
+        with original_open(frame_path, 'r+b') as writer:
+            writer.truncate(expected_size + size_delta)
+
+    _intercept_frame_reads(monkeypatch, frame_path, resize_before_read)
+    with pytest.raises(ValueError, match='size mismatch'):
+        cache.read_frame(str(tmp_path), 1)
+    assert reads == [expected_size + 1]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX open-inode replacement requires delete sharing absent from ordinary Windows file opens",
+)
+def test_path_replacement_after_open_reads_the_original_handle(tmp_path, monkeypatch):
+    _write_v3_cache(tmp_path, _frame_npz())
+    frame_path = tmp_path / 'frames' / 'frame_000001.npz'
+    expected_size = frame_path.stat().st_size
+    replacement_path = tmp_path / 'replacement.npz'
+    replacement = _frame_npz()
+    replacement['positions'].fill(42)
+    np.savez(replacement_path, **replacement)
+
+    def replace_before_read(size):
+        assert size == expected_size + 1, 'snapshot read must be bounded'
+        replacement_path.replace(frame_path)
+
+    _intercept_frame_reads(monkeypatch, frame_path, replace_before_read)
+    result = cache.read_frame(str(tmp_path), 1)
+    assert np.all(result['positions'] == 0)

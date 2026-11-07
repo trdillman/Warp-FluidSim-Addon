@@ -14,6 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
+from ..filesystem import filesystem_path
 from .cache_manager import RESTART_MANAGED_ENTRIES, require_restartable_cache_directory
 from .scene_access import scene_identity
 
@@ -29,7 +30,7 @@ class _RestartCacheProtection:
     """Keep the previous managed cache recoverable until admission succeeds."""
 
     def __init__(self, cache_path: Path | str):
-        self.cache_path = Path(cache_path).resolve()
+        self.cache_path = filesystem_path(Path(cache_path).resolve())
         self.backup_path: Path | None = None
         self._root_existed = False
         self._baseline_names: set[str] = set()

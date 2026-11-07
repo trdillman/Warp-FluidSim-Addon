@@ -2,6 +2,8 @@
 
 _SYNCING = False
 MODES = ("PREVIEW", "SURFACE", "OFF")
+_HELD = 0
+_PENDING = set()
 
 
 def cycle(settings):
@@ -47,18 +49,89 @@ def viewport_families(scene, surface_enabled):
     return bool(ordinary and surface_enabled), bool(ordinary and not surface_enabled)
 
 
-def apply_viewport(scene):
+def _viewport_geometry(scene, surface_enabled, surface):
+    """Final ordinary geometry, shared by visibility writes and UI readback."""
+    show_surface, show_particles = viewport_families(scene, surface_enabled)
+    if show_surface and (surface is None or not len(
+            getattr(getattr(surface, "data", None), "vertices", (1,)))):
+        return False, True
+    return show_surface, show_particles
+
+
+def viewport_summary(scene):
+    """Describe the viewport policy without changing authored output choices or IDs."""
+    from . import output_publication as output
+    from .liquid_preview import handler
+
+    mode = getattr(scene.fluidsim, "liquid_display_mode", "SURFACE")
+    if mode == "OFF":
+        return "Off"
+    if mode == "PREVIEW" and handler.failure() is None:
+        return "Liquid Preview"
+    enabled = bool(getattr(output._domain_settings(scene), "surface_enabled", False))
+    surface = output.output_object(scene, output.SURFACE_NAME, ensure=False)
+    surface_visible, particles_visible = _viewport_geometry(scene, enabled, surface)
+    label = "Surface Mesh" if surface_visible else "Particles" if particles_visible else "Off"
+    if mode == "PREVIEW":
+        label += " (preview fallback)"
+    elif enabled and particles_visible:
+        label += " (surface unavailable)"
+    return label
+
+
+def hold_viewport():
+    """Let an exporter own output visibility until ``release_viewport``.
+
+    Export un-hides the objects it samples and runs frame updates; the display
+    policy must not re-hide them from per-frame publication in the middle of
+    those updates (Blender 5.2.0 crashes in the depsgraph).
+    """
+    global _HELD
+    if not _HELD:
+        # Exporters must snapshot authored visibility, not the GPU overlay lease.
+        from . import gpu_particle_owner
+        gpu_particle_owner._restore_output()
+    _HELD += 1
+
+
+def release_viewport():
+    global _HELD
+    if not _HELD:
+        return
+    _HELD -= 1
+    if not _HELD and _PENDING:
+        if not _schedule_pending():
+            _flush_pending()
+
+
+def reset_viewport():
+    """Discard old-scene policy work on file load or add-on teardown."""
+    global _HELD
+    import bpy
+
+    timers = getattr(bpy.app, "timers", None)
+    if timers is not None and timers.is_registered(_flush_pending):
+        timers.unregister(_flush_pending)
+    _PENDING.clear()
+    _HELD = 0
+
+
+def apply_viewport(scene, *, deferred=True):
+    if _HELD:
+        name = getattr(scene, "name", None)
+        if isinstance(name, str):
+            _PENDING.add(name)
+        return
     from . import output_publication as output
     mode = getattr(getattr(scene, "fluidsim", None), "liquid_display_mode", None)
     if mode is None:
         return
     fs = scene.fluidsim
     ds = output._domain_settings(scene)
-    show_surface, show_particles = viewport_families(
-        scene, getattr(ds, "surface_enabled", False))
     surface = output.output_object(scene, output.SURFACE_NAME)
-    if show_surface and (surface is None or not len(getattr(getattr(surface, "data", None), "vertices", (1,)))):
-        show_surface, show_particles = False, True
+    show_surface, show_particles = _viewport_geometry(
+        scene, getattr(ds, "surface_enabled", False), surface)
+    changes = []
     for name, hidden in ((output.SURFACE_NAME, not show_surface),
                          (output.PARTICLES_NAME, not show_particles)):
         obj = output.output_object(scene, name)
@@ -72,13 +145,63 @@ def apply_viewport(scene):
             output._set_hidden(obj, not render_visible, viewport=False)
             if not hidden:
                 output._set_hidden(obj, False, render=False)
+            # hide_set re-tags the depsgraph even for an equal value, so only
+            # flags that actually change are written.
             layers = getattr(scene, "view_layers", ())
             if layers:
                 for layer in layers:
-                    if obj.name in layer.objects:
-                        obj.hide_set(hidden, view_layer=layer)
-            else:
-                obj.hide_set(hidden)
+                    if obj.name in layer.objects and obj.hide_get(view_layer=layer) != hidden:
+                        changes.append((obj, layer, hidden))
+            elif obj.hide_get() != hidden:
+                changes.append((obj, None, hidden))
+    if not changes:
+        return
+    if deferred and _defer_view_layer_write(scene):
+        return
+    for obj, layer, hidden in changes:
+        if layer is None:
+            obj.hide_set(hidden)
+        else:
+            obj.hide_set(hidden, view_layer=layer)
+
+
+def _defer_view_layer_write(scene):
+    """Queue the view-layer write for a timer; False when it must run now.
+
+    Per-frame publication runs inside the frame-change handler, i.e. during the
+    depsgraph update. Changing a base's hide flag there (typically when the
+    output objects were just created) crashed Blender 5.2.0 in
+    deg_check_base_in_depsgraph, so the write waits until the update is over.
+    """
+    name = getattr(scene, "name", None)
+    if not isinstance(name, str):
+        return False
+    _PENDING.add(name)
+    return _schedule_pending()
+
+
+def _schedule_pending():
+    try:
+        import bpy
+        timers = bpy.app.timers
+        if not timers.is_registered(_flush_pending):
+            timers.register(_flush_pending, first_interval=0.0)
+        return True
+    except Exception:  # noqa: BLE001 - no usable timer: write immediately
+        return False
+
+
+def _flush_pending():
+    import bpy
+
+    if _HELD:
+        return None
+    names = set(_PENDING)
+    _PENDING.clear()
+    for scene in bpy.data.scenes:
+        if scene.name in names:
+            apply_viewport(scene, deferred=False)
+    return None
 
 
 def restore_scene(scene):

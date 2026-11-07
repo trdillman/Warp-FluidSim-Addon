@@ -40,6 +40,14 @@ def test_export_follows_the_verified_playback_recipe():
     assert any(isinstance(node, ast.Try) and node.finalbody for node in ast.walk(export))
 
 
+def test_export_holds_the_display_policy_until_restore():
+    source = _source("blender/interchange.py")
+    enter = _function(source, "enter")
+    restore = _function(source, "restore")
+    assert "hold_viewport" in ast.unparse(enter)
+    assert "release_viewport" in ast.unparse(restore)
+
+
 def test_refusals_cover_every_documented_case():
     source = _source("blender/interchange.py")
     for needle in (

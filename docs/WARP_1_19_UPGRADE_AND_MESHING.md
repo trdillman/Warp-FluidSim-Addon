@@ -1,8 +1,11 @@
 # Warp 1.19 upgrade and meshing options
 
-Date: 3 November 2026. Status: source-level upgrade only. **No GPU gate run
-has been done for 1.19.0**, so "certified" in `version.py` names the build the
-release gate must now qualify, not a finished qualification.
+Date: 3 November 2026; installer follow-up 4 November. Status: **Warp 1.19.0
+has not passed the full GPU gate**. The PR47 author reports a Windows Blender
+5.1 attempt failing whitewater truth on both 1.19 and 1.18; this is not Blender
+5.2 qualification or proof of a dependency regression. Historical "certified"
+identifiers and status tokens in code name the locked gate target, not a
+finished qualification. User-facing installer and runtime labels say "locked".
 
 ## What changed in the repo
 
@@ -13,7 +16,7 @@ release gate must now qualify, not a finished qualification.
   its SHA-256 checked against PyPI's value. The Windows wheel is pinned from
   PyPI metadata only.
 - 1.19.0 is the same CUDA 13.4 build with the same R580 driver floor.
-- 1.17.0 and 1.18.0 still load (1.18.0 now shows the "older than certified"
+- 1.17.0 and 1.18.0 still load (1.18.0 now shows the "older than locked"
   warning). `MIN_WARP_VERSION` stays at 1.17.0.
 - Warp 1.19 removed arguments that 1.18 had marked deprecated on the dense
   marching cubes class (`max_verts`, `max_tris`, `device`). The add-on already

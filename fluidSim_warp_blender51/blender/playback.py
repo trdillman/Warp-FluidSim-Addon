@@ -24,6 +24,7 @@ _SUPPRESS_FRAME_HANDLERS = 0
 _RENDER_RESTORE_FRAME = None
 _IN_MODE_TRANSITION = False
 _CACHE_CURSORS = {}
+_CACHE_OUTPUT_SETTINGS = {}
 
 # The Solver Session is a process singleton, so a bake in one scene owns it
 # for every scene: Live in any other scene must not admit, step or reset it.
@@ -402,10 +403,12 @@ def set_cache_playback_enabled(scene, enabled: bool):
     if enabled:
         sess.release(scene)
         _CACHE_CURSORS.pop(scene_identity(scene), None)
+        _CACHE_OUTPUT_SETTINGS.pop(scene_identity(scene), None)
         if getattr(fs, "live", False):
             fs.status = "Cache playback enabled - press play"
     else:
         _CACHE_CURSORS.pop(scene_identity(scene), None)
+        _CACHE_OUTPUT_SETTINGS.pop(scene_identity(scene), None)
         if getattr(fs, "live", False):
             set_live_enabled(scene, True)
     return True
@@ -414,6 +417,51 @@ def set_cache_playback_enabled(scene, enabled: bool):
 def clear_cache_cursors():
     """Clear all non-authoritative cache playback positions."""
     _CACHE_CURSORS.clear()
+    _CACHE_OUTPUT_SETTINGS.clear()
+
+
+def _cache_output_settings(scene, *, frame=None):
+    """Settings that change cached geometry or its per-point attributes.
+
+    Material/radius/render visibility and the exclusive liquid display mode
+    reuse retained geometry. These changes require the verified frame again.
+    """
+    from .scene_access import active_domain_settings
+
+    fs = scene.fluidsim
+    domain = active_domain_settings(scene)
+    fields = (
+        "particle_display_fraction", "whitewater_display_fraction",
+        "surface_attribute_mode", "particle_attribute_mode",
+        "whitewater_attribute_mode", "whitewater_output_mode", "show_whitewater",
+    )
+    return (
+        bpy.path.abspath(fs.cache_path),
+        int(scene.frame_current if frame is None else frame),
+        tuple(getattr(fs, name, None) for name in fields),
+        bool(getattr(domain, "whitewater_enabled", False)),
+    )
+
+
+def refresh_current_cache_output(scene) -> None:
+    """Refresh paused cache edits without admitting or stepping a solver.
+
+    Geometry changes bypass the same-frame playback cursor. Ordinary material,
+    radius and visibility edits stay metadata-only; the previous signature is
+    replaced only after the verified read and publication succeed.
+    """
+    from . import output_publication
+
+    identity = scene_identity(scene)
+    if _CACHE_OUTPUT_SETTINGS.get(identity) == _cache_output_settings(scene):
+        publication = output_publication.refresh_existing_output_settings(scene)
+        warning = str(getattr(publication, "warning", "") or "")
+        if warning:
+            _bridge().session().set_error(scene, warning)
+            scene.fluidsim.status = warning
+        return
+    play_cache_frame(_bridge().session(), scene)
+    _CACHE_CURSORS[identity] = int(scene.frame_current)
 
 
 def _check_cache_scene_key(scene, frame_data):
@@ -522,6 +570,7 @@ def play_cache_frame(sess, scene, frame=None):
         fs.status = f"{fs.status} — {warning}"
     else:
         sess.clear_error(scene)
+    _CACHE_OUTPUT_SETTINGS[scene_identity(scene)] = _cache_output_settings(scene, frame=frame)
     return frame_data
 
 

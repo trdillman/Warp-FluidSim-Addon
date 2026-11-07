@@ -169,6 +169,7 @@ def _draw_callback():
 @_persistent
 def _on_load_post(*_args):
     from .. import liquid_display
+    liquid_display.reset_viewport()
     try:
         scenes = list(bpy.data.scenes)
     except AttributeError:
@@ -238,7 +239,8 @@ def unregister():
     global _FAILURE
     _require_bpy()
     timers = getattr(bpy.app, "timers", None)
-    from ..liquid_display import _refresh_fallback_outputs
+    from ..liquid_display import _refresh_fallback_outputs, reset_viewport
+    reset_viewport()
     if timers is not None and timers.is_registered(_refresh_fallback_outputs):
         timers.unregister(_refresh_fallback_outputs)
     if timers is not None and timers.is_registered(_restore_after_registration):

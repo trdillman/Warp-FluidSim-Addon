@@ -12,16 +12,20 @@ from types import SimpleNamespace
 
 import bpy
 
+from ..sim.effects.runtime import EffectExecutionError
 from .scene_access import (
     active_domain_settings,
     scene_get,
     scene_identity,
     scene_set,
 )
-from ..sim.effects.runtime import EffectExecutionError
 from .scene_inputs import SceneInputs
 from .simulation_admission import (
-    capacity_blocking_message, narrow_band_refusal, rigid_refusal)
+    ReplacementRetirementError,
+    capacity_blocking_message,
+    narrow_band_refusal,
+    rigid_refusal,
+)
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
@@ -186,8 +190,11 @@ class Session:
         ``candidate`` has already passed admission. The retired solver, its
         device memory and the superseded scene inputs are released here.
         ``admitted_effects`` are the effect instances the candidate was
-        admitted with.
+        admitted with. A retirement failure raises ReplacementRetirementError:
+        ownership has transferred even though this call did not return.
         """
+        from . import gpu_particle_owner
+        gpu_particle_owner.reset_runtime()
         old_solver = self.solver
         old_inputs = self.scene_inputs
         self.solver = candidate
@@ -195,35 +202,70 @@ class Session:
         self.device = device
         self.scene_inputs = scene_inputs
         self.admitted_effects = admitted_effects
+        failures = []
+
+        def retire(operation):
+            try:
+                operation()
+            except Exception as exc:
+                failures.append(exc)
+
         if old_inputs is not scene_inputs:
-            old_inputs.clear()
+            retire(old_inputs.clear)
         if old_solver is not None:
             retired_device = getattr(old_solver, "device", None)
             release = getattr(old_solver, "release", None)
             if callable(release):
-                release()
+                retire(release)
             from ..sim.memory_safety import release_cuda_memory
-            release_cuda_memory(retired_device)
+            retire(lambda: release_cuda_memory(retired_device))
+        if failures:
+            raise ReplacementRetirementError(
+                "Solver replacement committed; previous runtime retirement failed: "
+                + "; ".join(str(exc) for exc in failures)) from failures[0]
 
     def _clear_runtime(self):
+        failures = []
+        try:
+            from . import gpu_particle_owner
+            gpu_particle_owner.reset_runtime()
+        except Exception as exc:
+            failures.append(exc)
         solver = self.solver
+        inputs = self.scene_inputs
         device = getattr(solver, "device", None) or self.device
+        # Sever authority before fallible resource cleanup. Every remaining
+        # owner is attempted even if a solver subsystem fails to release.
         self.solver = None
-        if solver is not None:
-            if hasattr(solver, "release"):
-                solver.release()
         self.profiler = None
         self.begin_run(reported_growth_capacity=0)
-        self.scene_inputs.clear()
         self.device = None
         self.bind_scene(None, "")
         self.admitted_effects = ()
         self.sync_refusal = ""
         self._clear_capacity_plan()
         self.particle_capacity_notice_scene_identity = None
+        try:
+            if solver is not None and hasattr(solver, "release"):
+                solver.release()
+        except Exception as exc:
+            failures.append(exc)
+        try:
+            inputs.clear()
+        except Exception as exc:
+            failures.append(exc)
+            # A failed input owner cannot become the next run's gather state.
+            self.scene_inputs = SceneInputs()
         del solver
         from ..sim.memory_safety import release_cuda_memory
-        release_cuda_memory(device)
+        try:
+            release_cuda_memory(device)
+        except Exception as exc:
+            failures.append(exc)
+        if failures:
+            raise RuntimeError(
+                "Solver inactive; resource cleanup incomplete: "
+                + "; ".join(str(exc) for exc in failures)) from failures[0]
 
     def set_error(self, scene, message):
         self.error = str(message)
@@ -290,11 +332,13 @@ class Session:
             scene, depsgraph, operation=operation)
 
     def initialize(self, scene, *, depsgraph=None,
-                   ignore_memory_safeguard=False):
+                   ignore_memory_safeguard=False, frozen_input_state=None):
         """Admit one coherent Blender scene into a running Solver Session."""
         return self._admission().initialize(
             scene, depsgraph=depsgraph,
-            ignore_memory_safeguard=ignore_memory_safeguard)
+            ignore_memory_safeguard=ignore_memory_safeguard,
+            **({"frozen_input_state": frozen_input_state}
+               if frozen_input_state is not None else {}))
 
     def owns_scene(self, scene):
         return bool(
@@ -495,6 +539,9 @@ class Session:
             if warning:
                 self.set_error(scene, warning)
                 fs.status = f"{fs.status} — {warning}"
+        if publish_outputs:
+            from . import gpu_particle_owner
+            gpu_particle_owner.publish_scene(scene, self, stats.active_particles)
         return stats
 
     def reset(self, scene, *, depsgraph=None):

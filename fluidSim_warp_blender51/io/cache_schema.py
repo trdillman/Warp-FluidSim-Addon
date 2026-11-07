@@ -407,6 +407,8 @@ class CacheManifestV3:
     frames: dict[int, FrameEntry] = field(default_factory=dict)
     # 0 = a 3.0 manifest (the key is absent); 1 = 3.1, rigid records allowed.
     format_minor: int = FORMAT_MINOR_VERSION
+    # Absent on older readable caches; continuation requires the current identity.
+    input_identity_schema_version: int = 0
 
     @classmethod
     def new(
@@ -428,6 +430,7 @@ class CacheManifestV3:
         effect_signature: str = "",
         effect_inventory: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
         timestamp: str | None = None,
+        input_identity_schema_version: int = 0,
     ) -> "CacheManifestV3":
         timestamp = timestamp or utc_now()
         manifest = cls(
@@ -451,6 +454,7 @@ class CacheManifestV3:
             effect_inventory=_normalize_effect_inventory(effect_inventory),
             frames={},
             format_minor=FORMAT_MINOR_VERSION,
+            input_identity_schema_version=input_identity_schema_version,
         )
         return manifest.validate()
 
@@ -474,6 +478,7 @@ class CacheManifestV3:
                 f"cache format 3.{self.format_minor} is newer than this "
                 f"add-on reads (3.{FORMAT_MINOR_VERSION}); update FluidSim")
         _require_int(self.source_schema_version, "source_schema_version", minimum=1)
+        _require_int(self.input_identity_schema_version, "input_identity_schema_version", minimum=0)
         _require_transfer_mode(self.transfer_mode)
         _normalize_grid_spec(self.grid_spec)
         _normalize_narrow_band(self.narrow_band)
@@ -617,7 +622,8 @@ class CacheManifestV3:
                 raise ValueError(
                     f"unsupported cache format {version}; expected {FORMAT_VERSION}")
         expected = set(cls.__dataclass_fields__)
-        optional = {"effect_signature", "effect_inventory", "format_minor"}
+        optional = {"effect_signature", "effect_inventory", "format_minor",
+                    "input_identity_schema_version"}
         actual = set(value)
         missing = (expected - optional) - actual
         unknown = actual - expected
@@ -641,8 +647,9 @@ class CacheManifestV3:
             name: value[name]
             for name in expected
             if name not in {"frames", "effect_signature", "effect_inventory",
-                            "format_minor"}
+                            "format_minor", "input_identity_schema_version"}
         }
+        kwargs["input_identity_schema_version"] = value.get("input_identity_schema_version", 0)
         kwargs["format_minor"] = value.get("format_minor", 0)
         kwargs["effect_signature"] = str(value.get("effect_signature", ""))
         kwargs["effect_inventory"] = _normalize_effect_inventory(

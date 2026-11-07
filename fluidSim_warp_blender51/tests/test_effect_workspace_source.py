@@ -49,6 +49,7 @@ def test_text_workspace_prefers_an_existing_text_editor(monkeypatch):
     from types import ModuleType, SimpleNamespace
 
     fake_bpy = ModuleType("bpy")
+    fake_bpy.app = SimpleNamespace(handlers=SimpleNamespace(persistent=lambda fn: fn, load_post=[]))
     fake_bpy.types = SimpleNamespace(Operator=object, Panel=object)
     fake_props = ModuleType("bpy.props")
     for prop in ("IntProperty", "BoolProperty", "EnumProperty", "StringProperty"):

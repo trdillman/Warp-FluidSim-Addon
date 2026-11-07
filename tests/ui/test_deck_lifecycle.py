@@ -283,6 +283,20 @@ def test_file_load_brings_the_event_layer_timer_forward(monkeypatch):
     REGISTRY.unregister_all()
 
 
+def test_a_quick_second_click_runs_the_control_again(monkeypatch):
+    # Review finding, 2026-10-26: Blender delivers a second click inside the
+    # double-click time as value DOUBLE_CLICK; the bar acted only on PRESS and
+    # swallowed it, so a fast second click on a button did nothing.
+    _modal, operator, context, ran = _routing(monkeypatch)
+    assert operator.modal(context, _event("LEFTMOUSE", 120, 20)) == {"RUNNING_MODAL"}
+    assert operator.modal(
+        context, _event("LEFTMOUSE", 120, 20, value="DOUBLE_CLICK")) == {"RUNNING_MODAL"}
+    assert len(ran) == 2
+    # The release of either click runs nothing.
+    assert operator.modal(context, _event("LEFTMOUSE", 120, 20, value="RELEASE")) == {"RUNNING_MODAL"}
+    assert len(ran) == 2
+
+
 def test_a_refused_bar_click_runs_nothing_and_says_why(monkeypatch):
     _modal, operator, context, ran = _routing(monkeypatch)
     operator.status["value"] = (False, "A Production Bake is running")
@@ -374,3 +388,28 @@ def test_failed_deck_registration_preserves_preexisting_app_handler(monkeypatch)
     assert bpy.app.handlers.load_post == [prior]
     assert bpy.registered == []
     assert all(value == 0 for value in deck.registry.REGISTRY.counts().values())
+
+
+def test_double_click_cannot_dispatch_replacement_cancel_control(monkeypatch):
+    modal, operator, context, ran = _routing(monkeypatch)
+    operator.modal(context, _event("LEFTMOUSE", 120, 20))
+    original = ran[0]
+    operator.modal(context, _event("LEFTMOUSE", 120, 20, "RELEASE"))
+    replacement = modal.controls.BAKE_PROGRESS
+    item = modal.bar.Item((10.0, 10.0, 40.0, 40.0), "button", replacement, "Cancel Bake")
+    layout = modal.bar.BarLayout(card=(0.0, 0.0, 300.0, 50.0), items=(item,))
+    monkeypatch.setattr(modal.bar, "event_layout", lambda _ctx: layout)
+    operator.modal(context, _event("LEFTMOUSE", 120, 20, "DOUBLE_CLICK"))
+    assert ran == [original]
+    assert operator.modal(context, _event("LEFTMOUSE", 120, 20, "RELEASE")) == {"RUNNING_MODAL"}
+
+
+def test_double_click_does_not_pause_new_playback(monkeypatch):
+    modal, operator, context, ran = _routing(monkeypatch)
+    operator.modal(context, _event("LEFTMOUSE", 120, 20))
+    operator.modal(context, _event("LEFTMOUSE", 120, 20, "RELEASE"))
+    item = modal.bar.Item((10., 10., 40., 40.), "button", modal.controls.PAUSE, "Pause")
+    layout = modal.bar.BarLayout(card=(0., 0., 300., 50.), items=(item,))
+    monkeypatch.setattr(modal.bar, "event_layout", lambda _ctx: layout)
+    operator.modal(context, _event("LEFTMOUSE", 120, 20, "DOUBLE_CLICK"))
+    assert ran == [modal.controls.PLAY]

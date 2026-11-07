@@ -228,3 +228,17 @@ def test_install_and_probe_receive_repaired_environment(monkeypatch):
     assert len(calls) == 2
     assert all(call["env"] == {"PROCESSOR_ARCHITECTURE": "AMD64", "owned": "preserved"}
                for call in calls)
+
+
+def test_user_install_keeps_explicit_consumer_profile(monkeypatch, tmp_path):
+    consumer = tmp_path / "consumer-extensions"
+    monkeypatch.setenv("BLENDER_USER_EXTENSIONS", str(consumer))
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(kwargs["env"])
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(install_local.subprocess, "run", run)
+    install_local._run(["blender", "install-file"])
+    assert calls[0]["BLENDER_USER_EXTENSIONS"] == str(consumer)

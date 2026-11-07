@@ -34,6 +34,9 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
+from tools.demos.metadata import (  # noqa: E402
+    assign_input_identities, assign_object_identity, prepare_scene_for_save, write_metadata,
+)
 
 DEMOS = os.path.join(REPO, "demos")
 CACHE = os.path.join(REPO, "artifacts", "demo_cache")
@@ -55,6 +58,11 @@ CROWN_CORK_CENTER = (0.62, 0.40, 0.05 + CROWN_CORK_SIZE * (0.5 - 0.3))
 
 def log(msg):
     print(f"[demo] {msg}", flush=True)
+
+
+def initialize_demo():
+    assign_input_identities(bpy.context.scene)
+    bpy.ops.fluidsim.initialize()
 
 
 def admitted_total(result, *, label):
@@ -107,6 +115,14 @@ def fresh_scene():
                 block.remove(datablock)
     while bpy.data.libraries:
         bpy.data.libraries.remove(bpy.data.libraries[0])
+    # Presentation authored by a prior demo must not leak into the next one.
+    for text in list(bpy.data.texts):
+        bpy.data.texts.remove(text)
+    scene.render.engine = "BLENDER_EEVEE"
+    scene.display.shading.show_shadows = False
+    scene.display.shading.show_cavity = False
+    if scene.world is not None:
+        scene.world.color = (0.05087608844041824,) * 3
     scene.render.fps = 24
     scene.render.fps_base = 1.0
     return scene
@@ -160,6 +176,7 @@ def make_particle_seed(scene, points, name):
         mesh.update()
     obj = bpy.data.objects.new(name, mesh)
     scene.collection.objects.link(obj)
+    assign_object_identity(obj)
     obj.display_type = "BOUNDS"
     obj.hide_render = True
     obj.show_name = True
@@ -271,6 +288,12 @@ def run_scene(name, frames, dump_velocities=True, advance_timeline=False,
     return series
 
 
+def save_scene_file(name):
+    prepare_scene_for_save(bpy.context.scene, name)
+    bpy.ops.wm.save_as_mainfile(
+        filepath=os.path.join(DEMOS, f"{name}.blend"), check_existing=False)
+
+
 def save_scene(name, preview=True):
     path = os.path.join(DEMOS, f"{name}.blend")
     if preview:
@@ -283,7 +306,7 @@ def save_scene(name, preview=True):
             log(f"{name} preview rendered")
         except Exception as exc:  # noqa: BLE001
             log(f"{name} preview render skipped: {exc!r}")
-    bpy.ops.wm.save_as_mainfile(filepath=path)
+    save_scene_file(name)
     log(f"saved {path}")
 
 
@@ -447,7 +470,7 @@ def build_dam_break():
     make_mesh_object(scene, cove.apron_mesh(), materials)
     make_mesh_object(scene, cove.wall_mesh(), materials)
     src.fluidsim.enabled = True
-    bpy.ops.fluidsim.initialize()
+    initialize_demo()
     sess = session()
     log("dam_break: Initial Fill will create liquid through the visible source region")
     cam_loc, cam_target, cam_lens = DAM_BREAK_CAMERA
@@ -501,12 +524,10 @@ def build_dam_break():
         "preview_frame": DAM_BREAK_PREVIEW_FRAME,
         "playable_live_setup": True,
     }
-    with open(os.path.join(DEMOS, "dam_break", "meta.json"), "w",
-              encoding="utf-8", newline="\n") as fh:
-        json.dump(meta, fh, indent=2)
-        fh.write("\n")
+    write_metadata(os.path.join(DEMOS, "dam_break", "meta.json"), meta)
     fs.live = False
     scene.frame_set(1)
+    assign_input_identities(scene)
     sess.reset(scene)
     restored = sess.solver.particles.refresh_host_count()
     if restored == 0:
@@ -519,9 +540,7 @@ def build_dam_break():
     fs.live = True
     scene["fluidsim_playback_ready"] = True
     scene["fluidsim_simulated_frames"] = 72
-    bpy.ops.wm.save_as_mainfile(
-        filepath=os.path.join(DEMOS, "dam_break.blend"),
-        check_existing=False)
+    save_scene_file("dam_break")
     log(f"dam_break: saved live-playback-ready frame 1 with {restored:,} particles")
     bpy.ops.fluidsim.release()
 
@@ -579,7 +598,7 @@ def build_crown_splash():
     scene.frame_end = 120
     cork = add_crown_cork(scene)
     scene.frame_set(1)
-    bpy.ops.fluidsim.initialize()
+    initialize_demo()
     sess = session()
     pool_depth = 0.05
     pool = lattice((0.0, 0.0, 0.0), (0.8, 0.8, pool_depth), 0.005)
@@ -638,12 +657,9 @@ def build_crown_splash():
                 if n > 0),
         },
     }
-    with open(os.path.join(DEMOS, "crown_splash", "meta.json"), "w",
-              encoding="utf-8", newline="\n") as fh:
-        meta["playable_live_setup"] = True
-        meta["seed_objects"] = ["Crown Pool Seed", "Crown Droplet Seed"]
-        json.dump(meta, fh, indent=2)
-        fh.write("\n")
+    meta["playable_live_setup"] = True
+    meta["seed_objects"] = ["Crown Pool Seed", "Crown Droplet Seed"]
+    write_metadata(os.path.join(DEMOS, "crown_splash", "meta.json"), meta)
     pool_seed = make_particle_seed(scene, pool, "Crown Pool Seed")
     drop_seed = make_particle_seed(scene, drop, "Crown Droplet Seed")
     for seed in (pool_seed, drop_seed):
@@ -653,6 +669,7 @@ def build_crown_splash():
     drop_seed.fluidsim.initial_velocity = (0.0, 0.0, -drop_speed)
     fs.live = False
     scene.frame_set(1)
+    assign_input_identities(scene)
     sess.reset(scene)
     restored = sess.solver.particles.refresh_host_count()
     if restored != n_all:
@@ -662,9 +679,7 @@ def build_crown_splash():
     fs.live = True
     scene["fluidsim_playback_ready"] = True
     scene["fluidsim_simulated_frames"] = 48
-    bpy.ops.wm.save_as_mainfile(
-        filepath=os.path.join(DEMOS, "crown_splash.blend"),
-        check_existing=False)
+    save_scene_file("crown_splash")
     log(
         "crown_splash: saved manual-playback-ready frame 1 with "
         f"{restored:,} particles")
@@ -811,7 +826,7 @@ def build_paddle_stir():
     finally:
         prefs.keyframe_new_interpolation_type = old_interp
 
-    bpy.ops.fluidsim.initialize()
+    initialize_demo()
     sess = session()
     pool_depth = 0.32
     pool = lattice((-tank_inner_radius, -tank_inner_radius, 0.05),
@@ -861,12 +876,9 @@ def build_paddle_stir():
         "whitewater_churn_gain": 2.5,
         "collider_objects": ["PaddleStir Tank", "PaddleStir Paddle"],
     }
-    with open(os.path.join(DEMOS, scene_name, "meta.json"), "w",
-              encoding="utf-8", newline="\n") as fh:
-        meta["playable_live_setup"] = True
-        meta["seed_objects"] = ["Paddle Stir Pool Seed"]
-        json.dump(meta, fh, indent=2)
-        fh.write("\n")
+    meta["playable_live_setup"] = True
+    meta["seed_objects"] = ["Paddle Stir Pool Seed"]
+    write_metadata(os.path.join(DEMOS, scene_name, "meta.json"), meta)
     if variant:
         # Calibration bake: the cache and meta are the whole deliverable. The
         # live-playback packaging below rewrites the shipped demo .blend, so a
@@ -881,6 +893,7 @@ def build_paddle_stir():
     seed.hide_set(True)
     fs.live = False
     scene.frame_set(1)
+    assign_input_identities(scene)
     sess.reset(scene)
     restored = sess.solver.particles.refresh_host_count()
     if restored != n_pool:
@@ -890,9 +903,7 @@ def build_paddle_stir():
     fs.live = True
     scene["fluidsim_playback_ready"] = True
     scene["fluidsim_simulated_frames"] = total
-    bpy.ops.wm.save_as_mainfile(
-        filepath=os.path.join(DEMOS, "paddle_stir.blend"),
-        check_existing=False)
+    save_scene_file("paddle_stir")
     log(f"paddle_stir: saved live-playback-ready frame 1 with {restored:,} particles")
     bpy.ops.fluidsim.release()
 
@@ -938,12 +949,12 @@ def save_playable(name, scene, frames):
     fs = scene.fluidsim
     fs.live = False
     scene.frame_set(1)
+    assign_input_identities(scene)
     session().reset(scene)
     fs.live = True
     scene["fluidsim_playback_ready"] = True
     scene["fluidsim_simulated_frames"] = frames
-    bpy.ops.wm.save_as_mainfile(
-        filepath=os.path.join(DEMOS, f"{name}.blend"), check_existing=False)
+    save_scene_file(name)
     log(f"{name}: saved live-playback-ready frame 1")
     bpy.ops.fluidsim.release()
 
@@ -952,10 +963,7 @@ def write_meta(name, meta):
     os.makedirs(os.path.join(DEMOS, name), exist_ok=True)
     meta["playable_live_setup"] = True
     meta["seed_objects"] = []
-    with open(os.path.join(DEMOS, name, "meta.json"), "w",
-              encoding="utf-8", newline="\n") as fh:
-        json.dump(meta, fh, indent=2)
-        fh.write("\n")
+    write_metadata(os.path.join(DEMOS, name, "meta.json"), meta)
 
 
 # Density Ladder: four flat blocks of rising density dropped onto a still
@@ -1044,7 +1052,7 @@ def build_buoyancy_ladder():
 
     scene = author_buoyancy_ladder()
     scene.frame_set(1)
-    bpy.ops.fluidsim.initialize()
+    initialize_demo()
     sess = session()
     tracks = {ladder_block_name(d): [] for d in LADDER_DENSITIES}
 
@@ -1227,7 +1235,7 @@ def build_water_wheel():
 
     scene = author_water_wheel()
     scene.frame_set(1)
-    bpy.ops.fluidsim.initialize()
+    initialize_demo()
     sess = session()
     angles, offsets = [], []
 
@@ -1414,7 +1422,7 @@ def build_viscosity_race():
 
     scene = author_viscosity_race()
     scene.frame_set(1)
-    bpy.ops.fluidsim.initialize()
+    initialize_demo()
     sess = session()
     checkpoints = {}
 
@@ -1521,14 +1529,14 @@ def build_capillary_droplet():
 
     # Reference: the same bar with surface tension off keeps its shape.
     author_capillary_droplet(surface_tension=False)
-    bpy.ops.fluidsim.initialize()
+    initialize_demo()
     run_scene("capillary_droplet__off", DROP_FRAMES, dump_velocities=False)
     aspect_off = blob_aspect(session().solver.particle_positions())
     bpy.ops.fluidsim.release()
 
     scene = author_capillary_droplet(surface_tension=True)
     scene.frame_set(1)
-    bpy.ops.fluidsim.initialize()
+    initialize_demo()
     sess = session()
     aspects = {}
 
@@ -1654,14 +1662,14 @@ def build_deep_plunge():
 
     # Reference: the same tank as a full-band (every-cell) particle run.
     author_deep_plunge(narrow_band=False)
-    bpy.ops.fluidsim.initialize()
+    initialize_demo()
     full = run_scene("deep_plunge__full", PLUNGE_FRAMES, dump_velocities=False)
     full_level = water_level(session().solver.particle_positions())
     bpy.ops.fluidsim.release()
 
     scene = author_deep_plunge(narrow_band=True)
     scene.frame_set(1)
-    bpy.ops.fluidsim.initialize()
+    initialize_demo()
     sess = session()
 
     def preview(frame):

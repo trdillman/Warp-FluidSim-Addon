@@ -752,6 +752,9 @@ class FLUIDSIM_OT_cache_playback_stop(bpy.types.Operator):
 
     bl_idname = "fluidsim.cache_playback_stop"
     bl_label = "Stop Cache Playback"
+    bl_description = (
+        "Leave cache playback; Play can start live simulation. Baked files are kept"
+    )
 
     @classmethod
     def poll(cls, context):

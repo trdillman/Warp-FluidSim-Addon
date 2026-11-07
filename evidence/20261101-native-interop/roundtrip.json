@@ -1,0 +1,12 @@
+{
+  "blend_file": "C:\\workspace\\fluidsim-native-interop-20261101\\runtime-evidence\\integration-roundtrip.blend",
+  "domain": "FluidSim Domain",
+  "preview": true,
+  "particles": true,
+  "owner_none": true,
+  "output_hidden": false,
+  "build": "fbe6228777e7",
+  "warp": "1.18.0",
+  "sdk": "0.1.0a3.dev0",
+  "prk": "0.1.0"
+}

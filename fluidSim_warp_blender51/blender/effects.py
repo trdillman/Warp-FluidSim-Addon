@@ -1572,6 +1572,20 @@ def publish_admitted_effects(scene, instances: tuple[EffectInstanceV2, ...]) -> 
         _clear_diagnostics(item)
     _publish_applied_state(scene, instances)
 
+def untrusted_source_reason(scene, instance: EffectInstanceV2) -> str:
+    """Why ``instance`` may not run, or "" when its exact source is trusted.
+
+    Checks the trust store by content digest, never the authored
+    ``trust_state`` property, which a .blend file can carry in any state.
+    """
+    digest = content_trust_digest(instance.definition)
+    trust = trust_store_for_scene(scene).status(digest, built_in=instance.definition.built_in)
+    if trust in {TrustState.BUILT_IN_TRUSTED, TrustState.LOCAL_TRUSTED}:
+        return ""
+    return (f"{instance.definition.name}: exact source is not trusted; "
+            "use Review & Trust before running it")
+
+
 def trust_effect(scene, index: int) -> None:
     stack = scene.fluidsim_effects
     pg = stack.items[int(index)]

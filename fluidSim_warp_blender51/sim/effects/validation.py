@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import difflib
 import textwrap
+import types
 from dataclasses import dataclass
 
 from .enums import EffectDomain, FieldAccess
@@ -41,6 +42,11 @@ _FORBIDDEN_NODES = {
     ast.GeneratorExp: ("COMPREHENSION_FORBIDDEN", "Comprehensions are not supported in Warp kernels."),
     ast.While: ("UNBOUNDED_LOOP", "while loops are not allowed; use a small constant range loop."),
 }
+
+_HOST_EVALUATED_WARP_ATTRIBUTES = {"static"}
+# Characters str.splitlines() treats as line breaks but Python source does not
+# (inside a comment they would hide a statement from validation; see source.py).
+_NON_NEWLINE_LINE_BREAKS = "\x0b\x0c\x1c\x1d\x1e\x85  "
 
 _ALLOWED_GLOBALS = {
     "wp", "C", "float", "int", "bool", "abs", "min", "max", "range",
@@ -173,12 +179,28 @@ def _append_attribute_issues(
             node,
             kernel,
         ))
+    elif node.attr.startswith("_") or node.attr in _HOST_EVALUATED_WARP_ATTRIBUTES:
+        # wp.static(...) is evaluated by Python at kernel declaration, and
+        # private/dunder attributes (wp.__dict__) reach the host builtins.
+        issues.append(_line_issue(
+            "ATTRIBUTE_ACCESS_FORBIDDEN",
+            f"{getattr(node.value, 'id', '')}.{node.attr} runs host Python and is not allowed in effects.",
+            node,
+            kernel,
+        ))
     elif isinstance(node.value, ast.Name) and node.value.id == "wp":
         try:
             import warp as _wp
         except ModuleNotFoundError:
             _wp = None
-        if _wp is not None and not hasattr(_wp, node.attr):
+        if _wp is not None and isinstance(getattr(_wp, node.attr, None), types.ModuleType):
+            issues.append(_line_issue(
+                "ATTRIBUTE_ACCESS_FORBIDDEN",
+                f"wp.{node.attr} is a module, not a kernel function or type.",
+                node,
+                kernel,
+            ))
+        elif _wp is not None and not hasattr(_wp, node.attr):
             issues.append(_line_issue(
                 "UNKNOWN_WARP_SYMBOL",
                 f"Warp has no public symbol wp.{node.attr}.",
@@ -421,6 +443,16 @@ def _validate_kernel(instance: EffectInstanceV2, kernel: KernelDefinitionV2) -> 
             ))
 
     body = textwrap.dedent(kernel.source).strip()
+    hidden_break = next((char for char in body if char in _NON_NEWLINE_LINE_BREAKS), None)
+    if hidden_break is not None:
+        issues.append(EffectIssue(
+            "LINE_BREAK_FORBIDDEN",
+            f"Effect source contains the line-break character U+{ord(hidden_break):04X}; "
+            "use ordinary newlines only.",
+            effect_id=instance.definition.effect_id,
+            kernel_id=kernel.kernel_id,
+        ))
+        return issues
     try:
         tree = ast.parse(body)
     except SyntaxError as exc:

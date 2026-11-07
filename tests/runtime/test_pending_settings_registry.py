@@ -518,3 +518,17 @@ def test_every_object_field_requesting_reset_is_in_the_reset_signature(monkeypat
         finally:
             setattr(pg, name, previous)
         assert pending._signature_changes(reset, new_reset) == ("objects",), name
+
+
+def test_gpu_preview_disable_callback_does_not_step_solver(monkeypatch):
+    properties, _pending, bridge = _modules(monkeypatch)
+    from fluidSim_warp_blender51.blender import gpu_particle_owner
+    calls = []
+    monkeypatch.setattr(gpu_particle_owner, 'disable_preview',
+                        lambda context, scene: calls.append((context, scene)))
+    monkeypatch.setattr(bridge, 'step_frame',
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError('unexpected step')))
+    scene, context = object(), object()
+    properties._gpu_particle_preview_changed(
+        SimpleNamespace(gpu_particle_preview=False, id_data=scene), context)
+    assert calls == [(context, scene)]
