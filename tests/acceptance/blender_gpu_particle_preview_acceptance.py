@@ -101,6 +101,13 @@ class Acceptance:
                 bpy.context.active_object.display_type = 'WIRE'
                 if bpy.ops.fluidsim.setup_scene(mode='QUICK_LIQUID') != {'FINISHED'}:
                     raise RuntimeError('guided setup failed')
+                if fs.domain_object is None:
+                    raise RuntimeError('guided setup did not designate a domain')
+                # The current representation policy chooses ordinary particles
+                # only when surface output is disabled. show_particles is a
+                # render/export flag, not the viewport representation selector.
+                fs.domain_object.fluidsim_domain.surface_enabled = False
+                fs.liquid_display_mode = 'SURFACE'
                 fs.show_particles = True
                 fs.gpu_particle_preview = True
                 if bpy.ops.fluidsim.initialize() != {'FINISHED'} or bpy.ops.fluidsim.step(frames=1) != {'FINISHED'}:
