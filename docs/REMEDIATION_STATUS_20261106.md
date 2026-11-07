@@ -2,7 +2,7 @@
 
 The original R1–R13 code repairs are present in the combined candidate. Production release remains **NO-GO** until the exact candidate and installed packages pass certified target-host qualification. This status distinguishes implemented repairs from runtime acceptance; historical test counts are not evidence for later product changes.
 
-The original review covered `80bf4aa`. Master was refreshed to `f8d5b32` while preserving its untracked review/plan documents. The combined PR #61 candidate advanced to `d77d4bf`, including export, whitewater, Deck, visibility/lifecycle and optional GPU preview integrations. PR49/51/62 are already ancestors and must not be applied twice. PR #63 (`276fb87`) adds the installed installer matrix, CUDA continuation diagnostics and dedicated UI review. The UI follow-up is stacked on #63; no merge to master, release tag or publication is performed by this task.
+The original review covered `80bf4aa`. Master was refreshed to `f8d5b32` while preserving its untracked review/plan documents. The combined PR #61 candidate advanced to `d77d4bf`, including export, whitewater, Deck, visibility/lifecycle and optional GPU preview integrations. PR49/51/62 are already ancestors and must not be applied twice. PR #63 (`276fb87`) adds the installed installer matrix, CUDA continuation diagnostics and dedicated UI review. PR #63 was subsequently merged into the integration branch by another session, advancing it to `53dbfc4` with three retained-log ignore exceptions. The UI follow-up targets that current integration branch; no merge to master, release tag or publication is performed by this task.
 
 ## Original findings
 
@@ -16,7 +16,7 @@ The original review covered `80bf4aa`. Master was refreshed to `f8d5b32` while p
 | R6 paused cache display; R7 retirement failure; R13 fallback attributes | Retained publication, coherent cutover and cleanup, independent viewport attributes; [#57](https://github.com/trdillman/Warp-FluidSim-Addon/pull/57) | Installed foreground/CUDA behavior and fault recovery |
 | Original failing source checks | Current fixtures, declared-field scan and generated ownership map; [#56](https://github.com/trdillman/Warp-FluidSim-Addon/pull/56) | Re-run on each final changed candidate |
 
-The independent follow-up audit and its source/test references are recorded in `ORIGINAL_FINDINGS_AUDIT_20261106.md`. UI U1–U3 are tracked separately in the [UI review](UI_WORKFLOW_REVIEW_20261106.md); their implementation and final verification are recorded in the UI follow-up report.
+The independent follow-up audit and its source/test references are recorded in `ORIGINAL_FINDINGS_AUDIT_20261106.md`. UI U1–U3 are fixed in the follow-up: see [implementation and final verification](UI_REMEDIATION_20261107.md). The original [UI review](UI_WORKFLOW_REVIEW_20261106.md) is retained as the pre-fix record.
 
 ## Acceptance runners and evidence boundaries
 
@@ -28,7 +28,7 @@ The independent follow-up audit and its source/test references are recorded in `
 
 ## Release sequence
 
-1. Review and integrate the combined fixes and follow-ups while preserving their dependency order. #63 targets #61; the UI follow-up targets #63. Do not replay older topic commits already present in #61.
+1. Review and integrate the combined fixes and follow-ups while preserving their dependency order. #63 is already merged into the #61 integration branch; the UI follow-up targets that branch. Do not replay older topic commits already present in #61.
 2. Freeze the product/verifier commit and exact distribution provenance. Follow [RELEASING.md](RELEASING.md); missing identity must refuse rather than reuse a stale receipt.
 3. Run source checks and the certified Blender **5.2.0**, locked Warp **1.19.0**, CUDA, foreground GUI, nine-demo and four-demo performance campaigns. Windows is the existing certification platform; Linux requires its own evidence.
 4. Complete installed exact-ZIP installer, bake/resume/re-bake, preview restoration, paused display, export, lifecycle and fault-recovery stories. Qualify the optional GPU preview separately before advertising it as accepted.

@@ -27,8 +27,8 @@
 
 ## Tasks
 
-- [ ] UI specialist: add failing regressions for the three reviewed stories; fix labels/summary in properties.py and blender/ui_scene.py/ui_stages.py using liquid_display policy, expose existing cache_playback_stop in panels.py/ui_scene.py/deck/controls.py, and display existing activity error details in panels.py/ui_header.py. Verify affected sibling drawers and actual private-profile Blender cache/recovery paths; commit.
-- [ ] Independent original-findings audit: map R1–R13 to current code, tests and remaining native acceptance. Escalate any concrete unfixed code defect for implementation.
-- [ ] Root: correct stale Warp contribution example, mark the archive plan historical, document single-writer cache scope, reconcile changelog and remediation status with current source/evidence.
-- [ ] Independent reviewer: inspect the complete UI diff and tests; route confirmed issues to implementer and re-review fixes.
-- [ ] Root: integrate commits, run configured lint, full regression suite and mandatory production gate attempt; retain failed admission and native limitations. Publish a separate draft PR stacked on #63, with findings disposition and verification evidence.
+- [x] UI specialist: add failing regressions for the three reviewed stories; fix labels/summary in properties.py and blender/ui_scene.py/ui_stages.py using liquid_display policy, expose existing cache_playback_stop in panels.py/ui_scene.py/deck/controls.py, and display existing activity error details in panels.py/ui_header.py. Verify affected sibling drawers and actual private-profile Blender cache/recovery paths; commit.
+- [x] Independent original-findings audit: map R1–R13 to current code, tests and remaining native acceptance. Escalate any concrete unfixed code defect for implementation.
+- [x] Root: correct stale Warp contribution example, mark the archive plan historical, document single-writer cache scope, reconcile changelog and remediation status with current source/evidence.
+- [x] Independent reviewer: inspect the complete UI diff and tests; route confirmed issues to implementer and re-review fixes.
+- [x] Root: integrate commits, run configured lint, full regression suite and mandatory production gate attempt; retain failed admission and native limitations. Prepare a separate draft PR targeting the integration branch now that #63 is merged, with findings disposition and verification evidence.

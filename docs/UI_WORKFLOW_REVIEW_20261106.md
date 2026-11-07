@@ -1,5 +1,7 @@
 # FluidSim UI and production-workflow review — 6 November 2026
 
+> Pre-fix review retained for reproductions and evidence. U1–U3 were subsequently repaired; see [the follow-up results](UI_REMEDIATION_20261107.md). Foreground/CUDA qualification remains open.
+
 Three actionable **P2 usability findings** remain: misleading viewport labels for independent render/export controls, no direct way back from cache playback to live work, and hidden cache-error detail in the primary viewport surfaces. No renderer-policy change is recommended. Native setup, paused cache publication, save/reopen, and Alembic/USD/VDB cache-export diagnostics passed within the limits below. This is **not foreground visual approval or release qualification**.
 
 ## Reviewed source and evidence boundaries
