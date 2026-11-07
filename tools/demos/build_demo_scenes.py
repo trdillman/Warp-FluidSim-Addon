@@ -34,6 +34,7 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
+from tools.demos.metadata import write_metadata  # noqa: E402
 
 DEMOS = os.path.join(REPO, "demos")
 CACHE = os.path.join(REPO, "artifacts", "demo_cache")
@@ -501,10 +502,7 @@ def build_dam_break():
         "preview_frame": DAM_BREAK_PREVIEW_FRAME,
         "playable_live_setup": True,
     }
-    with open(os.path.join(DEMOS, "dam_break", "meta.json"), "w",
-              encoding="utf-8", newline="\n") as fh:
-        json.dump(meta, fh, indent=2)
-        fh.write("\n")
+    write_metadata(os.path.join(DEMOS, "dam_break", "meta.json"), meta)
     fs.live = False
     scene.frame_set(1)
     sess.reset(scene)
@@ -638,12 +636,9 @@ def build_crown_splash():
                 if n > 0),
         },
     }
-    with open(os.path.join(DEMOS, "crown_splash", "meta.json"), "w",
-              encoding="utf-8", newline="\n") as fh:
-        meta["playable_live_setup"] = True
-        meta["seed_objects"] = ["Crown Pool Seed", "Crown Droplet Seed"]
-        json.dump(meta, fh, indent=2)
-        fh.write("\n")
+    meta["playable_live_setup"] = True
+    meta["seed_objects"] = ["Crown Pool Seed", "Crown Droplet Seed"]
+    write_metadata(os.path.join(DEMOS, "crown_splash", "meta.json"), meta)
     pool_seed = make_particle_seed(scene, pool, "Crown Pool Seed")
     drop_seed = make_particle_seed(scene, drop, "Crown Droplet Seed")
     for seed in (pool_seed, drop_seed):
@@ -861,12 +856,9 @@ def build_paddle_stir():
         "whitewater_churn_gain": 2.5,
         "collider_objects": ["PaddleStir Tank", "PaddleStir Paddle"],
     }
-    with open(os.path.join(DEMOS, scene_name, "meta.json"), "w",
-              encoding="utf-8", newline="\n") as fh:
-        meta["playable_live_setup"] = True
-        meta["seed_objects"] = ["Paddle Stir Pool Seed"]
-        json.dump(meta, fh, indent=2)
-        fh.write("\n")
+    meta["playable_live_setup"] = True
+    meta["seed_objects"] = ["Paddle Stir Pool Seed"]
+    write_metadata(os.path.join(DEMOS, scene_name, "meta.json"), meta)
     if variant:
         # Calibration bake: the cache and meta are the whole deliverable. The
         # live-playback packaging below rewrites the shipped demo .blend, so a
@@ -952,10 +944,7 @@ def write_meta(name, meta):
     os.makedirs(os.path.join(DEMOS, name), exist_ok=True)
     meta["playable_live_setup"] = True
     meta["seed_objects"] = []
-    with open(os.path.join(DEMOS, name, "meta.json"), "w",
-              encoding="utf-8", newline="\n") as fh:
-        json.dump(meta, fh, indent=2)
-        fh.write("\n")
+    write_metadata(os.path.join(DEMOS, name, "meta.json"), meta)
 
 
 # Density Ladder: four flat blocks of rising density dropped onto a still
