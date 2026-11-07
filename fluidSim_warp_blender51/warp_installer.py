@@ -464,14 +464,9 @@ def _online_access_block_reason() -> str | None:
 
 def _filesystem_path(path: Path) -> Path:
     """Allow long Windows paths even when Blender's executable is not opted in."""
-    if os.name != "nt":
-        return path
-    absolute = str(path.resolve())
-    if absolute.startswith("\\\\?\\"):
-        return Path(absolute)
-    if absolute.startswith("\\\\"):
-        return Path("\\\\?\\UNC\\" + absolute[2:])
-    return Path("\\\\?\\" + absolute)
+    from .filesystem import filesystem_path
+
+    return filesystem_path(path)
 
 
 def _clear_owned_warp(site_packages: Path) -> None:

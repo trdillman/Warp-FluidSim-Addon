@@ -52,3 +52,11 @@ locked Warp1.19wheel, staged a forced repair, then a fresh process applied it an
 verified the extension-owned certified runtime. CUDA was hidden throughout.
 This closes the final-archive installer/restart scenario only. Production GPU/GUI,
 SDK/PRK and broader installer-negative scenarios remain unqualified.
+
+## 2026-11-07 final integration follow-up
+
+Integrated PR64 at 649d1601 after two independent reviews. Its cache exit, error recovery and output presentation changes retain authored render flags and cache data. PR63 is also included.
+
+Native preview acceptance passed with the actual SDK alpha4 wheel and locked Warp1.19: 5,984 particles, actual Vulkan drawing, frames1 to13, disable/re-enable and completed retirement. SDK compatibility was reviewed, tested and merged in blender-vulkan-interop PR5. This is bounded correctness evidence, not performance qualification.
+
+The 05aea headless gate exposed a Windows long-path failure staging a cache restart backup. Shared filesystem normalization now covers restart staging, rollback and cleanup, preserving ownership checks and all bytes. The original cache-export acceptance passed at the same long private-profile path after the fix. 347 focused tests passed; the two strengthened long-path/partial-rollback tests separately passed after review corrections. Ruff and whitespace checks passed. Generated demo outputs from the failed run were retained outside the source checkout before restoring their baseline. Fresh final-source qualification remains pending.

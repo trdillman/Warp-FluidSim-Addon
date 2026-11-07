@@ -20,6 +20,31 @@ def _cache_bytes(cache_dir: Path) -> dict[str, bytes]:
     }
 
 
+def test_restart_long_backup_paths_restore_and_commit_without_data_loss(tmp_path):
+    from fluidSim_warp_blender51.blender import cache_bake
+    from fluidSim_warp_blender51.filesystem import filesystem_path
+
+    cache_dir = tmp_path
+    while len(str(cache_dir)) < 230:
+        cache_dir /= "long-cache-component"
+    raw_cache_dir = cache_dir
+    cache_dir = filesystem_path(cache_dir)
+    (cache_dir / "frames").mkdir(parents=True)
+    (cache_dir / "fluidsim_cache.json").write_bytes(b"original")
+    (cache_dir / "frames" / "frame_000001.npz").write_bytes(b"original-frame")
+    before = _cache_bytes(cache_dir)
+    protection = cache_bake._protect_restart_cache(raw_cache_dir)
+    assert protection.cache_path == filesystem_path(raw_cache_dir.resolve())
+    assert len(str(protection.backup_path / "fluidsim_cache.json")) > 260
+    (cache_dir / "fluidsim_cache.json").write_bytes(b"failed-replacement")
+    protection.restore()
+    assert _cache_bytes(cache_dir) == before
+    protection = cache_bake._protect_restart_cache(raw_cache_dir)
+    (cache_dir / "fluidsim_cache.json").write_bytes(b"admitted-replacement")
+    protection.commit()
+    assert _cache_bytes(cache_dir) == {"fluidsim_cache.json": b"admitted-replacement"}
+
+
 def test_restart_preserves_existing_cache_when_admission_fails_then_allows_retry(
     monkeypatch, tmp_path
 ):
@@ -214,7 +239,7 @@ def test_partial_restart_staging_failure_preserves_unstaged_originals(
     real_replace = Path.replace
 
     def fail_frames(path, target):
-        if path == cache_dir / "frames":
+        if path.name == "frames" and path.parent.samefile(cache_dir):
             raise OSError("staging blocked")
         return real_replace(path, target)
 
