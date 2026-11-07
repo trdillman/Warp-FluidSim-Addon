@@ -53,10 +53,10 @@ def _items(enum_cls, descriptions=None):
 
 
 LIQUID_VIEW_ITEMS = (
-    ("HIDDEN", "Hidden", "Hide both the liquid surface and liquid particles"),
-    ("SURFACE", "Surface", "Show the marching-cubes liquid surface"),
-    ("PARTICLES", "Particles", "Show liquid as particles only"),
-    ("SURFACE_PARTICLES", "Surface + Particles", "Show both surface mesh and liquid particles"),
+    ("HIDDEN", "None", "Exclude liquid surface and particles from rendering"),
+    ("SURFACE", "Surface", "Include the liquid surface in rendering"),
+    ("PARTICLES", "Particles", "Include liquid particles in rendering"),
+    ("SURFACE_PARTICLES", "Surface + Particles", "Include both surface and particles in rendering"),
 )
 
 
@@ -907,18 +907,18 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
 
     # Viewport display / output
     liquid_view_mode: EnumProperty(
-        name="Liquid View",
+        name="Render Outputs",
         items=LIQUID_VIEW_ITEMS,
         default="SURFACE",
         update=_apply_liquid_view_mode,
-        description="Choose whether the viewport hides liquid output or shows the liquid surface, particles, or both; changing it updates the two visibility toggles below",
+        description="Choose liquid outputs for rendering; export tools use their own output selection. Independent of Liquid Display, which controls the viewport",
     )
     show_surface: BoolProperty(
-        name="Surface Mesh", default=True, update=_sync_liquid_view_mode,
-        description="Enable to display and publish the generated liquid mesh; disable to hide the mesh while simulation continues")
+        name="Render Surface Mesh", default=True, update=_sync_liquid_view_mode,
+        description="Include the generated mesh in rendering; Liquid Display independently controls viewport visibility")
     show_particles: BoolProperty(
-        name="Particles", default=False, update=_sync_liquid_view_mode,
-        description="Enable to display liquid particles in the viewport; disable to hide them while simulation continues")
+        name="Render Particles", default=False, update=_sync_liquid_view_mode,
+        description="Include liquid particles in rendering; Liquid Display independently controls viewport visibility")
     show_whitewater: BoolProperty(
         name="Whitewater", default=True, update=_request_output_refresh,
         description="Enable to display simulated whitewater particles; disable to hide them without disabling whitewater simulation")

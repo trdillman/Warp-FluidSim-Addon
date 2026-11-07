@@ -144,6 +144,10 @@ def _install_bpy_stub(monkeypatch, *, device="cuda:7"):
     fake_bpy.types.Material = object
     fake_bpy.types.Image = object
     fake_bpy.path = SimpleNamespace(abspath=lambda value: value)
+    fake_bpy.data = SimpleNamespace(collections={}, objects={})
+    output = sys.modules.get("fluidSim_warp_blender51.blender.output_publication")
+    if output is not None:
+        monkeypatch.setattr(output, "bpy", fake_bpy)
     fake_bpy.context = SimpleNamespace(
         preferences=SimpleNamespace(
             addons={
@@ -2206,7 +2210,8 @@ def _draw_launcher(
         lambda _device, probe=None: (runtime_ready, "CUDA ready" if runtime_ready else "no CUDA"),
     )
     monkeypatch.setattr(
-        scene_bridge, "session", lambda: SimpleNamespace(active=session_active)
+        scene_bridge, "session", lambda: SimpleNamespace(
+            active=session_active, current_error=lambda _scene: "")
     )
     context = SimpleNamespace(
         scene=SimpleNamespace(fluidsim=SimpleNamespace(live=playing)),

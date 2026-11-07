@@ -131,6 +131,32 @@ def draw_status_message(layout, text: str, severity: str = "INFO") -> None:
     row.label(text=f"{prefix}{text}", icon=icon)
 
 
+def draw_activity_status(layout, scene, state, *, width=42):
+    """Shared compact activity/error readout; full recovery detail stays in Properties."""
+    import textwrap
+
+    from .scene_bridge import current_error
+
+    error = current_error(scene)
+    if not error:
+        layout.label(text=state["label"], icon=state["icon"])
+        return False
+    title = "Cache Playback Error" if state["id"] == "CACHE_PLAYBACK" else "FluidSim Error"
+    layout.label(text=title, icon="ERROR")
+    # Keep the actionable beginning, not an unbounded filesystem path. The
+    # detail link opens the existing full message and recovery controls.
+    detail = str(error)
+    lines = textwrap.wrap(detail, width=width) or [detail]
+    for index, line in enumerate(lines[:3]):
+        if index == 2 and len(lines) > 3:
+            line = line[:width - 1] + "…"
+        layout.label(text=line)
+    layout.operator(
+        "fluidsim.open_scene_properties", text="Status & Recovery…", icon="PROPERTIES"
+    ).target = "SCENE"
+    return True
+
+
 def quality_effective_note(data, name: str) -> str:
     """``"→ 8 (Final)"`` when the Quality tier changes what the solver uses.
 

@@ -244,3 +244,17 @@ def test_liquid_display_cycles_exclusive_modes(deck, monkeypatch):
     for expected in ("PREVIEW", "SURFACE", "OFF", "PREVIEW"):
         assert controls.run_control(deck.bpy.context, controls.LIQUID_PREVIEW) == {"FINISHED"}
         assert group.liquid_display_mode == expected
+
+
+@pytest.mark.parametrize('playing', [False, True])
+def test_cache_transport_and_wheel_offer_exit_without_replacing_play_pause(deck, playing):
+    controls = deck.controls
+    deck.state.update(activity='CACHE_PLAYBACK', playing=playing, owns=False)
+    transport = controls.transport_controls(*controls.deck_state(deck.bpy.context))
+    assert transport[0] is (controls.PAUSE if playing else controls.PLAY)
+    assert 'fluidsim.cache_playback_stop' in {c.target for c in transport}
+    slots = deck.wheel.stage_controls(deck.bpy.context, 'BAKE')
+    assert 'fluidsim.cache_playback_stop' in {c.target for c in slots}
+    deck.state.update(activity='IDLE', playing=False)
+    slots = deck.wheel.stage_controls(deck.bpy.context, 'BAKE')
+    assert 'fluidsim.cache_preview_start' in {c.target for c in slots}

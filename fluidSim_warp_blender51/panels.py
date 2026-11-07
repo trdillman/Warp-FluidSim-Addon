@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import bpy
 
-from .blender.ui_common import FluidSimView3DPanel, activity_ui_state, pending_ui_state
+from .blender.ui_common import (
+    FluidSimView3DPanel,
+    activity_ui_state,
+    draw_activity_status,
+    pending_ui_state,
+)
 from .preferences import configured_device
 from .runtime.warp_runtime import probe_runtime, runtime_status_for_device
 
@@ -130,6 +135,8 @@ def draw_transport(layout, context, state, runtime_ready):
     else:
         controls.operator("screen.animation_play", text="Play", icon="PLAY")
 
+    if activity == "CACHE_PLAYBACK":
+        controls.operator("fluidsim.cache_playback_stop", text="Exit Cache Playback", icon="LOOP_BACK")
     if state["owns_scene"] and activity not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
         controls.operator(
             "fluidsim.restart_simulation",
@@ -159,8 +166,8 @@ class FLUIDSIM_PT_viewport_status(FluidSimView3DPanel, bpy.types.Panel):
         state = activity_ui_state(scene)
 
         status = layout.box()
-        status.label(text=state["label"], icon=state["icon"])
-        note = _status_note(state)
+        has_error = draw_activity_status(status, scene, state)
+        note = "" if has_error else _status_note(state)
         if note:
             status.label(text=note)
 

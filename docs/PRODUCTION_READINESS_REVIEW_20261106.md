@@ -2,6 +2,8 @@
 
 This is the review snapshot of `80bf4aa`. Remediation is now underway; see [current PR and qualification status](REMEDIATION_STATUS_20261106.md). Subsequent source fixes do not rewrite this original evidence.
 
+> Historical review of `80bf4aa`. For current code dispositions, see the [R1–R13 closure audit](ORIGINAL_FINDINGS_AUDIT_20261106.md) and [release status](REMEDIATION_STATUS_20261106.md).
+
 Re-reviewed 6 November 2026 against freshly fetched GitHub `master`, `80bf4aaae0a108602ef1ef73cdf6c74e30dc8354`, in `/workspace/Warp-FluidSim-Addon`. `git fetch origin` followed by the ahead/behind check returned `0 0`. Product source was clean; only the prior review/plan were untracked. This replaces the earlier same-day assessment of `502ca66`, whose documents and evidence remain preserved. It reviews the current tree and its 11-commit update, not only a pull-request diff.
 
 **Decision: NO-GO for production release from this candidate.** Installation has a reproducible UI compatibility defect; cache identity and continuation omit relevant input state; qualification can accept evidence for different source bytes. The documented source checks also fail. Stabilize the existing 4.1 features, then qualify the final source and installed packages. No product fixes, release, tag, merge, or publication were performed in this review.

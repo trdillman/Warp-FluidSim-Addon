@@ -59,6 +59,10 @@ PLAY = operator("screen.animation_play", "Play", "PLAY",
 PAUSE = operator("fluidsim.preview_pause", "Pause", "PAUSE", "Pause live playback")
 CANCEL_BAKE = operator("fluidsim.bake_cancel", "Cancel Bake", "CANCEL",
                        "Cancel the running Production Bake")
+EXIT_CACHE = operator("fluidsim.cache_playback_stop", "Exit Cache", "LOOP_BACK",
+                      "Leave cache playback; Play can start live simulation. Baked files are kept")
+PLAY_CACHE = operator("fluidsim.cache_preview_start", "Play Cache", "FILE_MOVIE",
+                      "Play the baked cache on the timeline")
 STEP = operator("fluidsim.step", "Step", "FRAME_NEXT", "Advance the simulation one frame",
                 call_context="EXEC_DEFAULT", frames=1)
 RESTART = operator("fluidsim.restart_simulation", "Restart", "FILE_REFRESH",
@@ -92,7 +96,7 @@ DECK_OPERATORS = frozenset({SEARCH.target, WHEEL.target})
 
 # Right-hand group of the bar, after the pending chip.
 TOOL_CONTROLS = (LIQUID_PREVIEW, SEARCH, WHEEL, BAKE)
-BAR_CONTROLS = (PLAY, PAUSE, CANCEL_BAKE, STEP, RESTART, APPLY, REVERT, *TOOL_CONTROLS)
+BAR_CONTROLS = (PLAY, PAUSE, CANCEL_BAKE, EXIT_CACHE, STEP, RESTART, APPLY, REVERT, *TOOL_CONTROLS)
 PENDING_ACTIONS = (APPLY, REVERT)
 
 
@@ -108,6 +112,8 @@ def transport_controls(activity: str, playing: bool, owns_scene: bool) -> tuple[
     else:
         first = PLAY
     result = [first]
+    if activity == "CACHE_PLAYBACK":
+        result.append(EXIT_CACHE)
     if owns_scene and activity not in {"CACHE_PLAYBACK", "PRODUCTION_BAKE"}:
         result.extend((STEP, RESTART))
     return tuple(result)
@@ -164,6 +170,8 @@ def resolve(context, control) -> Control:
     """
     if control is PLAY:
         return transport_controls(*deck_state(context))[0]
+    if control is PLAY_CACHE:
+        return EXIT_CACHE if deck_state(context)[0] == "CACHE_PLAYBACK" else PLAY_CACHE
     if control is BAKE:
         return bake_control(getattr(context, "scene", None))
     return control
@@ -246,8 +254,7 @@ STAGE_SLOTS = OrderedDict((
     ("BAKE", (
         BAKE,
         BAKE_RESUME,
-        operator("fluidsim.cache_preview_start", "Play Cache", "FILE_MOVIE",
-                 "Play the baked cache on the timeline"),
+        PLAY_CACHE,
         operator("fluidsim.export_alembic", "Alembic", "EXPORT",
                  "Export the baked liquid as Alembic"),
         operator("fluidsim.export_vdb", "VDB", "EXPORT", "Export the baked liquid as OpenVDB"),

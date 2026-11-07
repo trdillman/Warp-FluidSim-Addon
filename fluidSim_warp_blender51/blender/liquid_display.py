@@ -49,6 +49,36 @@ def viewport_families(scene, surface_enabled):
     return bool(ordinary and surface_enabled), bool(ordinary and not surface_enabled)
 
 
+def _viewport_geometry(scene, surface_enabled, surface):
+    """Final ordinary geometry, shared by visibility writes and UI readback."""
+    show_surface, show_particles = viewport_families(scene, surface_enabled)
+    if show_surface and (surface is None or not len(
+            getattr(getattr(surface, "data", None), "vertices", (1,)))):
+        return False, True
+    return show_surface, show_particles
+
+
+def viewport_summary(scene):
+    """Describe the viewport policy without changing authored output choices or IDs."""
+    from . import output_publication as output
+    from .liquid_preview import handler
+
+    mode = getattr(scene.fluidsim, "liquid_display_mode", "SURFACE")
+    if mode == "OFF":
+        return "Off"
+    if mode == "PREVIEW" and handler.failure() is None:
+        return "Liquid Preview"
+    enabled = bool(getattr(output._domain_settings(scene), "surface_enabled", False))
+    surface = output.output_object(scene, output.SURFACE_NAME, ensure=False)
+    surface_visible, particles_visible = _viewport_geometry(scene, enabled, surface)
+    label = "Surface Mesh" if surface_visible else "Particles" if particles_visible else "Off"
+    if mode == "PREVIEW":
+        label += " (preview fallback)"
+    elif enabled and particles_visible:
+        label += " (surface unavailable)"
+    return label
+
+
 def hold_viewport():
     """Let an exporter own output visibility until ``release_viewport``.
 
@@ -98,11 +128,9 @@ def apply_viewport(scene, *, deferred=True):
         return
     fs = scene.fluidsim
     ds = output._domain_settings(scene)
-    show_surface, show_particles = viewport_families(
-        scene, getattr(ds, "surface_enabled", False))
     surface = output.output_object(scene, output.SURFACE_NAME)
-    if show_surface and (surface is None or not len(getattr(getattr(surface, "data", None), "vertices", (1,)))):
-        show_surface, show_particles = False, True
+    show_surface, show_particles = _viewport_geometry(
+        scene, getattr(ds, "surface_enabled", False), surface)
     changes = []
     for name, hidden in ((output.SURFACE_NAME, not show_surface),
                          (output.PARTICLES_NAME, not show_particles)):

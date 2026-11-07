@@ -384,14 +384,22 @@ def is_output_object(obj) -> bool:
         return False
 
 
-def output_object(scene, kind):
+def output_object(scene, kind, *, ensure=True):
     """Resolve an add-on-owned output by tag inside its output collection.
 
     Never claim a global object merely because its name matches. Saved files
     from older versions are adopted only when the exact legacy-named object is
-    already linked to the configured output collection.
+    already linked to the configured output collection. ``ensure=False`` is a
+    read-only lookup: no collection creation/linking or legacy tag adoption.
     """
-    coll = _output_collection(scene)
+    if ensure:
+        coll = _output_collection(scene)
+    else:
+        # UI/status reads must not create/link collections or adopt legacy IDs.
+        name = getattr(scene.fluidsim, "output_collection_name", "") or "FluidSim Output"
+        coll = bpy.data.collections.get(name)
+        if coll is None:
+            return None
     for obj in coll.objects:
         try:
             if obj.get(OUTPUT_TAG) == kind:
@@ -400,10 +408,11 @@ def output_object(scene, kind):
             pass
     legacy = bpy.data.objects.get(kind)
     if legacy is not None and legacy.name in {obj.name for obj in coll.objects}:
-        try:
-            legacy[OUTPUT_TAG] = kind
-        except (AttributeError, TypeError):
-            pass
+        if ensure:
+            try:
+                legacy[OUTPUT_TAG] = kind
+            except (AttributeError, TypeError):
+                pass
         return legacy
     return None
 

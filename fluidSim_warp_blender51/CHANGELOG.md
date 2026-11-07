@@ -51,6 +51,27 @@
 
 ### Fixes
 
+- Liquid render-output controls are labeled separately from viewport display,
+  and the liquid viewport summary follows the active display/fallback policy.
+- Cache transport and the Liquid Deck expose an explicit Exit Cache action
+  that keeps baked files. Sidebar and header status show cache errors with a
+  link to recovery details, and clear the error when a valid frame recovers.
+
+- Paused cache display edits republish retained liquid and whitewater data,
+  including sampling and attribute colors, without requiring Warp. Viewport
+  fallback particles retain their selected attribute coloring independently
+  of particle render visibility.
+- Replacement admission retains a coherent installed session when retiring
+  the old runtime fails. Production Bake restores preview inputs at the
+  original playhead, and continuation checkpoints retain frozen source and
+  collider inputs rather than recapturing them at the resume frame.
+- Preferences uses a supported Blender icon for dependency controls.
+  Interrupted installer downloads count retained forward progress rather
+  than requiring a full read-buffer-sized transfer to reset the retry budget.
+- Build and qualification subprocesses use private Blender profiles.
+  Qualification now binds source, verifier, runtime and performance evidence
+  to observed identities and refuses missing provenance.
+
 - **Custom effects can no longer run hidden or host-side code.** The
   effect checker now rejects Unicode line breaks such as U+2028 (they hid
   code inside a comment from the check), `wp.static(...)`, private `wp`
@@ -96,8 +117,12 @@
 
 ### Known limitations
 
-- 4.1 is certified on Windows only, as in 4.0. Linux builds, including USD
-  export, are still not CI-tested or certified.
+- Windows is the existing certification platform; this 4.1 stabilization
+  candidate with Warp 1.19 still requires its final GPU/GUI and installed
+  package campaign. Linux builds, including USD export, remain unqualified.
+- Use one writer per cache directory. Separate Blender processes must use
+  separate directories; process-local guards do not provide a cross-process
+  lock.
 - Alembic still exports particle point clouds as empty transforms on
   Blender 5.2; only the surface mesh is written.
 - The Surface span cap setting is still shown but has no effect with
