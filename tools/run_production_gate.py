@@ -33,7 +33,9 @@ Control surface
   certified one. The gate refuses to start unless Blender's Python imports
   exactly version.py's CERTIFIED_WARP_VERSION.
 - Blender lanes use private absolute configuration, scripts, extensions,
-  datafiles and cache paths under the invocation directory. Caller profile
+  datafiles and cache paths. Windows uses a short, uniquely created temporary
+  profile; its path is retained in the invocation's private_profile.json. Other
+  platforms keep the profile under the invocation directory. Caller profile
   and Python home/startup overrides cannot redirect qualification.
 
 Debug surface
@@ -52,6 +54,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -259,9 +262,23 @@ def _check_certified_warp(python, env):
     return root
 
 
+def _profile_directory(*, windows=None):
+    if windows is None:
+        windows = os.name == "nt"
+    if windows:
+        # Blender's Python importer does not reliably handle deeply nested
+        # snapshot modules beyond MAX_PATH, even if the parent Python can copy
+        # them. Keep all state private without nesting it under a long checkout.
+        return Path(tempfile.mkdtemp(prefix="fsq-")).resolve()
+    return (_RUN_DIRECTORY or ROOT / 'artifacts' / 'gate') / 'blender-profile'
+
+
 def _env():
     from tools.release.build_extension import _blender_process_environment
-    profile = (_RUN_DIRECTORY or ROOT / 'artifacts' / 'gate') / 'blender-profile'
+    from tools.gate import qualification as q
+    profile = _profile_directory()
+    if _RUN_DIRECTORY is not None:
+        q.atomic_json(_RUN_DIRECTORY / "private_profile.json", {"profile_directory": str(profile)})
     env = _blender_process_environment(os.environ, profile_dir=profile, allow_source_imports=True)
     for key in ('BLENDER_USER_RESOURCES', 'PYTHONHOME', 'PYTHONSTARTUP'):
         env.pop(key, None)

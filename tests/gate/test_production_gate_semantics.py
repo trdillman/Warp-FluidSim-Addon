@@ -386,13 +386,28 @@ def test_gate_blender_lanes_isolate_user_extensions(monkeypatch):
 
     assert run_production_gate.main(["--include-gui"]) == 0
 
-    private = run_production_gate._RUN_DIRECTORY / "blender-profile" / "extensions"
-    assert private.is_relative_to(ROOT / "artifacts")
+    record = json.loads((run_production_gate._RUN_DIRECTORY / "private_profile.json").read_text())
+    private = Path(record["profile_directory"]) / "extensions"
+    assert private.is_absolute()
+    assert private.is_dir()
     blender_lanes = [label for label, cmd in commands.items() if cmd[0] == "blender-exe"]
     assert len(blender_lanes) >= 20
     assert any("--factory-startup" in commands[label] for label in blender_lanes)
     for label in blender_lanes:
         assert envs[label]["BLENDER_USER_EXTENSIONS"] == str(private), label
+
+
+def test_windows_profile_is_unique_created_and_outside_long_checkout(monkeypatch, tmp_path):
+    monkeypatch.setattr(run_production_gate.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(run_production_gate, "_RUN_DIRECTORY", tmp_path / "long-checkout" / "run")
+    first = run_production_gate._profile_directory(windows=True)
+    second = run_production_gate._profile_directory(windows=True)
+    assert first != second
+    for private in (first, second):
+        assert private.parent == tmp_path.resolve()
+        assert private.name.startswith("fsq-")
+        assert private.is_dir()
+        assert not private.is_relative_to(run_production_gate._RUN_DIRECTORY)
 
 
 def test_gate_owns_profile_and_only_preserves_explicit_import_paths(monkeypatch, tmp_path):
@@ -404,10 +419,12 @@ def test_gate_owns_profile_and_only_preserves_explicit_import_paths(monkeypatch,
     monkeypatch.setenv("PYTHONHOME", "/foreign/python")
     monkeypatch.setenv("PYTHONSTARTUP", "/foreign/startup.py")
     env = run_production_gate._env()
+    record = json.loads((tmp_path / "private_profile.json").read_text())
+    private = Path(record["profile_directory"])
     for key in ("BLENDER_USER_CONFIG", "BLENDER_USER_SCRIPTS", "BLENDER_USER_EXTENSIONS",
                 "BLENDER_USER_DATAFILES", "PYTHONUSERBASE", "WARP_CACHE_PATH",
                 "XDG_CACHE_HOME", "TEMP", "TMP", "TMPDIR"):
-        assert Path(env[key]).is_relative_to(tmp_path)
+        assert Path(env[key]).is_relative_to(private)
         assert Path(env[key]).is_dir()
     assert "BLENDER_USER_RESOURCES" not in env
     assert "PYTHONHOME" not in env and "PYTHONSTARTUP" not in env
