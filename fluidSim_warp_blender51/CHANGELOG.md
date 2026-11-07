@@ -51,6 +51,12 @@
 
 ### Fixes
 
+- Liquid render-output controls are labeled separately from viewport display,
+  and the liquid viewport summary follows the active display/fallback policy.
+- Cache transport and the Liquid Deck expose an explicit Exit Cache action
+  that keeps baked files. Sidebar and header status show cache errors with a
+  link to recovery details, and clear the error when a valid frame recovers.
+
 - Paused cache display edits republish retained liquid and whitewater data,
   including sampling and attribute colors, without requiring Warp. Viewport
   fallback particles retain their selected attribute coloring independently
