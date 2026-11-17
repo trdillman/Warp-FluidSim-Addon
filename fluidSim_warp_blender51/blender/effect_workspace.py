@@ -233,7 +233,10 @@ class FLUIDSIM_OT_effect_show_generated_source(bpy.types.Operator):
             return {"CANCELLED"}
         instance = effects.effect_instance_from_pg(context.scene, item)
         generated = generate_kernel_source(instance, self.kernel_index)
-        name = f"FluidSim Generated Source - {instance.instance_id} - {generated.kernel_id}.py"
+        # Blender names stop at 63 characters and silently truncate longer
+        # ones, so look up by the same shortened name or every click would
+        # miss the existing text and create a numbered duplicate.
+        name = f"FluidSim Generated Source - {instance.instance_id} - {generated.kernel_id}.py"[:63]
         text = bpy.data.texts.get(name) or bpy.data.texts.new(name)
         text.clear()
         text.write(generated.source)

@@ -11,6 +11,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
 
 import bpy
 
@@ -33,6 +34,9 @@ from .solver_settings import (
     scene_quality_fidelity as _scene_quality_fidelity,
     validate_setting_registry as _validate_solver_setting_registry,
 )
+
+if TYPE_CHECKING:
+    from .scene_bridge import Session
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
 persistent = getattr(_handlers, "persistent", lambda fn: fn)
@@ -1005,11 +1009,25 @@ def _restore_applied_domain(scene, scene_fs, state):
     return active_domain_settings(scene)
 
 
+def _restore_value(owner, name, value) -> None:
+    """Write one snapshot value back; a datablock deleted since is skipped.
+
+    The snapshot holds datablock wrappers (for example the height-profile
+    image), and writing a removed one raises ``ReferenceError``, which would
+    otherwise abort the revert with some fields restored and others not.
+    """
+    try:
+        setattr(owner, name, value)
+    except ReferenceError:
+        pass
+
+
 def revert_pending_values(scene):
     """Restore the successfully applied RNA snapshot without saving prefs."""
     state = _interaction_state(scene)
     if state.applied_reset_signature is None:
         return False
+    previous_suppress = state.suppress_callbacks
     state.suppress_callbacks = True
     try:
         scene_fs = getattr(scene, "fluidsim", None)
@@ -1029,11 +1047,11 @@ def revert_pending_values(scene):
                 continue
             owner = _declaring_group(scene_fs, domain_fs, name)
             if owner is not None:
-                setattr(owner, name, value)
+                _restore_value(owner, name, value)
         for name, value in state.reset_snapshot.items():
             owner = _declaring_group(scene_fs, domain_fs, name)
             if owner is not None:
-                setattr(owner, name, value)
+                _restore_value(owner, name, value)
         for obj, values in state.object_reset_snapshot:
             # An object deleted since the snapshot has nothing to restore;
             # skip it and finish the rest of the revert.
@@ -1045,7 +1063,7 @@ def revert_pending_values(scene):
             except ReferenceError:
                 continue
     finally:
-        state.suppress_callbacks = False
+        state.suppress_callbacks = previous_suppress
     refresh_pending_state(scene, session())
     if (_configured_device() != state.applied_device
             and state.pending_action is SceneUpdate.REBUILD):

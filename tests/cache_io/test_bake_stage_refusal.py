@@ -147,6 +147,7 @@ def test_a_changed_animation_offers_a_rebake_from_the_first_changed_frame(
     ui_stages = _stage_module(monkeypatch)
     ui_scene = sys.modules[ui_stages.draw_cache_bake.__module__]
     monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: tmp_path)
+    (tmp_path / "fluidsim_cache.json").write_text("{}", encoding="utf-8")
     context = _context()
     cache_bake._REBAKE_OFFERS[cache_bake.scene_identity(context.scene)] = 17
     layout = _Layout()
@@ -177,3 +178,22 @@ def test_nothing_is_drawn_while_a_bake_is_running(monkeypatch, tmp_path):
 
     assert layout.labels == []
     assert layout.operators == []
+
+
+def test_a_rebake_offer_is_dropped_once_its_cache_is_gone(monkeypatch, tmp_path):
+    """Freeing, moving or re-pointing the cache must not leave a stale offer."""
+    from fluidSim_warp_blender51.blender import cache_bake
+
+    ui_stages = _stage_module(monkeypatch)
+    ui_scene = sys.modules[ui_stages.draw_cache_bake.__module__]
+    monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: tmp_path)
+    context = _context()
+    identity = cache_bake.scene_identity(context.scene)
+    cache_bake._REBAKE_OFFERS[identity] = 17  # no manifest in tmp_path
+    layout = _Layout()
+
+    ui_stages.draw_cache_refusal(layout, context)
+
+    assert layout.labels == []
+    assert layout.operators == []
+    assert identity not in cache_bake._REBAKE_OFFERS

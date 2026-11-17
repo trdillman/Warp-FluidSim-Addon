@@ -111,6 +111,16 @@ class FLUIDSIM_OT_deck_modal(bpy.types.Operator):
                 region.tag_redraw()
 
     def modal(self, context, event):
+        # A raising modal never gets cancel(); free this window's slot so the
+        # ensure timer can start a fresh event layer instead of leaving the
+        # bar dead until the next file load.
+        try:
+            return self._modal(context, event)
+        except Exception:  # noqa: BLE001
+            self._finish()
+            raise
+
+    def _modal(self, context, event):
         if self.generation != _GENERATION:
             return {"FINISHED", "PASS_THROUGH"}
         if event.type not in {"MOUSEMOVE", "LEFTMOUSE"}:

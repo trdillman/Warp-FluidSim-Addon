@@ -79,7 +79,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `active_preset_id` | AUTHORED_NEXT_RUN | - | - | scene | scene | scene | 0 | PUBLISHED |
 | `cache_format` | AUTHORED_NEXT_RUN | - | - | - | - | scene | 0 | UNOBSERVED |
 | `bake_start` | AUTHORED_NEXT_RUN | scene | scene | scene | - | scene | 0 | OK |
-| `bake_end` | AUTHORED_NEXT_RUN | scene | scene | scene | - | scene | 0 | OK |
+| `bake_end` | AUTHORED_NEXT_RUN | scene | scene | scene | scene | scene | 0 | OK |
 | `checkpoint_interval` | AUTHORED_NEXT_RUN | scene | scene | scene | - | scene | 1 | OK |
 | `bake_status` | PRESENTATION | - | scene | scene | scene | scene | 1 | PUBLISHED |
 | `bake_progress` | PRESENTATION | scene | scene | scene | - | scene | 2 | OK |

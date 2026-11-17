@@ -19,6 +19,8 @@ Storage & Range and Manage Cache shelves, so every cache control stays reachable
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import bpy
 
 from . import file_compat
@@ -431,7 +433,7 @@ def draw_cache_refusal(layout, context) -> None:
     """
     from ..io.cache import LEGACY_2X_CACHE_MESSAGE
     from . import ui_scene
-    from .cache_bake import rebake_offer
+    from .cache_bake import clear_rebake_offer, rebake_offer
     from .production_bake import bake_is_active
     from .ui_cache_state import cache_format_for_ui
 
@@ -443,6 +445,12 @@ def draw_cache_refusal(layout, context) -> None:
         ui_scene._draw_wrapped(layout, LEGACY_2X_CACHE_MESSAGE, icon="ERROR")
         return
     frame = rebake_offer(scene)
+    if frame is not None and (
+            directory is None
+            or not (Path(directory) / "fluidsim_cache.json").is_file()):
+        # The offer outlived its cache (freed, moved or re-pointed): drop it.
+        clear_rebake_offer(scene)
+        frame = None
     if frame is not None:
         ui_scene._draw_wrapped(
             layout,

@@ -246,6 +246,15 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
         return {"FINISHED"}
 
     def modal(self, context, event):
+        # A raising modal never gets cancel(); close here so the draw handler
+        # cannot outlive the operator.
+        try:
+            return self._modal(context, event)
+        except Exception:  # noqa: BLE001
+            self._close(context)
+            raise
+
+    def _modal(self, context, event):
         from .registry import REGISTRY
 
         area = getattr(context, "area", None)
@@ -292,7 +301,7 @@ class FLUIDSIM_OT_radial_wheel(bpy.types.Operator):
             if isinstance(target, int):
                 return self._pick(context, target) or {"RUNNING_MODAL"}
             return {"RUNNING_MODAL"}
-        if event.type in {"LEFTMOUSE", "RIGHTMOUSE"} and event.value == "PRESS":
+        if event.type in {"LEFTMOUSE", "RIGHTMOUSE"} and event.value in {"PRESS", "DOUBLE_CLICK"}:
             if target is None:
                 self._close(context)
                 return {"CANCELLED"}

@@ -234,6 +234,15 @@ class _FLUIDSIM_OT_production_bake_modal:
         self._finish(context)
 
 
+def _resolved_cache_path_or_report(operator, scene):
+    """Resolve the configured cache path, or report why not and return ``None``."""
+    try:
+        return _runtime._resolved_cache_path(scene)
+    except Exception as exc:  # noqa: BLE001 - surface as a report, not a traceback
+        operator.report({"ERROR"}, f"Cache path is not usable: {exc}")
+        return None
+
+
 class FLUIDSIM_OT_bake_start(_FLUIDSIM_OT_production_bake_modal, bpy.types.Operator):
     """Start a fresh one-frame-transaction production bake"""
 
@@ -377,8 +386,14 @@ class FLUIDSIM_OT_cache_integrity_scan(bpy.types.Operator):
     def execute(self, context):
         from ..blender.cache_manager import inspect_cache
 
-        path = Path(bpy.path.abspath(context.scene.fluidsim.cache_path))
-        inspection = inspect_cache(path)
+        path = _resolved_cache_path_or_report(self, context.scene)
+        if path is None:
+            return {"CANCELLED"}
+        try:
+            inspection = inspect_cache(path)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Cache scan failed: {exc}")
+            return {"CANCELLED"}
         context.scene.fluidsim.status = inspection.message
         severity = {"INFO"} if inspection.healthy else {"ERROR"}
         detail = inspection.message
@@ -430,18 +445,28 @@ class FLUIDSIM_OT_cache_remove_orphans(bpy.types.Operator):
     def execute(self, context):
         from ..blender.cache_manager import inspect_cache, remove_orphans
 
-        path = _runtime._resolved_cache_path(context.scene)
+        path = _resolved_cache_path_or_report(self, context.scene)
+        if path is None:
+            return {"CANCELLED"}
         if self.expected_cache_path and str(path) != self.expected_cache_path:
             self.report({"ERROR"}, "Cache path changed after confirmation; inspect again")
             return {"CANCELLED"}
-        expected = tuple(json.loads(self.expected_orphans_json or "[]"))
-        current = tuple(inspect_cache(path).orphan_files)
+        try:
+            expected = tuple(json.loads(self.expected_orphans_json or "[]"))
+            current = tuple(inspect_cache(path).orphan_files)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Cache scan failed: {exc}")
+            return {"CANCELLED"}
         if expected and current != expected:
             self.report(
                 {"ERROR"}, "Cache orphan inventory changed after confirmation; inspect again"
             )
             return {"CANCELLED"}
-        removed = remove_orphans(path)
+        try:
+            removed = remove_orphans(path)
+        except Exception as exc:  # noqa: BLE001
+            self.report({"ERROR"}, f"Could not remove orphans: {exc}")
+            return {"CANCELLED"}
         self.report({"INFO"}, f"Removed {len(removed)} orphan cache file(s)")
         return {"FINISHED"}
 
@@ -476,7 +501,9 @@ class FLUIDSIM_OT_cache_free(bpy.types.Operator):
     def execute(self, context):
         from ..blender.cache_manager import free_cache
 
-        path = _runtime._resolved_cache_path(context.scene)
+        path = _resolved_cache_path_or_report(self, context.scene)
+        if path is None:
+            return {"CANCELLED"}
         if self.expected_cache_path and str(path) != self.expected_cache_path:
             self.report({"ERROR"}, "Cache path changed after confirmation; review Free Cache again")
             return {"CANCELLED"}
@@ -507,7 +534,9 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
     expected_source: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
-        source = _runtime._resolved_cache_path(context.scene)
+        source = _resolved_cache_path_or_report(self, context.scene)
+        if source is None:
+            return {"CANCELLED"}
         self.expected_source = str(source)
         if not self.destination:
             self.destination = str(source.with_name(source.name + "_moved"))
@@ -523,7 +552,9 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
         from ..blender.cache_manager import move_cache
 
         fs = context.scene.fluidsim
-        source = _runtime._resolved_cache_path(context.scene)
+        source = _resolved_cache_path_or_report(self, context.scene)
+        if source is None:
+            return {"CANCELLED"}
         if self.expected_source and str(source) != self.expected_source:
             self.report({"ERROR"}, "Cache source changed after confirmation; review Move again")
             return {"CANCELLED"}
@@ -531,6 +562,13 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
         try:
             moved = move_cache(source, destination)
         except Exception as exc:  # noqa: BLE001
+            if destination.is_dir() and not source.exists():
+                # The verified copy is published and the source is already
+                # gone (only leftover cleanup failed), so the scene must
+                # follow the cache instead of pointing at a missing folder.
+                fs.cache_path = str(destination)
+                self.report({"WARNING"}, f"Cache moved to {destination}, but cleanup is incomplete: {exc}")
+                return {"FINISHED"}
             self.report({"ERROR"}, f"Cache move failed: {exc}")
             return {"CANCELLED"}
         fs.cache_path = str(moved)
@@ -553,7 +591,9 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
     expected_source: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
 
     def invoke(self, context, _event):
-        source = _runtime._resolved_cache_path(context.scene)
+        source = _resolved_cache_path_or_report(self, context.scene)
+        if source is None:
+            return {"CANCELLED"}
         self.expected_source = str(source)
         self.name = source.name
         return context.window_manager.invoke_props_dialog(self, width=560)
@@ -567,7 +607,9 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
         from ..blender.cache_manager import rename_cache
 
         fs = context.scene.fluidsim
-        source = _runtime._resolved_cache_path(context.scene)
+        source = _resolved_cache_path_or_report(self, context.scene)
+        if source is None:
+            return {"CANCELLED"}
         if self.expected_source and str(source) != self.expected_source:
             self.report({"ERROR"}, "Cache source changed after confirmation; review Rename again")
             return {"CANCELLED"}
@@ -594,8 +636,11 @@ class FLUIDSIM_OT_cache_open_folder(bpy.types.Operator):
     def execute(self, context):
         from ..blender.cache_manager import open_cache_folder
 
+        path = _resolved_cache_path_or_report(self, context.scene)
+        if path is None:
+            return {"CANCELLED"}
         try:
-            open_cache_folder(Path(bpy.path.abspath(context.scene.fluidsim.cache_path)))
+            open_cache_folder(path)
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Could not open cache folder: {exc}")
             return {"CANCELLED"}

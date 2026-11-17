@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 from collections.abc import Iterable
@@ -317,6 +318,14 @@ def capture_scene_preset(
     )
 
 
+def _same_setting_value(current, wanted) -> bool:
+    """Equality that tolerates Blender's float32 storage of float settings."""
+    if (isinstance(current, float) and isinstance(wanted, (int, float))
+            and not isinstance(wanted, bool)):
+        return math.isclose(current, float(wanted), rel_tol=1e-6, abs_tol=1e-9)
+    return current == wanted
+
+
 def apply_preset(scene, preset: PresetV1, *, target=None, field_target=None) -> ApplyResult:
     preset = PresetV1.from_dict(preset.to_dict())
     # ``target`` is where the preset's solver values are written. Blender-layer
@@ -347,7 +356,8 @@ def apply_preset(scene, preset: PresetV1, *, target=None, field_target=None) -> 
         raise ValueError(f"scene does not support preset settings: {', '.join(missing)}")
     previous = {key: getattr(resolve(key), key) for key in preset.settings}
     changed = tuple(
-        key for key, value in preset.settings.items() if previous[key] != value
+        key for key, value in preset.settings.items()
+        if not _same_setting_value(previous[key], value)
     )
     try:
         for key, value in preset.settings.items():

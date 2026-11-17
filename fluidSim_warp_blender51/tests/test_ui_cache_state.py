@@ -164,3 +164,41 @@ def test_legacy_identity_is_playable_but_ui_requires_restart(tmp_path):
     assert 'input identity' in action.message
     assert 'playback' in action.message
     assert path.read_bytes() == before
+
+
+def _complete_current_cache(tmp_path):
+    """A complete cache from the current solver version, ending at frame 1."""
+    from fluidsim_testpkg.io.cache_schema import FrameEntry
+
+    manifest = _manifest(frame_end=1, solver_version=VERSION_STRING)
+    manifest.frames[1] = FrameEntry(
+        frame=1,
+        frame_file="frames/frame_000001.npz",
+        frame_sha256="a" * 64,
+        frame_size=1,
+        checkpoint_file="checkpoints/checkpoint_000001.npz",
+        checkpoint_sha256="b" * 64,
+        checkpoint_size=1,
+        solver_frame=1,
+        simulation_time=0.1,
+        settings_signature="sha256:" + "2" * 64,
+        source_signature="sha256:" + "3" * 64,
+        completed_at="2026-08-18T00:00:00Z",
+        source_frame_stamp="c" * 64,
+        whitewater_count=0,
+        particle_count=1,
+    )
+    write_manifest_atomic(tmp_path / "fluidsim_cache.json", manifest)
+
+
+def test_a_later_bake_end_extends_a_complete_cache_instead_of_restarting(tmp_path):
+    """Owner decision D4: a complete cache continues when Bake End moves later."""
+    _complete_current_cache(tmp_path)
+    assert production_bake_action(tmp_path).action == "RESTART"
+    assert production_bake_action(tmp_path, end=1).action == "RESTART"
+    extended = production_bake_action(tmp_path, end=5)
+    assert extended.action == "RESUME"
+    assert extended.destructive is False
+    assert "frame 5" in extended.message
+    # The memoized answer for one end must not leak into another.
+    assert production_bake_action(tmp_path, end=1).action == "RESTART"

@@ -2743,7 +2743,7 @@ def _patch_bake_runtime(
     monkeypatch.setattr(
         ui_cache_state,
         "production_bake_action",
-        lambda _directory: SimpleNamespace(
+        lambda _directory, _end=None: SimpleNamespace(
             action=action, message="Existing cache", destructive=action == "RESTART",
             warning=False,
         ),

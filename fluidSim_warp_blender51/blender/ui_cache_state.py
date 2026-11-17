@@ -49,21 +49,28 @@ _ACTION_CACHE: dict = {}
 _FORMAT_CACHE: dict = {}
 
 
-def production_bake_action(cache_dir: Path | str | None) -> ProductionBakeAction:
-    """Return START, RESUME, or RESTART for one mutually exclusive UI action."""
+def production_bake_action(
+    cache_dir: Path | str | None, end: int | None = None
+) -> ProductionBakeAction:
+    """Return START, RESUME, or RESTART for one mutually exclusive UI action.
+
+    ``end`` is the authored Bake End. A later end than a complete cache's
+    last frame extends that cache (owner decision D4), so it is a RESUME.
+    """
     if cache_dir is None:
         return ProductionBakeAction("START", "No production cache exists")
     path = manifest_path(Path(cache_dir))
     stamp = _manifest_stamp(path)
     if stamp is None:
         return ProductionBakeAction("START", "No cache manifest exists")
-    cached = _ACTION_CACHE.get(stamp[0])
+    key = (stamp[0], end)
+    cached = _ACTION_CACHE.get(key)
     if cached is not None and cached[0] == stamp:
         return cached[1]
-    action = _production_bake_action(path)
+    action = _production_bake_action(path, end)
     if len(_ACTION_CACHE) > 64:
         _ACTION_CACHE.clear()
-    _ACTION_CACHE[stamp[0]] = (stamp, action)
+    _ACTION_CACHE[key] = (stamp, action)
     return action
 
 
@@ -85,7 +92,7 @@ def cache_format_for_ui(cache_dir: Path | str) -> int:
     return value
 
 
-def _production_bake_action(path: Path) -> ProductionBakeAction:
+def _production_bake_action(path: Path, end: int | None = None) -> ProductionBakeAction:
     try:
         manifest = load_manifest(path)
     except LegacyCacheFormatError:
@@ -125,6 +132,12 @@ def _production_bake_action(path: Path) -> ProductionBakeAction:
             "RESUME",
             "Current solver cache: Resume will verify signatures, checksums, "
             "and the last committed checkpoint",
+        )
+    if end is not None and int(end) > manifest.frame_end:
+        return ProductionBakeAction(
+            "RESUME",
+            f"Current solver cache is complete through frame {manifest.frame_end}: "
+            f"Resume will extend it to frame {int(end)}",
         )
     return ProductionBakeAction(
         "RESTART",

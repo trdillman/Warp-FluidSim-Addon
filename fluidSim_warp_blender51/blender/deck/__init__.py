@@ -91,6 +91,13 @@ def _on_deck_load_post(_filepath):
     # cancel(); the ensure timer then starts one per window on its next tick,
     # which is brought forward so the bar takes clicks as soon as the file opens.
     modal.restart_after_load(REGISTRY)
+    # Their operators may be dropped by the load without cancel(), which would
+    # leave the keyed draw handlers pointing at freed operators.
+    for key in ("palette", "wheel"):
+        try:
+            REGISTRY.remove_draw_handler(key)
+        except Exception as exc:  # noqa: BLE001
+            print(f"FluidSim: could not clear the {key} overlay after load: {exc}")
     context = bpy.context
     data = getattr(bpy, "data", None)
     if deck_mode(context) == "AUTO" and getattr(data, "filepath", ""):
