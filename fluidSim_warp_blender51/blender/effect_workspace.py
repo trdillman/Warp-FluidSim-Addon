@@ -266,7 +266,7 @@ class FLUIDSIM_OT_effect_show_generated_source(bpy.types.Operator):
         name = generated_source_text_name(instance.instance_id, generated.kernel_id)
         text = find_or_create_generated_text(
             bpy.data.texts, item.kernels[self.kernel_index].generated_text_name, name,
-            f"{instance.instance_id}\0{generated.kernel_id}")
+            json.dumps([instance.instance_id, generated.kernel_id]))
         text.clear()
         text.write(generated.source)
         text["fluidsim_generated_source"] = True

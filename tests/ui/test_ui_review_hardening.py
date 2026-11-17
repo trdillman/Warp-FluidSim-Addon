@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -202,10 +203,10 @@ def test_generated_text_is_reused_only_by_the_kernel_that_owns_it():
     texts = _Texts()
     find = workspace.find_or_create_generated_text
 
-    mine = find(texts, "", "FluidSim Source - k - abc.py", "effect-1\0kernel_a")
-    assert find(texts, mine.name, "FluidSim Source - k - abc.py", "effect-1\0kernel_a") is mine
+    mine = find(texts, "", "FluidSim Source - k - abc.py", json.dumps(["effect-1", "kernel_a"]))
+    assert find(texts, mine.name, "FluidSim Source - k - abc.py", json.dumps(["effect-1", "kernel_a"])) is mine
 
     # A different kernel whose short name collides must not take over the Text.
-    other = find(texts, "", "FluidSim Source - k - abc.py", "effect-1\0kernel_b")
+    other = find(texts, "", "FluidSim Source - k - abc.py", json.dumps(["effect-1", "kernel_b"]))
     assert other is not mine
-    assert mine["fluidsim_generated_key"] == "effect-1\0kernel_a"
+    assert mine["fluidsim_generated_key"] == json.dumps(["effect-1", "kernel_a"])
