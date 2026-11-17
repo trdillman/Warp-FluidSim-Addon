@@ -222,3 +222,27 @@ def test_a_rebake_offer_does_not_follow_the_scene_to_another_cache(monkeypatch, 
     other = _Layout()
     ui_stages.draw_cache_refusal(other, context)
     assert other.labels == [] and other.operators == []
+
+
+def test_a_rebake_offer_is_bound_to_the_cache_that_refused_the_resume(monkeypatch, tmp_path):
+    """Switching caches before the panel first draws must not show the old offer."""
+    from fluidSim_warp_blender51.blender import cache_bake
+
+    ui_stages = _stage_module(monkeypatch)
+    ui_scene = sys.modules[ui_stages.draw_cache_bake.__module__]
+    first, second = tmp_path / "a", tmp_path / "b"
+    for directory in (first, second):
+        directory.mkdir()
+        (directory / "fluidsim_cache.json").write_text("{}", encoding="utf-8")
+    context = _context()
+    identity = cache_bake.scene_identity(context.scene)
+    error = SimpleNamespace(decision=SimpleNamespace(
+        code="SOURCE_ANIMATION_CHANGED", first_changed_frame=17))
+    cache_bake._record_resume_refusal(identity, error, first)  # refused for cache A
+    monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: second)  # B before any draw
+
+    layout = _Layout()
+    ui_stages.draw_cache_refusal(layout, context)
+
+    assert layout.labels == [] and layout.operators == []
+    assert cache_bake.rebake_offer(context.scene) is None

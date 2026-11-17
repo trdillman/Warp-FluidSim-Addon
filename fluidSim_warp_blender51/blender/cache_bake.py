@@ -141,6 +141,9 @@ def _protect_restart_cache(cache_path: Path | str) -> _RestartCacheProtection:
 # Bake stage: clicking it asks the cache again, so a stale value cannot re-bake
 # frames that still match.
 _REBAKE_OFFERS: dict[int, int] = {}
+# Scene identity -> the cache directory the offer was recorded for, so the
+# panel can drop it if the scene is pointed at another cache.
+_REBAKE_OFFER_CACHES: dict[int, str] = {}
 
 
 def rebake_offer(scene) -> int | None:
@@ -148,17 +151,30 @@ def rebake_offer(scene) -> int | None:
     return _REBAKE_OFFERS.get(scene_identity(scene))
 
 
+def rebake_offer_cache(scene) -> str | None:
+    """The cache directory the current offer was recorded for, if known."""
+    return _REBAKE_OFFER_CACHES.get(scene_identity(scene))
+
+
 def clear_rebake_offer(scene) -> None:
     _REBAKE_OFFERS.pop(scene_identity(scene), None)
+    _REBAKE_OFFER_CACHES.pop(scene_identity(scene), None)
 
 
-def _record_resume_refusal(scene_key: int, error: BaseException) -> None:
+def _record_resume_refusal(
+    scene_key: int, error: BaseException, cache_path: Path | str | None = None
+) -> None:
     decision = getattr(error, "decision", None)
     frame = getattr(decision, "first_changed_frame", None)
     if getattr(decision, "code", None) == "SOURCE_ANIMATION_CHANGED" and frame is not None:
         _REBAKE_OFFERS[scene_key] = int(frame)
+        if cache_path is not None:
+            _REBAKE_OFFER_CACHES[scene_key] = str(cache_path)
+        else:
+            _REBAKE_OFFER_CACHES.pop(scene_key, None)
     elif decision is not None:
         _REBAKE_OFFERS.pop(scene_key, None)
+        _REBAKE_OFFER_CACHES.pop(scene_key, None)
 
 
 class BakeRun:
@@ -223,8 +239,13 @@ class BakeRun:
             if restart:
                 self._restart_cache = _protect_restart_cache(cache_path)
             _REBAKE_OFFERS.pop(self.scene_key, None)
+            _REBAKE_OFFER_CACHES.pop(self.scene_key, None)
         except BaseException as exc:
-            _record_resume_refusal(self.scene_key, exc)
+            try:
+                refused_cache = backend.cache_path(scene)
+            except Exception:  # noqa: BLE001 - the path is only a label for the offer
+                refused_cache = None
+            _record_resume_refusal(self.scene_key, exc, refused_cache)
             try:
                 self.abandon("Production bake could not start")
             finally:

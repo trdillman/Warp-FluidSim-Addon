@@ -423,8 +423,16 @@ class FLUIDSIM_STAGE_PT_look_materials(FluidSimStagePanel, bpy.types.Panel):
         )
 
 
-# Which cache directory each scene's re-bake offer was first shown for.
+# Which cache directory each scene's re-bake offer belongs to.
 _OFFER_CACHE: dict = {}
+
+
+def _resolved(path) -> str:
+    """One spelling of a cache directory, however the bake or the panel got it."""
+    try:
+        return str(Path(path).resolve())
+    except (OSError, RuntimeError):
+        return str(path)
 
 
 def draw_cache_refusal(layout, context) -> None:
@@ -437,7 +445,7 @@ def draw_cache_refusal(layout, context) -> None:
     """
     from ..io.cache import LEGACY_2X_CACHE_MESSAGE
     from . import ui_scene
-    from .cache_bake import clear_rebake_offer, rebake_offer, scene_identity
+    from .cache_bake import clear_rebake_offer, rebake_offer, rebake_offer_cache, scene_identity
     from .production_bake import bake_is_active
     from .ui_cache_state import cache_format_for_ui
 
@@ -458,7 +466,8 @@ def draw_cache_refusal(layout, context) -> None:
     identity = scene_identity(scene)
     if frame is None:
         _OFFER_CACHE.pop(identity, None)
-    elif _OFFER_CACHE.setdefault(identity, str(directory)) != str(directory):
+    elif _OFFER_CACHE.setdefault(
+            identity, _resolved(rebake_offer_cache(scene) or directory)) != _resolved(directory):
         # The offer was recorded against another cache; the user has since
         # pointed the scene somewhere else, so it does not apply here.
         clear_rebake_offer(scene)
