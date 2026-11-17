@@ -152,7 +152,9 @@ def _publish_bundle(artifacts) -> list[str]:
             staged[final_path] = stage_path
             writer(stage_path, payload)
 
-        for final_path in finals:
+        # A single file needs no backup: one os.replace swaps it atomically, so
+        # a stop at any point leaves either the old or the new file in place.
+        for final_path in (finals if len(finals) > 1 else ()):
             if os.path.exists(final_path):
                 backup_path = _transaction_path(final_path, ".backup")
                 _remove_if_present(backup_path)

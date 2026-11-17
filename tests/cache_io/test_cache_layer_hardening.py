@@ -108,6 +108,16 @@ def test_directory_fsync_refusal_does_not_fail_a_write(tmp_path, monkeypatch):
 
     monkeypatch.setattr(os, "fsync", picky)
     fsutil.fsync_directory(tmp_path)  # must not raise
+
+    def failing(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(5, "Input/output error")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", failing)
+    with pytest.raises(OSError, match="Input/output"):
+        fsutil.fsync_directory(tmp_path)  # a real I/O failure is not hidden
+    monkeypatch.setattr(os, "fsync", picky)
     base = build_tiny_cache(tmp_path / "c")
     assert (Path(base) / "frames" / "frame_000001.npz").is_file()
 
@@ -289,3 +299,15 @@ def test_directory_destination_is_refused_and_left_untouched(tmp_path):
         export_mod.export_surface_obj(_solver(), str(target))
     assert (target / "keep.txt").read_text() == "keep"
     assert [p.name for p in tmp_path.iterdir()] == ["out.ply"]
+
+
+def test_single_file_export_never_moves_the_old_file_aside(
+        tmp_path, monkeypatch):
+    path = tmp_path / "p.ply"
+    export_mod.export_points_ply(np.zeros((1, 3), np.float32), str(path))
+    calls = []
+    real_replace = os.replace
+    monkeypatch.setattr(
+        os, "replace", lambda a, b: (calls.append((a, b)), real_replace(a, b))[1])
+    export_mod.export_points_ply(np.ones((2, 3), np.float32), str(path))
+    assert len(calls) == 1 and calls[0][1] == str(path)

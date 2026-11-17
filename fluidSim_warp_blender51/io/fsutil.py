@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
+
+_UNSUPPORTED_DIRECTORY_SYNC_ERRNOS = frozenset(
+    code for code in (
+        getattr(errno, name, None)
+        for name in ("EINVAL", "ENOTSUP", "EOPNOTSUPP", "ENOSYS")
+    ) if code is not None
+)
 
 
 def apply_umask_mode(path: Path | str) -> None:
@@ -24,7 +32,7 @@ def apply_umask_mode(path: Path | str) -> None:
 
 
 def fsync_directory(path: Path | str) -> None:
-    """Best-effort directory sync.
+    """Directory sync that tolerates filesystems which cannot do it.
 
     Some network and FUSE filesystems refuse ``fsync`` on a directory. The file
     itself is already durable and renamed, so a refusal must not fail the bake.
@@ -37,7 +45,10 @@ def fsync_directory(path: Path | str) -> None:
         return
     try:
         os.fsync(descriptor)
-    except OSError:
-        pass
+    except OSError as error:
+        # Only "this filesystem cannot sync a directory" is tolerated. A real
+        # I/O failure (EIO, ENOSPC...) must not be reported as success.
+        if error.errno not in _UNSUPPORTED_DIRECTORY_SYNC_ERRNOS:
+            raise
     finally:
         os.close(descriptor)
