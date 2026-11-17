@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import math
 import os
+import struct
 import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -320,10 +320,18 @@ def capture_scene_preset(
 
 def _same_setting_value(current, wanted) -> bool:
     """Equality that tolerates Blender's float32 storage of float settings."""
+    if current == wanted:
+        return True
     if (isinstance(current, float) and isinstance(wanted, (int, float))
             and not isinstance(wanted, bool)):
-        return math.isclose(current, float(wanted), rel_tol=1e-6, abs_tol=1e-9)
-    return current == wanted
+        try:
+            # Blender stores float settings as float32: equal means equal
+            # after rounding the wanted value the same way, with no tolerance
+            # that could hide a real change such as 0.0 -> 5e-10.
+            return current == struct.unpack("f", struct.pack("f", float(wanted)))[0]
+        except (OverflowError, struct.error):
+            return False
+    return False
 
 
 def apply_preset(scene, preset: PresetV1, *, target=None, field_target=None) -> ApplyResult:

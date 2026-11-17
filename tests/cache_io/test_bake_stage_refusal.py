@@ -197,3 +197,28 @@ def test_a_rebake_offer_is_dropped_once_its_cache_is_gone(monkeypatch, tmp_path)
     assert layout.labels == []
     assert layout.operators == []
     assert identity not in cache_bake._REBAKE_OFFERS
+
+
+def test_a_rebake_offer_does_not_follow_the_scene_to_another_cache(monkeypatch, tmp_path):
+    """Switching to a second existing cache must not show the first cache's offer."""
+    from fluidSim_warp_blender51.blender import cache_bake
+
+    ui_stages = _stage_module(monkeypatch)
+    ui_scene = sys.modules[ui_stages.draw_cache_bake.__module__]
+    first, second = tmp_path / "a", tmp_path / "b"
+    for directory in (first, second):
+        directory.mkdir()
+        (directory / "fluidsim_cache.json").write_text("{}", encoding="utf-8")
+    current = {"dir": first}
+    monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: current["dir"])
+    context = _context()
+    cache_bake._REBAKE_OFFERS[cache_bake.scene_identity(context.scene)] = 17
+
+    shown = _Layout()
+    ui_stages.draw_cache_refusal(shown, context)
+    assert shown.operators  # offered for the cache it was recorded against
+
+    current["dir"] = second
+    other = _Layout()
+    ui_stages.draw_cache_refusal(other, context)
+    assert other.labels == [] and other.operators == []

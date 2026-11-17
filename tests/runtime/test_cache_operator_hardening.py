@@ -70,7 +70,8 @@ def test_a_move_whose_source_cleanup_failed_still_repoints_the_scene(monkeypatch
         # leftover cleanup raises, exactly as move_cache does on a locked file.
         source.rmdir()
         target.mkdir()
-        raise RuntimeError("cache copied successfully, but source cleanup remains at x")
+        raise cache_manager.MoveCleanupIncomplete(
+            "cache copied successfully, but source cleanup remains at x")
 
     monkeypatch.setattr(cache_manager, "move_cache", move_then_fail)
     context = _context(source)
@@ -163,5 +164,29 @@ def test_preset_comparison_tolerates_float32_storage():
     assert stored != 0.1
     assert _same_setting_value(stored, 0.1)
     assert not _same_setting_value(stored, 0.2)
+    # A tiny but real float32 change must still count (no absolute tolerance).
+    assert not _same_setting_value(0.0, 5e-10)
     assert _same_setting_value("FLIP", "FLIP")
     assert not _same_setting_value("FLIP", "APIC")
+
+
+def test_a_move_that_never_ran_does_not_adopt_an_unrelated_destination(monkeypatch, tmp_path):
+    """The source vanished while the dialog was open and the destination already exists."""
+    cache_ops, _ = _load(monkeypatch)
+    from fluidSim_warp_blender51.blender import cache_manager
+
+    source = tmp_path / "cache"
+    destination = tmp_path / "elsewhere"
+    destination.mkdir()  # exists, but not published by this move
+
+    def missing_source(_source, _target):
+        raise FileNotFoundError(f"cache source does not exist: {source}")
+
+    monkeypatch.setattr(cache_manager, "move_cache", missing_source)
+    context = _context(source)
+    operator = _operator(
+        cache_ops.FLUIDSIM_OT_cache_move,
+        destination=str(destination), expected_source=str(source.resolve()))
+
+    assert operator.execute(context) == {"CANCELLED"}
+    assert context.scene.fluidsim.cache_path == str(source)

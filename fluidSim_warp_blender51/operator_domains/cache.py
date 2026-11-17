@@ -549,7 +549,7 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
         layout.label(text="The copy is verified before the source is removed.", icon="INFO")
 
     def execute(self, context):
-        from ..blender.cache_manager import move_cache
+        from ..blender.cache_manager import MoveCleanupIncomplete, move_cache
 
         fs = context.scene.fluidsim
         source = _resolved_cache_path_or_report(self, context.scene)
@@ -561,14 +561,14 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
         destination = Path(bpy.path.abspath(self.destination)).expanduser().resolve()
         try:
             moved = move_cache(source, destination)
+        except MoveCleanupIncomplete as exc:
+            # move_cache says the verified copy is published and only the old
+            # source's cleanup failed, so the scene must follow the new copy
+            # instead of pointing at a folder that may already be gone.
+            fs.cache_path = str(destination)
+            self.report({"WARNING"}, f"Cache moved to {destination}, but cleanup is incomplete: {exc}")
+            return {"FINISHED"}
         except Exception as exc:  # noqa: BLE001
-            if destination.is_dir() and not source.exists():
-                # The verified copy is published and the source is already
-                # gone (only leftover cleanup failed), so the scene must
-                # follow the cache instead of pointing at a missing folder.
-                fs.cache_path = str(destination)
-                self.report({"WARNING"}, f"Cache moved to {destination}, but cleanup is incomplete: {exc}")
-                return {"FINISHED"}
             self.report({"ERROR"}, f"Cache move failed: {exc}")
             return {"CANCELLED"}
         fs.cache_path = str(moved)

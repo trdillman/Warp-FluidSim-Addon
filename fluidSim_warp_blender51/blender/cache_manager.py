@@ -351,6 +351,10 @@ def _copy_and_verify(source: Path, destination: Path) -> None:
         raise RuntimeError("copied cache failed byte-for-byte verification")
 
 
+class MoveCleanupIncomplete(RuntimeError):
+    """The destination was published and verified, but the old source remains."""
+
+
 def move_cache(source: Path | str, destination: Path | str) -> Path:
     """Copy, verify, atomically publish, then remove the source."""
     source = assert_cache_path_mutable(source)
@@ -375,7 +379,7 @@ def move_cache(source: Path | str, destination: Path | str) -> Path:
         raise
     retained = free_cache(source)
     if retained is not None:
-        raise RuntimeError(
+        raise MoveCleanupIncomplete(
             f"cache copied successfully, but source cleanup remains at {retained}")
     return destination
 
