@@ -464,15 +464,20 @@ def draw_cache_refusal(layout, context) -> None:
         clear_rebake_offer(scene)
         frame = None
     identity = scene_identity(scene)
+    recorded = rebake_offer_cache(scene)
     if frame is None:
         _OFFER_CACHE.pop(identity, None)
-    elif _OFFER_CACHE.setdefault(
-            identity, _resolved(rebake_offer_cache(scene) or directory)) != _resolved(directory):
-        # The offer was recorded against another cache; the user has since
-        # pointed the scene somewhere else, so it does not apply here.
-        clear_rebake_offer(scene)
-        _OFFER_CACHE.pop(identity, None)
-        frame = None
+    else:
+        # The cache the refusal was recorded for, as stored by cache_bake; an
+        # offer without one falls back to the first cache the panel saw it on.
+        owner = _resolved(recorded) if recorded is not None else _OFFER_CACHE.setdefault(
+            identity, _resolved(directory))
+        if owner != _resolved(directory):
+            # The scene has since been pointed at another cache, so the offer
+            # does not apply here.
+            clear_rebake_offer(scene)
+            _OFFER_CACHE.pop(identity, None)
+            frame = None
     if frame is not None:
         ui_scene._draw_wrapped(
             layout,
