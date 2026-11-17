@@ -41,7 +41,9 @@ def fsync_directory(path: Path | str) -> None:
         return
     try:
         descriptor = os.open(path, os.O_RDONLY)
-    except OSError:
+    except OSError as error:
+        if error.errno not in _UNSUPPORTED_DIRECTORY_SYNC_ERRNOS:
+            raise
         return
     try:
         os.fsync(descriptor)

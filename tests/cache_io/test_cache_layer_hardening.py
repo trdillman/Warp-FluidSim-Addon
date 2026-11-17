@@ -311,3 +311,18 @@ def test_single_file_export_never_moves_the_old_file_aside(
         os, "replace", lambda a, b: (calls.append((a, b)), real_replace(a, b))[1])
     export_mod.export_points_ply(np.ones((2, 3), np.float32), str(path))
     assert len(calls) == 1 and calls[0][1] == str(path)
+
+
+def test_directory_open_io_failure_is_not_hidden(tmp_path, monkeypatch):
+    if os.name == "nt":
+        pytest.skip("directory fsync is skipped on Windows")
+    real_open = os.open
+
+    def failing_open(path, flags, *args, **kwargs):
+        if str(path) == str(tmp_path):
+            raise OSError(5, "Input/output error")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", failing_open)
+    with pytest.raises(OSError, match="Input/output"):
+        fsutil.fsync_directory(tmp_path)
