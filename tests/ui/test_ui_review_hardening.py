@@ -120,3 +120,34 @@ def test_loading_a_file_clears_orphaned_palette_and_wheel_handlers(deck):
     deck._on_deck_load_post("")
     assert not deck.registry.REGISTRY.has_draw_handler("palette")
     assert not deck.registry.REGISTRY.has_draw_handler("wheel")
+
+
+def test_generated_source_text_names_are_short_stable_and_distinct():
+    import importlib
+    import sys
+    import types
+
+    bpy = types.ModuleType("bpy")
+    props = types.ModuleType("bpy.props")
+    props.__getattr__ = lambda _name: (lambda **_kwargs: None)  # any *Property
+    bpy.props = props
+    bpy.app = SimpleNamespace(handlers=SimpleNamespace(persistent=lambda fn: fn), timers=None)
+    bpy.types = SimpleNamespace(
+        Operator=object, Panel=object, UIList=object, PropertyGroup=object, ID=object)
+    saved = {key: sys.modules.get(key) for key in ("bpy", "bpy.props")}
+    sys.modules["bpy"], sys.modules["bpy.props"] = bpy, props
+    try:
+        workspace = importlib.import_module("fluidSim_warp_blender51.blender.effect_workspace")
+        name = workspace.generated_source_text_name
+        first = name("effect-123456789abc", "particle_velocity_limit")
+        second = name("effect-123456789abc", "particle_velocity_drag")
+        assert first != second  # same long prefix, still different texts
+        assert first == name("effect-123456789abc", "particle_velocity_limit")  # stable
+        assert max(len(first), len(second), len(name("e" * 40, "k" * 60))) <= 63
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = value
+        sys.modules.pop("fluidSim_warp_blender51.blender.effect_workspace", None)

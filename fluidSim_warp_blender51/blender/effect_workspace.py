@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import bpy
@@ -221,6 +222,18 @@ class FLUIDSIM_OT_effect_go_to_error(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def generated_source_text_name(instance_id: str, kernel_id: str) -> str:
+    """A Text datablock name that is stable, unique per kernel and at most 63 characters.
+
+    Blender silently truncates longer names, so a plain "instance - kernel"
+    name misses its own text on the next click (a numbered duplicate each
+    time) and kernels sharing a long prefix could collide. A short digest of
+    the full identity keeps both lookups and kernels distinct.
+    """
+    digest = hashlib.sha256(f"{instance_id}\0{kernel_id}".encode()).hexdigest()[:10]
+    return f"FluidSim Source - {str(kernel_id)[:28]} - {digest}.py"
+
+
 class FLUIDSIM_OT_effect_show_generated_source(bpy.types.Operator):
     bl_idname = "fluidsim.effect_show_generated_source"
     bl_label = "Show Generated Source"
@@ -233,10 +246,7 @@ class FLUIDSIM_OT_effect_show_generated_source(bpy.types.Operator):
             return {"CANCELLED"}
         instance = effects.effect_instance_from_pg(context.scene, item)
         generated = generate_kernel_source(instance, self.kernel_index)
-        # Blender names stop at 63 characters and silently truncate longer
-        # ones, so look up by the same shortened name or every click would
-        # miss the existing text and create a numbered duplicate.
-        name = f"FluidSim Generated Source - {instance.instance_id} - {generated.kernel_id}.py"[:63]
+        name = generated_source_text_name(instance.instance_id, generated.kernel_id)
         text = bpy.data.texts.get(name) or bpy.data.texts.new(name)
         text.clear()
         text.write(generated.source)
