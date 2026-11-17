@@ -151,3 +151,61 @@ def test_generated_source_text_names_are_short_stable_and_distinct():
             else:
                 sys.modules[key] = value
         sys.modules.pop("fluidSim_warp_blender51.blender.effect_workspace", None)
+
+
+def _effect_workspace():
+    import importlib
+    import sys
+    import types
+
+    bpy = types.ModuleType("bpy")
+    props = types.ModuleType("bpy.props")
+    props.__getattr__ = lambda _name: (lambda **_kwargs: None)
+    bpy.props = props
+    bpy.app = SimpleNamespace(handlers=SimpleNamespace(persistent=lambda fn: fn), timers=None)
+    bpy.types = SimpleNamespace(
+        Operator=object, Panel=object, UIList=object, PropertyGroup=object, ID=object)
+    saved = {key: sys.modules.get(key) for key in ("bpy", "bpy.props")}
+    sys.modules["bpy"], sys.modules["bpy.props"] = bpy, props
+    try:
+        return importlib.import_module("fluidSim_warp_blender51.blender.effect_workspace")
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = value
+        sys.modules.pop("fluidSim_warp_blender51.blender.effect_workspace", None)
+
+
+class _Text(dict):
+    def __init__(self, name):
+        super().__init__()
+        self.name = name
+
+
+class _Texts:
+    def __init__(self):
+        self.items = {}
+
+    def get(self, name):
+        return self.items.get(name)
+
+    def new(self, name):
+        text = _Text(name)
+        self.items[name] = text
+        return text
+
+
+def test_generated_text_is_reused_only_by_the_kernel_that_owns_it():
+    workspace = _effect_workspace()
+    texts = _Texts()
+    find = workspace.find_or_create_generated_text
+
+    mine = find(texts, "", "FluidSim Source - k - abc.py", "effect-1\0kernel_a")
+    assert find(texts, mine.name, "FluidSim Source - k - abc.py", "effect-1\0kernel_a") is mine
+
+    # A different kernel whose short name collides must not take over the Text.
+    other = find(texts, "", "FluidSim Source - k - abc.py", "effect-1\0kernel_b")
+    assert other is not mine
+    assert mine["fluidsim_generated_key"] == "effect-1\0kernel_a"

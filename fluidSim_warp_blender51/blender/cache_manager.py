@@ -377,7 +377,13 @@ def move_cache(source: Path | str, destination: Path | str) -> Path:
     except Exception:
         shutil.rmtree(temp, ignore_errors=True)
         raise
-    retained = free_cache(source)
+    try:
+        retained = free_cache(source)
+    except Exception as exc:
+        # The destination is already published and verified, so a cleanup
+        # failure of any kind must not read as a failed move.
+        raise MoveCleanupIncomplete(
+            f"cache copied successfully, but removing the source failed: {exc}") from exc
     if retained is not None:
         raise MoveCleanupIncomplete(
             f"cache copied successfully, but source cleanup remains at {retained}")

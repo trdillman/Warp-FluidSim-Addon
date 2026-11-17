@@ -234,6 +234,23 @@ def generated_source_text_name(instance_id: str, kernel_id: str) -> str:
     return f"FluidSim Source - {str(kernel_id)[:28]} - {digest}.py"
 
 
+def find_or_create_generated_text(texts, stored_name: str, name: str, key: str):
+    """Reuse this kernel's generated Text, or make a new one; never take another kernel's.
+
+    ``key`` is the full instance and kernel identity. A short digest in the
+    name can in principle collide, so a Text is only reused when the key it
+    carries matches; otherwise a new Text (Blender adds a numeric suffix) is
+    made instead of overwriting someone else's source.
+    """
+    for candidate in (stored_name, name):
+        existing = texts.get(candidate) if candidate else None
+        if existing is not None and existing.get("fluidsim_generated_key") == key:
+            return existing
+    text = texts.new(name)
+    text["fluidsim_generated_key"] = key
+    return text
+
+
 class FLUIDSIM_OT_effect_show_generated_source(bpy.types.Operator):
     bl_idname = "fluidsim.effect_show_generated_source"
     bl_label = "Show Generated Source"
@@ -247,7 +264,9 @@ class FLUIDSIM_OT_effect_show_generated_source(bpy.types.Operator):
         instance = effects.effect_instance_from_pg(context.scene, item)
         generated = generate_kernel_source(instance, self.kernel_index)
         name = generated_source_text_name(instance.instance_id, generated.kernel_id)
-        text = bpy.data.texts.get(name) or bpy.data.texts.new(name)
+        text = find_or_create_generated_text(
+            bpy.data.texts, item.kernels[self.kernel_index].generated_text_name, name,
+            f"{instance.instance_id}\0{generated.kernel_id}")
         text.clear()
         text.write(generated.source)
         text["fluidsim_generated_source"] = True
