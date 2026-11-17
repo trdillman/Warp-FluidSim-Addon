@@ -372,7 +372,15 @@ class HostFrame:
             _HOST_OUTPUT_OPERATIONS["device_readbacks"] += 1
             return np.ascontiguousarray(out.numpy(), dtype=np.float32)
 
-        return self._get("surface_velocity", load)
+        # One entry per HostFrame, but only reused for the same target points:
+        # a second call with different positions must not get the first answer.
+        cached = self._values.get("surface_velocity")
+        if (cached is not None and cached[0].shape == targets.shape
+                and np.array_equal(cached[0], targets)):
+            return cached[1]
+        result = load()
+        self._values["surface_velocity"] = (targets.copy(), result)
+        return result
 
     def particle_attr(self, name, *, stride=1):
         """Read back one live particle channel, decimated on device."""

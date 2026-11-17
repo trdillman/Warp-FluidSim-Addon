@@ -36,6 +36,7 @@ from ..sim.attributes import (
     validate_attribute_values,
 )
 from ..sim.whitewater_types import validate_type_values
+from .fsutil import apply_umask_mode, fsync_directory
 from .cache_schema import (
     LEAF_DIM,
     LEGACY_2X_CACHE_MESSAGE,
@@ -664,14 +665,13 @@ def _write_npz_atomic(path: Path, payload: dict, *, compressed=False) -> tuple[s
                 np.savez(handle, **payload)
             handle.flush()
             os.fsync(handle.fileno())
+        # Hash and size the bytes just written, before they take the final name.
+        digest = sha256_file(temp_path)
+        size = temp_path.stat().st_size
+        apply_umask_mode(temp_path)
         os.replace(temp_path, path)
-        if os.name != "nt":
-            directory = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-        return sha256_file(path), path.stat().st_size
+        fsync_directory(path.parent)
+        return digest, size
     except Exception:
         if descriptor is not None:
             try:

@@ -9,7 +9,7 @@ def filesystem_path(path: Path) -> Path:
     if os.name != "nt":
         return path
     absolute = str(path.resolve())
-    if absolute.startswith("\\\\?\\"):
+    if absolute.startswith(("\\\\?\\", "\\\\.\\")):
         return Path(absolute)
     if absolute.startswith("\\\\"):
         return Path("\\\\?\\UNC\\" + absolute[2:])

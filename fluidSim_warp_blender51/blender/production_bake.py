@@ -501,7 +501,7 @@ def _grid_spec_record(quality) -> dict[str, object]:
     }
 
 
-_FRAME_FILE_RE = re.compile(r"^(?:frame|checkpoint)_(\d+)\.npz")
+_FRAME_FILE_RE = re.compile(r"^(?:frame|checkpoint)_(-?\d+)\.npz(?:\.[^.]*\.tmp)?$")
 
 
 class ProductionBakeBackend:

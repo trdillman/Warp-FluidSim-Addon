@@ -28,6 +28,7 @@ import re
 from typing import Any, Callable, Mapping
 
 from .checkpoint import CHECKPOINT_FORMAT_VERSION
+from .fsutil import fsync_directory
 
 FORMAT_VERSION = 3
 FORMAT_MINOR_VERSION = 1
@@ -71,7 +72,10 @@ def _require_finite_float(value: Any, name: str) -> float:
 
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be numeric")
-    result = float(value)
+    try:
+        result = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{name} must be finite") from exc
     if not math.isfinite(result):
         raise ValueError(f"{name} must be finite")
     return result
@@ -214,9 +218,13 @@ def _float_tuple(value: Any, name: str, size: int) -> tuple[float, ...]:
     for item in value:
         if isinstance(item, bool) or not isinstance(item, (int, float)):
             raise ValueError(f"{name} must hold numbers")
-        if not math.isfinite(float(item)):
+        try:
+            number = float(item)
+        except OverflowError as exc:
+            raise ValueError(f"{name} must be finite") from exc
+        if not math.isfinite(number):
             raise ValueError(f"{name} must be finite")
-        result.append(float(item))
+        result.append(number)
     return tuple(result)
 
 
@@ -524,8 +532,10 @@ class CacheManifestV3:
         # Production cache commits are contiguous. A later manifest entry with
         # a gap would expose an invalid resume point even if its files exist.
         if keys:
-            expected = list(range(self.frame_start, keys[-1] + 1))
-            if keys != expected:
+            # Keys are unique and sorted, so this is the same test as comparing
+            # against range(frame_start, last + 1) without building that list
+            # (a hand-edited manifest could name frame 50,000,000).
+            if keys[0] != self.frame_start or keys[-1] - keys[0] + 1 != len(keys):
                 raise ValueError(
                     f"committed frames must be contiguous from {self.frame_start}; "
                     f"found {keys}"
@@ -637,7 +647,9 @@ class CacheManifestV3:
             raise ValueError("frames must be a JSON object")
         frames: dict[int, FrameEntry] = {}
         for key, entry_value in frames_value.items():
-            if not isinstance(key, str) or not key or not key.lstrip("-").isdigit():
+            if (not isinstance(key, str)
+                    or not re.fullmatch(r"-?(0|[1-9][0-9]*)", key, re.ASCII)
+                    or key == "-0"):
                 raise ValueError(f"invalid frame key {key!r}")
             frame = int(key)
             entry = FrameEntry.from_dict(entry_value)
@@ -714,7 +726,10 @@ def _manifest_record(path: Path) -> list:
     key = os.path.abspath(path)
     record = _manifest_cache.get(key)
     if record is None or record[0] != raw:
-        value = json.loads(raw.decode("utf-8"))
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except RecursionError as exc:
+            raise json.JSONDecodeError("JSON is nested too deeply", "", 0) from exc
         _manifest_cache.pop(key, None)
         while len(_manifest_cache) >= _MANIFEST_CACHE_LIMIT:
             _manifest_cache.pop(next(iter(_manifest_cache)))
@@ -729,7 +744,7 @@ def load_manifest(path: Path | str) -> CacheManifestV3 | None:
         return None
     try:
         record = _manifest_record(path)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid cache manifest {path}: {exc}") from exc
     if record[2] is None:
         # Validation failures are not cached: they raise again next time.
@@ -796,7 +811,7 @@ def read_manifest_snapshot(base_dir):
         record = _manifest_record(path)
         return (CacheManifestV3.from_dict(record[1]),
                 hashlib.sha256(record[0]).hexdigest())
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid cache manifest {path}: {exc}") from exc
 
 
@@ -819,16 +834,6 @@ def observe_committed_sequence(base_dir):
     return CommittedSequence(base, digest, json.dumps(manifest.to_dict()), frames)
 
 
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
 def write_manifest_atomic(path: Path | str, manifest: CacheManifestV3) -> None:
     """Durably replace a manifest; no partially written JSON becomes visible."""
     path = Path(path)
@@ -845,7 +850,7 @@ def write_manifest_atomic(path: Path | str, manifest: CacheManifestV3) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp, path)
-        _fsync_directory(path.parent)
+        fsync_directory(path.parent)
     except Exception:
         try:
             temp.unlink()

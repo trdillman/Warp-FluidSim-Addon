@@ -14,6 +14,14 @@
   missing provenance is never inferred from the current scene.
 - Frame playback verifies and parses one immutable byte snapshot, preventing a
   concurrent file replacement from substituting unverified payload bytes.
+- Cache and export hardening: frame and checkpoint files now follow the
+  umask like the manifest; a refused directory sync no longer fails a bake;
+  damaged or hand-edited manifests (huge numbers, odd frame keys, bad text,
+  absurd frame gaps) are refused with a clear message; Export Frame no longer
+  loses the previous export if interrupted, writes real file permissions,
+  and refuses to report success when nothing was written; VDB export treats
+  frame 0 as a real frame; rebake cleanup also covers negative frames and
+  leftover temp files.
 
 - **Warp 1.19.0** is now the build Install Warp downloads (same CUDA 13 build and
   driver floor as 1.18). Warp 1.17.0 and 1.18.0 still load, with a warning.
