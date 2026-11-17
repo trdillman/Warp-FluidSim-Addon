@@ -277,3 +277,15 @@ def test_surface_velocity_is_not_reused_for_different_points():
     assert second.tolist() == [[2.0, 0.0, 0.0]]
     again = frame.surface_velocity([[10, 0, 0]])
     assert again is second
+
+
+def test_directory_destination_is_refused_and_left_untouched(tmp_path):
+    target = tmp_path / "out.ply"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep")
+    with pytest.raises(IsADirectoryError):
+        export_mod.export_points_ply(np.zeros((1, 3), np.float32), str(target))
+    with pytest.raises(IsADirectoryError):
+        export_mod.export_surface_obj(_solver(), str(target))
+    assert (target / "keep.txt").read_text() == "keep"
+    assert [p.name for p in tmp_path.iterdir()] == ["out.ply"]

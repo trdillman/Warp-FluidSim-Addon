@@ -137,6 +137,10 @@ def _publish_bundle(artifacts) -> list[str]:
     publication failure restores the prior bundle, but separate filesystem
     renames cannot provide crash-atomic multi-file publication.
     """
+    for final_path, _, _ in artifacts:
+        if os.path.isdir(final_path):
+            raise IsADirectoryError(
+                f"Export destination is a directory: {final_path}")
     staged = {}
     backups = {}
     published = set()
