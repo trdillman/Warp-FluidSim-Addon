@@ -608,7 +608,7 @@ def get_installed_warp_info() -> tuple[bool, str]:
         if version is not None:
             status, _message = warp_version_support(version)
             if status == "certified":
-                return True, f"Warp {version} (version-locked; GPU qualification pending)"
+                return True, f"Warp {version} (certified, version-locked)"
             if status == "untested":
                 return True, f"Warp {version} (newer than locked {CERTIFIED_WARP_VERSION})"
             if status == "older":

@@ -1,7 +1,10 @@
 # Warp 1.19 upgrade and meshing options
 
 Date: 3 November 2026; installer follow-up 4 November. Status: **Warp 1.19.0
-has not passed the full GPU gate**. The PR47 author reports a Windows Blender
+passed the headless production GPU gate on 17 November 2026** (Windows x64,
+Blender 5.2.0, RTX 4080 SUPER; evidence in
+`evidence/20261117-warp119-certification/`) and is certified there. The
+foreground GUI lane was not run. Earlier status, kept for history: the PR47 author reports a Windows Blender
 5.1 attempt failing whitewater truth on both 1.19 and 1.18; this is not Blender
 5.2 qualification or proof of a dependency regression. Historical "certified"
 identifiers and status tokens in code name the locked gate target, not a

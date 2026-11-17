@@ -1,0 +1,8 @@
+{
+  "blender_download_url": "https://download.blender.org/release/Blender5.2/blender-5.2.0-windows-x64.zip",
+  "blender_archive_sha256": "2d184b626c001692c362291911293b6a297179d618d95e9e9192c3a80318adc4",
+  "blender_executable_sha256": "0060916d6921eb4d46c57254609d805a2ea711917399051391a52ba14beb6327",
+  "bundled_python_sha256": "7d984ee02e70c22f04d5e26f1328865d75a5da14b677890896a294f35815d37a",
+  "verifier_fingerprint": "5b9300cd51db4c0525fd675bde8e37776b4276cef1c17d8c19abac812d5a1c1f",
+  "reviewed_by": "Claude Code session on behalf of Tyler (archive hash checked 2026-11-15 against official blender-5.2.0.sha256 via mirrors.ocf.berkeley.edu)"
+}

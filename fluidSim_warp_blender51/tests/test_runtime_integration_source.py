@@ -94,9 +94,9 @@ def test_preferences_offers_install_button_for_older_warp():
     assert 'if status in ("older", "unsupported"):' in source
 
 
-def test_preferences_runtime_controls_use_supported_icon_and_honest_lock_label():
+def test_preferences_runtime_controls_use_supported_icon_and_scoped_certification_label():
     source = (pathlib.Path(__file__).resolve().parents[1] / "preferences.py").read_text(encoding="utf-8")
     assert 'box.label(text="Runtime", icon="SYSTEM")' in source
     assert '"Upgrade to Locked Warp"' in source
-    assert 'full GPU qualification pending.' in source
-    assert 'certified' not in source.lower().replace('certified_warp_version', '').replace('status == "certified"', '')
+    assert 'certified (Windows x64, Blender 5.2.0, CUDA 13).' in source
+    assert 'qualification pending' not in source

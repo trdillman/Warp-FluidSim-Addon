@@ -17,7 +17,9 @@
 
 - **Warp 1.19.0** is now the build Install Warp downloads (same CUDA 13 build and
   driver floor as 1.18). Warp 1.17.0 and 1.18.0 still load, with a warning.
-  The 1.19 GPU gate has not been run yet.
+  The headless production GPU gate passed on Warp 1.19.0 (Windows x64,
+  Blender 5.2.0, RTX 4080 SUPER), so 1.19.0 is certified there; Preferences
+  and the runtime status say so.
 - **Body Type** on each collider: **Static**, **Animated** (the default,
   same behaviour as before) or **Dynamic**. Files saved before 4.1 keep
   working unchanged. A Static collider never moves: liquid and rigid

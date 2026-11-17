@@ -1,0 +1,1708 @@
+{
+  "demos": {
+    "chromatic_vortex": {
+      "attributeInventory": {
+        "particles": [],
+        "surface": [],
+        "whitewater": [
+          "type"
+        ]
+      },
+      "blocks": [
+        {
+          "activeParticlesMinimumRatio": 1.0,
+          "block": 0,
+          "hostRatio": 0.9529189511963729,
+          "order": "baseline-first",
+          "solverRatio": 0.9776961858758633,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.9573500010446878,
+              "candidateMedian": 0.9206500035361387,
+              "ratio": 0.9616650154400156
+            },
+            "compute_1": {
+              "baselineMedian": 2.7509000028658193,
+              "candidateMedian": 2.6217500017082784,
+              "ratio": 0.9530517281533333
+            },
+            "compute_10": {
+              "baselineMedian": 4.472699996767915,
+              "candidateMedian": 4.381999990073382,
+              "ratio": 0.9797214195541675
+            },
+            "compute_11": {
+              "baselineMedian": 0.4580000004352769,
+              "candidateMedian": 0.43480000022100285,
+              "ratio": 0.9493449777462335
+            },
+            "compute_12": {
+              "baselineMedian": 0.22750000607629772,
+              "candidateMedian": 0.2019500061578583,
+              "ratio": 0.8876923110504419
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.623649996370659,
+              "candidateMedian": 3.542000004017609,
+              "ratio": 0.9774674727319613
+            },
+            "compute_15": {
+              "baselineMedian": 2.0669500008807518,
+              "candidateMedian": 1.9028499991691206,
+              "ratio": 0.9206076578331811
+            },
+            "compute_2": {
+              "baselineMedian": 7.32784999490832,
+              "candidateMedian": 7.226449995869189,
+              "ratio": 0.9861623806287536
+            },
+            "compute_3": {
+              "baselineMedian": 1.6729500021028798,
+              "candidateMedian": 1.5481000027648406,
+              "ratio": 0.9253713504999527
+            },
+            "compute_4": {
+              "baselineMedian": 0.057350001952727325,
+              "candidateMedian": 0.055600003179279156,
+              "ratio": 0.9694856370730264
+            },
+            "compute_5": {
+              "baselineMedian": 19.637049999801093,
+              "candidateMedian": 18.72114999969199,
+              "ratio": 0.953358574728975
+            },
+            "compute_6": {
+              "baselineMedian": 7.030700000541401,
+              "candidateMedian": 7.391850005660672,
+              "ratio": 1.0513675743654913
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 1.7114999991463264,
+              "candidateMedian": 1.6304499986290466,
+              "ratio": 0.9526438793118863
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          },
+          "substeps": {
+            "baseline": 1048,
+            "candidate": 1048,
+            "candidateToBaselineRatio": 1.0
+          }
+        },
+        {
+          "activeParticlesMinimumRatio": 1.0,
+          "block": 1,
+          "hostRatio": 1.0261349925592456,
+          "order": "candidate-first",
+          "solverRatio": 1.039457096809438,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.9908000083669322,
+              "candidateMedian": 1.0144999960175483,
+              "ratio": 1.0239200519282183
+            },
+            "compute_1": {
+              "baselineMedian": 2.7257000019744737,
+              "candidateMedian": 2.805149999403511,
+              "ratio": 1.0291484746565964
+            },
+            "compute_10": {
+              "baselineMedian": 4.392549995827721,
+              "candidateMedian": 4.582749998007785,
+              "ratio": 1.04330058903387
+            },
+            "compute_11": {
+              "baselineMedian": 0.44019999404554255,
+              "candidateMedian": 0.4549999976006802,
+              "ratio": 1.0336210898576397
+            },
+            "compute_12": {
+              "baselineMedian": 0.22060000810597558,
+              "candidateMedian": 0.21645000924763735,
+              "ratio": 0.9811876758574525
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.652850000435137,
+              "candidateMedian": 3.736399996341788,
+              "ratio": 1.0228725504460074
+            },
+            "compute_15": {
+              "baselineMedian": 2.05554999774904,
+              "candidateMedian": 2.0707499988930067,
+              "ratio": 1.0073946151446629
+            },
+            "compute_2": {
+              "baselineMedian": 7.461699997293181,
+              "candidateMedian": 7.2833500016713515,
+              "ratio": 0.9760979407257692
+            },
+            "compute_3": {
+              "baselineMedian": 1.6540000033273827,
+              "candidateMedian": 1.733600005536573,
+              "ratio": 1.0481257569825015
+            },
+            "compute_4": {
+              "baselineMedian": 0.0563000012334669,
+              "candidateMedian": 0.05795000106445514,
+              "ratio": 1.0293072787715574
+            },
+            "compute_5": {
+              "baselineMedian": 19.526899995980784,
+              "candidateMedian": 20.15690000007453,
+              "ratio": 1.0322631858729967
+            },
+            "compute_6": {
+              "baselineMedian": 7.122250004613306,
+              "candidateMedian": 7.561599995824508,
+              "ratio": 1.0616869656255568
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 1.6726499998185318,
+              "candidateMedian": 1.731700001982972,
+              "ratio": 1.0353032625898106
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          },
+          "substeps": {
+            "baseline": 1048,
+            "candidate": 1048,
+            "candidateToBaselineRatio": 1.0
+          }
+        }
+      ],
+      "budgetRatio": 1.05,
+      "earlyStopMargin": 0.06,
+      "effectiveSettings": {
+        "commonFields": [
+          "attraction_enabled",
+          "attraction_max_distance",
+          "attraction_strength",
+          "auto_grow_particles",
+          "cfl",
+          "churn_decay",
+          "churn_gain",
+          "count_stiffness",
+          "device",
+          "directional_force",
+          "dissipation_attribute",
+          "dissipation_enabled",
+          "dissipation_rate",
+          "dissipation_target",
+          "domain_max",
+          "domain_min",
+          "domain_sdf_walls",
+          "flip_ratio",
+          "force_diffusion",
+          "frame_rate",
+          "gravity",
+          "leaf_capacity",
+          "live_surface_publish_cadence",
+          "max_particles",
+          "max_speed",
+          "max_substeps",
+          "max_whitewater",
+          "min_substeps",
+          "narrow_band_enabled",
+          "narrow_band_voxels",
+          "omnidirectional_force_center",
+          "omnidirectional_force_radius",
+          "omnidirectional_force_strength",
+          "open_boundaries",
+          "particle_growth_failure_policy",
+          "particle_radius_scale",
+          "particles_attribute_age",
+          "particles_attribute_color",
+          "particles_attribute_density",
+          "particles_attribute_lifetime",
+          "particles_attribute_source_id",
+          "particles_attribute_speed",
+          "particles_attribute_uid",
+          "particles_attribute_velocity",
+          "particles_attribute_viscosity",
+          "particles_attribute_vorticity",
+          "particles_per_voxel",
+          "pressure_iterations",
+          "pressure_learned_guess",
+          "pressure_preconditioner",
+          "pressure_solver",
+          "pressure_threshold",
+          "pressure_tolerance",
+          "relax_enabled",
+          "relax_mode",
+          "relax_strength",
+          "resolved_quality",
+          "sample_type",
+          "species_enabled",
+          "species_mixing_rate",
+          "speed_limit_behavior",
+          "speed_limit_percent",
+          "surface_attribute_age",
+          "surface_attribute_color",
+          "surface_attribute_density",
+          "surface_attribute_lifetime",
+          "surface_attribute_motion",
+          "surface_attribute_source_id",
+          "surface_attribute_speed",
+          "surface_attribute_velocity",
+          "surface_attribute_viscosity",
+          "surface_attribute_vorticity",
+          "surface_build_lowres_sdf",
+          "surface_dilate_iterations",
+          "surface_dilate_strength",
+          "surface_enabled",
+          "surface_erode_iterations",
+          "surface_erode_strength",
+          "surface_filter_iterations",
+          "surface_filter_strength",
+          "surface_filter_type",
+          "surface_leaf_capacity_scale",
+          "surface_max_dense_dim",
+          "surface_resolution_mode",
+          "surface_resolution_multiplier",
+          "surface_smooth_iterations",
+          "surface_smooth_strength",
+          "surface_smooth_type",
+          "surface_splat_radius",
+          "surface_tension_band_voxels",
+          "surface_tension_coefficient",
+          "surface_tension_density",
+          "surface_tension_enabled",
+          "surface_tension_safety",
+          "surface_tension_smoothing_iterations",
+          "surface_update_cadence",
+          "surface_voxel_size",
+          "time_scale",
+          "topology_expand",
+          "trace_mode",
+          "viscosity_constant",
+          "viscosity_enabled",
+          "viscosity_from_particles",
+          "viscosity_iterations",
+          "viscosity_solver",
+          "viscosity_tolerance",
+          "voxel_size",
+          "whitewater_attribute_age",
+          "whitewater_attribute_lifetime",
+          "whitewater_attribute_speed",
+          "whitewater_attribute_type",
+          "whitewater_attribute_velocity",
+          "whitewater_enabled",
+          "ww_bubble_buoyancy",
+          "ww_bubble_drag",
+          "ww_bubble_life_multiplier",
+          "ww_churn_threshold",
+          "ww_emission_rate",
+          "ww_foam_advection",
+          "ww_foam_band",
+          "ww_foam_density_influence",
+          "ww_foam_life_multiplier",
+          "ww_foam_preservation",
+          "ww_life_max",
+          "ww_life_min",
+          "ww_min_speed",
+          "ww_spray_drag",
+          "ww_spray_gravity_scale",
+          "ww_spray_life_multiplier",
+          "ww_spray_min_speed",
+          "ww_surface_band",
+          "ww_type_hysteresis"
+        ],
+        "intendedChanges": {
+          "multigridStopRule": {
+            "budgetRatio": 1.0,
+            "residualRatioLimit": 6.0
+          }
+        },
+        "neutralAbsentFields": {}
+      },
+      "hostOrderSpread": 0.07321604136287263,
+      "hostRatio": 0.9895269718778092,
+      "passed": true,
+      "pressure": {
+        "iterations": {
+          "baseline": 8.0,
+          "candidate": 8.0,
+          "reduction": 1.0
+        },
+        "residual": {
+          "baseline": 0.0017481390002501975,
+          "candidate": 0.0017481390002501975,
+          "ratio": 1.0
+        }
+      },
+      "reasons": [],
+      "referenceVersion": "4.0.1",
+      "residualRatioLimit": 6.0,
+      "solverRatio": 1.0085766413426507,
+      "stage": "early",
+      "status": "pass",
+      "trials": {
+        "baseline": 4,
+        "candidate": 4
+      }
+    },
+    "crown_splash": {
+      "attributeInventory": {
+        "particles": [],
+        "surface": [],
+        "whitewater": [
+          "type"
+        ]
+      },
+      "blocks": [
+        {
+          "activeParticlesMinimumRatio": 1.0,
+          "block": 0,
+          "hostRatio": 0.9819765033467512,
+          "order": "baseline-first",
+          "solverRatio": 0.9835438244185497,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.21749999814346666,
+              "candidateMedian": 0.21515000025829067,
+              "ratio": 0.9891954119299537
+            },
+            "compute_1": {
+              "baselineMedian": 2.0222500006639166,
+              "candidateMedian": 1.9413499985603266,
+              "ratio": 0.9599950539858919
+            },
+            "compute_10": {
+              "baselineMedian": 2.91535000087606,
+              "candidateMedian": 2.9634999991685618,
+              "ratio": 1.0165160266444964
+            },
+            "compute_11": {
+              "baselineMedian": 3.3567499995115213,
+              "candidateMedian": 3.353150000293681,
+              "ratio": 0.9989275343059911
+            },
+            "compute_12": {
+              "baselineMedian": 4.5272999986991636,
+              "candidateMedian": 4.4345000005705515,
+              "ratio": 0.9795021319207305
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 2.533150000090245,
+              "candidateMedian": 2.4273000008179224,
+              "ratio": 0.9582140815709486
+            },
+            "compute_15": {
+              "baselineMedian": 1.950800000486197,
+              "candidateMedian": 1.7063000004782225,
+              "ratio": 0.8746668033898719
+            },
+            "compute_2": {
+              "baselineMedian": 3.0300500002340414,
+              "candidateMedian": 3.0547999995178543,
+              "ratio": 1.0081681818062083
+            },
+            "compute_3": {
+              "baselineMedian": 0.640150000435824,
+              "candidateMedian": 0.6733000009262469,
+              "ratio": 1.0517847386828927
+            },
+            "compute_4": {
+              "baselineMedian": 0.041050001527764834,
+              "candidateMedian": 0.03899999956047395,
+              "ratio": 0.950060855274163
+            },
+            "compute_5": {
+              "baselineMedian": 10.493699999642558,
+              "candidateMedian": 10.191200001827383,
+              "ratio": 0.9711731803057568
+            },
+            "compute_6": {
+              "baselineMedian": 3.5257999998066225,
+              "candidateMedian": 3.451750001659093,
+              "ratio": 0.9789976748109391
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 5.054749996816099,
+              "candidateMedian": 4.859800004851422,
+              "ratio": 0.9614323177036506
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          },
+          "substeps": {
+            "baseline": 716,
+            "candidate": 716,
+            "candidateToBaselineRatio": 1.0
+          }
+        },
+        {
+          "activeParticlesMinimumRatio": 1.0,
+          "block": 1,
+          "hostRatio": 1.0405454647030188,
+          "order": "candidate-first",
+          "solverRatio": 1.0288906451715858,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.19035000059375307,
+              "candidateMedian": 0.20204999873385532,
+              "ratio": 1.0614657110775245
+            },
+            "compute_1": {
+              "baselineMedian": 1.7016500014506164,
+              "candidateMedian": 1.7757499999788706,
+              "ratio": 1.0435459691858406
+            },
+            "compute_10": {
+              "baselineMedian": 2.7568000004976057,
+              "candidateMedian": 2.903799997511669,
+              "ratio": 1.0533226918846235
+            },
+            "compute_11": {
+              "baselineMedian": 3.409399998417939,
+              "candidateMedian": 3.409299996746995,
+              "ratio": 0.9999706688358684
+            },
+            "compute_12": {
+              "baselineMedian": 4.017749999547959,
+              "candidateMedian": 4.0618999973958125,
+              "ratio": 1.0109887369430204
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 2.1206499986874405,
+              "candidateMedian": 2.322150000509282,
+              "ratio": 1.095018037840548
+            },
+            "compute_15": {
+              "baselineMedian": 1.4585499984605121,
+              "candidateMedian": 1.5455499988092924,
+              "ratio": 1.059648281128935
+            },
+            "compute_2": {
+              "baselineMedian": 2.9787499997837585,
+              "candidateMedian": 2.9428000016196165,
+              "ratio": 0.9879311798013423
+            },
+            "compute_3": {
+              "baselineMedian": 0.43309999909979524,
+              "candidateMedian": 0.4891499984296388,
+              "ratio": 1.1294158380197283
+            },
+            "compute_4": {
+              "baselineMedian": 0.03754999943339499,
+              "candidateMedian": 0.03855000340990955,
+              "ratio": 1.0266312647564306
+            },
+            "compute_5": {
+              "baselineMedian": 9.806649997699424,
+              "candidateMedian": 9.965299997929833,
+              "ratio": 1.0161777977461852
+            },
+            "compute_6": {
+              "baselineMedian": 3.5761499993895995,
+              "candidateMedian": 3.6084500015931553,
+              "ratio": 1.0090320602349088
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 4.461850001462153,
+              "candidateMedian": 4.59954999951151,
+              "ratio": 1.0308616376624566
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          },
+          "substeps": {
+            "baseline": 716,
+            "candidate": 716,
+            "candidateToBaselineRatio": 1.0
+          }
+        },
+        {
+          "activeParticlesMinimumRatio": 1.0,
+          "block": 2,
+          "hostRatio": 0.9747074321451057,
+          "order": "baseline-first",
+          "solverRatio": 0.9646715579506238,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.2194499993493082,
+              "candidateMedian": 0.20684999708464602,
+              "ratio": 0.9425837215674528
+            },
+            "compute_1": {
+              "baselineMedian": 1.826300001994241,
+              "candidateMedian": 1.7507500024294131,
+              "ratio": 0.9586322074783274
+            },
+            "compute_10": {
+              "baselineMedian": 2.9138999998394866,
+              "candidateMedian": 2.8016499991281307,
+              "ratio": 0.9614777443572055
+            },
+            "compute_11": {
+              "baselineMedian": 3.5381499992581666,
+              "candidateMedian": 3.425299999435083,
+              "ratio": 0.9681048005746663
+            },
+            "compute_12": {
+              "baselineMedian": 4.447349998372374,
+              "candidateMedian": 4.036400002405571,
+              "ratio": 0.9075966595574442
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 2.3158000003604684,
+              "candidateMedian": 2.1522999995795544,
+              "ratio": 0.9293980478644683
+            },
+            "compute_15": {
+              "baselineMedian": 1.484149999669171,
+              "candidateMedian": 1.4419999997699051,
+              "ratio": 0.9715999057314548
+            },
+            "compute_2": {
+              "baselineMedian": 3.0652000014015357,
+              "candidateMedian": 2.9536500023823464,
+              "ratio": 0.9636075952733316
+            },
+            "compute_3": {
+              "baselineMedian": 0.46874999770807335,
+              "candidateMedian": 0.44970000089961104,
+              "ratio": 0.9593600066099068
+            },
+            "compute_4": {
+              "baselineMedian": 0.042049999137816485,
+              "candidateMedian": 0.037799999518028926,
+              "ratio": 0.8989298523917105
+            },
+            "compute_5": {
+              "baselineMedian": 10.526249997383275,
+              "candidateMedian": 10.132849998626625,
+              "ratio": 0.9626267665261186
+            },
+            "compute_6": {
+              "baselineMedian": 3.635700000813813,
+              "candidateMedian": 3.5782500008281204,
+              "ratio": 0.9841983662093041
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 4.607449996910873,
+              "candidateMedian": 4.485400003432005,
+              "ratio": 0.973510294509827
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          },
+          "substeps": {
+            "baseline": 716,
+            "candidate": 716,
+            "candidateToBaselineRatio": 1.0
+          }
+        },
+        {
+          "activeParticlesMinimumRatio": 1.0,
+          "block": 3,
+          "hostRatio": 0.9885782686446863,
+          "order": "candidate-first",
+          "solverRatio": 0.9577719209683072,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.20769999991898658,
+              "candidateMedian": 0.2198999991378514,
+              "ratio": 1.0587385615003535
+            },
+            "compute_1": {
+              "baselineMedian": 1.9410999993851874,
+              "candidateMedian": 1.773150001099566,
+              "ratio": 0.9134768954001252
+            },
+            "compute_10": {
+              "baselineMedian": 2.948800000922347,
+              "candidateMedian": 2.833900000041467,
+              "ratio": 0.9610349970004949
+            },
+            "compute_11": {
+              "baselineMedian": 3.5463000012896373,
+              "candidateMedian": 3.4856999991461635,
+              "ratio": 0.9829117665957656
+            },
+            "compute_12": {
+              "baselineMedian": 4.2541499988146825,
+              "candidateMedian": 4.273199998351629,
+              "ratio": 1.0044779802174946
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 2.323049999176874,
+              "candidateMedian": 2.2743500003343797,
+              "ratio": 0.9790361813737328
+            },
+            "compute_15": {
+              "baselineMedian": 1.4648500009570853,
+              "candidateMedian": 1.5348499991887365,
+              "ratio": 1.047786461539349
+            },
+            "compute_2": {
+              "baselineMedian": 3.0475500016109436,
+              "candidateMedian": 2.953749999505817,
+              "ratio": 0.969221176992816
+            },
+            "compute_3": {
+              "baselineMedian": 0.4775500001414912,
+              "candidateMedian": 0.46225000187405385,
+              "ratio": 0.9679614736406572
+            },
+            "compute_4": {
+              "baselineMedian": 0.03990000004705507,
+              "candidateMedian": 0.03974999981437577,
+              "ratio": 0.9962405956766315
+            },
+            "compute_5": {
+              "baselineMedian": 10.517549999349285,
+              "candidateMedian": 10.028750000856235,
+              "ratio": 0.9535252983324737
+            },
+            "compute_6": {
+              "baselineMedian": 3.682450000269455,
+              "candidateMedian": 3.558449998308788,
+              "ratio": 0.9663267656175661
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 4.712699998890457,
+              "candidateMedian": 4.537750000054075,
+              "ratio": 0.9628769073190375
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          },
+          "substeps": {
+            "baseline": 716,
+            "candidate": 716,
+            "candidateToBaselineRatio": 1.0
+          }
+        }
+      ],
+      "budgetRatio": 1.05,
+      "earlyStopMargin": null,
+      "effectiveSettings": {
+        "commonFields": [
+          "attraction_enabled",
+          "attraction_max_distance",
+          "attraction_strength",
+          "auto_grow_particles",
+          "cfl",
+          "churn_decay",
+          "churn_gain",
+          "count_stiffness",
+          "device",
+          "directional_force",
+          "dissipation_attribute",
+          "dissipation_enabled",
+          "dissipation_rate",
+          "dissipation_target",
+          "domain_max",
+          "domain_min",
+          "domain_sdf_walls",
+          "flip_ratio",
+          "force_diffusion",
+          "frame_rate",
+          "gravity",
+          "leaf_capacity",
+          "live_surface_publish_cadence",
+          "max_particles",
+          "max_speed",
+          "max_substeps",
+          "max_whitewater",
+          "min_substeps",
+          "narrow_band_enabled",
+          "narrow_band_voxels",
+          "omnidirectional_force_center",
+          "omnidirectional_force_radius",
+          "omnidirectional_force_strength",
+          "open_boundaries",
+          "particle_growth_failure_policy",
+          "particle_radius_scale",
+          "particles_attribute_age",
+          "particles_attribute_color",
+          "particles_attribute_density",
+          "particles_attribute_lifetime",
+          "particles_attribute_source_id",
+          "particles_attribute_speed",
+          "particles_attribute_uid",
+          "particles_attribute_velocity",
+          "particles_attribute_viscosity",
+          "particles_attribute_vorticity",
+          "particles_per_voxel",
+          "pressure_iterations",
+          "pressure_learned_guess",
+          "pressure_preconditioner",
+          "pressure_solver",
+          "pressure_threshold",
+          "pressure_tolerance",
+          "relax_enabled",
+          "relax_mode",
+          "relax_strength",
+          "resolved_quality",
+          "sample_type",
+          "species_enabled",
+          "species_mixing_rate",
+          "speed_limit_behavior",
+          "speed_limit_percent",
+          "surface_attribute_age",
+          "surface_attribute_color",
+          "surface_attribute_density",
+          "surface_attribute_lifetime",
+          "surface_attribute_motion",
+          "surface_attribute_source_id",
+          "surface_attribute_speed",
+          "surface_attribute_velocity",
+          "surface_attribute_viscosity",
+          "surface_attribute_vorticity",
+          "surface_build_lowres_sdf",
+          "surface_dilate_iterations",
+          "surface_dilate_strength",
+          "surface_enabled",
+          "surface_erode_iterations",
+          "surface_erode_strength",
+          "surface_filter_iterations",
+          "surface_filter_strength",
+          "surface_filter_type",
+          "surface_leaf_capacity_scale",
+          "surface_max_dense_dim",
+          "surface_resolution_mode",
+          "surface_resolution_multiplier",
+          "surface_smooth_iterations",
+          "surface_smooth_strength",
+          "surface_smooth_type",
+          "surface_splat_radius",
+          "surface_tension_band_voxels",
+          "surface_tension_coefficient",
+          "surface_tension_density",
+          "surface_tension_enabled",
+          "surface_tension_safety",
+          "surface_tension_smoothing_iterations",
+          "surface_update_cadence",
+          "surface_voxel_size",
+          "time_scale",
+          "topology_expand",
+          "trace_mode",
+          "viscosity_constant",
+          "viscosity_enabled",
+          "viscosity_from_particles",
+          "viscosity_iterations",
+          "viscosity_solver",
+          "viscosity_tolerance",
+          "voxel_size",
+          "whitewater_attribute_age",
+          "whitewater_attribute_lifetime",
+          "whitewater_attribute_speed",
+          "whitewater_attribute_type",
+          "whitewater_attribute_velocity",
+          "whitewater_enabled",
+          "ww_bubble_buoyancy",
+          "ww_bubble_drag",
+          "ww_bubble_life_multiplier",
+          "ww_churn_threshold",
+          "ww_emission_rate",
+          "ww_foam_advection",
+          "ww_foam_band",
+          "ww_foam_density_influence",
+          "ww_foam_life_multiplier",
+          "ww_foam_preservation",
+          "ww_life_max",
+          "ww_life_min",
+          "ww_min_speed",
+          "ww_spray_drag",
+          "ww_spray_gravity_scale",
+          "ww_spray_life_multiplier",
+          "ww_spray_min_speed",
+          "ww_surface_band",
+          "ww_type_hysteresis"
+        ],
+        "intendedChanges": {
+          "multigridStopRule": {
+            "budgetRatio": 1.0,
+            "residualRatioLimit": 6.0
+          }
+        },
+        "neutralAbsentFields": {}
+      },
+      "hostOrderSpread": 0.0362198989279241,
+      "hostRatio": 0.9964519172098905,
+      "passed": true,
+      "pressure": {
+        "iterations": {
+          "baseline": 5.0,
+          "candidate": 5.0,
+          "reduction": 1.0
+        },
+        "residual": {
+          "baseline": 0.0010430844170659546,
+          "candidate": 0.0010430844170659546,
+          "ratio": 1.0
+        }
+      },
+      "reasons": [],
+      "referenceVersion": "4.0.1",
+      "residualRatioLimit": 6.0,
+      "solverRatio": 0.9837194871272666,
+      "stage": "full",
+      "status": "pass",
+      "trials": {
+        "baseline": 8,
+        "candidate": 8
+      }
+    },
+    "dam_break": {
+      "attributeInventory": {
+        "particles": [],
+        "surface": [],
+        "whitewater": [
+          "type"
+        ]
+      },
+      "blocks": [
+        {
+          "activeParticlesMinimumRatio": 1.0,
+          "block": 0,
+          "hostRatio": 0.9753943973393976,
+          "order": "baseline-first",
+          "solverRatio": 1.0119345333118663,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.749949997953081,
+              "candidateMedian": 0.714249999873573,
+              "ratio": 0.9523968288859952
+            },
+            "compute_1": {
+              "baselineMedian": 2.199699997618154,
+              "candidateMedian": 2.119950000633253,
+              "ratio": 0.9637450574754489
+            },
+            "compute_10": {
+              "baselineMedian": 3.3849499977804953,
+              "candidateMedian": 3.3039000009011943,
+              "ratio": 0.976055777210167
+            },
+            "compute_11": {
+              "baselineMedian": 3.2974999985526665,
+              "candidateMedian": 3.327599998556252,
+              "ratio": 1.009128127374313
+            },
+            "compute_12": {
+              "baselineMedian": 4.820200000722252,
+              "candidateMedian": 4.714000000603846,
+              "ratio": 0.9779677191605134
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 2.6578000015433645,
+              "candidateMedian": 2.6044500000352855,
+              "ratio": 0.9799270067435101
+            },
+            "compute_15": {
+              "baselineMedian": 2.194149998103967,
+              "candidateMedian": 2.21629999941797,
+              "ratio": 1.0100950260160626
+            },
+            "compute_2": {
+              "baselineMedian": 5.201450000640762,
+              "candidateMedian": 5.23209999937535,
+              "ratio": 1.0058925873998237
+            },
+            "compute_3": {
+              "baselineMedian": 0.5485499996211729,
+              "candidateMedian": 0.5546500005948474,
+              "ratio": 1.011120227833173
+            },
+            "compute_4": {
+              "baselineMedian": 0.04355000146460952,
+              "candidateMedian": 0.044299998990027234,
+              "ratio": 1.0172215269849576
+            },
+            "compute_5": {
+              "baselineMedian": 14.671699999780685,
+              "candidateMedian": 14.865300002384174,
+              "ratio": 1.0131954717317273
+            },
+            "compute_6": {
+              "baselineMedian": 4.589099999066093,
+              "candidateMedian": 4.59474999934173,
+              "ratio": 1.0012311782869814
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 3.6280000012993696,
+              "candidateMedian": 3.678449998915312,
+              "ratio": 1.013905732524221
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          },
+          "substeps": {
+            "baseline": 788,
+            "candidate": 788,
+            "candidateToBaselineRatio": 1.0
+          }
+        },
+        {
+          "activeParticlesMinimumRatio": 1.0,
+          "block": 1,
+          "hostRatio": 0.9770749173709866,
+          "order": "candidate-first",
+          "solverRatio": 0.9584523831995803,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.8679999991727527,
+              "candidateMedian": 0.8354499987035524,
+              "ratio": 0.9624999994237072
+            },
+            "compute_1": {
+              "baselineMedian": 2.448099999128317,
+              "candidateMedian": 2.354200002628204,
+              "ratio": 0.9616437251200737
+            },
+            "compute_10": {
+              "baselineMedian": 3.741650000847585,
+              "candidateMedian": 3.5079500021311105,
+              "ratio": 0.9375409248156468
+            },
+            "compute_11": {
+              "baselineMedian": 3.5955500015916186,
+              "candidateMedian": 3.448150000622263,
+              "ratio": 0.9590048807820482
+            },
+            "compute_12": {
+              "baselineMedian": 5.617450003228441,
+              "candidateMedian": 5.292400004691444,
+              "ratio": 0.9421356668327826
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 3.1169499989118776,
+              "candidateMedian": 2.990800001498428,
+              "ratio": 0.9595277442828765
+            },
+            "compute_15": {
+              "baselineMedian": 2.3542999997516745,
+              "candidateMedian": 2.371200001107354,
+              "ratio": 1.0071783550768645
+            },
+            "compute_2": {
+              "baselineMedian": 5.643949998557218,
+              "candidateMedian": 5.431700000372075,
+              "ratio": 0.9623933595727457
+            },
+            "compute_3": {
+              "baselineMedian": 0.660899998365494,
+              "candidateMedian": 0.6028499965395895,
+              "ratio": 0.912165226252881
+            },
+            "compute_4": {
+              "baselineMedian": 0.0502500006405171,
+              "candidateMedian": 0.04704999810201116,
+              "ratio": 0.9363183582543928
+            },
+            "compute_5": {
+              "baselineMedian": 16.695949999302684,
+              "candidateMedian": 15.761199999360542,
+              "ratio": 0.9440133685126524
+            },
+            "compute_6": {
+              "baselineMedian": 4.938100001709245,
+              "candidateMedian": 4.845649998969748,
+              "ratio": 0.9812782238700114
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 3.98369999948045,
+              "candidateMedian": 3.7626000030286377,
+              "ratio": 0.9444988336268675
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          },
+          "substeps": {
+            "baseline": 788,
+            "candidate": 788,
+            "candidateToBaselineRatio": 1.0
+          }
+        }
+      ],
+      "budgetRatio": 1.05,
+      "earlyStopMargin": 0.06,
+      "effectiveSettings": {
+        "commonFields": [
+          "attraction_enabled",
+          "attraction_max_distance",
+          "attraction_strength",
+          "auto_grow_particles",
+          "cfl",
+          "churn_decay",
+          "churn_gain",
+          "count_stiffness",
+          "device",
+          "directional_force",
+          "dissipation_attribute",
+          "dissipation_enabled",
+          "dissipation_rate",
+          "dissipation_target",
+          "domain_max",
+          "domain_min",
+          "domain_sdf_walls",
+          "flip_ratio",
+          "force_diffusion",
+          "frame_rate",
+          "gravity",
+          "leaf_capacity",
+          "live_surface_publish_cadence",
+          "max_particles",
+          "max_speed",
+          "max_substeps",
+          "max_whitewater",
+          "min_substeps",
+          "narrow_band_enabled",
+          "narrow_band_voxels",
+          "omnidirectional_force_center",
+          "omnidirectional_force_radius",
+          "omnidirectional_force_strength",
+          "open_boundaries",
+          "particle_growth_failure_policy",
+          "particle_radius_scale",
+          "particles_attribute_age",
+          "particles_attribute_color",
+          "particles_attribute_density",
+          "particles_attribute_lifetime",
+          "particles_attribute_source_id",
+          "particles_attribute_speed",
+          "particles_attribute_uid",
+          "particles_attribute_velocity",
+          "particles_attribute_viscosity",
+          "particles_attribute_vorticity",
+          "particles_per_voxel",
+          "pressure_iterations",
+          "pressure_learned_guess",
+          "pressure_preconditioner",
+          "pressure_solver",
+          "pressure_threshold",
+          "pressure_tolerance",
+          "relax_enabled",
+          "relax_mode",
+          "relax_strength",
+          "resolved_quality",
+          "sample_type",
+          "species_enabled",
+          "species_mixing_rate",
+          "speed_limit_behavior",
+          "speed_limit_percent",
+          "surface_attribute_age",
+          "surface_attribute_color",
+          "surface_attribute_density",
+          "surface_attribute_lifetime",
+          "surface_attribute_motion",
+          "surface_attribute_source_id",
+          "surface_attribute_speed",
+          "surface_attribute_velocity",
+          "surface_attribute_viscosity",
+          "surface_attribute_vorticity",
+          "surface_build_lowres_sdf",
+          "surface_dilate_iterations",
+          "surface_dilate_strength",
+          "surface_enabled",
+          "surface_erode_iterations",
+          "surface_erode_strength",
+          "surface_filter_iterations",
+          "surface_filter_strength",
+          "surface_filter_type",
+          "surface_leaf_capacity_scale",
+          "surface_max_dense_dim",
+          "surface_resolution_mode",
+          "surface_resolution_multiplier",
+          "surface_smooth_iterations",
+          "surface_smooth_strength",
+          "surface_smooth_type",
+          "surface_splat_radius",
+          "surface_tension_band_voxels",
+          "surface_tension_coefficient",
+          "surface_tension_density",
+          "surface_tension_enabled",
+          "surface_tension_safety",
+          "surface_tension_smoothing_iterations",
+          "surface_update_cadence",
+          "surface_voxel_size",
+          "time_scale",
+          "topology_expand",
+          "trace_mode",
+          "viscosity_constant",
+          "viscosity_enabled",
+          "viscosity_from_particles",
+          "viscosity_iterations",
+          "viscosity_solver",
+          "viscosity_tolerance",
+          "voxel_size",
+          "whitewater_attribute_age",
+          "whitewater_attribute_lifetime",
+          "whitewater_attribute_speed",
+          "whitewater_attribute_type",
+          "whitewater_attribute_velocity",
+          "whitewater_enabled",
+          "ww_bubble_buoyancy",
+          "ww_bubble_drag",
+          "ww_bubble_life_multiplier",
+          "ww_churn_threshold",
+          "ww_emission_rate",
+          "ww_foam_advection",
+          "ww_foam_band",
+          "ww_foam_density_influence",
+          "ww_foam_life_multiplier",
+          "ww_foam_preservation",
+          "ww_life_max",
+          "ww_life_min",
+          "ww_min_speed",
+          "ww_spray_drag",
+          "ww_spray_gravity_scale",
+          "ww_spray_life_multiplier",
+          "ww_spray_min_speed",
+          "ww_surface_band",
+          "ww_type_hysteresis"
+        ],
+        "intendedChanges": {
+          "multigridStopRule": {
+            "budgetRatio": 1.0,
+            "residualRatioLimit": 6.0
+          }
+        },
+        "neutralAbsentFields": {}
+      },
+      "hostOrderSpread": 0.0016805200315890279,
+      "hostRatio": 0.9762346573551921,
+      "passed": true,
+      "pressure": {
+        "iterations": {
+          "baseline": 7.0,
+          "candidate": 7.0,
+          "reduction": 1.0
+        },
+        "residual": {
+          "baseline": 0.0028652561976623848,
+          "candidate": 0.0028652561976623848,
+          "ratio": 1.0
+        }
+      },
+      "reasons": [],
+      "referenceVersion": "4.0.1",
+      "residualRatioLimit": 6.0,
+      "solverRatio": 0.9851934582557234,
+      "stage": "early",
+      "status": "pass",
+      "trials": {
+        "baseline": 4,
+        "candidate": 4
+      }
+    },
+    "paddle_stir": {
+      "attributeInventory": {
+        "particles": [],
+        "surface": [],
+        "whitewater": [
+          "type"
+        ]
+      },
+      "blocks": [
+        {
+          "activeParticlesMinimumRatio": 1.0,
+          "block": 0,
+          "hostRatio": 0.8960236678269702,
+          "order": "baseline-first",
+          "solverRatio": 0.9426784782546925,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.18725000245467527,
+              "candidateMedian": 0.13545000001613516,
+              "ratio": 0.7233644765848346
+            },
+            "compute_1": {
+              "baselineMedian": 1.406849997692916,
+              "candidateMedian": 1.15544999789563,
+              "ratio": 0.8213029106091231
+            },
+            "compute_10": {
+              "baselineMedian": 1.8513000004531932,
+              "candidateMedian": 1.723299998047878,
+              "ratio": 0.9308593948177059
+            },
+            "compute_11": {
+              "baselineMedian": 1.8131999986508163,
+              "candidateMedian": 1.7078999990189914,
+              "ratio": 0.9419258770625537
+            },
+            "compute_12": {
+              "baselineMedian": 3.250150001804286,
+              "candidateMedian": 2.730699996391195,
+              "ratio": 0.8401766056567469
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 1.740349999636237,
+              "candidateMedian": 1.5003499975136947,
+              "ratio": 0.8620967034374083
+            },
+            "compute_15": {
+              "baselineMedian": 1.6900000018722494,
+              "candidateMedian": 1.5314999982365407,
+              "ratio": 0.9062130157040733
+            },
+            "compute_2": {
+              "baselineMedian": 2.722900002481765,
+              "candidateMedian": 2.644899997903849,
+              "ratio": 0.9713540693720578
+            },
+            "compute_3": {
+              "baselineMedian": 0.3698499995152815,
+              "candidateMedian": 0.3168499988532858,
+              "ratio": 0.8566986596418642
+            },
+            "compute_4": {
+              "baselineMedian": 0.028549997296067886,
+              "candidateMedian": 0.025450000975979492,
+              "ratio": 0.891418682532928
+            },
+            "compute_5": {
+              "baselineMedian": 9.081450000849145,
+              "candidateMedian": 7.890399996540509,
+              "ratio": 0.8688480359196749
+            },
+            "compute_6": {
+              "baselineMedian": 2.1864500022275024,
+              "candidateMedian": 2.13880000046629,
+              "ratio": 0.978206681281224
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 2.1728500023527886,
+              "candidateMedian": 2.0521999977063388,
+              "ratio": 0.9444738456332428
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          },
+          "substeps": {
+            "baseline": 480,
+            "candidate": 480,
+            "candidateToBaselineRatio": 1.0
+          }
+        },
+        {
+          "activeParticlesMinimumRatio": 1.0,
+          "block": 1,
+          "hostRatio": 1.070132085094163,
+          "order": "candidate-first",
+          "solverRatio": 1.043276319174247,
+          "stages": {
+            "compute_0": {
+              "baselineMedian": 0.12454999887268059,
+              "candidateMedian": 0.14434999866352882,
+              "ratio": 1.1589723000406327
+            },
+            "compute_1": {
+              "baselineMedian": 1.1173000020789914,
+              "candidateMedian": 1.226350001161336,
+              "ratio": 1.0976013594195222
+            },
+            "compute_10": {
+              "baselineMedian": 1.5782000027684262,
+              "candidateMedian": 1.6642000045976602,
+              "ratio": 1.054492460827763
+            },
+            "compute_11": {
+              "baselineMedian": 1.6836999966471922,
+              "candidateMedian": 1.6739999991841614,
+              "ratio": 0.9942388801554037
+            },
+            "compute_12": {
+              "baselineMedian": 2.4329499956365908,
+              "candidateMedian": 2.71959999918181,
+              "ratio": 1.1178199322054772
+            },
+            "compute_13": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_14": {
+              "baselineMedian": 1.3571999970736215,
+              "candidateMedian": 1.5807500021765009,
+              "ratio": 1.164714121415337
+            },
+            "compute_15": {
+              "baselineMedian": 1.4863500000501517,
+              "candidateMedian": 1.6243499958363827,
+              "ratio": 1.0928448856471051
+            },
+            "compute_2": {
+              "baselineMedian": 2.621749999889289,
+              "candidateMedian": 2.621400000862195,
+              "ratio": 0.9998665017537489
+            },
+            "compute_3": {
+              "baselineMedian": 0.2853499972843565,
+              "candidateMedian": 0.30390000029001385,
+              "ratio": 1.0650078962053464
+            },
+            "compute_4": {
+              "baselineMedian": 0.023800001144991256,
+              "candidateMedian": 0.02380000296398066,
+              "ratio": 1.0000000764281225
+            },
+            "compute_5": {
+              "baselineMedian": 7.596099998409045,
+              "candidateMedian": 8.091100000456208,
+              "ratio": 1.0651650191744235
+            },
+            "compute_6": {
+              "baselineMedian": 2.1011999997426756,
+              "candidateMedian": 2.127600000676466,
+              "ratio": 1.0125642494465181
+            },
+            "compute_7": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            },
+            "compute_8": {
+              "baselineMedian": 2.0342499992693774,
+              "candidateMedian": 2.0675999967352254,
+              "ratio": 1.0163942472546768
+            },
+            "compute_9": {
+              "baselineMedian": 0.0,
+              "candidateMedian": 0.0,
+              "ratio": null
+            }
+          },
+          "substeps": {
+            "baseline": 480,
+            "candidate": 480,
+            "candidateToBaselineRatio": 1.0
+          }
+        }
+      ],
+      "budgetRatio": 1.05,
+      "earlyStopMargin": 0.06,
+      "effectiveSettings": {
+        "commonFields": [
+          "attraction_enabled",
+          "attraction_max_distance",
+          "attraction_strength",
+          "auto_grow_particles",
+          "cfl",
+          "churn_decay",
+          "churn_gain",
+          "count_stiffness",
+          "device",
+          "directional_force",
+          "dissipation_attribute",
+          "dissipation_enabled",
+          "dissipation_rate",
+          "dissipation_target",
+          "domain_max",
+          "domain_min",
+          "domain_sdf_walls",
+          "flip_ratio",
+          "force_diffusion",
+          "frame_rate",
+          "gravity",
+          "leaf_capacity",
+          "live_surface_publish_cadence",
+          "max_particles",
+          "max_speed",
+          "max_substeps",
+          "max_whitewater",
+          "min_substeps",
+          "narrow_band_enabled",
+          "narrow_band_voxels",
+          "omnidirectional_force_center",
+          "omnidirectional_force_radius",
+          "omnidirectional_force_strength",
+          "open_boundaries",
+          "particle_growth_failure_policy",
+          "particle_radius_scale",
+          "particles_attribute_age",
+          "particles_attribute_color",
+          "particles_attribute_density",
+          "particles_attribute_lifetime",
+          "particles_attribute_source_id",
+          "particles_attribute_speed",
+          "particles_attribute_uid",
+          "particles_attribute_velocity",
+          "particles_attribute_viscosity",
+          "particles_attribute_vorticity",
+          "particles_per_voxel",
+          "pressure_iterations",
+          "pressure_learned_guess",
+          "pressure_preconditioner",
+          "pressure_solver",
+          "pressure_threshold",
+          "pressure_tolerance",
+          "relax_enabled",
+          "relax_mode",
+          "relax_strength",
+          "resolved_quality",
+          "sample_type",
+          "species_enabled",
+          "species_mixing_rate",
+          "speed_limit_behavior",
+          "speed_limit_percent",
+          "surface_attribute_age",
+          "surface_attribute_color",
+          "surface_attribute_density",
+          "surface_attribute_lifetime",
+          "surface_attribute_motion",
+          "surface_attribute_source_id",
+          "surface_attribute_speed",
+          "surface_attribute_velocity",
+          "surface_attribute_viscosity",
+          "surface_attribute_vorticity",
+          "surface_build_lowres_sdf",
+          "surface_dilate_iterations",
+          "surface_dilate_strength",
+          "surface_enabled",
+          "surface_erode_iterations",
+          "surface_erode_strength",
+          "surface_filter_iterations",
+          "surface_filter_strength",
+          "surface_filter_type",
+          "surface_leaf_capacity_scale",
+          "surface_max_dense_dim",
+          "surface_resolution_mode",
+          "surface_resolution_multiplier",
+          "surface_smooth_iterations",
+          "surface_smooth_strength",
+          "surface_smooth_type",
+          "surface_splat_radius",
+          "surface_tension_band_voxels",
+          "surface_tension_coefficient",
+          "surface_tension_density",
+          "surface_tension_enabled",
+          "surface_tension_safety",
+          "surface_tension_smoothing_iterations",
+          "surface_update_cadence",
+          "surface_voxel_size",
+          "time_scale",
+          "topology_expand",
+          "trace_mode",
+          "viscosity_constant",
+          "viscosity_enabled",
+          "viscosity_from_particles",
+          "viscosity_iterations",
+          "viscosity_solver",
+          "viscosity_tolerance",
+          "voxel_size",
+          "whitewater_attribute_age",
+          "whitewater_attribute_lifetime",
+          "whitewater_attribute_speed",
+          "whitewater_attribute_type",
+          "whitewater_attribute_velocity",
+          "whitewater_enabled",
+          "ww_bubble_buoyancy",
+          "ww_bubble_drag",
+          "ww_bubble_life_multiplier",
+          "ww_churn_threshold",
+          "ww_emission_rate",
+          "ww_foam_advection",
+          "ww_foam_band",
+          "ww_foam_density_influence",
+          "ww_foam_life_multiplier",
+          "ww_foam_preservation",
+          "ww_life_max",
+          "ww_life_min",
+          "ww_min_speed",
+          "ww_spray_drag",
+          "ww_spray_gravity_scale",
+          "ww_spray_life_multiplier",
+          "ww_spray_min_speed",
+          "ww_surface_band",
+          "ww_type_hysteresis"
+        ],
+        "intendedChanges": {
+          "multigridStopRule": {
+            "budgetRatio": 1.0,
+            "residualRatioLimit": 6.0
+          }
+        },
+        "neutralAbsentFields": {}
+      },
+      "hostOrderSpread": 0.17410841726719273,
+      "hostRatio": 0.9830778764605665,
+      "passed": true,
+      "pressure": {
+        "iterations": {
+          "baseline": 6.0,
+          "candidate": 6.0,
+          "reduction": 1.0
+        },
+        "residual": {
+          "baseline": 0.0032035078644996463,
+          "candidate": 0.0032035078644996463,
+          "ratio": 1.0
+        }
+      },
+      "reasons": [],
+      "referenceVersion": "4.0.1",
+      "residualRatioLimit": 6.0,
+      "solverRatio": 0.9929773987144697,
+      "stage": "early",
+      "status": "pass",
+      "trials": {
+        "baseline": 4,
+        "candidate": 4
+      }
+    }
+  },
+  "environment_fingerprint": "e19401ba1a243ef9c8d72ff62e939f48733867acf7d1db1511309ee9a5281cd2",
+  "frames": 48,
+  "gitHead": "45824b891c0234e6ffa39abdcbb08b39a629099b",
+  "gitStatus": [],
+  "measurementKind": "saved_demo_scene_bridge_with_stage_sync",
+  "observed_environment": {
+    "architecture": "AMD64",
+    "blender_build": "fbe6228777e7",
+    "blender_sha256": "0060916d6921eb4d46c57254609d805a2ea711917399051391a52ba14beb6327",
+    "blender_version": [
+      5,
+      2,
+      0
+    ],
+    "cuda_driver": [
+      13,
+      5
+    ],
+    "driver": "621.14",
+    "gpu_model": "NVIDIA GeForce RTX 4080 SUPER",
+    "gpu_uuid": "GPU-5d09f77b-a936-a6d9-054d-0324aef67adb",
+    "platform": "Windows",
+    "python_executable": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\blender520\\x\\blender-5.2.0-windows-x64\\5.2\\python\\bin\\python.exe",
+    "python_prefix": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\blender520\\x\\blender-5.2.0-windows-x64\\5.2\\python",
+    "python_sha256": "7d984ee02e70c22f04d5e26f1328865d75a5da14b677890896a294f35815d37a",
+    "python_version": "3.13.13 (main, May  8 2026, 12:37:03) [MSC v.1944 64 bit (AMD64)]",
+    "warp_distribution": "1.19.0",
+    "warp_loaded_path": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site\\warp\\__init__.py",
+    "warp_payload_fingerprint": "5f1ab05581310979916ee7381b8945794b7a1003f56dc1cd19b59bd82c081796",
+    "warp_version": "1.19.0",
+    "warp_wheel_sha256": "bb4865dde4c2ae916d3d2a4e20ed1cd406e1d0a76ae722c3c574a9d43385c4d9"
+  },
+  "passed": true,
+  "referenceCommits": {
+    "4.0.1": "46cdf3ce67b16a92ea47ad372bcd6e4bba8fe877"
+  },
+  "run_id": "52fe3526406e4dcbb283611448e454fa",
+  "source_fingerprint": "5fefadf9b09c2736708acde30c16651ebf60dd1021820ac90d396e0f72c3d015",
+  "status": "pass",
+  "verifier_fingerprint": "5b9300cd51db4c0525fd675bde8e37776b4276cef1c17d8c19abac812d5a1c1f"
+}
