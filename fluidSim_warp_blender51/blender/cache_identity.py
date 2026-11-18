@@ -133,6 +133,13 @@ def _mesh_topology(mesh):
                  for polygon in getattr(mesh, "polygons", ()))
 
 
+def _library_name(obj) -> str:
+    """File name of the linked library, without its machine-specific folder."""
+    filepath = str(getattr(getattr(obj, "library", None), "filepath", "") or "")
+    # Blender's "//" (relative to the .blend) would parse as a UNC share.
+    return PureWindowsPath(filepath.removeprefix("//")).name
+
+
 def _volume_record(obj):
     data = obj.data
     grids = getattr(data, "grids", None)
@@ -304,8 +311,7 @@ def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
             "name_full": obj.name_full,
             # File name only: the folder a linked library sits in is machine
             # specific, and name_full above already carries the library name.
-            "library": PureWindowsPath(str(
-                getattr(getattr(obj, "library", None), "filepath", "") or "")).name,
+            "library": _library_name(obj),
             "role": role,
             "properties": _rna_record(
                 group, ignored=_SOURCE_SIGNATURE_IGNORED_RNA),

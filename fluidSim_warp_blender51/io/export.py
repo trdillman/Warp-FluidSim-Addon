@@ -173,7 +173,7 @@ def _publish_bundle(artifacts) -> list[str]:
             try:
                 if backup_path is not None and os.path.exists(backup_path):
                     os.replace(backup_path, final_path)
-                elif final_path in published:
+                elif final_path in published and len(finals) > 1:
                     _remove_if_present(final_path)
             except OSError as rollback_error:
                 rollback_errors.append((final_path, rollback_error))
@@ -236,7 +236,13 @@ def export_frame(solver, base_path: str) -> list:
             _write_points_ply,
             _points_payload(ww),
         ))
-    if not artifacts:
+    # An enabled surface with no vertices is not geometry: a frame with only
+    # that has nothing to export (the empty surface file is still written when
+    # particles or whitewater accompany it).
+    has_geometry = any(
+        (len(payload[0]) > 0 if writer is _write_surface_obj else payload[0] > 0)
+        for _, writer, payload in artifacts)
+    if not has_geometry:
         raise ValueError(
             "Nothing to export: the frame has no surface, particles or whitewater."
         )

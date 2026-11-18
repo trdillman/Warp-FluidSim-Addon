@@ -355,3 +355,46 @@ def test_volume_identity_ignores_the_folder_the_file_sits_in(tmp_path):
             frame_offset=0, sequence_mode="CLAMP"),
         library=None))
     assert changed != records[0]  # different content still changes identity
+
+
+@pytest.mark.parametrize("filepath,expected", [
+    ("//lib.blend", "lib.blend"),
+    ("//assets/lib.blend", "lib.blend"),
+    ("C:\\proj\\assets\\lib.blend", "lib.blend"),
+    ("/home/alice/assets/lib.blend", "lib.blend"),
+    ("", ""),
+])
+def test_library_identity_keeps_only_the_file_name(filepath, expected):
+    from fluidSim_warp_blender51.blender import cache_identity
+
+    obj = SimpleNamespace(library=SimpleNamespace(filepath=filepath))
+    assert cache_identity._library_name(obj) == expected
+    assert cache_identity._library_name(SimpleNamespace(library=None)) == ""
+
+
+def test_frame_with_only_an_empty_surface_has_nothing_to_export(tmp_path):
+    empty_surface = np.zeros((0, 3), np.float32)
+    solver = _solver(particles=0)
+    solver.host_frame().surface_mesh = (empty_surface, np.zeros((0, 3), np.int32))
+    with pytest.raises(ValueError, match="Nothing to export"):
+        export_mod.export_frame(solver, str(tmp_path / "f"))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_interrupt_after_single_file_publish_keeps_the_new_file(
+        tmp_path, monkeypatch):
+    path = tmp_path / "p.ply"
+    export_mod.export_points_ply(np.zeros((1, 3), np.float32), str(path))
+
+    class _Interrupting(set):
+        def add(self, item):
+            super().add(item)
+            raise KeyboardInterrupt
+
+    real_publish = export_mod._publish_bundle
+    monkeypatch.setattr(export_mod, "set", _Interrupting, raising=False)
+    with pytest.raises(KeyboardInterrupt):
+        real_publish([(str(path), export_mod._write_points_ply,
+                       export_mod._points_payload(np.ones((2, 3), np.float32)))])
+    monkeypatch.undo()
+    assert b"element vertex 2" in path.read_bytes()
