@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import numpy as np
 
@@ -133,6 +133,13 @@ def _mesh_topology(mesh):
                  for polygon in getattr(mesh, "polygons", ()))
 
 
+def _library_name(obj) -> str:
+    """File name of the linked library, without its machine-specific folder."""
+    filepath = str(getattr(getattr(obj, "library", None), "filepath", "") or "")
+    # Blender's "//" (relative to the .blend) would parse as a UNC share.
+    return PureWindowsPath(filepath.removeprefix("//")).name
+
+
 def _volume_record(obj):
     data = obj.data
     grids = getattr(data, "grids", None)
@@ -146,8 +153,10 @@ def _volume_record(obj):
     with open(path, "rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
+    # The absolute path is deliberately not part of the identity: it differs
+    # between machines and drives, while the content hash already says which
+    # file was consumed. Hashing it made a moved project refuse to resume.
     return {
-        "path": path,
         "content_sha256": digest.hexdigest(),
         "sequence": {name: getattr(data, name, None) for name in
                      ("is_sequence", "frame_start", "frame_duration", "frame_offset", "sequence_mode")},
@@ -300,8 +309,9 @@ def _source_records(scene, depsgraph=None) -> tuple[dict, ...]:
         records.append({
             "identity": persistent_source_key(obj),
             "name_full": obj.name_full,
-            "library": str(
-                getattr(getattr(obj, "library", None), "filepath", "") or ""),
+            # File name only: the folder a linked library sits in is machine
+            # specific, and name_full above already carries the library name.
+            "library": _library_name(obj),
             "role": role,
             "properties": _rna_record(
                 group, ignored=_SOURCE_SIGNATURE_IGNORED_RNA),

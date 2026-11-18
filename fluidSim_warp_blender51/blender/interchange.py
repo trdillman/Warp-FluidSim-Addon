@@ -48,6 +48,7 @@ import bpy
 from bpy.props import IntProperty, StringProperty
 
 from ..io import cache, cache_schema
+from ..io.fsutil import staged_output
 from . import liquid_display, output_publication, playback, production_bake, rigid_publication
 
 SURFACE_KIND = output_publication.SURFACE_NAME
@@ -383,27 +384,28 @@ def export_alembic(scene, filepath: str, plan: ExportPlan) -> list[str]:
     if plan.sequence is not None:
         plan.sequence.revalidate()
     state = _SceneState(scene, (plan.surface,))
-    try:
-        state.enter(plan)
-        result = bpy.ops.wm.alembic_export(
-            filepath=filepath,
-            start=plan.start,
-            end=plan.end,
-            selected=True,
-            flatten=True,
-            export_hair=False,
-            export_particles=False,
-            uvs=False,
-            normals=True,
-            vcolors=False,
-            evaluation_mode="RENDER",
-        )
-        if "FINISHED" not in result:
-            raise RuntimeError("Blender's Alembic exporter did not finish.")
-        if plan.sequence is not None:
-            plan.sequence.revalidate()
-    finally:
-        problems = state.restore()
+    with staged_output(filepath, suffix=".abc") as staged:
+        try:
+            state.enter(plan)
+            result = bpy.ops.wm.alembic_export(
+                filepath=staged,
+                start=plan.start,
+                end=plan.end,
+                selected=True,
+                flatten=True,
+                export_hair=False,
+                export_particles=False,
+                uvs=False,
+                normals=True,
+                vcolors=False,
+                evaluation_mode="RENDER",
+            )
+            if "FINISHED" not in result:
+                raise RuntimeError("Blender's Alembic exporter did not finish.")
+            if plan.sequence is not None:
+                plan.sequence.revalidate()
+        finally:
+            problems = state.restore()
     return problems
 
 
@@ -514,38 +516,40 @@ def export_usd(scene, filepath: str, plan: UsdExportPlan) -> list[str]:
         plan.sequence.revalidate()
     state = _SceneState(scene, plan.objects)
     samplers = _UsdSamplers()
-    try:
-        state.enter(plan)
-        with output_publication.hold_point_capacity():
-            for obj, peak in plan.points:
-                output_publication.reserve_point_capacity(obj, peak)
-            # Reservation leaves placeholders: republish the first frame.
-            playback.clear_cache_cursors()
-            samplers.attach(plan.objects)
-            datablocks = [(obj, obj.data.as_pointer()) for obj in plan.objects]
-            _set_frame_range(scene, plan.start, plan.end)
-            result = bpy.ops.wm.usd_export(
-                filepath=filepath,
-                selected_objects_only=True,
-                export_animation=True,
-                evaluation_mode="RENDER",
-                export_materials=False,
-                export_uvmaps=False,
-                export_custom_properties=False,
-            )
-            if "FINISHED" not in result:
-                raise RuntimeError("Blender's USD exporter did not finish.")
-            replaced = [obj.name for obj, pointer in datablocks
-                        if obj.data.as_pointer() != pointer]
-            if plan.sequence is not None:
-                plan.sequence.revalidate()
-            if replaced:
-                raise RuntimeError(
-                    f"{', '.join(replaced)} changed datablock during the export, "
-                    "so the file has no per-frame samples for it.")
-    finally:
-        problems = samplers.remove()
-        problems += state.restore()
+    suffix = Path(filepath).suffix.lower()
+    with staged_output(filepath, suffix=suffix if suffix in USD_SUFFIXES else ".usd") as staged:
+        try:
+            state.enter(plan)
+            with output_publication.hold_point_capacity():
+                for obj, peak in plan.points:
+                    output_publication.reserve_point_capacity(obj, peak)
+                # Reservation leaves placeholders: republish the first frame.
+                playback.clear_cache_cursors()
+                samplers.attach(plan.objects)
+                datablocks = [(obj, obj.data.as_pointer()) for obj in plan.objects]
+                _set_frame_range(scene, plan.start, plan.end)
+                result = bpy.ops.wm.usd_export(
+                    filepath=staged,
+                    selected_objects_only=True,
+                    export_animation=True,
+                    evaluation_mode="RENDER",
+                    export_materials=False,
+                    export_uvmaps=False,
+                    export_custom_properties=False,
+                )
+                if "FINISHED" not in result:
+                    raise RuntimeError("Blender's USD exporter did not finish.")
+                replaced = [obj.name for obj, pointer in datablocks
+                            if obj.data.as_pointer() != pointer]
+                if plan.sequence is not None:
+                    plan.sequence.revalidate()
+                if replaced:
+                    raise RuntimeError(
+                        f"{', '.join(replaced)} changed datablock during the export, "
+                        "so the file has no per-frame samples for it.")
+        finally:
+            problems = samplers.remove()
+            problems += state.restore()
     return problems
 
 

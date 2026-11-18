@@ -7,6 +7,8 @@ import tempfile
 
 import numpy as np
 
+from .fsutil import apply_umask_mode
+
 
 def _host_frame(solver):
     from ..sim.frame_output import HostFrame
@@ -39,6 +41,11 @@ def _surface_payload(solver, host):
         raise ValueError("surface vertices must be finite numbers") from exc
     if not finite:
         raise ValueError("surface vertices must be finite")
+    if tris.size:
+        if not np.issubdtype(tris.dtype, np.integer):
+            raise ValueError("surface triangle indices must be integers")
+        if int(tris.min()) < 0 or int(tris.max()) >= len(verts):
+            raise ValueError("surface triangle indices are out of range")
     metadata = solver.surface.metadata()
     header = (
         float(metadata["voxel_size"]),
@@ -130,6 +137,10 @@ def _publish_bundle(artifacts) -> list[str]:
     publication failure restores the prior bundle, but separate filesystem
     renames cannot provide crash-atomic multi-file publication.
     """
+    for final_path, _, _ in artifacts:
+        if os.path.isdir(final_path):
+            raise IsADirectoryError(
+                f"Export destination is a directory: {final_path}")
     staged = {}
     backups = {}
     published = set()
@@ -141,7 +152,9 @@ def _publish_bundle(artifacts) -> list[str]:
             staged[final_path] = stage_path
             writer(stage_path, payload)
 
-        for final_path in finals:
+        # A single file needs no backup: one os.replace swaps it atomically, so
+        # a stop at any point leaves either the old or the new file in place.
+        for final_path in (finals if len(finals) > 1 else ()):
             if os.path.exists(final_path):
                 backup_path = _transaction_path(final_path, ".backup")
                 _remove_if_present(backup_path)
@@ -149,17 +162,18 @@ def _publish_bundle(artifacts) -> list[str]:
                 os.replace(final_path, backup_path)
 
         for final_path in finals:
+            apply_umask_mode(staged[final_path])
             os.replace(staged[final_path], final_path)
             published.add(final_path)
         return finals
-    except Exception as publish_error:
+    except BaseException as publish_error:
         rollback_errors = []
         for final_path in reversed(finals):
             backup_path = backups.get(final_path)
             try:
                 if backup_path is not None and os.path.exists(backup_path):
                     os.replace(backup_path, final_path)
-                elif final_path in published:
+                elif final_path in published and len(finals) > 1:
                     _remove_if_present(final_path)
             except OSError as rollback_error:
                 rollback_errors.append((final_path, rollback_error))
@@ -185,7 +199,7 @@ def _publish_bundle(artifacts) -> list[str]:
 def export_surface_obj(solver, path: str, *, host=None) -> str:
     _require_existing_parent(path)
     payload = _surface_payload(solver, host or _host_frame(solver))
-    _write_surface_obj(path, payload)
+    _publish_bundle([(path, _write_surface_obj, payload)])
     return path
 
 
@@ -193,7 +207,7 @@ def export_points_ply(positions: np.ndarray, path: str,
                       velocities: np.ndarray | None = None) -> str:
     _require_existing_parent(path)
     payload = _points_payload(positions, velocities)
-    _write_points_ply(path, payload)
+    _publish_bundle([(path, _write_points_ply, payload)])
     return path
 
 
@@ -222,4 +236,14 @@ def export_frame(solver, base_path: str) -> list:
             _write_points_ply,
             _points_payload(ww),
         ))
+    # An enabled surface with no vertices is not geometry: a frame with only
+    # that has nothing to export (the empty surface file is still written when
+    # particles or whitewater accompany it).
+    has_geometry = any(
+        (len(payload[0]) > 0 if writer is _write_surface_obj else payload[0] > 0)
+        for _, writer, payload in artifacts)
+    if not has_geometry:
+        raise ValueError(
+            "Nothing to export: the frame has no surface, particles or whitewater."
+        )
     return _publish_bundle(artifacts)

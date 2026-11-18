@@ -14,6 +14,23 @@
   missing provenance is never inferred from the current scene.
 - Frame playback verifies and parses one immutable byte snapshot, preventing a
   concurrent file replacement from substituting unverified payload bytes.
+- Cache and export hardening: frame and checkpoint files now follow the
+  umask like the manifest; a refused directory sync no longer fails a bake;
+  damaged or hand-edited manifests (huge numbers, odd frame keys, bad text,
+  absurd frame gaps) are refused with a clear message; Export Frame no longer
+  loses the previous export if interrupted, writes real file permissions,
+  and refuses to report success when nothing was written; VDB export treats
+  frame 0 as a real frame; rebake cleanup also covers negative frames and
+  leftover temp files.
+- Source identity no longer includes the absolute path of a VDB volume source or
+  the folder of a linked library (only content and file name). A project moved to
+  another drive or machine can resume. Caches already baked with a volume source
+  or a linked library will ask for a re-bake once, because their stored identity
+  was computed with the path.
+- Restart preserves the previous cache when replacement solver admission,
+  scene synchronization or replacement-manifest preparation fails.
+- Alembic and USD exports publish their staged file only after export checks
+  and scene restoration, preserving the previous file on failure or cancellation.
 
 - **Warp 1.19.0** is now the build Install Warp downloads (same CUDA 13 build and
   driver floor as 1.18). Warp 1.17.0 and 1.18.0 still load, with a warning.

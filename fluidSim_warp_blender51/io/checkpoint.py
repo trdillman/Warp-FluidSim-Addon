@@ -22,6 +22,8 @@ import zipfile
 
 import numpy as np
 
+from .fsutil import apply_umask_mode, fsync_directory
+
 CHECKPOINT_FORMAT_VERSION = 2
 _META_KEY = "__fluidsim_checkpoint_metadata__"
 
@@ -197,16 +199,6 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
 def write_checkpoint_atomic(path: Path | str, payload: CheckpointPayload) -> str:
     """Write, fsync, checksum, and atomically replace a checkpoint."""
     path = Path(path)
@@ -229,8 +221,9 @@ def write_checkpoint_atomic(path: Path | str, payload: CheckpointPayload) -> str
             handle.flush()
             os.fsync(handle.fileno())
         digest = _sha256(temp)
+        apply_umask_mode(temp)
         os.replace(temp, path)
-        _fsync_directory(path.parent)
+        fsync_directory(path.parent)
         return digest
     except Exception:
         if descriptor is not None:

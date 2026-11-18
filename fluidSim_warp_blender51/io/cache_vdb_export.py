@@ -76,8 +76,10 @@ def _frame(plan, number):
     return payload
 
 
-def plan_export(base_dir, settings=None, *, frame_start=0, frame_end=0) -> VDBExportPlan:
-    """Freeze a validated contiguous export; zero bounds select the full cache.
+def plan_export(base_dir, settings=None, *, frame_start=None, frame_end=None) -> VDBExportPlan:
+    """Freeze a validated contiguous export; ``None`` bounds select the full cache.
+
+    Frame ``0`` is a real frame here (caches may start at or below zero).
 
     ``settings`` is an optional authenticated fallback for older frames without
     origin metadata. When supplied it must match the canonical baked settings.
@@ -93,8 +95,8 @@ def plan_export(base_dir, settings=None, *, frame_start=0, frame_end=0) -> VDBEx
     frames = manifest.committed_frames
     if not frames:
         raise ValueError("The cache has no committed frames. Bake first.")
-    first = int(frame_start) or frames[0]
-    last = int(frame_end) or frames[-1]
+    first = frames[0] if frame_start is None else int(frame_start)
+    last = frames[-1] if frame_end is None else int(frame_end)
     if first > last or first < frames[0] or last > frames[-1]:
         raise ValueError(f"Export range {first}-{last} is outside the cached range {frames[0]}-{frames[-1]}.")
     selected = tuple(f for f in frames if first <= f <= last)
