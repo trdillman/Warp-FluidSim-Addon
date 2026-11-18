@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Bounded CUDA allocation proof; run through an isolated Blender launcher.
 
 This measures array payload separately from CUDA pool usage/free-memory samples.
@@ -16,6 +17,7 @@ from pathlib import Path
 import subprocess
 import sys
 import traceback
+import weakref
 
 import bpy
 import warp as wp
@@ -28,13 +30,15 @@ from fluidSim_warp_blender51.sim.memory_safety import estimate_solver_bytes
 from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
 
 
-def inventory(*owners):
+def inventory(*owners, array_refs=None):
     """Inspect real reachable Warp arrays; aliases count once by device pointer."""
     arrays, seen = {}, set()
 
     def visit(value, path):
         if isinstance(value, wp.array):
             if value.ptr:
+                if array_refs is not None:
+                    array_refs.append((path, weakref.ref(value)))
                 key = (str(value.device), int(value.ptr))
                 arrays.setdefault(key, {
                     "path": path, "shape": list(value.shape),
@@ -71,6 +75,7 @@ def memory_sample(device):
 
 def run_case(name, settings, device):
     solver = None
+    array_refs = []
     record = {"name": name, "status": "FAIL", "settings": {
         key: getattr(settings, key) for key in (
             "sample_type", "max_particles", "max_whitewater", "leaf_capacity",
@@ -84,7 +89,7 @@ def run_case(name, settings, device):
         if settings.surface_tension_enabled:
             solver.surface_tension.ensure_resources()
             solver.surface._ensure_band_buffers(solver.grid.voxel_capacity, device)
-        record["initial"] = inventory(solver)
+        record["initial"] = inventory(solver, array_refs=array_refs)
         record["initial_memory"] = memory_sample(device)
         record["initial_allowance_bytes"] = estimate_solver_bytes(settings)
         assert record["initial_allowance_bytes"] >= record["initial"]["payload_bytes"]
@@ -110,7 +115,8 @@ def run_case(name, settings, device):
         assert result.grew, result
         fresh_candidates = (solver.whitewater.candidates, solver.whitewater.candidate_offsets,
                             solver.whitewater.candidate_types)
-        fresh = inventory(solver.particles, solver.bins, fresh_candidates)
+        fresh = inventory(solver.particles, solver.bins, fresh_candidates,
+                          array_refs=array_refs)
         retained = inventory(old_particles, old_bins, old_candidates,
                              solver.particles, solver.bins, fresh_candidates)
         assert retained["payload_bytes"] == old_payload["payload_bytes"] + fresh["payload_bytes"]
@@ -122,18 +128,29 @@ def run_case(name, settings, device):
                             "memory_with_retained_old_arrays": memory_sample(device)}
         # Release test-owned retention before solver teardown.
         del old_particles, old_bins, old_candidates, fresh_candidates, original_allocate
-        record["status"] = "PASS"
-        return record
     except Exception:
         record["error"] = traceback.format_exc()
-        return record
     finally:
-        if solver is not None:
-            solver.release()
-        solver = old_particles = old_bins = old_candidates = fresh_candidates = None
+        try:
+            if solver is not None:
+                solver.release()
+        except Exception:
+            record["error"] = record.get("error", "") + traceback.format_exc()
+        solver = old_particles = old_bins = old_candidates = fresh_candidates = None  # noqa: F841
         original_allocate = None
         gc.collect()
-        record["after_release_memory"] = memory_sample(device)
+        retained_paths = sorted({path for path, ref in array_refs if ref() is not None})
+        record["release_retained_array_paths"] = retained_paths
+        if retained_paths:
+            record["error"] = record.get("error", "") + (
+                f"owned Warp arrays retained after release: {retained_paths}\n")
+        try:
+            record["after_release_memory"] = memory_sample(device)
+        except Exception:
+            record["error"] = record.get("error", "") + traceback.format_exc()
+    if "error" not in record:
+        record["status"] = "PASS"
+    return record
 
 
 def main():

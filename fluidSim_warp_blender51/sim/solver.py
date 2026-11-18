@@ -2343,6 +2343,27 @@ class FluidSolver:
         return _motion_leaf_radius(vmax, frame_dt, gmag, s.voxel_size)
 
 
+    def _run_sourcing_phase(self, dt):
+        """Index particles and apply sources for one substep."""
+        with self._phase("indexing"):
+            self._index_particles()
+        with self._phase("sourcing"):
+            if self.narrow_band is not None:
+                self.narrow_band.credit_interior_counts()
+            bins_before = self.bins
+            emitted = self._source(dt)
+            if self.narrow_band is not None:
+                self.narrow_band.release_interior_counts()
+            # A successful pool growth swaps in fresh, empty bins and
+            # defers the emission, so the index must be rebuilt even
+            # though nothing was emitted.
+            if not emitted and self.bins is not bins_before:
+                self._index_particles()
+            # Re-count after emission so P2G activity sees new particles.
+            # Skipped when no emitter ran: indexing is already current.
+            if emitted:
+                self._index_particles()
+
     def step_frame(self):
         """Advance one display frame (interactive playback entry point)."""
         s = self.settings
@@ -2424,24 +2445,7 @@ class FluidSolver:
                     self._apply_collisions(reuse_static=reuse_static)
             self.features.run(
                 FrameFeaturePhase.BEFORE_SOURCING, self, time_ctx)
-            with self._phase("indexing"):
-                self._index_particles()
-            with self._phase("sourcing"):
-                if self.narrow_band is not None:
-                    self.narrow_band.credit_interior_counts()
-                bins_before = self.bins
-                emitted = self._source(dt)
-                if self.narrow_band is not None:
-                    self.narrow_band.release_interior_counts()
-                # A successful pool growth swaps in fresh, empty bins and
-                # defers the emission, so the index must be rebuilt even
-                # though nothing was emitted.
-                if not emitted and self.bins is not bins_before:
-                    self._index_particles()
-                # Re-count after emission so P2G activity sees new particles.
-                # Skipped when no emitter ran: indexing is already current.
-                if emitted:
-                    self._index_particles()
+            self._run_sourcing_phase(dt)
             with self._phase("p2g"):
                 self._p2g()
             if self.narrow_band is not None:
