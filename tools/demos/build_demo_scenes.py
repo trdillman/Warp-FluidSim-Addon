@@ -16,6 +16,9 @@ not become source-control assets.
 3. paddle_stir     - keyframed rotating paddle in a cylindrical tank; the only
                      scene exercising the moving-collider velocity-coupling path
                      (build explicitly with `-- paddle_stir`).
+4. tsunami_parthenon - a tsunami-sized wave drives through a procedural
+                     Parthenon-style temple (build explicitly with
+                     `-- tsunami_parthenon`).
 
 The exported data is analyzed offline by tools/demos/analyze_demos.py.
 """
@@ -1716,6 +1719,152 @@ def build_deep_plunge():
     save_playable("deep_plunge", scene, PLUNGE_FRAMES)
 
 
+# Tsunami Parthenon: a tsunami-sized wall of water (a 2.4 m slab, about nine
+# times the dam_break reservoir by volume) collapses along a flume, runs up a
+# ramp and drives into a Parthenon-style temple at about 1:15 scale. The temple
+# is procedural static colliders from tools/demos/tsunami_parthenon.py: three
+# steps, an 8 x 17 Doric colonnade, a cella with a door facing the wave, an
+# entablature ring and a gabled roof. Whitewater is left off until its churn
+# threshold has been measured on a GPU run (see docs/DEMO_SCENE_CONTRACT.md).
+TSUNAMI_PREVIEW_FRAME = 30
+# Lenient build-time proof that the wave really reaches and enters the temple:
+# frame, then the thresholds checked at that frame. They are unmeasured guesses
+# until the scene has been built once on a GPU; tighten them from that run.
+TSUNAMI_REACH_FRAME = 40
+TSUNAMI_MIN_FRACTION_PAST_FRONT = 0.02
+TSUNAMI_MIN_COLONNADE_PARTICLES = 200
+TSUNAMI_WATER_COLOR = (0.03, 0.22, 0.46, 1.0)
+
+
+def make_temple_object(scene, data, materials):
+    """Link one closed temple mesh from tsunami_parthenon as a flat-shaded object."""
+    mesh = bpy.data.meshes.new(data.name)
+    mesh.from_pydata(data.verts.tolist(), [], [list(f) for f in data.faces])
+    if mesh.validate(verbose=True):
+        raise RuntimeError(f"{data.name}: generated mesh needed repair")
+    mesh.materials.append(materials[data.material])
+    mesh.update()
+    obj = bpy.data.objects.new(data.name, mesh)
+    scene.collection.objects.link(obj)
+    return obj
+
+
+def author_tsunami_parthenon():
+    scene = fresh_scene()
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+    from tools.demos import tsunami_parthenon as tp
+
+    fs = scene.fluidsim
+    lo, hi = tp.DOMAIN_LO, tp.DOMAIN_HI
+    make_domain(scene, lo, hi, "Tsunami Domain")
+    ds = domain_settings(scene)
+    set_resolution(ds, lo, hi, tp.VOXEL)
+    ds.max_particles = tp.MAX_PARTICLES
+    ds.min_substeps = 1
+    ds.max_substeps = 16
+    ds.whitewater_enabled = False
+    ds.profiling_enabled = False
+    show_liquid(scene, "Tsunami", TSUNAMI_WATER_COLOR)
+    fs.live = True
+    scene.frame_start = 1
+    scene.frame_end = tp.FRAMES
+    scene.frame_set(1)
+    make_source_box(scene, tp.WAVE_LO, tp.WAVE_HI, "Tsunami Wave",
+                    emit_rate=tp.PARTICLES_PER_VOXEL,
+                    emission_mode="INITIAL_FILL").hide_render = True
+    make_source_box(scene, tp.FORESHORE_LO, tp.FORESHORE_HI, "Tsunami Foreshore",
+                    emit_rate=tp.PARTICLES_PER_VOXEL,
+                    emission_mode="INITIAL_FILL").hide_render = True
+    materials = {name: demo_material(f"Tsunami {name.title()}", color, roughness=0.8)
+                 for name, color in tp.MATERIAL_COLORS.items()}
+    for data in tp.collider_meshes():
+        obj = make_temple_object(scene, data, materials)
+        _colliders.tag_collider(obj, friction=data.friction, restitution=0.0)
+    # Side-on view: the wave enters from the left and the 17-column long side
+    # of the temple faces the camera.
+    add_camera_light(scene, (4.9, -10.0, 3.4), (0.0, 0.0, 0.0))
+    look_at(scene.camera, (4.9, 0.0, 1.0))
+    scene.camera.data.lens = 30.0
+    add_text_block("README_Tsunami_Parthenon", (
+        "Tsunami Parthenon\n"
+        "=================\n\n"
+        "A 2.4 m wall of water stands at the left end of a 9.7 m flume with a\n"
+        "shallow sea in front of it. Press Play: Live Simulation is on and\n"
+        "frame 1 holds the full wave. It collapses into a surge, climbs the\n"
+        "ramp and drives into a Parthenon-style temple: three steps, an\n"
+        "8 x 17 column colonnade, an inner cella with a door facing the wave,\n"
+        "a beam ring and a gabled roof. The temple is static colliders built\n"
+        "from plain geometry (tools/demos/tsunami_parthenon.py).\n\n"
+        "The two 'Tsunami' sources stay enabled, so Reset or Reinitialize\n"
+        "refills the wave from any timeline frame. Whitewater is off; turn it\n"
+        "on under Domain to get foam and spray (heavier to run).\n"))
+    return scene
+
+
+def build_tsunami_parthenon():
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+    from tools.demos import tsunami_parthenon as tp
+
+    scene = author_tsunami_parthenon()
+    initialize_demo()
+    sess = session()
+    checks = {}
+
+    def record(frame):
+        if frame == TSUNAMI_PREVIEW_FRAME:
+            use_material_shading(scene)
+            render_preview("tsunami_parthenon", min_water_fraction=0.02)
+        pos = sess.solver.particle_positions()
+        if frame in (12, 24, TSUNAMI_REACH_FRAME, 64, tp.FRAMES):
+            checks[frame] = {
+                "front_x": tp.front_x(pos),
+                "fraction_past_temple_front": tp.fraction_past(pos, tp.TEMPLE_FRONT_X),
+                "colonnade_particles": tp.colonnade_fill(pos),
+                "particles": int(len(pos)),
+            }
+            log(f"tsunami_parthenon frame {frame}: {checks[frame]}")
+
+    series = run_scene("tsunami_parthenon", tp.FRAMES, dump_velocities=False,
+                       on_frame=record)
+    reach = checks[TSUNAMI_REACH_FRAME]
+    if reach["fraction_past_temple_front"] < TSUNAMI_MIN_FRACTION_PAST_FRONT:
+        raise RuntimeError(
+            f"tsunami_parthenon: only {reach['fraction_past_temple_front']:.1%} of the "
+            f"water passed the temple front by frame {TSUNAMI_REACH_FRAME}")
+    if reach["colonnade_particles"] < TSUNAMI_MIN_COLONNADE_PARTICLES:
+        raise RuntimeError(
+            f"tsunami_parthenon: only {reach['colonnade_particles']} particles inside "
+            f"the colonnade by frame {TSUNAMI_REACH_FRAME}")
+    first = int(series["particle_count"][0])
+    log(f"tsunami_parthenon: {first:,} particles at frame 1 "
+        f"(expected about {tp.expected_particles():,.0f})")
+    use_material_shading(scene)
+    save_scene("tsunami_parthenon", preview=False)
+    write_meta("tsunami_parthenon", {
+        "scene": "tsunami_parthenon",
+        "domain": [list(tp.DOMAIN_LO), list(tp.DOMAIN_HI)],
+        "voxel_size": tp.VOXEL,
+        "fps": FPS,
+        "wave": [list(tp.WAVE_LO), list(tp.WAVE_HI)],
+        "foreshore": [list(tp.FORESHORE_LO), list(tp.FORESHORE_HI)],
+        "temple_center": list(tp.TEMPLE_CENTER),
+        "temple_front_x": tp.TEMPLE_FRONT_X,
+        "temple_rear_x": tp.TEMPLE_REAR_X,
+        "temple_top_z": tp.TEMPLE_TOP_Z,
+        "columns": int(len(tp.column_centers())),
+        "collider_objects": [m.name for m in tp.collider_meshes()],
+        "source_objects": ["Tsunami Wave", "Tsunami Foreshore"],
+        "source_emission_mode": "INITIAL_FILL",
+        "source_emitted_particles": first,
+        "preview_frame": TSUNAMI_PREVIEW_FRAME,
+        "whitewater_enabled": False,
+        "build_checks": {str(k): v for k, v in sorted(checks.items())},
+        "build_frames": tp.FRAMES,
+        "build_peak_particles": int(max(series["particle_count"])),
+    })
+    save_playable("tsunami_parthenon", scene, tp.FRAMES)
+
+
 # ---------------------------------------------------------------------------
 
 def main():
@@ -1730,6 +1879,7 @@ def main():
         "viscosity_race": build_viscosity_race,
         "capillary_droplet": build_capillary_droplet,
         "deep_plunge": build_deep_plunge,
+        "tsunami_parthenon": build_tsunami_parthenon,
     }
     targets = list(DEFAULT_SCENES)
     if "--" in sys.argv:
