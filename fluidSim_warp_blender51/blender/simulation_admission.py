@@ -782,6 +782,119 @@ class SimulationAdmission:
             if snapshot is not None:
                 self._release_snapshot(snapshot)
 
+    def grow_leaf_capacity(self, scene, error, *, depsgraph=None,
+                           effect_frame=None):
+        """Replace the solver with one holding more sparse leaves, same state.
+
+        Every per-voxel array is sized from the leaf capacity at allocation, so
+        growth is a Replacement Cutover: a candidate solver is allocated with the
+        larger capacity, configured from the scene, and handed the live solver's
+        checkpoint state, all while the live solver stays authoritative. Only
+        then does the Session swap. Any refusal or failure before the swap
+        leaves the running simulation exactly as it was and is reported in the
+        returned result; the frame cursor, cache coverage and authored settings
+        are untouched (like particle growth, the authored value is not
+        rewritten).
+        """
+        from ..sim.leaf_capacity import LeafGrowthResult, leaf_growth_target
+
+        solver = getattr(self.session, "solver", None)
+        required = int(error.required)
+        current = int(error.capacity)
+        if solver is None or not self._owns_scene(scene):
+            return LeafGrowthResult(
+                "BLOCKED", current, current, required,
+                "no running solver owns this scene")
+        if not bool(getattr(solver.settings, "auto_grow_particles", True)):
+            return LeafGrowthResult(
+                "DISABLED", current, current, required,
+                "automatic capacity growth is turned off "
+                "(Auto Grow Particle Pool)")
+        if getattr(error, "substep_index", None) != 0:
+            return LeafGrowthResult(
+                "BLOCKED", current, current, required,
+                "the frame had already started, so it cannot be repeated safely")
+        total_cells = int(solver.grid.num_leaf_cells)
+        target = leaf_growth_target(
+            current, required, total_cells=total_cells)
+        if target < required:
+            return LeafGrowthResult(
+                "BLOCKED", current, current, required,
+                f"the domain holds only {total_cells:,} leaves"
+                if total_cells < required
+                else "the leaf growth limit was reached")
+        if target <= current:
+            return LeafGrowthResult(
+                "SUFFICIENT", current, current, required)
+
+        candidate = None
+        snapshot = None
+        committed = False
+        try:
+            # The checkpoint is the exact state the refused frame started from.
+            state = solver.export_checkpoint_state()
+            # Growth changes allocation only: the running solver's own settings
+            # carry over whole, so pending Reset edits are not applied and an
+            # Applied Settings Snapshot stays true.
+            settings = replace(
+                solver.settings, leaf_capacity=int(target),
+                max_particles=int(solver.particles.capacity))
+            # Inputs frozen at the first frame stay frozen in the replacement.
+            frozen_state = self.session.scene_inputs.export_frozen_state()
+            try:
+                snapshot, _growth = self._preflight(
+                    scene, depsgraph=depsgraph,
+                    runtime_capacity=int(solver.particles.capacity),
+                    operation="RESET", applied_allocation=settings,
+                    **({"frozen_input_state": frozen_state}
+                       if frozen_state is not None else {}))
+            except RuntimeError as exc:
+                return LeafGrowthResult(
+                    "BLOCKED", current, current, required, str(exc))
+            snapshot.settings = settings
+            candidate, _warnings = self._prepare_solver_replacement(
+                scene, settings, snapshot, self.session.profiler)
+            candidate.import_checkpoint_state(state)
+            effects = getattr(getattr(candidate, "features", None),
+                              "effects", None)
+            if effects is not None:
+                if effect_frame is not None:
+                    effects.mark_initialized_through(int(effect_frame) - 1)
+                old_effects = getattr(
+                    getattr(solver, "features", None), "effects", None)
+                if old_effects is not None:
+                    effects.adopt_cadence_history(old_effects)
+            resume = getattr(candidate, "resume_refused_frame", None)
+            if callable(resume):
+                # The refused frame's before-emission effects already ran and
+                # are part of the checkpoint.
+                resume()
+            self._validate_effect_snapshot(scene, snapshot)
+            self._commit_solver_replacement(
+                candidate, snapshot, profiler=self.session.profiler,
+                settings=settings)
+            committed = True
+            candidate = None
+        except ReplacementRetirementError as exc:
+            candidate = None
+            self.session.set_error(scene, repr(exc))
+            self._release_failed_cutover(scene, exc)
+            raise
+        except Exception as exc:  # noqa: BLE001 - every refusal keeps the live solver
+            if committed:
+                self.session.set_error(scene, repr(exc))
+                self.session.release(scene, preserve_error=True)
+                raise
+            return LeafGrowthResult(
+                "FAILED", current, current, required,
+                f"leaf growth failed before the swap: {exc}")
+        finally:
+            if candidate is not None:
+                discard_prepared_solver(candidate)
+            if snapshot is not None:
+                self._release_snapshot(snapshot)
+        return LeafGrowthResult("GROWN", current, int(target), required)
+
     def reset(self, scene, *, depsgraph=None):
         if not self._owns_scene(scene):
             return

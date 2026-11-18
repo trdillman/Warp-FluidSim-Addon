@@ -693,9 +693,11 @@ def handle_frame_change(sess, scene, depsgraph):
             sess.last_frame = advanced_to
             sess.set_error(scene, repr(exc))
             fs.live = False
+            note = str(getattr(exc, "growth_note", "") or "")
             fs.status = (
                 "Topology capacity blocked; Live paused, solver preserved "
-                f"(need {int(exc.required):,}, capacity {int(exc.capacity):,})")
+                f"(need {int(exc.required):,}, capacity {int(exc.capacity):,})"
+                + (f" — automatic growth: {note}" if note else ""))
             print(f"fluidSim topology step blocked: {exc!r}")
             return
         sess.set_error(scene, repr(exc))

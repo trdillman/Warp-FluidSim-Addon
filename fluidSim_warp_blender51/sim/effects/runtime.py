@@ -418,6 +418,15 @@ class EffectRuntimeManager:
                 if any(self._should_run(entry, f) for f in range(first, frame + 1)):
                     self._initialized.add(entry.key)
 
+    def adopt_cadence_history(self, other: EffectRuntimeManager) -> None:
+        """Carry over which once-only and once-per-frame effects already ran.
+
+        Used when a solver is replaced part-way through a frame: its successor
+        must not run again what the old manager ran before the handover.
+        """
+        self._initialized |= set(other._initialized)
+        self._once_per_frame.update(other._once_per_frame)
+
     def _cadence_allows(self, entry: EffectRuntimeEntry, frame: int) -> bool:
         cadence = entry.compiled_kernel.kernel_definition.cadence
         key = entry.key

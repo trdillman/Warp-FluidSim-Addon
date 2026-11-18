@@ -187,6 +187,8 @@ MANUAL_BLENDER_PROBES = {
         "needs a real GUI window and --enable-event-simulate; drags every Deck gizmo live",
     "tests/acceptance/blender_deck_defects_acceptance.py":
         "needs a real GUI window and --enable-event-simulate; checks the Liquid Deck defect fixes live, including a real modal bake (also grep its log for Traceback)",
+    "tests/acceptance/blender_leaf_growth_acceptance.py":
+        "CUDA, minutes long: steps a demo twice (a control and a run whose Leaf Capacity must grow mid-run); run by hand with FLUIDSIM_LEAF_GROWTH_BLEND and, to reproduce a Final-quality overflow, FLUIDSIM_LEAF_GROWTH_QUALITY=FINAL; expect LEAF-GROWTH-ACCEPTANCE-PASS",
     "tests/acceptance/blender_vdb_writer_acceptance.py":
         "lane I spike: pure writer needs no add-on; run headless on demand (prints VDB_WRITER_OK)",
     "tests/acceptance/blender_resolution_divisions_acceptance.py":

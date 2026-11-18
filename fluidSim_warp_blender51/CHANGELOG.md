@@ -4,6 +4,13 @@
 
 ### Changes
 
+- The sparse-leaf allocation now grows by itself during Live playback, Step and
+  bake, like the particle pool. When a frame needs more leaves than the Leaf
+  Capacity holds, the solver is rebuilt with a larger allocation (about 1.5x,
+  never beyond the domain's own leaf count) carrying the full simulation state,
+  and the same frame runs again; if growth is off (Auto Grow Particle Pool),
+  would not fit in memory or cannot be done safely, Live pauses with the reason
+  and the running solver untouched. The authored Leaf Capacity is not rewritten.
 - Newly baked cache v3 manifests declare input identity schema 2. Source and
   frame identities include evaluated triangle connectivity, point coordinates,
   selected mesh/point/volume dependencies, their transforms, resolved VDB
