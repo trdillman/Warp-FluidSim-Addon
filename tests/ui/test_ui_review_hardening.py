@@ -193,8 +193,12 @@ class _Texts:
         return self.items.get(name)
 
     def new(self, name):
-        text = _Text(name)
-        self.items[name] = text
+        unique, number = name, 0
+        while unique in self.items:  # Blender adds a numeric suffix to a taken name
+            number += 1
+            unique = f"{name}.{number:03d}"
+        text = _Text(unique)
+        self.items[unique] = text
         return text
 
 
@@ -209,4 +213,8 @@ def test_generated_text_is_reused_only_by_the_kernel_that_owns_it():
     # A different kernel whose short name collides must not take over the Text.
     other = find(texts, "", "FluidSim Source - k - abc.py", json.dumps(["effect-1", "kernel_b"]))
     assert other is not mine
+    assert other.name != mine.name
+    key_a, key_b = json.dumps(["effect-1", "kernel_a"]), json.dumps(["effect-1", "kernel_b"])
+    assert find(texts, mine.name, "FluidSim Source - k - abc.py", key_a) is mine
+    assert find(texts, other.name, "FluidSim Source - k - abc.py", key_b) is other
     assert mine["fluidsim_generated_key"] == json.dumps(["effect-1", "kernel_a"])

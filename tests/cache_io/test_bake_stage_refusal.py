@@ -97,9 +97,11 @@ def _clean_registries():
 
     production_bake._ACTIVE_BAKES.clear()
     cache_bake._REBAKE_OFFERS.clear()
+    cache_bake._REBAKE_OFFER_CACHES.clear()
     yield
     production_bake._ACTIVE_BAKES.clear()
     cache_bake._REBAKE_OFFERS.clear()
+    cache_bake._REBAKE_OFFER_CACHES.clear()
 
 
 def _cache_2x(directory):
