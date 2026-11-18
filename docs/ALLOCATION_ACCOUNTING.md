@@ -41,3 +41,16 @@ initial/growth allocations across base, optional/APIC, capillary/narrow-band and
 secondary-surface configurations. Its report separates reachable array payload,
 memory-pool observations and free-device memory. It does not certify frame
 advancement, every lazy backend allocation, performance or whole-process VRAM.
+
+The acceptance also checks that observed Warp array wrappers are no longer owned
+following teardown. This does not establish allocator reservation or the lifetime
+of underlying storage through views. Cleanup and final memory-sampling failures
+produce a failed case rather than a premature pass.
+
+The gate runs `tests/acceptance/blender_allocation_accounting_controls.py` in its
+quiet allocation lane. On real CUDA arrays it checks budget refusal without
+replacement allocation, injected failure after replacement allocation with
+rollback and retry, deliberately reduced allowances, deliberately retained array
+rejection, and repeated clean teardown. Injected budgets and sentinel failures
+are negative controls, not real device-memory exhaustion. These checks retain
+the original no-frame-advancement and no-performance-certification boundary.
