@@ -923,7 +923,9 @@ class ProductionBakeBackend:
         scene.fluidsim.live = False
         self.base_dir.mkdir(parents=True, exist_ok=True)
         if restart:
-            self._clear_for_restart(self.base_dir)
+            from .cache_manager import require_restartable_cache_directory
+
+            require_restartable_cache_directory(self.base_dir)
         with playback.suppress_frame_handlers():
             if int(scene.frame_current) != admission_frame:
                 scene.frame_set(admission_frame)
@@ -946,6 +948,10 @@ class ProductionBakeBackend:
             self.sess.sync_scene(scene, depsgraph)
             if not resume:
                 self.manifest = self._new_manifest(int(start), int(end))
+                # Restart is destructive: preserve the previous bake until the
+                # replacement solver is admitted, synchronized and has a valid manifest.
+                if restart:
+                    self._clear_for_restart(self.base_dir)
                 write_manifest_atomic(manifest_path(self.base_dir), self.manifest)
             if resume:
                 last = self.manifest.last_committed_frame

@@ -52,7 +52,8 @@ def test_huge_json_integer_is_a_value_error_not_overflow(tmp_path):
         cache_schema.load_manifest(cache_schema.manifest_path(base))
 
 
-@pytest.mark.parametrize("raw", [b"\xff\xfe\x00bad", b"[" * 200000])
+@pytest.mark.parametrize("raw", [b"\xff\xfe\x00bad", b"[" * 200000],
+                         ids=["non-utf8", "deeply-nested"])
 def test_unreadable_manifest_bytes_are_a_clean_value_error(tmp_path, raw):
     base = build_tiny_cache(tmp_path / "c")
     Path(cache_schema.manifest_path(base)).write_bytes(raw)

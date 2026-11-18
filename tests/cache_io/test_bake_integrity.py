@@ -121,6 +121,57 @@ def test_admission_runs_at_the_bake_start_not_the_playhead(backend):
     assert session.initialized_at == [5]
 
 
+@pytest.mark.parametrize("failure", ["admission", "sync", "manifest"])
+def test_refused_restart_preserves_the_entire_previous_cache(backend, failure):
+    from tests.cache_io.fixtures.tiny_cache import build_tiny_cache
+
+    scene = _Scene()
+    base = build_tiny_cache(backend.cache_path(scene))
+    before = {path.relative_to(base): path.read_bytes()
+              for path in base.rglob("*") if path.is_file()}
+    session = _Session(scene, fail_sync=failure == "sync")
+    _snapshot(backend, session)
+
+    def refused(*args, **kwargs):
+        raise RuntimeError("replacement refused")
+
+    if failure == "admission":
+        session.initialize = refused
+    backend._new_manifest = refused
+    with pytest.raises(RuntimeError):
+        backend.initialize(scene, 1, 3, restart=True)
+    after = {path.relative_to(base): path.read_bytes()
+             for path in base.rglob("*") if path.is_file()}
+    assert after == before
+
+
+def test_successful_restart_clears_old_data_only_after_admission_and_sync(backend):
+    from dataclasses import replace
+
+    from tests.cache_io.fixtures.tiny_cache import build_tiny_cache
+
+    scene = _Scene()
+    base = build_tiny_cache(backend.cache_path(scene))
+    old = production_bake.load_manifest(production_bake.manifest_path(base))
+    previous_files = {path.relative_to(base): path.read_bytes()
+                      for path in base.rglob("*") if path.is_file()}
+    session = _Session(scene)
+    session.solver = SimpleNamespace(frame=0)
+    _snapshot(backend, session)
+
+    def admit(_scene, depsgraph=None):
+        for name, content in previous_files.items():
+            assert (base / name).read_bytes() == content
+
+    session.initialize = admit
+    session.sync_scene = admit
+    backend._new_manifest = lambda start, end: replace(old, frames={})
+    assert backend.initialize(scene, 1, 3, restart=True) == 1
+    assert production_bake.load_manifest(production_bake.manifest_path(base)).frames == {}
+    assert not (base / "frames").exists()
+    assert not (base / "checkpoints").exists()
+
+
 def test_restoring_live_is_not_refused_by_the_bakes_own_guard(backend, monkeypatch):
     scene = _Scene(live=False)
 

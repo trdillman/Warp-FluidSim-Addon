@@ -27,6 +27,8 @@
   another drive or machine can resume. Caches already baked with a volume source
   or a linked library will ask for a re-bake once, because their stored identity
   was computed with the path.
+- Restart preserves the previous cache when replacement solver admission,
+  scene synchronization or replacement-manifest preparation fails.
 
 - **Warp 1.19.0** is now the build Install Warp downloads (same CUDA 13 build and
   driver floor as 1.18). Warp 1.17.0 and 1.18.0 still load, with a warning.
