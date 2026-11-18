@@ -621,6 +621,9 @@ class FluidSolver:
 
     # Class default so solver stand-ins built without __init__ read as "mode off".
     narrow_band = None
+    # Set on a replacement solver that continues a frame whose first substep
+    # already ran its before-emission effects on the solver it replaces.
+    _skip_first_before_emission = False
 
     def __init__(self, settings: SolverSettings, profiler=None):
         self.settings = settings
@@ -1101,6 +1104,15 @@ class FluidSolver:
             whitewater_type_schema_version=WHITEWATER_TYPE_SCHEMA_VERSION,
         )
         return schema.validate(state)
+
+    def resume_refused_frame(self):
+        """Continue a frame refused at its first topology rebuild.
+
+        The refused frame had already run its before-emission effects, and a
+        checkpoint taken afterwards carries their writes, so the repeat must not
+        run them a second time.
+        """
+        self._skip_first_before_emission = True
 
     def import_checkpoint_state(self, state):
         """Restore into a newly initialized, signature-compatible solver."""
@@ -2375,8 +2387,11 @@ class FluidSolver:
             time_ctx["substep_index"] = substep_index
             if self.narrow_band is not None:
                 self.narrow_band._substep_index = substep_index
-            self.features.run(
-                FrameFeaturePhase.BEFORE_EMISSION, self, time_ctx)
+            if substep_index == 0 and self._skip_first_before_emission:
+                self._skip_first_before_emission = False
+            else:
+                self.features.run(
+                    FrameFeaturePhase.BEFORE_EMISSION, self, time_ctx)
             rebuild = substep_index == 0 or rebuild_each_substep
             collision_rebuild = rebuild or moving_colliders
             if rebuild:

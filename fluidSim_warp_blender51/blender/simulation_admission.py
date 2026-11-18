@@ -833,29 +833,42 @@ class SimulationAdmission:
         try:
             # The checkpoint is the exact state the refused frame started from.
             state = solver.export_checkpoint_state()
-            applied = replace(solver.settings, leaf_capacity=int(target))
+            # Growth changes allocation only: the running solver's own settings
+            # carry over whole, so pending Reset edits are not applied and an
+            # Applied Settings Snapshot stays true.
+            settings = replace(
+                solver.settings, leaf_capacity=int(target),
+                max_particles=int(solver.particles.capacity))
+            # Inputs frozen at the first frame stay frozen in the replacement.
+            frozen_state = self.session.scene_inputs.export_frozen_state()
             try:
                 snapshot, _growth = self._preflight(
                     scene, depsgraph=depsgraph,
                     runtime_capacity=int(solver.particles.capacity),
-                    operation="RESET", applied_allocation=applied)
+                    operation="RESET", applied_allocation=settings,
+                    **({"frozen_input_state": frozen_state}
+                       if frozen_state is not None else {}))
             except RuntimeError as exc:
                 return LeafGrowthResult(
                     "BLOCKED", current, current, required, str(exc))
-            settings = snapshot.settings
-            if int(settings.leaf_capacity) != int(target):
-                return LeafGrowthResult(
-                    "FAILED", current, current, required,
-                    "the replacement did not take the grown leaf capacity")
+            snapshot.settings = settings
             candidate, _warnings = self._prepare_solver_replacement(
                 scene, settings, snapshot, self.session.profiler)
             candidate.import_checkpoint_state(state)
             effects = getattr(getattr(candidate, "features", None),
                               "effects", None)
-            if effects is not None and effect_frame is not None:
-                # The restored state already carries the INITIALIZATION
-                # effects applied up to the last finished frame.
-                effects.mark_initialized_through(int(effect_frame) - 1)
+            if effects is not None:
+                if effect_frame is not None:
+                    effects.mark_initialized_through(int(effect_frame) - 1)
+                old_effects = getattr(
+                    getattr(solver, "features", None), "effects", None)
+                if old_effects is not None:
+                    effects.adopt_cadence_history(old_effects)
+            resume = getattr(candidate, "resume_refused_frame", None)
+            if callable(resume):
+                # The refused frame's before-emission effects already ran and
+                # are part of the checkpoint.
+                resume()
             self._validate_effect_snapshot(scene, snapshot)
             self._commit_solver_replacement(
                 candidate, snapshot, profiler=self.session.profiler,

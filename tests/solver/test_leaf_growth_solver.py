@@ -87,3 +87,43 @@ def test_refused_frame_continues_on_a_grown_solver(cuda_device):
     finally:
         grown.release()
         small.release()
+
+
+def _count_before_emission(solver):
+    from fluidSim_warp_blender51.sim.frame_features import FrameFeaturePhase
+
+    calls = []
+    original = solver.features.run
+
+    def run(phase, *args, **kwargs):
+        if phase is FrameFeaturePhase.BEFORE_EMISSION:
+            calls.append(1)
+        return original(phase, *args, **kwargs)
+
+    solver.features.run = run
+    return calls
+
+
+def test_resumed_frame_does_not_repeat_the_before_emission_effects(cuda_device):
+    # The refused frame already ran its before-emission effects, so the
+    # checkpoint carries their writes; the repeat must skip them once.
+    plain = _start(cuda_device, BIG)
+    grown = FluidSolver(_settings(cuda_device, BIG))
+    try:
+        plain_calls = _count_before_emission(plain)
+        plain.step_frame()
+        substeps = len(plain_calls)
+        assert substeps >= 1
+
+        grown.import_checkpoint_state(_start(cuda_device, BIG).export_checkpoint_state())
+        grown_calls = _count_before_emission(grown)
+        grown.resume_refused_frame()
+        grown.step_frame()
+        assert len(grown_calls) == substeps - 1
+
+        grown_calls.clear()
+        grown.step_frame()  # only the refused frame is resumed
+        assert len(grown_calls) == substeps
+    finally:
+        grown.release()
+        plain.release()

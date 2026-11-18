@@ -58,7 +58,9 @@ class _Runtime:
         self.particles = SimpleNamespace(capacity=800_000)
         self.features = SimpleNamespace(effects=SimpleNamespace(
             mark_initialized_through=lambda frame: self.events.append(
-                ("effects", frame))))
+                ("effects", frame)),
+            adopt_cadence_history=lambda other: self.events.append(
+                ("history", other))))
         self.state = {"frame": 17}
         self.import_error = None
 
@@ -71,6 +73,9 @@ class _Runtime:
         if self.import_error is not None:
             raise self.import_error
 
+    def resume_refused_frame(self):
+        self.events.append("resume")
+
     def release(self):
         self.released = True
 
@@ -79,6 +84,8 @@ class _Session:
     def __init__(self, solver):
         self.solver = solver
         self.profiler = None
+        self.scene_inputs = SimpleNamespace(
+            export_frozen_state=lambda: "FROZEN")
         self.errors = []
         self.begin_run_calls = 0
         self.release_calls = []
@@ -175,7 +182,9 @@ def test_growth_replaces_the_solver_with_the_same_state(rig):
     # The state is captured before the replacement is built, restored into the
     # candidate before the swap, and the old solver is retired only afterwards.
     assert rig.solver.events == ["export"]
-    assert rig.candidate.events == [("import", rig.solver.state), ("effects", 17)]
+    assert rig.candidate.events == [
+        ("import", rig.solver.state), ("effects", 17),
+        ("history", rig.solver.features.effects), "resume"]
     assert rig.session.solver is rig.candidate
     assert rig.solver.released is True
     assert rig.candidate.released is False
@@ -186,6 +195,26 @@ def test_growth_replaces_the_solver_with_the_same_state(rig):
     assert rig.seen["prepared_settings"].max_particles == 800_000
     assert rig.seen["preflight"]["operation"] == "RESET"
     assert rig.session.begin_run_calls == 0
+
+
+def test_growth_changes_allocation_only(rig):
+    # Authored edits that are still pending (a Reset-only setting changed on
+    # the scene) must not ride along: the running solver's settings carry over.
+    rig.solver.settings = _settings(open_boundaries=True)
+
+    result = rig.owner.grow_leaf_capacity(SimpleNamespace(), _refusal())
+
+    assert result.grew
+    prepared = rig.seen["prepared_settings"]
+    assert prepared.open_boundaries is True
+    assert prepared.leaf_capacity == 12288
+    assert rig.seen["snapshot"].settings is prepared
+
+
+def test_growth_keeps_frozen_scene_inputs(rig):
+    rig.owner.grow_leaf_capacity(SimpleNamespace(), _refusal())
+
+    assert rig.seen["preflight"]["frozen_input_state"] == "FROZEN"
 
 
 @pytest.mark.parametrize("disabled_by", ["setting", "mid_frame", "domain_full"])
