@@ -98,5 +98,6 @@ def test_preferences_runtime_controls_use_supported_icon_and_scoped_certificatio
     source = (pathlib.Path(__file__).resolve().parents[1] / "preferences.py").read_text(encoding="utf-8")
     assert 'box.label(text="Runtime", icon="SYSTEM")' in source
     assert '"Upgrade to Locked Warp"' in source
-    assert 'certified (Windows x64, Blender 5.2.0, CUDA 13).' in source
+    assert 'headless GPU gate passed' in source
+    assert '(Windows x64, Blender 5.2.0, CUDA 13).' in source
     assert 'qualification pending' not in source
