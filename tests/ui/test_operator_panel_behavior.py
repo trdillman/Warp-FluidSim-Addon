@@ -297,6 +297,23 @@ def test_validation_operator_uses_configured_device(monkeypatch):
     assert seen["device"] == "cuda:3"
 
 
+@pytest.mark.parametrize(("outcome", "message"), [
+    (None, "No applied pending snapshot is available"),
+    (False, "Some pending values could not be restored from the applied snapshot"),
+])
+def test_pending_revert_distinguishes_missing_and_incomplete_snapshot(monkeypatch, outcome, message):
+    _install_bpy_stub(monkeypatch)
+    operators = _reload_module("fluidSim_warp_blender51.operators")
+    pending = SimpleNamespace(revert_pending_values=lambda _scene: outcome)
+    monkeypatch.setattr(operators._operator_runtime, "_pending", lambda: pending)
+    op = operators.FLUIDSIM_OT_revert_pending()
+    reports = []
+    op.report = lambda level, text: reports.append((level, text))
+
+    assert op.execute(SimpleNamespace(scene=SimpleNamespace())) == {"CANCELLED"}
+    assert reports == [({"WARNING"}, message)]
+
+
 def test_pending_operators_route_context_scene_and_contain_failures(monkeypatch):
     _install_bpy_stub(monkeypatch)
     operators = _reload_module("fluidSim_warp_blender51.operators")

@@ -1022,11 +1022,11 @@ def _restore_value(owner, name, value) -> None:
         pass
 
 
-def revert_pending_values(scene):
-    """Restore the successfully applied RNA snapshot without saving prefs."""
+def revert_pending_values(scene) -> bool | None:
+    """Restore applied RNA values without saving prefs. None means no snapshot exists."""
     state = _interaction_state(scene)
     if state.applied_reset_signature is None:
-        return False
+        return None
     previous_suppress = state.suppress_callbacks
     state.suppress_callbacks = True
     try:
