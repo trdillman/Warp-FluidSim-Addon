@@ -241,7 +241,8 @@ def _legacy_footprint(legacy_plan, compiler, context, settings):
 def capture_snapshot(
         scene, settings, resources, *, depsgraph=None, scene_identity=None,
         scene_key="", effect_builder=lambda _scene: (),
-        additional_transaction_bytes=0, frozen_input_state=None):
+        additional_transaction_bytes=0, frozen_input_state=None,
+        collider_history=None):
     """Gather and compile one evaluated scene exactly once.
 
     The compiler is always released.  The returned SceneInputs owner is either
@@ -261,6 +262,8 @@ def capture_snapshot(
     try:
         if frozen_input_state is not None:
             inputs.restore_frozen_state(frozen_input_state)
+        if collider_history is not None:
+            inputs.restore_collider_history(collider_history)
         evaluation = inputs.evaluate(
             scene, depsgraph, device=settings.device, staged=True,
             include_auto_seeds=True)
@@ -405,7 +408,8 @@ class SimulationAdmission:
 
     def _plan_scene(
             self, scene, settings, resources, *, depsgraph=None,
-            additional_transaction_bytes=0, frozen_input_state=None):
+            additional_transaction_bytes=0, frozen_input_state=None,
+            collider_history=None):
         from . import cache_identity
 
         return capture_snapshot(
@@ -416,6 +420,8 @@ class SimulationAdmission:
             additional_transaction_bytes=additional_transaction_bytes,
             **({"frozen_input_state": frozen_input_state}
                if frozen_input_state is not None else {}),
+            **({"collider_history": collider_history}
+               if collider_history is not None else {}),
         )
 
     def _replan_snapshot(
@@ -446,7 +452,8 @@ class SimulationAdmission:
     def _preflight(self, scene, *, depsgraph=None, runtime_capacity=None,
                    ignore_memory_safeguard=False,
                    defer_particle_growth=False, operation=None,
-                   applied_allocation=None, frozen_input_state=None):
+                   applied_allocation=None, frozen_input_state=None,
+                   collider_history=None):
         from ..sim.memory_safety import vram_snapshot
 
         if operation is None:
@@ -474,7 +481,9 @@ class SimulationAdmission:
             scene, settings, resources, depsgraph=depsgraph,
             additional_transaction_bytes=live_solver_bytes,
             **({"frozen_input_state": frozen_input_state}
-               if frozen_input_state is not None else {}))
+               if frozen_input_state is not None else {}),
+            **({"collider_history": collider_history}
+               if collider_history is not None else {}))
         snapshot.settings = settings
         if not hasattr(snapshot, "frame_start"):
             snapshot.frame_start = int(getattr(scene, "frame_start", 1))
@@ -841,13 +850,17 @@ class SimulationAdmission:
                 max_particles=int(solver.particles.capacity))
             # Inputs frozen at the first frame stay frozen in the replacement.
             frozen_state = self.session.scene_inputs.export_frozen_state()
+            # Moving colliders get the velocity the refused frame was given.
+            collider_history = self.session.scene_inputs.export_collider_history(
+                int(getattr(scene, "frame_current", 0)))
             try:
                 snapshot, _growth = self._preflight(
                     scene, depsgraph=depsgraph,
                     runtime_capacity=int(solver.particles.capacity),
                     operation="RESET", applied_allocation=settings,
                     **({"frozen_input_state": frozen_state}
-                       if frozen_state is not None else {}))
+                       if frozen_state is not None else {}),
+                    collider_history=collider_history)
             except RuntimeError as exc:
                 return LeafGrowthResult(
                     "BLOCKED", current, current, required, str(exc))

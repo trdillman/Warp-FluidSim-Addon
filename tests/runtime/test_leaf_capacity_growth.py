@@ -85,7 +85,8 @@ class _Session:
         self.solver = solver
         self.profiler = None
         self.scene_inputs = SimpleNamespace(
-            export_frozen_state=lambda: "FROZEN")
+            export_frozen_state=lambda: "FROZEN",
+            export_collider_history=lambda frame: {"frame": frame})
         self.errors = []
         self.begin_run_calls = 0
         self.release_calls = []
@@ -215,6 +216,13 @@ def test_growth_keeps_frozen_scene_inputs(rig):
     rig.owner.grow_leaf_capacity(SimpleNamespace(), _refusal())
 
     assert rig.seen["preflight"]["frozen_input_state"] == "FROZEN"
+
+
+def test_growth_hands_the_collider_history_before_the_refused_frame(rig):
+    rig.owner.grow_leaf_capacity(
+        SimpleNamespace(frame_current=18), _refusal())
+
+    assert rig.seen["preflight"]["collider_history"] == {"frame": 18}
 
 
 @pytest.mark.parametrize("disabled_by", ["setting", "mid_frame", "domain_full"])
@@ -404,3 +412,39 @@ def test_other_errors_are_not_retried(monkeypatch):
     with pytest.raises(RuntimeError, match="boom"):
         session._step_growing_leaves(SimpleNamespace())
     assert owner.calls == [] and old.calls == 1
+
+
+# --- collider motion history -----------------------------------------------
+
+def test_collider_history_exports_the_samples_before_the_refused_frame():
+    from types import SimpleNamespace as NS
+
+    import numpy as np
+
+    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
+
+    class Obj:
+        def __init__(self, x):
+            self.name = "collider"
+            self.matrix_world = NS(translation=(x, 0.0, 0.0))
+
+    scene = NS(render=NS(fps=24, fps_base=1.0), frame_current=10)
+    inputs = SceneInputs()
+    obj = Obj(1.0)
+    inputs.object_velocity(obj, scene)
+    scene.frame_current = 11
+    obj.matrix_world = NS(translation=(2.0, 0.0, 0.0))
+    original = inputs.object_velocity(obj, scene)
+    assert original[0] == pytest.approx(24.0)
+
+    history = inputs.export_collider_history(11)
+    successor = SceneInputs()
+    successor.restore_collider_history(history)
+    repeated = successor.object_velocity(obj, scene)
+
+    # The replacement repeats frame 11 with the same velocity, not zero.
+    assert tuple(repeated) == pytest.approx(tuple(original))
+    # A frame that was not evaluated yet keeps its latest sample.
+    later = inputs.export_collider_history(12)
+    assert [frame for _value, frame in later["position"].values()] == [11]
+    assert np.isfinite(next(iter(later["position"].values()))[0]).all()
