@@ -41,6 +41,7 @@ from .fields import (
     SparseGrid,
     ScalarField,
     MacVelocityField,
+    TopologyCapacityError,
     voxel_coord_of_flat,
     voxel_center_world,
 )
@@ -2388,9 +2389,15 @@ class FluidSolver:
                     # Topology marks Dynamic colliders by their host bounds.
                     self.rigid.sync_host()
                 if rebuild:
-                    self._rebuild_topology(
-                        substep_topology_expand if rebuild_each_substep
-                        else frame_topology_expand)
+                    try:
+                        self._rebuild_topology(
+                            substep_topology_expand if rebuild_each_substep
+                            else frame_topology_expand)
+                    except TopologyCapacityError as exc:
+                        # Only a refusal before the first substep moved
+                        # anything leaves the whole frame safe to run again.
+                        exc.substep_index = substep_index
+                        raise
                 self._clear_grid_fields(
                     clear_collision=collision_rebuild and not reuse_static)
             with self._phase("collision"):

@@ -438,6 +438,13 @@ def k_allocate_leaves(
 class TopologyCapacityError(RuntimeError):
     """Recoverable sparse-topology refusal that leaves the live grid intact."""
 
+    # Set by the solver: the substep whose rebuild was refused. Only a refusal
+    # at substep 0 happens before the frame changed any state, so only that one
+    # can be retried after the capacity grows. ``None`` means unknown.
+    substep_index = None
+    # Set by the session when automatic growth was tried and did not happen.
+    growth_note = ""
+
     def __init__(self, required: int, capacity: int):
         self.required = int(required)
         self.capacity = int(capacity)

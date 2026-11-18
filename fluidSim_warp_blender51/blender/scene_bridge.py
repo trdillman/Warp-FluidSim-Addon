@@ -61,6 +61,9 @@ class Session:
         self.capacity_plan_scene_signature = ""
         self.particle_capacity_notice_scene_identity = None
         self.last_reported_growth_capacity = 0
+        # Result of the most recent automatic sparse-leaf growth (or None).
+        self.last_leaf_growth = None
+        self._leaf_growth_notice = ""
         self.admitted_effects = ()
         self.scene_inputs = SceneInputs()
         self.scene_identity = None
@@ -399,6 +402,39 @@ class Session:
             return True
         return pending_settings.apply_live_settings_safely(scene, self)
 
+    def _step_growing_leaves(self, scene):
+        """Run one solver frame; when the sparse-leaf allocation is too small,
+        grow it automatically and run the same frame again.
+
+        A frame refused at its first topology rebuild has changed nothing, so it
+        can safely be repeated on a replacement solver that holds the same
+        state with more leaves (see ``SimulationAdmission.grow_leaf_capacity``).
+        When growth is off, blocked or fails, the original refusal is raised
+        with the reason attached and the live solver is untouched.
+        """
+        from ..sim.fields import TopologyCapacityError
+        from ..sim.leaf_capacity import MAX_GROWTHS_PER_STEP
+
+        effect_frame = getattr(self.solver, "effect_frame", None)
+        for attempt in range(MAX_GROWTHS_PER_STEP + 1):
+            try:
+                return self.solver.step_frame()
+            except TopologyCapacityError as exc:
+                if attempt == MAX_GROWTHS_PER_STEP:
+                    exc.growth_note = "leaf growth did not settle after repeated tries"
+                    raise
+                result = self._admission().grow_leaf_capacity(
+                    scene, exc, effect_frame=effect_frame)
+                if not result.grew:
+                    exc.growth_note = result.reason or result.status.lower()
+                    raise
+                self.last_leaf_growth = result
+                self._leaf_growth_notice = (
+                    f"Leaf capacity grew {int(result.previous):,} → "
+                    f"{int(result.current):,}")
+                self.solver.effect_frame = effect_frame
+        raise AssertionError("unreachable")  # pragma: no cover
+
     def step(self, scene, *, write_cache=True, timeline_frame=None,
              publish_outputs=True):
 
@@ -416,7 +452,7 @@ class Session:
 
             effects.sync_animated_effect_bindings(scene, self)
         try:
-            stats = self.solver.step_frame()
+            stats = self._step_growing_leaves(scene)
         except EffectExecutionError as exc:
             if effects is not None:
                 # Before any caller releases the solver and its runtime error.
@@ -524,8 +560,10 @@ class Session:
                 f"{int(growth.current):,}")
         whitewater_notice = str(
             getattr(stats, "whitewater_message", "") or "")
+        leaf_notice, self._leaf_growth_notice = self._leaf_growth_notice, ""
         notices = [
-            notice for notice in (capacity_notice, whitewater_notice) if notice]
+            notice for notice in (
+                leaf_notice, capacity_notice, whitewater_notice) if notice]
         fs.status = (
             f"Frame {self.solver.frame}: {stats.active_particles:,} particles, "
             f"{stats.active_voxels:,} voxels, {stats.step_time * 1000.0:.1f} ms"
