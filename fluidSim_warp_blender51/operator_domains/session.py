@@ -411,7 +411,11 @@ class FLUIDSIM_OT_revert_pending(bpy.types.Operator):
             self.report({"ERROR"}, f"Pending revert failed: {exc}")
             return {"CANCELLED"}
         if not reverted:
-            self.report({"WARNING"}, "No applied pending snapshot is available")
+            message = (
+                "No applied pending snapshot is available" if reverted is None
+                else "Some pending values could not be restored from the applied snapshot"
+            )
+            self.report({"WARNING"}, message)
             return {"CANCELLED"}
         self.report({"INFO"}, "Pending values reverted")
         return {"FINISHED"}

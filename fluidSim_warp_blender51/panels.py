@@ -70,7 +70,12 @@ class FLUIDSIM_OT_open_scene_properties(bpy.types.Operator):
         areas = getattr(screen, "areas", ()) if screen is not None else ()
         for area in areas:
             if area.type == "PROPERTIES":
-                area.spaces.active.context = target
+                try:
+                    area.spaces.active.context = target
+                except TypeError:
+                    # The active object has no Physics tab (camera, light...).
+                    target, tab = "SCENE", "Scene"
+                    area.spaces.active.context = target
                 self.report({"INFO"}, f"FluidSim controls are in {tab} Properties")
                 return {"FINISHED"}
         self.report(

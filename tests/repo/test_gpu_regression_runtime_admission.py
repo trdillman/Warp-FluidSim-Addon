@@ -1,11 +1,40 @@
 """The installed GPU verifier must admit the lazy owned runtime before importing kernels."""
+import importlib
 import runpy
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("already_on_path", [False, True])
+def test_gpu_verifier_prefers_provisioned_warp_over_ambient(monkeypatch, tmp_path, already_on_path):
+    extensions = tmp_path / "extensions"
+    owned = extensions / ".user" / "fluidsim_ci" / "fluidsim_warp" / ".local"
+    ambient = tmp_path / "ambient-site"
+    for site, version in ((ambient, "1.18.0"), (owned, "1.19.0")):
+        package = site / "warp"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(f"__version__ = {version!r}\n", encoding="utf-8")
+    monkeypatch.setenv("BLENDER_USER_EXTENSIONS", str(extensions))
+    monkeypatch.syspath_prepend(str(ambient))
+    if already_on_path:
+        monkeypatch.setattr(sys, "path", [*sys.path, str(owned)])
+    monkeypatch.delitem(sys.modules, "warp", raising=False)
+    monkeypatch.setitem(sys.modules, "bpy", SimpleNamespace())
+    try:
+        runpy.run_path(str(ROOT / "tools/release/gpu_regression_blender.py"))
+        # Physical Python packages exercise import precedence without initializing Warp/CUDA.
+        warp = importlib.import_module("warp")
+        assert warp.__version__ == "1.19.0"
+        assert Path(warp.__file__).resolve() == (owned / "warp" / "__init__.py").resolve()
+        assert sys.path[0] == str(owned)
+    finally:
+        sys.modules.pop("warp", None)
+
 
 def test_gpu_verifier_admits_runtime_before_loading_validation(monkeypatch):
     # Blender is unavailable in host pytest; only its host API is substituted.

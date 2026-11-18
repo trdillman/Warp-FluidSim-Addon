@@ -71,6 +71,10 @@ class FLUIDSIM_OT_export_cache_sequence(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         fs = scene.fluidsim
+        if _runtime._unsaved_relative_cache_path(scene):
+            fs.status = _runtime.UNSAVED_RELATIVE_CACHE_MESSAGE
+            self.report({"ERROR"}, fs.status)
+            return {"CANCELLED"}
         bridge = _runtime._bridge()
         from ..blender import production_bake
         from ..io import cache

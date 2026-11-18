@@ -76,7 +76,10 @@ def activity_ui_state(scene) -> dict[str, object]:
     result = dict(activity_snapshot(
         scene, owns_scene=owns_scene,
         is_animation_playing=scene_animation_playing(scene)))
-    result["icon"] = _ACTIVITY_ICONS.get(str(result.get("id", "IDLE")), "INFO")
+    # The snapshot picks its own icon (Bake Complete/Failed/Cancelled differ
+    # from plain Idle), so the id table is only a fallback.
+    result["icon"] = result.get("icon") or _ACTIVITY_ICONS.get(
+        str(result.get("id", "IDLE")), "INFO")
     return result
 
 
@@ -152,7 +155,7 @@ def draw_activity_status(layout, scene, state, *, width=42):
             line = line[:width - 1] + "…"
         layout.label(text=line)
     layout.operator(
-        "fluidsim.open_scene_properties", text="Status & Recovery…", icon="PROPERTIES"
+        "fluidsim.open_scene_properties", text="Status & Runtime…", icon="PROPERTIES"
     ).target = "SCENE"
     return True
 

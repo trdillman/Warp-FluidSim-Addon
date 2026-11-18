@@ -345,7 +345,12 @@ def commit_inline(scene, entry: Entry, text: str) -> str:
         if not math.isfinite(number):
             raise ValueError(f"{text!r} is not a finite number")
         value = int(round(number)) if entry.value_type == "INT" else number
-    setattr(group, entry.target, value)
+    try:
+        setattr(group, entry.target, value)
+    except (TypeError, OverflowError) as exc:
+        # Blender raises these for a value outside the property's C type
+        # (for example an INT beyond 32 bits); treat it as a bad entry.
+        raise ValueError(f"{text!r} is out of range for {entry.label}") from exc
     _push_undo(f"Set {entry.label}")
     return _write_feedback(scene, entry)
 
@@ -546,6 +551,15 @@ class FLUIDSIM_OT_command_palette(bpy.types.Operator):
         return not (x0 <= event.mouse_region_x <= x1 and y0 <= event.mouse_region_y <= y1)
 
     def modal(self, context, event):
+        # A raising modal never gets cancel(); close here so the draw handler
+        # cannot outlive the operator.
+        try:
+            return self._modal(context, event)
+        except Exception:  # noqa: BLE001
+            self._close(context)
+            raise
+
+    def _modal(self, context, event):
         from .registry import REGISTRY
 
         area = getattr(context, "area", None)

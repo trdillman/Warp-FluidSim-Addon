@@ -1282,8 +1282,10 @@ def _get_voxel_size(self) -> float:
 def _set_voxel_size(self, value) -> None:
     from .sim.quality_contract import divisions_for_voxel_size
 
+    # A set= callback bypasses the property's min, so clamp here: zero or a
+    # negative size would raise, and a tiny one would ask for absurd divisions.
     self.resolution_divisions = divisions_for_voxel_size(
-        value, _domain_longest_axis(self))
+        max(float(value), _MIN_VOXEL_SIZE), _domain_longest_axis(self))
 
 
 _MIN_VOXEL_SIZE = 1.0e-4

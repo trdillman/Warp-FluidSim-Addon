@@ -312,7 +312,10 @@ class FLUIDSIM_OT_effect_add(bpy.types.Operator):
 
     def invoke(self, context, _event):
         if not self.effect_id:
-            self.effect_id = context.scene.fluidsim_effects.selected_library_effect
+            try:
+                self.effect_id = context.scene.fluidsim_effects.selected_library_effect
+            except TypeError:
+                pass  # the remembered effect is no longer in the library
         context.window_manager.invoke_search_popup(self)
         return {"RUNNING_MODAL"}
 
@@ -581,7 +584,9 @@ class FLUIDSIM_OT_effect_select_controller(bpy.types.Operator):
         if controller is None:
             self.report({"ERROR"}, "No controller is assigned")
             return {"CANCELLED"}
-        bpy.ops.object.select_all(action="DESELECT")
+        # select_all only polls in Object Mode, so deselect directly.
+        for selected in tuple(getattr(context.view_layer.objects, "selected", ())):
+            selected.select_set(False)
         controller.hide_set(False)
         controller.select_set(True)
         context.view_layer.objects.active = controller

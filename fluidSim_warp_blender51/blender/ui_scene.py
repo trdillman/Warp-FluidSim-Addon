@@ -1046,11 +1046,15 @@ def draw_cache_bake(layout, context, show_all=False):
     it because the Basic/Advanced switch only trims the 3D View sidebar.
     """
     fs = context.scene.fluidsim
+    active = fs.bake_status in {"PREFLIGHT", "INITIALIZING", "RUNNING", "CANCELLING"}
     row = layout.row(align=True)
+    # A running bake captured its range at start; editing it now does nothing.
+    row.enabled = not active
     row.prop(fs, "bake_start")
     row.prop(fs, "bake_end")
-    active = fs.bake_status in {"PREFLIGHT", "INITIALIZING", "RUNNING", "CANCELLING"}
-    layout.prop(fs, "bake_progress", text=fs.bake_status.title(), slider=True)
+    progress = layout.row()
+    progress.enabled = False  # a read-out, not a control
+    progress.prop(fs, "bake_progress", text=fs.bake_status.title(), slider=True)
     if fs.bake_message:
         _draw_wrapped(layout, fs.bake_message, icon="INFO")
     actions = layout.row(align=True)
@@ -1059,7 +1063,8 @@ def draw_cache_bake(layout, context, show_all=False):
     else:
         from .ui_cache_state import production_bake_action
 
-        presentation = production_bake_action(_cache_directory(context.scene))
+        presentation = production_bake_action(
+            _cache_directory(context.scene), int(fs.bake_end))
         if presentation.action != "START":
             _draw_wrapped(
                 layout, presentation.message,

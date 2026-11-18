@@ -155,7 +155,7 @@ class FLUIDSIM_PT_object_region(FluidSimObjectPanel, bpy.types.Panel):
             radius.prop(settings, "point_rasterize_radius")
         # Point, volume and field inputs are evaluated on the same First /
         # Every Sim Frame cadence as meshes (B47).
-        if uses_native_source_plan(settings):
+        if uses_native_source_plan(settings) and region not in {"MESH_SOLID", "MESH_SHELL"}:
             layout.prop(settings, "mesh_evaluation_mode")
 
 

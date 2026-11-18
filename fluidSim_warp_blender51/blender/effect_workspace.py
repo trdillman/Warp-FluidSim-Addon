@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import bpy
@@ -221,6 +222,35 @@ class FLUIDSIM_OT_effect_go_to_error(bpy.types.Operator):
         return {"FINISHED"}
 
 
+def generated_source_text_name(instance_id: str, kernel_id: str) -> str:
+    """A Text datablock name that is stable, unique per kernel and at most 63 characters.
+
+    Blender silently truncates longer names, so a plain "instance - kernel"
+    name misses its own text on the next click (a numbered duplicate each
+    time) and kernels sharing a long prefix could collide. A short digest of
+    the full identity keeps both lookups and kernels distinct.
+    """
+    digest = hashlib.sha256(f"{instance_id}\0{kernel_id}".encode()).hexdigest()[:10]
+    return f"FluidSim Source - {str(kernel_id)[:28]} - {digest}.py"
+
+
+def find_or_create_generated_text(texts, stored_name: str, name: str, key: str):
+    """Reuse this kernel's generated Text, or make a new one; never take another kernel's.
+
+    ``key`` is the full instance and kernel identity. A short digest in the
+    name can in principle collide, so a Text is only reused when the key it
+    carries matches; otherwise a new Text (Blender adds a numeric suffix) is
+    made instead of overwriting someone else's source.
+    """
+    for candidate in (stored_name, name):
+        existing = texts.get(candidate) if candidate else None
+        if existing is not None and existing.get("fluidsim_generated_key") == key:
+            return existing
+    text = texts.new(name)
+    text["fluidsim_generated_key"] = key
+    return text
+
+
 class FLUIDSIM_OT_effect_show_generated_source(bpy.types.Operator):
     bl_idname = "fluidsim.effect_show_generated_source"
     bl_label = "Show Generated Source"
@@ -233,8 +263,10 @@ class FLUIDSIM_OT_effect_show_generated_source(bpy.types.Operator):
             return {"CANCELLED"}
         instance = effects.effect_instance_from_pg(context.scene, item)
         generated = generate_kernel_source(instance, self.kernel_index)
-        name = f"FluidSim Generated Source - {instance.instance_id} - {generated.kernel_id}.py"
-        text = bpy.data.texts.get(name) or bpy.data.texts.new(name)
+        name = generated_source_text_name(instance.instance_id, generated.kernel_id)
+        text = find_or_create_generated_text(
+            bpy.data.texts, item.kernels[self.kernel_index].generated_text_name, name,
+            json.dumps([instance.instance_id, generated.kernel_id]))
         text.clear()
         text.write(generated.source)
         text["fluidsim_generated_source"] = True

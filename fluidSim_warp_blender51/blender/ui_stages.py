@@ -19,6 +19,8 @@ Storage & Range and Manage Cache shelves, so every cache control stays reachable
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import bpy
 
 from . import file_compat
@@ -421,6 +423,18 @@ class FLUIDSIM_STAGE_PT_look_materials(FluidSimStagePanel, bpy.types.Panel):
         )
 
 
+# Which cache directory each scene's re-bake offer belongs to.
+_OFFER_CACHE: dict = {}
+
+
+def _resolved(path) -> str:
+    """One spelling of a cache directory, however the bake or the panel got it."""
+    try:
+        return str(Path(path).resolve())
+    except (OSError, RuntimeError):
+        return str(path)
+
+
 def draw_cache_refusal(layout, context) -> None:
     """Say why the cache on disk cannot be played or resumed, and what to do.
 
@@ -431,7 +445,7 @@ def draw_cache_refusal(layout, context) -> None:
     """
     from ..io.cache import LEGACY_2X_CACHE_MESSAGE
     from . import ui_scene
-    from .cache_bake import rebake_offer
+    from .cache_bake import clear_rebake_offer, rebake_offer, rebake_offer_cache, scene_identity
     from .production_bake import bake_is_active
     from .ui_cache_state import cache_format_for_ui
 
@@ -443,6 +457,27 @@ def draw_cache_refusal(layout, context) -> None:
         ui_scene._draw_wrapped(layout, LEGACY_2X_CACHE_MESSAGE, icon="ERROR")
         return
     frame = rebake_offer(scene)
+    if frame is not None and (
+            directory is None
+            or not (Path(directory) / "fluidsim_cache.json").is_file()):
+        # The offer outlived its cache (freed, moved or re-pointed): drop it.
+        clear_rebake_offer(scene)
+        frame = None
+    identity = scene_identity(scene)
+    recorded = rebake_offer_cache(scene)
+    if frame is None:
+        _OFFER_CACHE.pop(identity, None)
+    else:
+        # The cache the refusal was recorded for, as stored by cache_bake; an
+        # offer without one falls back to the first cache the panel saw it on.
+        owner = _resolved(recorded) if recorded is not None else _OFFER_CACHE.setdefault(
+            identity, _resolved(directory))
+        if owner != _resolved(directory):
+            # The scene has since been pointed at another cache, so the offer
+            # does not apply here.
+            clear_rebake_offer(scene)
+            _OFFER_CACHE.pop(identity, None)
+            frame = None
     if frame is not None:
         ui_scene._draw_wrapped(
             layout,

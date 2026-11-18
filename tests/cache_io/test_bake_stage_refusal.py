@@ -97,9 +97,11 @@ def _clean_registries():
 
     production_bake._ACTIVE_BAKES.clear()
     cache_bake._REBAKE_OFFERS.clear()
+    cache_bake._REBAKE_OFFER_CACHES.clear()
     yield
     production_bake._ACTIVE_BAKES.clear()
     cache_bake._REBAKE_OFFERS.clear()
+    cache_bake._REBAKE_OFFER_CACHES.clear()
 
 
 def _cache_2x(directory):
@@ -147,6 +149,7 @@ def test_a_changed_animation_offers_a_rebake_from_the_first_changed_frame(
     ui_stages = _stage_module(monkeypatch)
     ui_scene = sys.modules[ui_stages.draw_cache_bake.__module__]
     monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: tmp_path)
+    (tmp_path / "fluidsim_cache.json").write_text("{}", encoding="utf-8")
     context = _context()
     cache_bake._REBAKE_OFFERS[cache_bake.scene_identity(context.scene)] = 17
     layout = _Layout()
@@ -177,3 +180,103 @@ def test_nothing_is_drawn_while_a_bake_is_running(monkeypatch, tmp_path):
 
     assert layout.labels == []
     assert layout.operators == []
+
+
+def test_a_rebake_offer_is_dropped_once_its_cache_is_gone(monkeypatch, tmp_path):
+    """Freeing, moving or re-pointing the cache must not leave a stale offer."""
+    from fluidSim_warp_blender51.blender import cache_bake
+
+    ui_stages = _stage_module(monkeypatch)
+    ui_scene = sys.modules[ui_stages.draw_cache_bake.__module__]
+    monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: tmp_path)
+    context = _context()
+    identity = cache_bake.scene_identity(context.scene)
+    cache_bake._REBAKE_OFFERS[identity] = 17  # no manifest in tmp_path
+    layout = _Layout()
+
+    ui_stages.draw_cache_refusal(layout, context)
+
+    assert layout.labels == []
+    assert layout.operators == []
+    assert identity not in cache_bake._REBAKE_OFFERS
+
+
+def test_a_rebake_offer_does_not_follow_the_scene_to_another_cache(monkeypatch, tmp_path):
+    """Switching to a second existing cache must not show the first cache's offer."""
+    from fluidSim_warp_blender51.blender import cache_bake
+
+    ui_stages = _stage_module(monkeypatch)
+    ui_scene = sys.modules[ui_stages.draw_cache_bake.__module__]
+    first, second = tmp_path / "a", tmp_path / "b"
+    for directory in (first, second):
+        directory.mkdir()
+        (directory / "fluidsim_cache.json").write_text("{}", encoding="utf-8")
+    current = {"dir": first}
+    monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: current["dir"])
+    context = _context()
+    cache_bake._REBAKE_OFFERS[cache_bake.scene_identity(context.scene)] = 17
+
+    shown = _Layout()
+    ui_stages.draw_cache_refusal(shown, context)
+    assert shown.operators  # offered for the cache it was recorded against
+
+    current["dir"] = second
+    other = _Layout()
+    ui_stages.draw_cache_refusal(other, context)
+    assert other.labels == [] and other.operators == []
+
+
+def test_a_rebake_offer_is_bound_to_the_cache_that_refused_the_resume(monkeypatch, tmp_path):
+    """Switching caches before the panel first draws must not show the old offer."""
+    from fluidSim_warp_blender51.blender import cache_bake
+
+    ui_stages = _stage_module(monkeypatch)
+    ui_scene = sys.modules[ui_stages.draw_cache_bake.__module__]
+    first, second = tmp_path / "a", tmp_path / "b"
+    for directory in (first, second):
+        directory.mkdir()
+        (directory / "fluidsim_cache.json").write_text("{}", encoding="utf-8")
+    context = _context()
+    identity = cache_bake.scene_identity(context.scene)
+    error = SimpleNamespace(decision=SimpleNamespace(
+        code="SOURCE_ANIMATION_CHANGED", first_changed_frame=17))
+    cache_bake._record_resume_refusal(identity, error, first)  # refused for cache A
+    monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: second)  # B before any draw
+
+    layout = _Layout()
+    ui_stages.draw_cache_refusal(layout, context)
+
+    assert layout.labels == [] and layout.operators == []
+    assert cache_bake.rebake_offer(context.scene) is None
+
+
+def test_consecutive_refusals_on_two_caches_each_show_their_own_offer(monkeypatch, tmp_path):
+    """A new refusal for cache B replaces the offer the panel last drew for cache A."""
+    from fluidSim_warp_blender51.blender import cache_bake
+
+    ui_stages = _stage_module(monkeypatch)
+    ui_scene = sys.modules[ui_stages.draw_cache_bake.__module__]
+    first, second = tmp_path / "a", tmp_path / "b"
+    for directory in (first, second):
+        directory.mkdir()
+        (directory / "fluidsim_cache.json").write_text("{}", encoding="utf-8")
+    current = {"dir": first}
+    monkeypatch.setattr(ui_scene, "_cache_directory", lambda _scene: current["dir"])
+    context = _context()
+    identity = cache_bake.scene_identity(context.scene)
+
+    def refuse(frame, cache):
+        error = SimpleNamespace(decision=SimpleNamespace(
+            code="SOURCE_ANIMATION_CHANGED", first_changed_frame=frame))
+        cache_bake._record_resume_refusal(identity, error, cache)
+
+    refuse(17, first)
+    drawn_a = _Layout()
+    ui_stages.draw_cache_refusal(drawn_a, context)
+    assert "17" in drawn_a.operators[0]["text"]
+
+    current["dir"] = second
+    refuse(42, second)  # a fresh refusal before the panel redraws
+    drawn_b = _Layout()
+    ui_stages.draw_cache_refusal(drawn_b, context)
+    assert "42" in drawn_b.operators[0]["text"]

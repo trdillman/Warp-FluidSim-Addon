@@ -5,10 +5,23 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
 import bpy
+
+# The offline release harness extracts the locked wheel into this isolated user
+# directory, as it does for smoke_test_blender.py. Admit that copy before the
+# first runtime probe; an ambient Blender site-packages Warp must not win.
+_provisioned_warp = os.environ.get("BLENDER_USER_EXTENSIONS", "")
+if _provisioned_warp:
+    _local_site = str(
+        Path(_provisioned_warp) / ".user" / "fluidsim_ci" / "fluidsim_warp" / ".local"
+    )
+    if _local_site in sys.path:
+        sys.path.remove(_local_site)
+    sys.path.insert(0, _local_site)
 
 SUCCESS_MARKER = "FLUIDSIM_GPU_REGRESSION_OK"
 

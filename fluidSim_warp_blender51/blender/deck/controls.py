@@ -144,7 +144,8 @@ def _bake_action(scene) -> str:
         from ..ui_cache_state import production_bake_action
 
         raw = str(bpy.path.abspath(scene.fluidsim.cache_path) or "").strip()
-        return production_bake_action(raw or None).action
+        return production_bake_action(
+            raw or None, int(scene.fluidsim.bake_end)).action
     except Exception:  # noqa: BLE001 - presentation only; the operator re-checks
         return "START"
 

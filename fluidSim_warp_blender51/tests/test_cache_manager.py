@@ -469,3 +469,20 @@ def test_whole_cache_refuses_distinct_uppercase_directory(tmp_path, operation):
         else:
             rename_cache(folder, "renamed")
     assert _tree(folder) == before
+
+
+def test_a_cleanup_exception_after_publishing_is_reported_as_incomplete_cleanup(
+        tmp_path, monkeypatch):
+    """The destination is already published, so a failing source cleanup is not a failed move."""
+    from fluidsim_testpkg.blender import cache_manager
+
+    source = tmp_path / "source"
+    _write_2x_cache(source)
+
+    def locked(_path):
+        raise PermissionError("source is locked")
+
+    monkeypatch.setattr(cache_manager, "free_cache", locked)
+    with pytest.raises(cache_manager.MoveCleanupIncomplete):
+        cache_manager.move_cache(source, tmp_path / "destination")
+    assert (tmp_path / "destination").is_dir()
