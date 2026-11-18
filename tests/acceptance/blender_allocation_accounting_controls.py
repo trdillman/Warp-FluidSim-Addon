@@ -228,7 +228,7 @@ def main():
     }
     retained = []
     try:
-        assert device.is_cuda and "4080 SUPER" in device.name
+        assert device.is_cuda, f"Allocation controls require CUDA, got {device}"
         report["controls"]["transaction"] = transactional_controls()
         with patch.dict(run_case.__globals__, estimate_solver_bytes=lambda _: 0):
             bad = run_case("initial-undercount-control", replace(base), device)
