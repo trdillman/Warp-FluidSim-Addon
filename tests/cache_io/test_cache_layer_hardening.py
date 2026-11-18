@@ -326,3 +326,32 @@ def test_directory_open_io_failure_is_not_hidden(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "open", failing_open)
     with pytest.raises(OSError, match="Input/output"):
         fsutil.fsync_directory(tmp_path)
+
+
+# --- source identity must not depend on where the project lives ----------------
+
+def test_volume_identity_ignores_the_folder_the_file_sits_in(tmp_path):
+    from fluidSim_warp_blender51.blender import cache_identity
+
+    records = []
+    for folder in ("alice_laptop", "farm_node/D"):
+        directory = tmp_path / folder
+        directory.mkdir(parents=True)
+        (directory / "smoke.vdb").write_bytes(b"same bytes")
+        data = SimpleNamespace(
+            filepath=str(directory / "smoke.vdb"), grids=None,
+            is_sequence=False, frame_start=1, frame_duration=1,
+            frame_offset=0, sequence_mode="CLAMP")
+        records.append(cache_identity._volume_record(
+            SimpleNamespace(data=data, library=None)))
+    assert records[0] == records[1]
+    assert "path" not in records[0]
+
+    (tmp_path / "farm_node" / "D" / "smoke.vdb").write_bytes(b"other bytes")
+    changed = cache_identity._volume_record(SimpleNamespace(
+        data=SimpleNamespace(
+            filepath=str(tmp_path / "farm_node" / "D" / "smoke.vdb"),
+            grids=None, is_sequence=False, frame_start=1, frame_duration=1,
+            frame_offset=0, sequence_mode="CLAMP"),
+        library=None))
+    assert changed != records[0]  # different content still changes identity
