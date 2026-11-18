@@ -29,6 +29,8 @@
   was computed with the path.
 - Restart preserves the previous cache when replacement solver admission,
   scene synchronization or replacement-manifest preparation fails.
+- Alembic and USD exports publish their staged file only after export checks
+  and scene restoration, preserving the previous file on failure or cancellation.
 
 - **Warp 1.19.0** is now the build Install Warp downloads (same CUDA 13 build and
   driver floor as 1.18). Warp 1.17.0 and 1.18.0 still load, with a warning.

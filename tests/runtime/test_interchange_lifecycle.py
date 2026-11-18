@@ -41,7 +41,8 @@ class Objects(list):
 
 
 @pytest.fixture
-def export_env(monkeypatch):
+def export_env(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     bridge = _install_scene_bridge_stubs(monkeypatch)
     playback = bridge.playback
     monkeypatch.setattr(playback, "_bridge", lambda: bridge)
@@ -329,6 +330,128 @@ def test_pinned_sequence_change_during_export_restores_scene(export_env, fmt):
         getattr(e.module, "export_" + fmt)(e.scene, "out", plan)
     assert len(calls) == 2
     assert snapshot(e) == before
+
+
+@pytest.mark.parametrize("fmt,suffix", [
+    ("alembic", ".abc"), ("usd", ".usd"), ("usd", ".usda"), ("usd", ".usdc"),
+])
+@pytest.mark.parametrize("outcome", ["success", "cancel", "exception", "interrupt", "cache_changed"])
+def test_interchange_publishes_only_checked_exports(export_env, tmp_path, fmt, suffix, outcome):
+    from pathlib import Path
+
+    e = export_env
+    before = snapshot(e)
+    final = tmp_path / ("existing" + suffix)
+    final.write_bytes(b"previous export")
+    checks = []
+
+    def revalidate():
+        checks.append(1)
+        if len(checks) == 2 and outcome == "cache_changed":
+            raise ValueError("changed during export")
+
+    sequence = SimpleNamespace(revalidate=revalidate)
+    plan = (e.module.ExportPlan("cache", (1, 2), e.obj, sequence=sequence) if fmt == "alembic"
+            else e.module.UsdExportPlan("cache", (1, 2), e.obj, (), sequence=sequence))
+
+    def exporter(**kwargs):
+        staged = Path(kwargs["filepath"])
+        assert staged.parent == final.parent and staged.suffix == suffix
+        staged.write_bytes(b"new export")
+        # Even a fully written native output is private until postchecks finish.
+        assert final.read_bytes() == b"previous export"
+        e.scene.frame_set(2)
+        if outcome == "exception":
+            raise RuntimeError("exporter failed")
+        if outcome == "interrupt":
+            raise KeyboardInterrupt
+        return {"CANCELLED"} if outcome == "cancel" else {"FINISHED"}
+
+    setattr(e.bpy.ops.wm, fmt + "_export", exporter)
+    if outcome == "success":
+        assert getattr(e.module, "export_" + fmt)(e.scene, str(final), plan) == []
+        assert final.read_bytes() == b"new export"
+    else:
+        with pytest.raises((RuntimeError, ValueError, KeyboardInterrupt)):
+            getattr(e.module, "export_" + fmt)(e.scene, str(final), plan)
+        assert final.read_bytes() == b"previous export"
+    assert snapshot(e) == before
+    assert sorted(tmp_path.iterdir()) == [final]
+
+
+@pytest.mark.parametrize("fmt", ["alembic", "usd"])
+def test_interchange_keeps_restore_diagnostics_and_publishes_after_restore(
+        export_env, tmp_path, monkeypatch, fmt):
+    from pathlib import Path
+
+    e = export_env
+    final = tmp_path / ("out.abc" if fmt == "alembic" else "out.usda")
+    final.write_bytes(b"previous export")
+    before = snapshot(e)
+    original_restore = e.module._SceneState.restore
+
+    def restore(state):
+        assert final.read_bytes() == b"previous export"
+        assert original_restore(state) == []
+        return ["restore diagnostic"]
+
+    monkeypatch.setattr(e.module._SceneState, "restore", restore)
+    setattr(e.bpy.ops.wm, fmt + "_export", lambda **kw: (
+        Path(kw["filepath"]).write_bytes(b"new export"), {"FINISHED"})[1])
+    plan = (e.module.ExportPlan("cache", (1, 2), e.obj) if fmt == "alembic"
+            else e.module.UsdExportPlan("cache", (1, 2), e.obj, ()))
+    assert getattr(e.module, "export_" + fmt)(e.scene, str(final), plan) == ["restore diagnostic"]
+    assert final.read_bytes() == b"new export"
+    assert snapshot(e) == before
+
+
+@pytest.mark.parametrize("fmt", ["alembic", "usd"])
+def test_interchange_replace_failure_preserves_old_output_and_restores_scene(
+        export_env, tmp_path, monkeypatch, fmt):
+    from pathlib import Path
+
+    from fluidSim_warp_blender51.io import fsutil
+
+    e = export_env
+    final = tmp_path / ("out.abc" if fmt == "alembic" else "out.usda")
+    final.write_bytes(b"previous export")
+    before = snapshot(e)
+    setattr(e.bpy.ops.wm, fmt + "_export", lambda **kw: (
+        Path(kw["filepath"]).write_bytes(b"new export"), {"FINISHED"})[1])
+
+    def refuse(*args):
+        assert snapshot(e) == before
+        raise PermissionError("destination locked")
+
+    monkeypatch.setattr(fsutil.os, "replace", refuse)
+    plan = (e.module.ExportPlan("cache", (1, 2), e.obj) if fmt == "alembic"
+            else e.module.UsdExportPlan("cache", (1, 2), e.obj, ()))
+    with pytest.raises(PermissionError, match="destination locked"):
+        getattr(e.module, "export_" + fmt)(e.scene, str(final), plan)
+    assert final.read_bytes() == b"previous export"
+    assert sorted(tmp_path.iterdir()) == [final]
+
+
+def test_usd_datablock_postcheck_preserves_old_file(export_env, tmp_path):
+    from pathlib import Path
+
+    e = export_env
+    final = tmp_path / "out.usda"
+    final.write_bytes(b"previous export")
+    before = snapshot(e)
+
+    def exporter(**kwargs):
+        Path(kwargs["filepath"]).write_bytes(b"invalid split prims")
+        e.obj.data = SimpleNamespace(as_pointer=lambda: 43)
+        return {"FINISHED"}
+
+    e.bpy.ops.wm.usd_export = exporter
+    plan = e.module.UsdExportPlan("cache", (1, 2), e.obj, ())
+    with pytest.raises(RuntimeError, match="changed datablock"):
+        e.module.export_usd(e.scene, str(final), plan)
+    assert final.read_bytes() == b"previous export"
+    assert snapshot(e) == before
+    assert sorted(tmp_path.iterdir()) == [final]
 
 
 def test_usd_planner_shares_one_observation_with_counts_and_rigid_selection(export_env, monkeypatch):

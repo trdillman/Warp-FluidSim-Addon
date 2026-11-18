@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import errno
 import os
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 _UNSUPPORTED_DIRECTORY_SYNC_ERRNOS = frozenset(
@@ -12,6 +14,28 @@ _UNSUPPORTED_DIRECTORY_SYNC_ERRNOS = frozenset(
         for name in ("EINVAL", "ENOTSUP", "EOPNOTSUPP", "ENOSYS")
     ) if code is not None
 )
+
+
+@contextmanager
+def staged_output(path: Path | str, *, suffix: str):
+    """Publish a native writer's file only after its caller's checks/cleanup succeed.
+
+    Keep the format suffix for exporters which select their encoding from it.
+    The private file shares the destination's directory, so replacement is atomic.
+    """
+    final = Path(path)
+    if final.is_dir():
+        raise IsADirectoryError(f"Export destination is a directory: {final}")
+    descriptor, name = tempfile.mkstemp(prefix=f".{final.stem}.", suffix=suffix,
+                                      dir=final.parent)
+    os.close(descriptor)
+    staged = Path(name)
+    try:
+        yield str(staged)
+        apply_umask_mode(staged)
+        os.replace(staged, final)
+    finally:
+        staged.unlink(missing_ok=True)
 
 
 def apply_umask_mode(path: Path | str) -> None:
