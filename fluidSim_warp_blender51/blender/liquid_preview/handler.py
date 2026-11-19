@@ -176,10 +176,15 @@ def _on_load_post(*_args):
         return
     for scene in scenes:
         liquid_display.restore_scene(scene)
-        if getattr(getattr(scene, "fluidsim", None),
-                   "liquid_preview_enabled", False):
-            # Draw the liquid the file was saved with before the first step.
-            output_publication.seed_published_points_from_saved_outputs(scene)
+    # Draw the liquid the file was saved with before the first step. There is
+    # one published record, so it goes to the displayed scene.
+    enabled = [scene for scene in scenes if getattr(
+        getattr(scene, "fluidsim", None), "liquid_preview_enabled", False)]
+    displayed = getattr(getattr(bpy, "context", None), "scene", None)
+    target = next((scene for scene in enabled if scene == displayed),
+                  enabled[0] if enabled else None)
+    if target is not None:
+        output_publication.seed_published_points_from_saved_outputs(target)
     sync_registration()
 
 

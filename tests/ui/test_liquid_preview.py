@@ -1085,6 +1085,24 @@ def test_load_publishes_saved_points_only_for_preview_scenes(monkeypatch, previe
     assert seeded == ([scene] if preview else [])
 
 
+def test_load_seeds_the_displayed_preview_scene_of_several(monkeypatch):
+    from fluidSim_warp_blender51.blender import liquid_display, output_publication
+    handler, fake_bpy, _draw, _keys = _install_handler_bpy(monkeypatch)
+    first, active = (SimpleNamespace(fluidsim=SimpleNamespace(liquid_preview_enabled=True))
+                     for _ in range(2))
+    fake_bpy.data = SimpleNamespace(scenes=[first, active])
+    fake_bpy.context = SimpleNamespace(scene=active)
+    seeded = []
+    monkeypatch.setattr(liquid_display, "restore_scene", lambda _scene: None)
+    monkeypatch.setattr(
+        output_publication, "seed_published_points_from_saved_outputs",
+        lambda target: seeded.append(target))
+
+    handler._on_load_post()
+
+    assert seeded == [active]
+
+
 def test_particle_only_legacy_scene_migrates_to_preview(monkeypatch):
     from fluidSim_warp_blender51.blender import liquid_display, scene_access
     scene, domain = _live_scene(False)
