@@ -805,16 +805,18 @@ class SimulationAdmission:
             if snapshot is not None:
                 self._release_snapshot(snapshot)
 
-    def _running_effects(self, solver):
-        """The effect instances the running solver executes, as installed."""
-        admitted = tuple(getattr(self.session, "admitted_effects", ()) or ())
+    @staticmethod
+    def _running_effects(solver):
+        """The effect stack the running solver executes, exactly as installed.
+
+        The runtime manager is the authority: Compile & Apply swaps a new stack
+        into it without touching the admission-time inventory, so that
+        inventory can name effects that are no longer running (or miss new
+        ones).
+        """
         manager = getattr(getattr(solver, "features", None), "effects", None)
         applied_of = getattr(manager, "applied_instances", None)
-        applied = tuple(applied_of()) if callable(applied_of) else ()
-        if not admitted:
-            return applied
-        by_id = {item.instance_id: item for item in applied}
-        return tuple(by_id.get(item.instance_id, item) for item in admitted)
+        return tuple(applied_of()) if callable(applied_of) else ()
 
     def grow_leaf_capacity(self, scene, error, *, depsgraph=None,
                            effect_frame=None):

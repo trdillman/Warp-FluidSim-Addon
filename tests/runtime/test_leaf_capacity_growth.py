@@ -219,16 +219,18 @@ def test_growth_changes_allocation_only(rig):
 
 def test_growth_installs_the_running_effects_not_the_scene_draft(rig):
     applied = SimpleNamespace(instance_id="vortex", strength=2.0)
-    stale = SimpleNamespace(instance_id="vortex", strength=1.0)
-    disabled = SimpleNamespace(instance_id="off", strength=0.0)
-    rig.solver.applied_effects = (applied,)
-    rig.session.admitted_effects = (stale, disabled)
+    # An admission-time inventory that Compile & Apply has since replaced.
+    rig.session.admitted_effects = (
+        SimpleNamespace(instance_id="vortex", strength=1.0),
+        SimpleNamespace(instance_id="removed", strength=1.0))
+    newly_applied = SimpleNamespace(instance_id="curl", strength=3.0)
+    rig.solver.applied_effects = (applied, newly_applied)
 
     result = rig.owner.grow_leaf_capacity(SimpleNamespace(), _refusal())
 
     assert result.grew
-    # The live value replaces the stale admitted one; disabled entries stay.
-    assert rig.seen["prepared_effects"] == (applied, disabled)
+    # Exactly the installed stack: nothing dropped, nothing resurrected.
+    assert rig.seen["prepared_effects"] == (applied, newly_applied)
 
 
 def test_growth_keeps_frozen_scene_inputs(rig):
