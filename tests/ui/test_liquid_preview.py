@@ -823,7 +823,8 @@ def test_display_modes_change_only_liquid_viewport_objects(monkeypatch):
         scene.fluidsim.liquid_display_mode = mode
         liquid_display.apply_viewport(scene)
         assert surface.hidden is expected
-        assert particles.hidden is True
+        # Render Outputs selects particles too, so the ordinary mode shows them.
+        assert particles.hidden is expected
         assert whitewater.hidden is None
         assert not surface.hide_render and not particles.hide_render
 
@@ -1064,6 +1065,42 @@ def test_display_policy_state_is_cleared_at_lifecycle_boundary(monkeypatch, boun
     assert timers == []
     assert not liquid_display._PENDING
     assert liquid_display._HELD == 0
+
+
+@pytest.mark.parametrize("preview", [True, False])
+def test_load_publishes_saved_points_only_for_preview_scenes(monkeypatch, preview):
+    from fluidSim_warp_blender51.blender import liquid_display, output_publication
+    handler, fake_bpy, _draw, _keys = _install_handler_bpy(monkeypatch)
+    scene = SimpleNamespace(
+        fluidsim=SimpleNamespace(liquid_preview_enabled=preview))
+    fake_bpy.data = SimpleNamespace(scenes=[scene])
+    seeded = []
+    monkeypatch.setattr(liquid_display, "restore_scene", lambda _scene: None)
+    monkeypatch.setattr(
+        output_publication, "seed_published_points_from_saved_outputs",
+        lambda target: seeded.append(target))
+
+    handler._on_load_post()
+
+    assert seeded == ([scene] if preview else [])
+
+
+def test_load_seeds_the_displayed_preview_scene_of_several(monkeypatch):
+    from fluidSim_warp_blender51.blender import liquid_display, output_publication
+    handler, fake_bpy, _draw, _keys = _install_handler_bpy(monkeypatch)
+    first, active = (SimpleNamespace(fluidsim=SimpleNamespace(liquid_preview_enabled=True))
+                     for _ in range(2))
+    fake_bpy.data = SimpleNamespace(scenes=[first, active])
+    fake_bpy.context = SimpleNamespace(scene=active)
+    seeded = []
+    monkeypatch.setattr(liquid_display, "restore_scene", lambda _scene: None)
+    monkeypatch.setattr(
+        output_publication, "seed_published_points_from_saved_outputs",
+        lambda target: seeded.append(target))
+
+    handler._on_load_post()
+
+    assert seeded == [active]
 
 
 def test_particle_only_legacy_scene_migrates_to_preview(monkeypatch):

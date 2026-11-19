@@ -19,12 +19,14 @@ PKG = 'fluidSim_warp_blender51'
 
 @pytest.mark.parametrize(('authored', 'display', 'surface', 'expected'), [
     ('HIDDEN', 'SURFACE', True, 'Surface Mesh'),
-    ('PARTICLES', 'SURFACE', True, 'Surface Mesh'),
+    ('PARTICLES', 'SURFACE', True, 'Particles'),
+    ('SURFACE_PARTICLES', 'SURFACE', True, 'Surface + Particles'),
+    ('PARTICLES', 'OFF', True, 'Off'),
     ('SURFACE', 'OFF', True, 'Off'),
     ('SURFACE', 'SURFACE', False, 'Particles'),
     ('HIDDEN', 'PREVIEW', True, 'Liquid Preview'),
 ])
-def test_viewport_summary_follows_display_policy_not_render_outputs(
+def test_viewport_summary_follows_display_policy_and_render_outputs(
         monkeypatch, authored, display, surface, expected):
     _install_bpy_stub(monkeypatch)
     ui = _reload_module(f'{PKG}.blender.ui_scene')
@@ -35,7 +37,9 @@ def test_viewport_summary_follows_display_policy_not_render_outputs(
         data=SimpleNamespace(vertices=[1])))
     context, fs, _ = _stage_context(
         surface_enabled=surface,
-        scene_overrides={'liquid_view_mode': authored, 'liquid_display_mode': display})
+        scene_overrides={'liquid_view_mode': authored, 'liquid_display_mode': display,
+                         'show_surface': authored in {'SURFACE', 'SURFACE_PARTICLES'},
+                         'show_particles': authored in {'PARTICLES', 'SURFACE_PARTICLES'}})
     layout = _draw_stage(ui.FLUIDSIM_PT_scene_outputs, context)
     assert f'Liquid Viewport: {expected}' in [x['text'] for x in layout.labels]
     assert fs.liquid_view_mode == authored  # a display read must not edit render outputs

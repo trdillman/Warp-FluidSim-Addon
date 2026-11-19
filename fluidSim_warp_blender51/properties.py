@@ -1070,7 +1070,7 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         description="Enable to show FluidSim status and statistics in the viewport; disable to hide the overlay without stopping simulation")
     liquid_display_mode: EnumProperty(
         name="Liquid Display", items=(("PREVIEW", "Preview", ""),
-                                      ("SURFACE", "Surface Mesh", ""),
+                                      ("SURFACE", "Render Outputs", "Show the surface and/or particles chosen under Render Outputs"),
                                       ("OFF", "Off", "")),
         default="SURFACE", update=_on_liquid_display_changed,
         description="Choose the liquid representation shown in the viewport")

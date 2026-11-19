@@ -1196,6 +1196,56 @@ def latest_published_points() -> PublishedPoints | None:
     return _LATEST_PUBLISHED_POINTS
 
 
+def seed_published_points_from_saved_outputs(scene):
+    """Give Liquid Preview the points a file was saved with.
+
+    The preview draws only a published record, and nothing is published until
+    the first step, so a file that opens in Liquid Preview showed nothing
+    before Play even though its saved Particles output holds the whole liquid.
+    This publishes that saved cloud as the record. It never replaces a record
+    a live step or a cache frame already published.
+    """
+    global _LATEST_PUBLISHED_POINTS
+    pointer = getattr(scene, "as_pointer", None)
+    current = _LATEST_PUBLISHED_POINTS
+    if current is not None and (
+            current.scene_key is None or not callable(pointer)
+            or current.scene_key == pointer()):
+        return None  # already published for this scene
+    try:
+        obj = output_object(scene, PARTICLES_NAME, ensure=False)
+        count = live_point_count(obj) if obj is not None else 0
+        attributes = getattr(getattr(obj, "data", None), "attributes", None)
+        if not count or attributes is None or obj.type != "POINTCLOUD":
+            return None
+        position = attributes.get("position")
+        if position is None or len(position.data) < count:
+            return None
+        coords = np.zeros(len(position.data) * 3, dtype=np.float32)
+        position.data.foreach_get("vector", coords)
+        positions = coords.reshape((-1, 3))[:count].copy()
+        radius = 0.0
+        radius_attr = attributes.get("radius")
+        if radius_attr is not None and len(radius_attr.data):
+            radii = np.zeros(len(radius_attr.data), dtype=np.float32)
+            radius_attr.data.foreach_get("value", radii)
+            radius = float(radii[0])
+    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+        return None
+    frame = getattr(scene, "frame_current", None)
+    _LATEST_PUBLISHED_POINTS = PublishedPoints(
+        frame_id=next(_PUBLISHED_FRAME_IDS),
+        scene_frame=int(frame) if isinstance(frame, (int, np.integer)) else None,
+        scene_key=int(pointer()) if callable(pointer) else None,
+        positions=_read_only_view(positions, np.float32),
+        particle_radius=radius,
+        whitewater=_EMPTY_POINTS,
+        whitewater_types=None,
+        whitewater_radius=0.0,
+    )
+    return _LATEST_PUBLISHED_POINTS
+
+
 def clear_published_points():
     """Forget the published record (outputs removed or add-on unloading)."""
     global _LATEST_PUBLISHED_POINTS

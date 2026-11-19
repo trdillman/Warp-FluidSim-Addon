@@ -55,8 +55,8 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `capacity_show_alternatives` | PRESENTATION | scene | - | - | scene | scene | 0 | UI_STATE |
 | `surface_advanced_expanded` | PRESENTATION | - | - | - | - | scene | 0 | UNOBSERVED |
 | `liquid_view_mode` | OUTPUT | scene | - | - | scene | scene | 0 | UI_STATE |
-| `show_surface` | OUTPUT | - | scene | - | - | scene | 2 | READ_ONLY |
-| `show_particles` | OUTPUT | - | scene | - | - | scene | 3 | READ_ONLY |
+| `show_surface` | OUTPUT | - | scene | - | - | scene | 3 | READ_ONLY |
+| `show_particles` | OUTPUT | - | scene | - | - | scene | 4 | READ_ONLY |
 | `show_whitewater` | OUTPUT | scene | scene | - | scene | scene | 0 | OK |
 | `gpu_particle_preview` | OUTPUT | scene | scene | - | - | scene | 3 | OK |
 | `particle_display_fraction` | OUTPUT | scene | scene | - | - | scene | 1 | OK |
@@ -86,7 +86,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `bake_message` | PRESENTATION | - | scene | scene | scene | scene | 2 | PUBLISHED |
 | `show_overlay` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
 | `liquid_display_mode` | OUTPUT | scene | scene | scene | - | scene | 6 | OK |
-| `liquid_preview_enabled` | OUTPUT | - | scene | scene | scene | scene | 5 | PUBLISHED |
+| `liquid_preview_enabled` | OUTPUT | - | scene | scene | scene | scene | 6 | PUBLISHED |
 | `liquid_preview_scale` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
 | `liquid_preview_radius_multiplier` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
 | `liquid_preview_absorption` | OUTPUT | scene | scene | - | - | scene | 0 | OK |

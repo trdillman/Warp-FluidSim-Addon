@@ -945,15 +945,32 @@ def body_states(sess):
     return states
 
 
-def save_playable(name, scene, frames):
-    """Reset to frame 1 (clears the published poses) and save live-ready."""
+def save_playable(name, scene, frames, seed_particles=None):
+    """Reset to frame 1 (clears the published poses) and save live-ready.
+
+    INITIAL_FILL sources emit on the first step, so a bare reset leaves frame 1
+    empty. ``seed_particles`` (the build's own frame-1 count) asks for one
+    seed step when the reset restored nothing, as the dam break does, so the
+    saved file opens with the liquid in place.
+    """
     from fluidSim_warp_blender51.blender.scene_bridge import session
 
     fs = scene.fluidsim
     fs.live = False
     scene.frame_set(1)
     assign_input_identities(scene)
-    session().reset(scene)
+    sess = session()
+    sess.reset(scene)
+    if seed_particles is not None:
+        restored = sess.solver.particles.refresh_host_count()
+        if restored == 0:
+            if bpy.ops.fluidsim.step(frames=1) != {"FINISHED"}:
+                raise RuntimeError(f"{name} playback seed step failed")
+            restored = sess.solver.particles.refresh_host_count()
+        if restored != seed_particles:
+            raise RuntimeError(
+                f"{name} playback reset restored {restored:,}, "
+                f"expected {seed_particles:,}")
     fs.live = True
     scene["fluidsim_playback_ready"] = True
     scene["fluidsim_simulated_frames"] = frames
@@ -1764,7 +1781,9 @@ def author_tsunami_parthenon():
     ds.max_substeps = 16
     ds.whitewater_enabled = False
     ds.profiling_enabled = False
-    show_liquid(scene, "Tsunami", TSUNAMI_WATER_COLOR)
+    show_liquid(scene, "Tsunami", TSUNAMI_WATER_COLOR, view="PARTICLES")
+    # The viewport shows the Render Outputs choice: the raw particle points.
+    fs.liquid_display_mode = "SURFACE"
     fs.live = True
     scene.frame_start = 1
     scene.frame_end = tp.FRAMES
@@ -1862,7 +1881,7 @@ def build_tsunami_parthenon():
         "build_frames": tp.FRAMES,
         "build_peak_particles": int(max(series["particle_count"])),
     })
-    save_playable("tsunami_parthenon", scene, tp.FRAMES)
+    save_playable("tsunami_parthenon", scene, tp.FRAMES, seed_particles=first)
 
 
 # ---------------------------------------------------------------------------
