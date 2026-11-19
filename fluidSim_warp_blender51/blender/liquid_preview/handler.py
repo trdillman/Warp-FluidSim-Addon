@@ -176,6 +176,10 @@ def _on_load_post(*_args):
         return
     for scene in scenes:
         liquid_display.restore_scene(scene)
+        if getattr(getattr(scene, "fluidsim", None),
+                   "liquid_preview_enabled", False):
+            # Draw the liquid the file was saved with before the first step.
+            output_publication.seed_published_points_from_saved_outputs(scene)
     sync_registration()
 
 

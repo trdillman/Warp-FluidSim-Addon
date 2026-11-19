@@ -86,7 +86,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `bake_message` | PRESENTATION | - | scene | scene | scene | scene | 2 | PUBLISHED |
 | `show_overlay` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
 | `liquid_display_mode` | OUTPUT | scene | scene | scene | - | scene | 6 | OK |
-| `liquid_preview_enabled` | OUTPUT | - | scene | scene | scene | scene | 5 | PUBLISHED |
+| `liquid_preview_enabled` | OUTPUT | - | scene | scene | scene | scene | 6 | PUBLISHED |
 | `liquid_preview_scale` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
 | `liquid_preview_radius_multiplier` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
 | `liquid_preview_absorption` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
