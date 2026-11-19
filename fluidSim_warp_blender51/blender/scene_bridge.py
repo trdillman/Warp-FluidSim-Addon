@@ -335,11 +335,17 @@ class Session:
             scene, depsgraph, operation=operation)
 
     def initialize(self, scene, *, depsgraph=None,
-                   ignore_memory_safeguard=False, frozen_input_state=None):
-        """Admit one coherent Blender scene into a running Solver Session."""
+                   ignore_memory_safeguard=False, frozen_input_state=None,
+                   runtime_leaf_capacity=None):
+        """Admit one coherent Blender scene into a running Solver Session.
+
+        ``runtime_leaf_capacity`` is the allocation a checkpoint was captured
+        with after automatic leaf growth. It is not an authored setting.
+        """
         return self._admission().initialize(
             scene, depsgraph=depsgraph,
             ignore_memory_safeguard=ignore_memory_safeguard,
+            runtime_leaf_capacity=runtime_leaf_capacity,
             **({"frozen_input_state": frozen_input_state}
                if frozen_input_state is not None else {}))
 

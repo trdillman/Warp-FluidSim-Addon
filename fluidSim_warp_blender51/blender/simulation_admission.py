@@ -444,6 +444,7 @@ class SimulationAdmission:
         return estimate_solver_bytes(self.session.solver.settings)
 
     def _preflight(self, scene, *, depsgraph=None, runtime_capacity=None,
+                   runtime_leaf_capacity=None,
                    ignore_memory_safeguard=False,
                    defer_particle_growth=False, operation=None,
                    applied_allocation=None, frozen_input_state=None):
@@ -468,6 +469,13 @@ class SimulationAdmission:
             raise RuntimeError(refusal)
         if runtime_capacity is not None:
             settings = replace(settings, max_particles=int(runtime_capacity))
+        # Leaf growth does not rewrite the authored Leaf Capacity, but a
+        # checkpoint from the grown solver will not fit a smaller allocation.
+        # Never shrink: an authored value above the checkpoint still wins.
+        if runtime_leaf_capacity is not None:
+            requested = int(runtime_leaf_capacity)
+            if requested > int(settings.leaf_capacity):
+                settings = replace(settings, leaf_capacity=requested)
         resources = vram_snapshot(settings.device)
         live_solver_bytes = self._live_solver_bytes()
         snapshot = self._plan_scene(
@@ -702,7 +710,7 @@ class SimulationAdmission:
             scene.fluidsim.status = "Replacement failed after cutover; solver released"
 
     def initialize(self, scene, *, depsgraph=None, ignore_memory_safeguard=False,
-                   frozen_input_state=None):
+                   frozen_input_state=None, runtime_leaf_capacity=None):
         from ..diagnostics.profiler import Profiler
         from . import cache_identity
 
@@ -716,6 +724,7 @@ class SimulationAdmission:
             snapshot, initial_growth = self._preflight(
                 scene, depsgraph=depsgraph, operation=operation,
                 ignore_memory_safeguard=ignore_memory_safeguard,
+                runtime_leaf_capacity=runtime_leaf_capacity,
                 **({"frozen_input_state": frozen_input_state}
                    if frozen_input_state is not None else {}))
             validate = getattr(snapshot, "assert_evaluation_valid", None)

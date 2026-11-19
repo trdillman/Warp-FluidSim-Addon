@@ -425,6 +425,49 @@ def _resume_with_frozen_points(backend, monkeypatch, tmp_path, *, foreign=False)
     return scene, session, restored, path
 
 
+def test_resume_and_preview_restore_admit_the_grown_leaf_allocation(
+        backend, monkeypatch, tmp_path):
+    """A checkpoint captured after automatic leaf growth does not fit the
+    authored Leaf Capacity. Resume and the post-bake preview restore must
+    ask admission for the checkpoint's allocation."""
+    scene, session, _restored, _path = _resume_with_frozen_points(
+        backend, monkeypatch, tmp_path)
+    from fluidSim_warp_blender51.io import checkpoint
+
+    grown = checkpoint.CheckpointPayload(
+        10, 0.5, "settings", "sources",
+        scalars={"leaf_capacity": 12288, "leaf_count": 10000}).validated()
+    monkeypatch.setattr(production_bake, "read_checkpoint", lambda *_a, **_k: grown)
+    # This resume is about allocation, not frozen inputs. An empty key set
+    # makes a checkpoint without frozen inputs admissible.
+    from fluidSim_warp_blender51.blender import scene_inputs
+    monkeypatch.setattr(scene_inputs, "frozen_input_keys", lambda _scene: set())
+    admitted = []
+    original_initialize = session.initialize
+
+    def initialize(scene, depsgraph=None, frozen_input_state=None,
+                   runtime_leaf_capacity=None):
+        admitted.append(runtime_leaf_capacity)
+        return original_initialize(
+            scene, depsgraph, frozen_input_state=frozen_input_state)
+
+    session.initialize = initialize
+    assert backend.initialize(scene, 1, 20, resume=True) == 11
+    assert admitted == [12288]
+
+    admitted.clear()
+    backend.sess = session
+    backend._original_frame = 5
+    backend._original_live = False
+    backend._original_session_active = True
+    backend._original_session_payload = grown
+    backend._original_frozen_state = None
+    backend._held_settings_changed = lambda _scene: False
+    backend._initialized = True
+    backend._restore_original_state(scene)
+    assert admitted == [12288]
+
+
 def test_resume_restores_frozen_points_but_primes_dynamic_history_at_checkpoint(backend, monkeypatch, tmp_path):
     scene, session, restored, _path = _resume_with_frozen_points(backend, monkeypatch, tmp_path)
     assert backend.initialize(scene, 1, 20, resume=True) == 11

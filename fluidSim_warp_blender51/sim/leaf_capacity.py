@@ -34,6 +34,31 @@ class LeafGrowthResult:
         return self.status == "GROWN"
 
 
+def checkpoint_leaf_allocation(payload) -> int | None:
+    """Leaves a restored solver must be able to hold, or None when unknown.
+
+    Automatic growth raises the live allocation without rewriting the authored
+    Leaf Capacity. The checkpoint records that larger allocation (and the live
+    leaf count). A solver built from the authored value alone cannot import it.
+    """
+    scalars = getattr(payload, "scalars", None)
+    getter = getattr(scalars, "get", None)
+    if not callable(getter):
+        return None
+    values = []
+    for name in ("leaf_capacity", "leaf_count"):
+        raw = getter(name)
+        if raw is None or isinstance(raw, bool):
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            values.append(value)
+    return max(values) if values else None
+
+
 def leaf_growth_target(
     current: int,
     required: int,

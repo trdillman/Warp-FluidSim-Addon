@@ -283,6 +283,23 @@ _ACTIVE_STATUSES = {
 }
 
 
+def _restore_allocation_kwargs(payload, frozen_state) -> dict:
+    """Admission kwargs that let a grown-leaf checkpoint fit its solver.
+
+    Omitted when the checkpoint does not name an allocation, so callers that
+    predate runtime leaf growth keep their existing initialize signature.
+    """
+    from ..sim.leaf_capacity import checkpoint_leaf_allocation
+
+    kwargs = {}
+    if frozen_state is not None:
+        kwargs["frozen_input_state"] = frozen_state
+    allocation = checkpoint_leaf_allocation(payload)
+    if allocation is not None:
+        kwargs["runtime_leaf_capacity"] = allocation
+    return kwargs
+
+
 def _active_cache_path(controller) -> Path | None:
     if getattr(controller, "status", None) not in _ACTIVE_STATUSES:
         return None
@@ -932,8 +949,11 @@ class ProductionBakeBackend:
             depsgraph = self._bpy().context.evaluated_depsgraph_get()
             previous_solver = getattr(self.sess, "solver", None)
             try:
-                self.sess.initialize(scene, depsgraph=depsgraph,
-                    **({"frozen_input_state": frozen_state} if frozen_state is not None else {}))
+                # A checkpoint written after automatic leaf growth will not
+                # fit a solver allocated from the authored Leaf Capacity.
+                self.sess.initialize(
+                    scene, depsgraph=depsgraph,
+                    **_restore_allocation_kwargs(payload, frozen_state))
             except Exception:
                 # Admission may fail after authority transferred and the new
                 # solver was released. A preflight refusal instead preserves
@@ -1177,7 +1197,8 @@ class ProductionBakeBackend:
                     self.sess.initialize(
                         scene,
                         depsgraph=self._bpy().context.evaluated_depsgraph_get(),
-                        **({"frozen_input_state": frozen_state} if frozen_state is not None else {}),
+                        **_restore_allocation_kwargs(
+                            self._original_session_payload, frozen_state),
                     )
                     self.sess.sync_scene(
                         scene, self._bpy().context.evaluated_depsgraph_get())

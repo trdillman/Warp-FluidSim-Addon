@@ -15,6 +15,7 @@ from fluidSim_warp_blender51.sim import memory_safety
 from fluidSim_warp_blender51.sim.fields import TopologyCapacityError
 from fluidSim_warp_blender51.sim.leaf_capacity import (
     MAX_GROWTHS_PER_STEP,
+    checkpoint_leaf_allocation,
     leaf_growth_target,
 )
 from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
@@ -34,6 +35,40 @@ def test_target_never_exceeds_the_domain_or_the_hard_limit():
         200_000, 250_000, total_cells=10**9, hard_limit=262_144) == 262_144
     # Demand beyond what the domain can hold is reported, not hidden.
     assert leaf_growth_target(1800, 2500, total_cells=1800) == 1800
+
+
+def test_checkpoint_allocation_is_the_grown_capacity_or_the_live_count():
+    assert checkpoint_leaf_allocation(SimpleNamespace(
+        scalars={"leaf_capacity": 12288, "leaf_count": 10000})) == 12288
+    assert checkpoint_leaf_allocation(SimpleNamespace(
+        scalars={"leaf_count": 10000})) == 10000
+    assert checkpoint_leaf_allocation(SimpleNamespace(scalars={})) is None
+    assert checkpoint_leaf_allocation(SimpleNamespace(
+        scalars={"leaf_capacity": True, "leaf_count": 0})) is None
+    assert checkpoint_leaf_allocation(SimpleNamespace(frame=1)) is None
+
+
+def test_preflight_raises_leaf_allocation_to_fit_a_grown_checkpoint(monkeypatch):
+    authored = _settings(leaf_capacity=8192)
+    seen = {}
+
+    def plan(_self, _scene, settings, _resources, **_kwargs):
+        seen["leaf_capacity"] = int(settings.leaf_capacity)
+        raise RuntimeError("planned")
+
+    monkeypatch.setattr(admission, "build_settings", lambda _scene: authored)
+    monkeypatch.setattr(memory_safety, "vram_snapshot", lambda _device: {})
+    monkeypatch.setattr(admission.SimulationAdmission, "_plan_scene", plan)
+    scene = SimpleNamespace(objects=(), frame_start=1)
+
+    with pytest.raises(RuntimeError, match="planned"):
+        _owner(_Session(None))._preflight(scene, runtime_leaf_capacity=12288)
+    assert seen["leaf_capacity"] == 12288
+
+    seen.clear()
+    with pytest.raises(RuntimeError, match="planned"):
+        _owner(_Session(None))._preflight(scene, runtime_leaf_capacity=64)
+    assert seen["leaf_capacity"] == 8192
 
 
 def test_target_never_shrinks_and_rejects_bad_factors():
