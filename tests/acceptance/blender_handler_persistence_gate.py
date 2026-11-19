@@ -47,13 +47,15 @@ HANDLER_LISTS = (
 # handler got through. Absence is the failure this catches.
 EXPECTED_HANDLERS = {
     "frame_change_post": {"_on_frame_change"},
-    "load_pre": {"_on_load_pre", "_on_compat_load_pre", "_on_gpu_preview_load_pre"},
+    "load_pre": {
+        "_on_load_pre", "_on_compat_load_pre", "_on_gpu_preview_load_pre", "_on_preview_load_pre",
+    },
     "load_post": {"_on_load_post", "_on_deck_load_post"},
     "blend_import_post": {"_on_blend_import_post"},
     "animation_playback_pre": {"_on_playback_pre"},
     "depsgraph_update_post": {"_on_interaction_state_update", "_on_imported_domain_update"},
     "undo_post": {"_on_interaction_state_update"},
-    "save_pre": {"_on_gpu_preview_save_pre"},
+    "save_pre": {"_on_gpu_preview_save_pre", "_on_preview_save_pre"},
     "save_post": {"_on_gpu_preview_save_post"},
     "render_init": {"_on_render_init"},
     "render_complete": {"_on_render_end"},
@@ -81,8 +83,12 @@ EXPECTED_HANDLER_MODULES = {
         "_on_compat_load_pre": "fluidSim_warp_blender51.blender.file_compat",
         "_on_load_pre": "fluidSim_warp_blender51.blender.pending_settings",
         "_on_gpu_preview_load_pre": "fluidSim_warp_blender51.blender.gpu_particle_owner",
+        "_on_preview_load_pre": "fluidSim_warp_blender51.blender.liquid_preview.handler",
     },
-    "save_pre": {"_on_gpu_preview_save_pre": "fluidSim_warp_blender51.blender.gpu_particle_owner"},
+    "save_pre": {
+        "_on_gpu_preview_save_pre": "fluidSim_warp_blender51.blender.gpu_particle_owner",
+        "_on_preview_save_pre": "fluidSim_warp_blender51.blender.liquid_preview.handler",
+    },
     "save_post": {"_on_gpu_preview_save_post": "fluidSim_warp_blender51.blender.gpu_particle_owner"},
     "render_init": {
         "_on_render_init": "fluidSim_warp_blender51.blender.render",

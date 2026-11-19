@@ -31,7 +31,7 @@ from ..sim.whitewater_types import (
     partition_type_indices,
     validate_type_values,
 )
-from .scene_access import active_domain_settings
+from .scene_access import active_domain_object, active_domain_settings
 
 SURFACE_NAME = "FluidSim Surface"
 PARTICLES_NAME = "FluidSim Particles"
@@ -1138,6 +1138,7 @@ class PublishedPoints:
     whitewater: np.ndarray
     whitewater_types: np.ndarray | None
     whitewater_radius: float
+    output_owner_key: tuple[int | None, str] | None = None
 
     @property
     def particle_count(self) -> int:
@@ -1159,6 +1160,14 @@ def _read_only_view(values, dtype):
     view = array.view()
     view.flags.writeable = False
     return view
+
+
+def _preview_output_owner_key(scene):
+    fs = getattr(scene, "fluidsim", None)
+    domain = active_domain_object(scene)
+    pointer = getattr(domain, "as_pointer", None)
+    domain_key = int(pointer()) if callable(pointer) else id(domain) if domain is not None else None
+    return domain_key, str(getattr(fs, "output_collection_name", "") or "FluidSim Output")
 
 
 def _record_published_points(scene, payload, *, preserve_preview_points=False):
@@ -1187,6 +1196,7 @@ def _record_published_points(scene, payload, *, preserve_preview_points=False):
         whitewater=whitewater,
         whitewater_types=types,
         whitewater_radius=whitewater_radius,
+        output_owner_key=_preview_output_owner_key(scene),
     )
     return _LATEST_PUBLISHED_POINTS
 
@@ -1194,6 +1204,40 @@ def _record_published_points(scene, payload, *, preserve_preview_points=False):
 def latest_published_points() -> PublishedPoints | None:
     """Return the most recent published point record, or ``None``."""
     return _LATEST_PUBLISHED_POINTS
+
+
+def persist_preview_points_for_save(scene):
+    """Save the already displayed liquid without a solver readback or per-frame ID work.
+
+    Surface-only rendering keeps Liquid Preview's particles in RAM. Materialize
+    that record at the save boundary into the existing owned particle output,
+    which the load path can seed even while particle rendering stays disabled.
+    """
+    fs = getattr(scene, "fluidsim", None)
+    record = latest_published_points()
+    pointer = getattr(scene, "as_pointer", None)
+    if (not getattr(fs, "liquid_preview_enabled", False) or record is None
+            or not callable(pointer) or record.scene_key != int(pointer())
+            or record.output_owner_key != _preview_output_owner_key(scene)):
+        return False
+    # Selected particle outputs were already published with their attributes.
+    if getattr(fs, "show_particles", False):
+        return False
+    if not record.particle_count:
+        _clear_points(scene, PARTICLES_NAME)
+        return True
+    from . import materials
+    from .liquid_display import apply_viewport
+
+    obj = _ensure_point_object(scene, PARTICLES_NAME)
+    if _supports_pointcloud():
+        _swap_points(obj, record.positions, record.particle_radius)
+    else:
+        _swap_vertex_cloud(obj, record.positions)
+    _ensure_material(materials.ensure_particle_material, scene, obj)
+    _set_hidden(obj, True, viewport=False)
+    apply_viewport(scene, deferred=False)
+    return True
 
 
 def seed_published_points_from_saved_outputs(scene):
@@ -1208,7 +1252,7 @@ def seed_published_points_from_saved_outputs(scene):
     global _LATEST_PUBLISHED_POINTS
     pointer = getattr(scene, "as_pointer", None)
     current = _LATEST_PUBLISHED_POINTS
-    if current is not None and (
+    if current is not None and current.output_owner_key == _preview_output_owner_key(scene) and (
             current.scene_key is None or not callable(pointer)
             or current.scene_key == pointer()):
         return None  # already published for this scene
@@ -1242,6 +1286,7 @@ def seed_published_points_from_saved_outputs(scene):
         whitewater=_EMPTY_POINTS,
         whitewater_types=None,
         whitewater_radius=0.0,
+        output_owner_key=_preview_output_owner_key(scene),
     )
     return _LATEST_PUBLISHED_POINTS
 
