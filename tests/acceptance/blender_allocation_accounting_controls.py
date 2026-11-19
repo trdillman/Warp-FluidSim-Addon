@@ -16,6 +16,8 @@ import warp as wp
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests" / "support"))
+from _test_device import script_device
 from fluidSim_warp_blender51.sim import memory_safety, solver as solver_module
 from fluidSim_warp_blender51.sim.solver import FluidSolver, SolverSettings
 
@@ -25,7 +27,8 @@ ns = runpy.run_path(
 run_case = ns["run_case"]
 inventory = ns["inventory"]
 memory_sample = ns["memory_sample"]
-device = wp.get_device("cuda:0")
+device_alias = script_device()
+device = wp.get_device(device_alias)
 base = SolverSettings(
     domain_min=(0.0, 0.0, 0.0),
     domain_max=(0.8, 0.8, 0.8),
@@ -34,7 +37,7 @@ base = SolverSettings(
     max_particles=32,
     max_whitewater=16,
     surface_enabled=False,
-    device="cuda:0",
+    device=device_alias,
 )
 
 
