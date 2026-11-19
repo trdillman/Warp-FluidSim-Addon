@@ -1,5 +1,6 @@
 """Fresh-child failure propagation and the release lane's fixed contract."""
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,13 +29,14 @@ def test_successful_child_returns_raw_evidence(monkeypatch, tmp_path):
     assert bench._run_trial(["blender"], out)["records"][0]["hostMs"] == 17
 
 
-def test_zero_exit_cannot_reuse_stale_payload(monkeypatch, tmp_path):
+def test_zero_exit_cannot_reuse_stale_payload(tmp_path):
     out = tmp_path / "settings.json"
     out.write_text("{}")
-    monkeypatch.setattr(bench.subprocess, "run", lambda *a, **kw: SimpleNamespace(
-        returncode=0, stdout="", stderr=""))
     with pytest.raises(RuntimeError, match="missing marker"):
-        bench._run_trial(["blender"], out, expect_marker="DEMO-SETTINGS-EXTRACT-PASS")
+        # Settings extraction uses Popen so both demo markers share bounded cleanup.
+        # Run a real zero-exit host child; a bare Blender name must never escape a stale mock.
+        bench._run_trial([sys.executable, "-c", "pass"], out,
+                         expect_marker="DEMO-SETTINGS-EXTRACT-PASS")
     assert not out.exists()
 
 
