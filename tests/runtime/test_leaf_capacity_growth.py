@@ -60,7 +60,9 @@ class _Runtime:
             mark_initialized_through=lambda frame: self.events.append(
                 ("effects", frame)),
             adopt_cadence_history=lambda other: self.events.append(
-                ("history", other))))
+                ("history", other)),
+            applied_instances=lambda: self.applied_effects))
+        self.applied_effects = ()
         self.state = {"frame": 17}
         self.import_error = None
 
@@ -84,6 +86,7 @@ class _Session:
     def __init__(self, solver):
         self.solver = solver
         self.profiler = None
+        self.admitted_effects = ()
         self.scene_inputs = SimpleNamespace(
             export_frozen_state=lambda: "FROZEN",
             export_collider_history=lambda frame: {"frame": frame})
@@ -148,9 +151,8 @@ def rig(monkeypatch):
     def preflight(scene, **kwargs):
         seen["preflight"] = kwargs
         seen["order"] = list(solver.events)
-        settings = kwargs["applied_allocation"]
-        snapshot = _Snapshot(replace(_settings(), leaf_capacity=settings.leaf_capacity,
-                                     max_particles=kwargs["runtime_capacity"]))
+        # Admission is run against the settings that will be allocated.
+        snapshot = _Snapshot(kwargs["exact_settings"])
         seen["snapshot"] = snapshot
         return snapshot, None
 
@@ -159,6 +161,7 @@ def rig(monkeypatch):
 
     def prepare(scene, settings, snapshot, profiler):
         seen["prepared_settings"] = settings
+        seen["prepared_effects"] = snapshot.effects
         return candidate, ()
 
     monkeypatch.setattr(owner, "_preflight", preflight)
@@ -210,6 +213,22 @@ def test_growth_changes_allocation_only(rig):
     assert prepared.open_boundaries is True
     assert prepared.leaf_capacity == 12288
     assert rig.seen["snapshot"].settings is prepared
+    # ...and admission itself ran against those same settings.
+    assert rig.seen["preflight"]["exact_settings"] is prepared
+
+
+def test_growth_installs_the_running_effects_not_the_scene_draft(rig):
+    applied = SimpleNamespace(instance_id="vortex", strength=2.0)
+    stale = SimpleNamespace(instance_id="vortex", strength=1.0)
+    disabled = SimpleNamespace(instance_id="off", strength=0.0)
+    rig.solver.applied_effects = (applied,)
+    rig.session.admitted_effects = (stale, disabled)
+
+    result = rig.owner.grow_leaf_capacity(SimpleNamespace(), _refusal())
+
+    assert result.grew
+    # The live value replaces the stale admitted one; disabled entries stay.
+    assert rig.seen["prepared_effects"] == (applied, disabled)
 
 
 def test_growth_keeps_frozen_scene_inputs(rig):
@@ -448,3 +467,64 @@ def test_collider_history_exports_the_samples_before_the_refused_frame():
     later = inputs.export_collider_history(12)
     assert [frame for _value, frame in later["position"].values()] == [11]
     assert np.isfinite(next(iter(later["position"].values()))[0]).all()
+
+
+# --- admission settings and checkpoint-sized resume --------------------------
+
+def _preflight_rig(monkeypatch, authored):
+    monkeypatch.setattr(admission, "build_settings", lambda _scene: authored)
+    monkeypatch.setattr(admission, "narrow_band_refusal", lambda *_a: "")
+    monkeypatch.setattr(admission, "rigid_refusal", lambda *_a: "")
+    monkeypatch.setattr(
+        memory_safety, "vram_snapshot", lambda _device: SimpleNamespace())
+    planned = {}
+
+    class _Plan:
+        blockers = ()
+
+    def plan_scene(scene, settings, resources, **kwargs):
+        planned["settings"] = settings
+        planned["kwargs"] = kwargs
+        return SimpleNamespace(capacity_plan=_Plan())
+
+    session = SimpleNamespace(
+        solver=None, set_capacity_plan=lambda *_a, **_k: None)
+    owner = _owner(session)
+    monkeypatch.setattr(owner, "_plan_scene", plan_scene)
+    monkeypatch.setattr(owner, "_replan_snapshot",
+                        lambda snapshot, *_a, **_k: snapshot)
+    return owner, planned
+
+
+def test_preflight_can_plan_the_exact_settings_it_will_allocate(monkeypatch):
+    owner, planned = _preflight_rig(monkeypatch, _settings(open_boundaries=False))
+    running = _settings(open_boundaries=True, leaf_capacity=12288)
+
+    snapshot, _ = owner._preflight(
+        SimpleNamespace(), operation="RESET", exact_settings=running)
+
+    assert planned["settings"] == running
+    assert snapshot.settings == running
+
+
+def test_initialize_can_size_the_solver_for_a_checkpoints_leaves(monkeypatch):
+    owner, planned = _preflight_rig(monkeypatch, _settings(leaf_capacity=8192))
+
+    snapshot, _ = owner._preflight(
+        SimpleNamespace(), operation="INITIALIZE", minimum_leaf_capacity=12288)
+    assert snapshot.settings.leaf_capacity == 12288
+    assert planned["settings"].leaf_capacity == 12288
+
+    # A checkpoint that already fits leaves the authored value alone.
+    snapshot, _ = owner._preflight(
+        SimpleNamespace(), operation="INITIALIZE", minimum_leaf_capacity=100)
+    assert snapshot.settings.leaf_capacity == 8192
+
+
+def test_bake_resume_floor_comes_from_the_checkpoint_leaf_count():
+    from fluidSim_warp_blender51.blender.production_bake import _leaf_floor
+
+    assert _leaf_floor(SimpleNamespace(scalars={"leaf_count": 9398})) == {
+        "minimum_leaf_capacity": 9398}
+    assert _leaf_floor(SimpleNamespace(scalars={})) == {}
+    assert _leaf_floor(None) == {}

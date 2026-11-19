@@ -453,15 +453,27 @@ class SimulationAdmission:
                    ignore_memory_safeguard=False,
                    defer_particle_growth=False, operation=None,
                    applied_allocation=None, frozen_input_state=None,
-                   collider_history=None):
+                   collider_history=None, exact_settings=None,
+                   minimum_leaf_capacity=None):
         from ..sim.memory_safety import vram_snapshot
 
         if operation is None:
             operation = (
                 "REINITIALIZE" if self._owns_scene(scene)
                 else "INITIALIZE")
-        settings = build_settings(scene)
-        if applied_allocation is not None:
+        if exact_settings is not None:
+            # Replacing a running solver in place: admit, plan and allocate
+            # exactly the settings it runs with, not the scene's edits.
+            settings = exact_settings
+        else:
+            settings = build_settings(scene)
+        if minimum_leaf_capacity is not None and (
+                int(settings.leaf_capacity) < int(minimum_leaf_capacity)):
+            # A saved checkpoint holds more leaves than the authored value;
+            # the authored setting is left alone, only the allocation grows.
+            settings = replace(
+                settings, leaf_capacity=int(minimum_leaf_capacity))
+        if applied_allocation is not None and exact_settings is None:
             preserved = {
                 name: getattr(applied_allocation, name)
                 for name in RESET_PRESERVED_ALLOCATION_FIELDS
@@ -711,7 +723,7 @@ class SimulationAdmission:
             scene.fluidsim.status = "Replacement failed after cutover; solver released"
 
     def initialize(self, scene, *, depsgraph=None, ignore_memory_safeguard=False,
-                   frozen_input_state=None):
+                   frozen_input_state=None, minimum_leaf_capacity=None):
         from ..diagnostics.profiler import Profiler
         from . import cache_identity
 
@@ -726,7 +738,9 @@ class SimulationAdmission:
                 scene, depsgraph=depsgraph, operation=operation,
                 ignore_memory_safeguard=ignore_memory_safeguard,
                 **({"frozen_input_state": frozen_input_state}
-                   if frozen_input_state is not None else {}))
+                   if frozen_input_state is not None else {}),
+                **({"minimum_leaf_capacity": minimum_leaf_capacity}
+                   if minimum_leaf_capacity is not None else {}))
             validate = getattr(snapshot, "assert_evaluation_valid", None)
             if callable(validate):
                 validate(scene)
@@ -790,6 +804,17 @@ class SimulationAdmission:
         finally:
             if snapshot is not None:
                 self._release_snapshot(snapshot)
+
+    def _running_effects(self, solver):
+        """The effect instances the running solver executes, as installed."""
+        admitted = tuple(getattr(self.session, "admitted_effects", ()) or ())
+        manager = getattr(getattr(solver, "features", None), "effects", None)
+        applied_of = getattr(manager, "applied_instances", None)
+        applied = tuple(applied_of()) if callable(applied_of) else ()
+        if not admitted:
+            return applied
+        by_id = {item.instance_id: item for item in applied}
+        return tuple(by_id.get(item.instance_id, item) for item in admitted)
 
     def grow_leaf_capacity(self, scene, error, *, depsgraph=None,
                            effect_frame=None):
@@ -857,14 +882,16 @@ class SimulationAdmission:
                 snapshot, _growth = self._preflight(
                     scene, depsgraph=depsgraph,
                     runtime_capacity=int(solver.particles.capacity),
-                    operation="RESET", applied_allocation=settings,
+                    operation="RESET", exact_settings=settings,
                     **({"frozen_input_state": frozen_state}
                        if frozen_state is not None else {}),
                     collider_history=collider_history)
             except RuntimeError as exc:
                 return LeafGrowthResult(
                     "BLOCKED", current, current, required, str(exc))
-            snapshot.settings = settings
+            # The running effect stack carries over as applied, not the
+            # scene's current (possibly unapplied or held) effect edits.
+            snapshot.effects = self._running_effects(solver)
             candidate, _warnings = self._prepare_solver_replacement(
                 scene, settings, snapshot, self.session.profiler)
             candidate.import_checkpoint_state(state)
@@ -882,7 +909,6 @@ class SimulationAdmission:
                 # The refused frame's before-emission effects already ran and
                 # are part of the checkpoint.
                 resume()
-            self._validate_effect_snapshot(scene, snapshot)
             self._commit_solver_replacement(
                 candidate, snapshot, profiler=self.session.profiler,
                 settings=settings)

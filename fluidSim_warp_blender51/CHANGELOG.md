@@ -11,6 +11,9 @@
   and the same frame runs again; if growth is off (Auto Grow Particle Pool),
   would not fit in memory or cannot be done safely, Live pauses with the reason
   and the running solver untouched. The authored Leaf Capacity is not rewritten.
+  Growth keeps the running solver's own settings, effects, frozen inputs and
+  collider motion, and a bake that grew can still be resumed: the solver is
+  sized from the checkpoint's leaf count.
 - Newly baked cache v3 manifests declare input identity schema 2. Source and
   frame identities include evaluated triangle connectivity, point coordinates,
   selected mesh/point/volume dependencies, their transforms, resolved VDB
