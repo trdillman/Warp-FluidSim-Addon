@@ -444,6 +444,17 @@ def _verified_checkpoint_header(base: Path, entry: FrameEntry, manifest) -> tupl
     return known
 
 
+def _leaf_floor(payload) -> dict:
+    """Initialize keyword that sizes the solver for a checkpoint's leaves.
+
+    A bake that grew its sparse-leaf allocation checkpoints more leaves than
+    the authored Leaf Capacity, so resuming or restoring from it needs a solver
+    allocated at least that large. The authored setting is not changed.
+    """
+    leaves = int(((getattr(payload, "scalars", None) or {}).get("leaf_count")) or 0)
+    return {"minimum_leaf_capacity": leaves} if leaves > 0 else {}
+
+
 def _rigid_records(solver) -> tuple[RigidBodyRecord, ...]:
     """Cache v3.1: the Dynamic collider poses at the end of this frame."""
     states = getattr(solver, "rigid_body_states", None)
@@ -933,7 +944,8 @@ class ProductionBakeBackend:
             previous_solver = getattr(self.sess, "solver", None)
             try:
                 self.sess.initialize(scene, depsgraph=depsgraph,
-                    **({"frozen_input_state": frozen_state} if frozen_state is not None else {}))
+                    **({"frozen_input_state": frozen_state} if frozen_state is not None else {}),
+                    **_leaf_floor(payload))
             except Exception:
                 # Admission may fail after authority transferred and the new
                 # solver was released. A preflight refusal instead preserves
@@ -1178,6 +1190,7 @@ class ProductionBakeBackend:
                         scene,
                         depsgraph=self._bpy().context.evaluated_depsgraph_get(),
                         **({"frozen_input_state": frozen_state} if frozen_state is not None else {}),
+                        **_leaf_floor(self._original_session_payload),
                     )
                     self.sess.sync_scene(
                         scene, self._bpy().context.evaluated_depsgraph_get())

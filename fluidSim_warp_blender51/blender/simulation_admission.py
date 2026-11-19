@@ -241,7 +241,8 @@ def _legacy_footprint(legacy_plan, compiler, context, settings):
 def capture_snapshot(
         scene, settings, resources, *, depsgraph=None, scene_identity=None,
         scene_key="", effect_builder=lambda _scene: (),
-        additional_transaction_bytes=0, frozen_input_state=None):
+        additional_transaction_bytes=0, frozen_input_state=None,
+        collider_history=None):
     """Gather and compile one evaluated scene exactly once.
 
     The compiler is always released.  The returned SceneInputs owner is either
@@ -261,6 +262,8 @@ def capture_snapshot(
     try:
         if frozen_input_state is not None:
             inputs.restore_frozen_state(frozen_input_state)
+        if collider_history is not None:
+            inputs.restore_collider_history(collider_history)
         evaluation = inputs.evaluate(
             scene, depsgraph, device=settings.device, staged=True,
             include_auto_seeds=True)
@@ -405,7 +408,8 @@ class SimulationAdmission:
 
     def _plan_scene(
             self, scene, settings, resources, *, depsgraph=None,
-            additional_transaction_bytes=0, frozen_input_state=None):
+            additional_transaction_bytes=0, frozen_input_state=None,
+            collider_history=None):
         from . import cache_identity
 
         return capture_snapshot(
@@ -416,6 +420,8 @@ class SimulationAdmission:
             additional_transaction_bytes=additional_transaction_bytes,
             **({"frozen_input_state": frozen_input_state}
                if frozen_input_state is not None else {}),
+            **({"collider_history": collider_history}
+               if collider_history is not None else {}),
         )
 
     def _replan_snapshot(
@@ -446,15 +452,28 @@ class SimulationAdmission:
     def _preflight(self, scene, *, depsgraph=None, runtime_capacity=None,
                    ignore_memory_safeguard=False,
                    defer_particle_growth=False, operation=None,
-                   applied_allocation=None, frozen_input_state=None):
+                   applied_allocation=None, frozen_input_state=None,
+                   collider_history=None, exact_settings=None,
+                   minimum_leaf_capacity=None):
         from ..sim.memory_safety import vram_snapshot
 
         if operation is None:
             operation = (
                 "REINITIALIZE" if self._owns_scene(scene)
                 else "INITIALIZE")
-        settings = build_settings(scene)
-        if applied_allocation is not None:
+        if exact_settings is not None:
+            # Replacing a running solver in place: admit, plan and allocate
+            # exactly the settings it runs with, not the scene's edits.
+            settings = exact_settings
+        else:
+            settings = build_settings(scene)
+        if minimum_leaf_capacity is not None and (
+                int(settings.leaf_capacity) < int(minimum_leaf_capacity)):
+            # A saved checkpoint holds more leaves than the authored value;
+            # the authored setting is left alone, only the allocation grows.
+            settings = replace(
+                settings, leaf_capacity=int(minimum_leaf_capacity))
+        if applied_allocation is not None and exact_settings is None:
             preserved = {
                 name: getattr(applied_allocation, name)
                 for name in RESET_PRESERVED_ALLOCATION_FIELDS
@@ -474,7 +493,9 @@ class SimulationAdmission:
             scene, settings, resources, depsgraph=depsgraph,
             additional_transaction_bytes=live_solver_bytes,
             **({"frozen_input_state": frozen_input_state}
-               if frozen_input_state is not None else {}))
+               if frozen_input_state is not None else {}),
+            **({"collider_history": collider_history}
+               if collider_history is not None else {}))
         snapshot.settings = settings
         if not hasattr(snapshot, "frame_start"):
             snapshot.frame_start = int(getattr(scene, "frame_start", 1))
@@ -702,7 +723,7 @@ class SimulationAdmission:
             scene.fluidsim.status = "Replacement failed after cutover; solver released"
 
     def initialize(self, scene, *, depsgraph=None, ignore_memory_safeguard=False,
-                   frozen_input_state=None):
+                   frozen_input_state=None, minimum_leaf_capacity=None):
         from ..diagnostics.profiler import Profiler
         from . import cache_identity
 
@@ -717,7 +738,9 @@ class SimulationAdmission:
                 scene, depsgraph=depsgraph, operation=operation,
                 ignore_memory_safeguard=ignore_memory_safeguard,
                 **({"frozen_input_state": frozen_input_state}
-                   if frozen_input_state is not None else {}))
+                   if frozen_input_state is not None else {}),
+                **({"minimum_leaf_capacity": minimum_leaf_capacity}
+                   if minimum_leaf_capacity is not None else {}))
             validate = getattr(snapshot, "assert_evaluation_valid", None)
             if callable(validate):
                 validate(scene)
@@ -782,6 +805,19 @@ class SimulationAdmission:
             if snapshot is not None:
                 self._release_snapshot(snapshot)
 
+    @staticmethod
+    def _running_effects(solver):
+        """The effect stack the running solver executes, exactly as installed.
+
+        The runtime manager is the authority: Compile & Apply swaps a new stack
+        into it without touching the admission-time inventory, so that
+        inventory can name effects that are no longer running (or miss new
+        ones).
+        """
+        manager = getattr(getattr(solver, "features", None), "effects", None)
+        applied_of = getattr(manager, "applied_instances", None)
+        return tuple(applied_of()) if callable(applied_of) else ()
+
     def grow_leaf_capacity(self, scene, error, *, depsgraph=None,
                            effect_frame=None):
         """Replace the solver with one holding more sparse leaves, same state.
@@ -841,17 +877,23 @@ class SimulationAdmission:
                 max_particles=int(solver.particles.capacity))
             # Inputs frozen at the first frame stay frozen in the replacement.
             frozen_state = self.session.scene_inputs.export_frozen_state()
+            # Moving colliders get the velocity the refused frame was given.
+            collider_history = self.session.scene_inputs.export_collider_history(
+                int(getattr(scene, "frame_current", 0)))
             try:
                 snapshot, _growth = self._preflight(
                     scene, depsgraph=depsgraph,
                     runtime_capacity=int(solver.particles.capacity),
-                    operation="RESET", applied_allocation=settings,
+                    operation="RESET", exact_settings=settings,
                     **({"frozen_input_state": frozen_state}
-                       if frozen_state is not None else {}))
+                       if frozen_state is not None else {}),
+                    collider_history=collider_history)
             except RuntimeError as exc:
                 return LeafGrowthResult(
                     "BLOCKED", current, current, required, str(exc))
-            snapshot.settings = settings
+            # The running effect stack carries over as applied, not the
+            # scene's current (possibly unapplied or held) effect edits.
+            snapshot.effects = self._running_effects(solver)
             candidate, _warnings = self._prepare_solver_replacement(
                 scene, settings, snapshot, self.session.profiler)
             candidate.import_checkpoint_state(state)
@@ -869,7 +911,6 @@ class SimulationAdmission:
                 # The refused frame's before-emission effects already ran and
                 # are part of the checkpoint.
                 resume()
-            self._validate_effect_snapshot(scene, snapshot)
             self._commit_solver_replacement(
                 candidate, snapshot, profiler=self.session.profiler,
                 settings=settings)

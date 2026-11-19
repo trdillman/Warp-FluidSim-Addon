@@ -626,6 +626,10 @@ class SceneInputs:
         self._session_generation = getattr(self, "_session_generation", 0) + 1
         self._collider_prev = {}
         self._collider_rotation_prev = {}
+        # The sample each history entry replaced, so a frame that has already
+        # been evaluated can still be re-evaluated from the one before it.
+        self._collider_prev_before = {}
+        self._collider_rotation_prev_before = {}
         self._evaluated_mesh_cache = {}
         self._mesh_consumers = []
         self._source_mesh_cache_keys = set()
@@ -966,12 +970,45 @@ class SceneInputs:
         self.device = device
         return len({id(consumer.mesh) for consumer in consumers})
 
+    def export_collider_history(self, frame):
+        """Collider motion samples as they stood before ``frame`` was evaluated.
+
+        A solver replaced mid-frame needs them so the repeated frame computes
+        the same collider velocities; evaluating ``frame`` again from its own
+        sample would give zero.
+        """
+        frame = int(frame)
+
+        def before(current, earlier):
+            history = {}
+            for identity, (value, sample_frame) in current.items():
+                if int(sample_frame) == frame:
+                    value = earlier.get(identity)
+                    if value is None:
+                        continue
+                    history[identity] = value
+                else:
+                    history[identity] = (value, sample_frame)
+            return history
+
+        return dict(
+            position=before(self._collider_prev, self._collider_prev_before),
+            rotation=before(
+                self._collider_rotation_prev,
+                self._collider_rotation_prev_before))
+
+    def restore_collider_history(self, history):
+        self._collider_prev = dict(history.get("position", {}))
+        self._collider_rotation_prev = dict(history.get("rotation", {}))
+
     def object_velocity(self, obj, scene):
         fps = scene.render.fps / scene.render.fps_base
         current = np.array(obj.matrix_world.translation)
         identity = _object_identity(obj)
         previous = self._collider_prev.get(identity)
         frame = scene.frame_current
+        if previous is not None and previous[1] != frame:
+            self._collider_prev_before[identity] = previous
         self._collider_prev[identity] = (current, frame)
         if previous is None or frame <= previous[1]:
             return (0.0, 0.0, 0.0)
@@ -986,6 +1023,8 @@ class SceneInputs:
         identity = _object_identity(obj)
         previous = self._collider_rotation_prev.get(identity)
         frame = scene.frame_current
+        if previous is not None and previous[1] != frame:
+            self._collider_rotation_prev_before[identity] = previous
         self._collider_rotation_prev[identity] = (current.copy(), frame)
         if previous is None or frame <= previous[1]:
             return (0.0, 0.0, 0.0)

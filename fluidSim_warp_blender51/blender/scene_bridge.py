@@ -335,13 +335,20 @@ class Session:
             scene, depsgraph, operation=operation)
 
     def initialize(self, scene, *, depsgraph=None,
-                   ignore_memory_safeguard=False, frozen_input_state=None):
-        """Admit one coherent Blender scene into a running Solver Session."""
+                   ignore_memory_safeguard=False, frozen_input_state=None,
+                   minimum_leaf_capacity=None):
+        """Admit one coherent Blender scene into a running Solver Session.
+
+        ``minimum_leaf_capacity`` sizes the solver for a checkpoint that holds
+        more sparse leaves than the authored Leaf Capacity (it grew in a bake).
+        """
         return self._admission().initialize(
             scene, depsgraph=depsgraph,
             ignore_memory_safeguard=ignore_memory_safeguard,
             **({"frozen_input_state": frozen_input_state}
-               if frozen_input_state is not None else {}))
+               if frozen_input_state is not None else {}),
+            **({"minimum_leaf_capacity": minimum_leaf_capacity}
+               if minimum_leaf_capacity is not None else {}))
 
     def owns_scene(self, scene):
         return bool(
