@@ -1781,11 +1781,9 @@ def author_tsunami_parthenon():
     ds.max_substeps = 16
     ds.whitewater_enabled = False
     ds.profiling_enabled = False
-    show_liquid(scene, "Tsunami", TSUNAMI_WATER_COLOR)
-    # Render outputs stay Surface + Particles; the viewport itself draws the
-    # particles through Liquid Preview. In Surface Mesh display mode the
-    # viewport hides the particle points and shows only the mesh.
-    fs.liquid_display_mode = "PREVIEW"
+    show_liquid(scene, "Tsunami", TSUNAMI_WATER_COLOR, view="PARTICLES")
+    # The viewport shows the Render Outputs choice: the raw particle points.
+    fs.liquid_display_mode = "SURFACE"
     fs.live = True
     scene.frame_start = 1
     scene.frame_end = tp.FRAMES

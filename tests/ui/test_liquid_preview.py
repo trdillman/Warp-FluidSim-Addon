@@ -823,7 +823,8 @@ def test_display_modes_change_only_liquid_viewport_objects(monkeypatch):
         scene.fluidsim.liquid_display_mode = mode
         liquid_display.apply_viewport(scene)
         assert surface.hidden is expected
-        assert particles.hidden is True
+        # Render Outputs selects particles too, so the ordinary mode shows them.
+        assert particles.hidden is expected
         assert whitewater.hidden is None
         assert not surface.hide_render and not particles.hide_render
 

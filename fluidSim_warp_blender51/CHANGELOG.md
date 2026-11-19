@@ -14,6 +14,11 @@
   Growth keeps the running solver's own settings, effects, frozen inputs and
   collider motion, and a bake that grew can still be resumed: the solver is
   sized from the checkpoint's leaf count.
+- Fixed: particles chosen under Render Outputs were hidden in the viewport
+  (only whitewater showed), so attribute colours on them could not be seen
+  either. The "Render Outputs" Liquid Display mode (formerly "Surface Mesh")
+  again shows exactly what Render Outputs selects: particles, surface, or both.
+  Liquid Preview and Off are unchanged.
 - A file that opens in Liquid Preview now draws the liquid it was saved with
   before the first step, instead of an empty viewport until Play.
 - Newly baked cache v3 manifests declare input identity schema 2. Source and

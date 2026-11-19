@@ -44,9 +44,18 @@ def preview_changed(settings, context):
 def viewport_families(scene, surface_enabled):
     """Viewport geometry needs, independent of render/export visibility."""
     from .liquid_preview import handler
-    mode = getattr(scene.fluidsim, "liquid_display_mode", None)
+    fs = scene.fluidsim
+    mode = getattr(fs, "liquid_display_mode", None)
     ordinary = mode == "SURFACE" or (mode == "PREVIEW" and handler.failure() is not None)
-    return bool(ordinary and surface_enabled), bool(ordinary and not surface_enabled)
+    if not ordinary:
+        return False, False
+    # The ordinary viewport shows what Render Outputs selects, so particles
+    # (and their attribute colours) are visible whenever they are selected.
+    surface = bool(surface_enabled and getattr(fs, "show_surface", False))
+    particles = bool(getattr(fs, "show_particles", False))
+    if not (surface or particles):
+        return bool(surface_enabled), not surface_enabled
+    return surface, particles
 
 
 def _viewport_geometry(scene, surface_enabled, surface):
@@ -71,10 +80,12 @@ def viewport_summary(scene):
     enabled = bool(getattr(output._domain_settings(scene), "surface_enabled", False))
     surface = output.output_object(scene, output.SURFACE_NAME, ensure=False)
     surface_visible, particles_visible = _viewport_geometry(scene, enabled, surface)
-    label = "Surface Mesh" if surface_visible else "Particles" if particles_visible else "Off"
+    label = ("Surface + Particles" if surface_visible and particles_visible else
+             "Surface Mesh" if surface_visible else
+             "Particles" if particles_visible else "Off")
     if mode == "PREVIEW":
         label += " (preview fallback)"
-    elif enabled and particles_visible:
+    elif viewport_families(scene, enabled)[0] and not surface_visible:
         label += " (surface unavailable)"
     return label
 
