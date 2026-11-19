@@ -164,22 +164,27 @@ def main(report_path=None):
         )
         from fluidSim_warp_blender51.blender.deck import controls, wheel
 
-        # The render-output authoring controls never silently become viewport controls.
+        # Ordinary display follows selected render families. Off and Preview
+        # still control viewport mode without mutating the authored choice.
         check("render output RNA describes its separate scope",
               fs.bl_rna.properties["liquid_view_mode"].name == "Render Outputs"
               and "Independent of Liquid Display" in
               fs.bl_rna.properties["liquid_view_mode"].description)
-        for authored, display, visible, label in (
-                ("HIDDEN", "SURFACE", True, "Liquid Viewport: Surface Mesh"),
-                ("PARTICLES", "SURFACE", True, "Liquid Viewport: Surface Mesh"),
-                ("SURFACE", "OFF", False, "Liquid Viewport: Off"),
-                ("HIDDEN", "PREVIEW", False, "Liquid Viewport: Liquid Preview")):
+        surface = output.output_object(scene, output.SURFACE_NAME)
+        particles = output.output_object(scene, output.PARTICLES_NAME)
+        for authored, display, show_surface, show_particles, label in (
+                ("HIDDEN", "SURFACE", True, False, "Liquid Viewport: Surface Mesh"),
+                ("PARTICLES", "SURFACE", False, True, "Liquid Viewport: Particles"),
+                ("SURFACE_PARTICLES", "SURFACE", True, True, "Liquid Viewport: Surface + Particles"),
+                ("SURFACE", "OFF", False, False, "Liquid Viewport: Off"),
+                ("HIDDEN", "PREVIEW", False, False, "Liquid Viewport: Liquid Preview")):
             fs.liquid_view_mode = authored
             fs.liquid_display_mode = display
             liquid_display.apply_viewport(scene, deferred=False)
-            check(f"{authored}/{display} preserves independent viewport policy",
-                  output.output_object(scene, output.SURFACE_NAME).hide_get() != visible
-                  and fs.liquid_view_mode == authored)
+            check(f"{authored}/{display} preserves authored output selection",
+                  fs.liquid_view_mode == authored)
+            check(f"{authored}/{display} applies viewport family visibility",
+                  (not surface.hide_get(), not particles.hide_get()) == (show_surface, show_particles))
             check(f"{authored}/{display} summary follows viewport policy",
                   any(row.get("text") == label for row in
                       recorded_draw(ui_scene.FLUIDSIM_PT_scene_outputs)))
