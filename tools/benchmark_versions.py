@@ -82,6 +82,28 @@ def _snapshot_candidate(source, destination):
     return before
 
 
+def _communicate_demo_trial(child, command, timeout):
+    if sys.platform != "win32":
+        return (*child.communicate(timeout=timeout), child.pid)
+
+    # IFEO can substitute a broker launcher for the actual Blender process.
+    # Read the native executable and parent link while both processes are live.
+    from tools.gate.windows_trial_process import observe_executable
+
+    deadline = time.monotonic() + timeout
+    while True:
+        observed_pid = observe_executable(child, command[0])
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, timeout)
+        if observed_pid is not None:
+            return (*child.communicate(timeout=remaining), observed_pid)
+        try:
+            return (*child.communicate(timeout=min(0.2, remaining)), None)
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
     """One fresh child process, with retained failure logs for either harness."""
     out = Path(out)
@@ -91,7 +113,7 @@ def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
             with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   text=True, env=env, cwd=cwd) as child:
                 try:
-                    stdout, stderr = child.communicate(timeout=900)
+                    stdout, stderr, observed_pid = _communicate_demo_trial(child, command, 900)
                 except BaseException as exc:
                     child.kill()
                     stdout, stderr = child.communicate()
@@ -100,7 +122,6 @@ def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
                         exc.stdout, exc.stderr = stdout, stderr
                     raise
                 proc = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
-                observed_pid = child.pid
         else:
             proc = subprocess.run(command, capture_output=True, text=True, env=env,
                                   cwd=cwd, timeout=900)
@@ -115,7 +136,8 @@ def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
     if expect_marker and expect_marker not in proc.stdout:
         raise RuntimeError(f"trial missing marker {expect_marker}; see {out.with_suffix('.log')}")
     report = json.loads(out.read_text(encoding="utf-8"))
-    if expect_marker == "DEMO-PERFORMANCE-TRIAL-PASS" and report.get("processId") != observed_pid:
+    if expect_marker == "DEMO-PERFORMANCE-TRIAL-PASS" and (
+            observed_pid is None or report.get("processId") != observed_pid):
         raise RuntimeError("reported child process identity differs from launched process")
     return report
 

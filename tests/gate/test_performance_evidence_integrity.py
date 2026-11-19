@@ -1,6 +1,8 @@
 """CPU regressions for preserved evidence and independently checked claims."""
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,9 @@ from test_performance_budget import _campaign
 from tools import benchmark_versions as bench
 from tools import run_production_gate as gate
 from tools.performance_budget import evaluate_budget
+
+
+TRIAL_MARKER = 'DEMO-PERFORMANCE-TRIAL-PASS'
 
 
 def test_equal_but_shortened_duration_cannot_override_authored_settings():
@@ -146,6 +151,8 @@ def test_runner_rejects_wrong_observed_child_identity(monkeypatch, tmp_path, mut
 
 
 def test_trial_rejects_wrong_actual_process_id(monkeypatch, tmp_path):
+    from tools.gate import windows_trial_process
+
     out = tmp_path / 'trial.json'
     class Process:
         pid = 123
@@ -158,11 +165,49 @@ def test_trial_rejects_wrong_actual_process_id(monkeypatch, tmp_path):
             out.write_text(json.dumps({'processId': 999}))
             return 'DEMO-PERFORMANCE-TRIAL-PASS', ''
     monkeypatch.setattr(bench.subprocess, 'Popen', lambda *args, **kwargs: Process())
+    monkeypatch.setattr(windows_trial_process, 'observe_executable', lambda child, _: child.pid)
     with pytest.raises(RuntimeError, match='process'):
-        bench._run_trial(['child'], out, expect_marker='DEMO-PERFORMANCE-TRIAL-PASS')
+        bench._run_trial(['child'], out, expect_marker=TRIAL_MARKER)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='requires real Windows process ancestry')
+@pytest.mark.parametrize('wrapped, report_pid', [(False, 'child'), (True, 'child'),
+                                                (True, 'launcher'), (True, 'foreign')])
+def test_windows_trial_binds_live_executable_to_launcher(monkeypatch, tmp_path, wrapped, report_pid):
+    out = tmp_path / 'trial.json'
+    script = tmp_path / 'trial.py'
+    pid_expression = {'child': 'os.getpid()', 'launcher': 'os.getppid()',
+                      'foreign': str(os.getpid())}[report_pid]
+    script.write_text(
+        'import json, os, pathlib, time\n'
+        'time.sleep(0.8)\n'
+        f'pid = {pid_expression}\n'
+        f'pathlib.Path({str(out)!r}).write_text(json.dumps({{"processId": pid}}))\n'
+        f'print({TRIAL_MARKER!r})\n',
+        encoding='utf-8',
+    )
+    command = [sys.executable, str(script)]
+    if wrapped:
+        wrapper = tmp_path / 'launch.cmd'
+        wrapper.write_text(f'@"{sys.executable}" "{script}"\n', encoding='utf-8')
+        popen = subprocess.Popen
+
+        def launch(args, **kwargs):
+            assert args == command
+            return popen([os.environ['COMSPEC'], '/d', '/c', str(wrapper)], **kwargs)
+
+        monkeypatch.setattr(bench.subprocess, 'Popen', launch)
+    if report_pid == 'child':
+        assert bench._run_trial(command, out, expect_marker=TRIAL_MARKER)['processId'] != os.getpid()
+    else:
+        with pytest.raises(RuntimeError, match='reported child process identity'):
+            bench._run_trial(command, out, expect_marker=TRIAL_MARKER)
+        assert TRIAL_MARKER in out.with_suffix('.log').read_text()
 
 
 def test_cancelled_trial_kills_only_owned_child_and_keeps_output(monkeypatch, tmp_path):
+    from tools.gate import windows_trial_process
+
     out = tmp_path / 'trial.json'
     class Process:
         pid = 123
@@ -180,6 +225,7 @@ def test_cancelled_trial_kills_only_owned_child_and_keeps_output(monkeypatch, tm
             self.killed = True
     child = Process()
     monkeypatch.setattr(bench.subprocess, 'Popen', lambda *args, **kwargs: child)
+    monkeypatch.setattr(windows_trial_process, 'observe_executable', lambda child, _: child.pid)
     with pytest.raises(KeyboardInterrupt):
         bench._run_trial(['child'], out, expect_marker='DEMO-PERFORMANCE-TRIAL-PASS')
     assert child.killed
