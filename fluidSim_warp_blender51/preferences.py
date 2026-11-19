@@ -261,7 +261,8 @@ class FLUIDSIM_AP_preferences(bpy.types.AddonPreferences):
         layout = self.layout
         box = layout.box()
         box.label(text="Runtime", icon="SYSTEM")
-        box.label(text=f"Locked Warp {CERTIFIED_WARP_VERSION}; full GPU qualification pending.")
+        box.label(text=f"Warp {CERTIFIED_WARP_VERSION}: headless GPU gate passed "
+                       "(Windows x64, Blender 5.2.0, CUDA 13).")
 
         active_override = developer_override_active(
             str(getattr(self, "developer_warp_path", "") or "")

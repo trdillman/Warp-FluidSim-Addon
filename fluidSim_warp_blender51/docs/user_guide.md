@@ -17,9 +17,9 @@ FluidSim Warp 4.1.0 is a sparse-grid PIC/FLIP liquid simulator for Blender
 | FluidSim | 4.1.0 |
 | Blender | Blender 5.2.0 LTS or newer 5.2.x |
 | Operating systems | Windows x64 and Linux x64 |
-| GPU qualification | Warp 1.19.0 has not passed the full production GPU gate. Historical Windows 11 / RTX 4080 SUPER results do not certify this runtime; Linux x64 remains unqualified |
+| GPU qualification | Warp 1.19.0 is certified on Windows x64 with Blender 5.2.0: the headless production GPU gate passed on an RTX 4080 SUPER (evidence in `evidence/20261117-warp119-certification/`). The foreground GUI lane was not part of that run; Linux x64 remains unqualified |
 | Compute | NVIDIA CUDA GPU required for solver execution; CPU and macOS are not certified |
-| Warp dependency | NVIDIA Warp 1.19.0 (CUDA 13 build; its full GPU gate has not passed yet), installed via preferences button; 1.17.0 and 1.18.0 still load |
+| Warp dependency | NVIDIA Warp 1.19.0 (CUDA 13 build; certified on Windows x64 / Blender 5.2.0), installed via preferences button; 1.17.0 and 1.18.0 still load |
 | Cache compatibility | Cache v3 write/playback/resume; Cache v1 (1.0.x) is refused, and so are caches from 2.x: bake again (see [Migrating to 3.0](migrating_to_3_0.md)) |
 
 Install the extension ZIP for your platform. On first run, open **Edit →
@@ -48,9 +48,9 @@ override), FluidSim still runs but marks the runtime status as
 locked Warp"; **Upgrade to Locked Warp** (or **Install from File**) upgrades them to 1.19.0 after a
 restart. Warp older than 1.17.0 or a 2.x Warp is refused.
 
-The lock verifies the wheel's identity, size and SHA-256; it is not GPU
-certification. Preferences explicitly shows that full GPU qualification is
-pending. Offline installation requires the exact platform wheel listed in
+The lock verifies the wheel's identity, size and SHA-256. GPU certification
+of Warp 1.19.0 is a separate result from the headless production gate on
+Windows x64 / Blender 5.2.0, which Preferences states with its scope. Offline installation requires the exact platform wheel listed in
 `warp_wheels.lock.json`; older, wrong-platform or altered wheels are rejected
 without replacing the existing runtime. If Warp is already loaded, the verified
 replacement is staged and applied only after restarting Blender.

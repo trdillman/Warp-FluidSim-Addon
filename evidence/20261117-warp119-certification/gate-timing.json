@@ -1,0 +1,294 @@
+[
+  {
+    "step": "git whitespace",
+    "seconds": 0.1
+  },
+  {
+    "step": "python syntax",
+    "seconds": 0.8
+  },
+  {
+    "step": "tests/scripts/smoke_core.py",
+    "seconds": 10.6
+  },
+  {
+    "step": "tests/scripts/smoke_solver.py",
+    "seconds": 13.9
+  },
+  {
+    "step": "tests/validation/test_solver_validation.py",
+    "seconds": 13.4
+  },
+  {
+    "step": "tests/validation/test_validation.py",
+    "seconds": 6.0
+  },
+  {
+    "step": "GPU profiler smoke",
+    "seconds": 3.6
+  },
+  {
+    "step": "phase4 kernels on CUDA",
+    "seconds": 3.6
+  },
+  {
+    "step": "pytest CUDA regressions",
+    "seconds": 17.8
+  },
+  {
+    "step": "phase5 kernels on CUDA",
+    "seconds": 5.0
+  },
+  {
+    "step": "custom_effects kernels on CUDA",
+    "seconds": 6.5
+  },
+  {
+    "step": "parallel group (10 steps, wall)",
+    "seconds": 24.0
+  },
+  {
+    "step": "phase3 release validation in Blender",
+    "seconds": 6.0
+  },
+  {
+    "step": "phase4 release validation in Blender",
+    "seconds": 6.7
+  },
+  {
+    "step": "phase5 release validation in Blender",
+    "seconds": 5.2
+  },
+  {
+    "step": "properties_ui release validation in Blender",
+    "seconds": 5.2
+  },
+  {
+    "step": "demo cache build dam_break",
+    "seconds": 28.3
+  },
+  {
+    "step": "custom_effects release validation in Blender",
+    "seconds": 8.8
+  },
+  {
+    "step": "examples release validation in Blender",
+    "seconds": 4.5
+  },
+  {
+    "step": "tests/acceptance/blender_alembic_export_acceptance.py",
+    "seconds": 5.3
+  },
+  {
+    "step": "tests/acceptance/blender_usd_export_acceptance.py",
+    "seconds": 6.0
+  },
+  {
+    "step": "demo cache build crown_splash",
+    "seconds": 21.1
+  },
+  {
+    "step": "tests/acceptance/blender_rigid_publication_acceptance.py",
+    "seconds": 7.0
+  },
+  {
+    "step": "tests/acceptance/blender_collider_body_type_acceptance.py",
+    "seconds": 5.6
+  },
+  {
+    "step": "paused cache output acceptance",
+    "seconds": 4.8
+  },
+  {
+    "step": "demo analysis",
+    "seconds": 59.2
+  },
+  {
+    "step": "Blender acceptance batch (1 scripts)",
+    "seconds": 130.2
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_cache_v3_stamp_acceptance.py",
+    "seconds": 125.7
+  },
+  {
+    "step": "demo blend checks",
+    "seconds": 110.4
+  },
+  {
+    "step": "Blender acceptance batch (34 scripts)",
+    "seconds": 156.4
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_append_migration_acceptance.py",
+    "seconds": 1.7
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_vdb_production_bake_acceptance.py",
+    "seconds": 6.7
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_cache_vdb_export_acceptance.py",
+    "seconds": 3.4
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_cache_export_pipeline.py",
+    "seconds": 5.3
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_handler_persistence_gate.py",
+    "seconds": 4.6
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_viewport_2frame_gate.py",
+    "seconds": 4.6
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_background_acceptance.py",
+    "seconds": 5.3
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_pre_bridge_file_acceptance.py",
+    "seconds": 4.8
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_attribute_viz_acceptance.py",
+    "seconds": 8.1
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_mesh_source_acceptance.py",
+    "seconds": 5.4
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_force_region_acceptance.py",
+    "seconds": 4.2
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_simulation_admission_acceptance.py",
+    "seconds": 21.0
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_custom_effects_acceptance.py",
+    "seconds": 1.3
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_chromatic_vortex_containment_acceptance.py",
+    "seconds": 4.0
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_color_mixing_runtime_acceptance.py",
+    "seconds": 3.4
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_export_live_session_acceptance.py",
+    "seconds": 4.3
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_color_mixing_ui_acceptance.py",
+    "seconds": 1.4
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_mixed_source_batch_acceptance.py",
+    "seconds": 3.2
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_quick_setup_idempotence.py",
+    "seconds": 2.9
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_source_sampling_acceptance.py",
+    "seconds": 1.0
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_tooltip_acceptance.py",
+    "seconds": 0.6
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_topology_transaction_acceptance.py",
+    "seconds": 0.4
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_whitewater_truth_acceptance.py",
+    "seconds": 0.9
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_animated_cache_playback_acceptance.py",
+    "seconds": 5.5
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_animated_effect_bake_acceptance.py",
+    "seconds": 6.1
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_deforming_collider_bake_acceptance.py",
+    "seconds": 4.8
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_headless_bake_cli_acceptance.py",
+    "seconds": 9.7
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_static_collider_bake_acceptance.py",
+    "seconds": 9.4
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_phase3_source_ui_acceptance.py",
+    "seconds": 2.4
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_source_region_acceptance.py",
+    "seconds": 2.6
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_point_source_acceptance.py",
+    "seconds": 2.6
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_source_lifecycle_acceptance.py",
+    "seconds": 2.9
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_animated_source_acceptance.py",
+    "seconds": 2.7
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_volume_source_acceptance.py",
+    "seconds": 3.1
+  },
+  {
+    "step": "parallel group (3 steps, wall)",
+    "seconds": 221.5
+  },
+  {
+    "step": "Blender acceptance batch (6 scripts)",
+    "seconds": 27.5
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_memory_safety_gate.py",
+    "seconds": 3.6
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_phase4_live_interaction_acceptance.py",
+    "seconds": 3.9
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_closed_domain_stability_acceptance.py",
+    "seconds": 5.3
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_demo_gallery_acceptance.py",
+    "seconds": 3.5
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_allocation_accounting_acceptance.py",
+    "seconds": 2.7
+  },
+  {
+    "step": "  batch: tests/acceptance/blender_capacity_planner_acceptance.py",
+    "seconds": 4.8
+  },
+  {
+    "step": "paired demo performance budget",
+    "seconds": 1054.7
+  }
+]
