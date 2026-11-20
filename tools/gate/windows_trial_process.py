@@ -415,6 +415,18 @@ def observe_executable(launcher, expected):
     return None
 
 
+def wait_for_trial_job(launcher, deadline, timeout):
+    """Wait for owned writers even when the root launcher exits first."""
+    tree = _tree(launcher)
+    if tree.closed:
+        return
+    while tree.job.pids():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(launcher.args, timeout)
+        time.sleep(min(.02, remaining))
+
+
 def terminate_executable_children(launcher, expected):
     """Stop the pinned trial tree, including wrappers that could launch later.
 

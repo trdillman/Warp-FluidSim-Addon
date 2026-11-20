@@ -21,6 +21,8 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import locale
+import mmap
 import os
 import shutil
 import statistics
@@ -30,6 +32,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 
 _qspec = importlib.util.spec_from_file_location("_qualification", Path(__file__).with_name("gate") / "qualification.py")
@@ -82,6 +85,31 @@ def _snapshot_candidate(source, destination):
     return before
 
 
+def _read_trial_capture(child):
+    encoding = 'utf-8' if sys.flags.utf8_mode else locale.getencoding()
+    output = []
+    for stream in child._trial_capture_files:
+        size = os.fstat(stream.fileno()).st_size
+        data = b''
+        if size:
+            # A mapping reads the flushed prefix without moving the shared writer offset.
+            with mmap.mmap(stream.fileno(), size, access=mmap.ACCESS_READ) as capture:
+                data = capture[:]
+        output.append(data.decode(encoding, errors='replace').replace('\r\n', '\n').replace('\r', '\n'))
+    return tuple(output)
+
+
+def _communicate_trial_output(child, timeout):
+    deadline = time.monotonic() + timeout
+    output = child.communicate(timeout=timeout)
+    if hasattr(child, '_trial_capture_files'):
+        from tools.gate.windows_trial_process import wait_for_trial_job
+
+        wait_for_trial_job(child, deadline, timeout)
+        return _read_trial_capture(child)
+    return output
+
+
 def _communicate_demo_trial(child, command, timeout):
     if sys.platform != "win32":
         return (*child.communicate(timeout=timeout), child.pid)
@@ -97,9 +125,9 @@ def _communicate_demo_trial(child, command, timeout):
         if remaining <= 0:
             raise subprocess.TimeoutExpired(command, timeout)
         if observed_pid is not None:
-            return (*child.communicate(timeout=remaining), observed_pid)
+            return (*_communicate_trial_output(child, remaining), observed_pid)
         try:
-            return (*child.communicate(timeout=min(0.2, remaining)), None)
+            return (*_communicate_trial_output(child, min(0.2, remaining)), None)
         except subprocess.TimeoutExpired:
             continue
 
@@ -108,7 +136,15 @@ def _launch_demo_trial(command, **kwargs):
     if sys.platform == 'win32':
         from tools.gate.windows_trial_process import launch_trial
 
-        return launch_trial(command, **kwargs)
+        # File-backed capture remains readable even if a descendant keeps a writer open.
+        with ExitStack() as scope:
+            stdout = scope.enter_context(tempfile.TemporaryFile('w+b'))
+            stderr = scope.enter_context(tempfile.TemporaryFile('w+b'))
+            kwargs.update(stdout=stdout, stderr=stderr)
+            child = launch_trial(command, **kwargs)
+            child._trial_capture_files = (stdout, stderr)
+            child._trial_capture_scope = scope.pop_all()
+            return child
     return subprocess.Popen(command, **kwargs)
 
 
@@ -181,13 +217,20 @@ def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
                     except OSError as cleanup_error:
                         exc.add_note(f"Trial launcher cleanup failed: {cleanup_error}")
                     try:
-                        stdout, stderr = child.communicate(timeout=5)
+                        stdout, stderr = _communicate_trial_output(child, 5)
                         drained = True
                     except subprocess.TimeoutExpired as drain_error:
                         stdout, stderr = drain_error.stdout or '', drain_error.stderr or ''
                         stdout = stdout.decode(errors='replace') if isinstance(stdout, bytes) else stdout
                         stderr = stderr.decode(errors='replace') if isinstance(stderr, bytes) else stderr
                         exc.add_note("Trial output drain exceeded 5 seconds after process cleanup")
+                        if hasattr(child, '_trial_capture_files'):
+                            try:
+                                stdout, stderr = _read_trial_capture(child)
+                            except OSError as capture_error:
+                                exc.add_note(f'Could not read trial output: {capture_error}')
+                    except OSError as capture_error:
+                        exc.add_note(f'Could not read trial output: {capture_error}')
                     if not drained:
                         _write_trial_output(out, stdout, stderr, exc)
                     if isinstance(exc, subprocess.TimeoutExpired):
@@ -216,6 +259,14 @@ def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
                     original_error = sys.exception()
                     if original_error is not None:
                         _write_failed_trial_identity(out, child, observed_pid, original_error)
+                    capture_scope = getattr(child, '_trial_capture_scope', None)
+                    if capture_scope is not None:
+                        try:
+                            capture_scope.close()
+                        except OSError as capture_error:
+                            if original_error is None:
+                                raise
+                            original_error.add_note(f'Could not close trial output: {capture_error}')
                     # Popen.__exit__ would wait without a timeout, defeating a
                     # failed bounded drain. Close only completed captures.
                     if drained:

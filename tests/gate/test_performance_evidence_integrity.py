@@ -279,6 +279,80 @@ def test_trial_failure_drain_is_bounded_when_inherited_pipe_remains(monkeypatch,
     assert out.with_suffix('.log').read_text() == 'partial stdoutpartial stderr'
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows stdio handle inheritance')
+@pytest.mark.parametrize('failure', ['cancel', 'timeout'])
+def test_windows_failed_trial_retains_output_while_writer_handles_stay_open(
+        monkeypatch, tmp_path, native_trial_python, failure):
+    import _winapi
+
+    script, ready, out = (tmp_path / name for name in ('trial.py', 'ready', 'trial.json'))
+    script.write_text(
+        'import os, pathlib, time\n'
+        'os.write(1, b"flushed stdout\\n")\n'
+        'os.write(2, b"flushed stderr\\n")\n'
+        f'pathlib.Path({str(ready)!r}).touch()\n'
+        'time.sleep(30)\n',
+        encoding='utf-8',
+    )
+    get_handles = subprocess.Popen._get_handles
+    parent = _winapi.GetCurrentProcess()
+    writers = []
+
+    def retain_writers(child, stdin, stdout, stderr):
+        handles = get_handles(child, stdin, stdout, stderr)
+        for writer in (handles[3], handles[5]):
+            writers.append(_winapi.DuplicateHandle(
+                parent, writer, parent, 0, False, _winapi.DUPLICATE_SAME_ACCESS))
+        return handles
+
+    def interrupt_after_flush(child, command, timeout):
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert ready.exists()
+        if failure == 'cancel':
+            raise KeyboardInterrupt('cancel after output')
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(subprocess.Popen, '_get_handles', retain_writers)
+    monkeypatch.setattr(bench, '_communicate_demo_trial', interrupt_after_flush)
+    try:
+        original_error = KeyboardInterrupt if failure == 'cancel' else subprocess.TimeoutExpired
+        with pytest.raises(original_error) as raised:
+            bench._run_trial([native_trial_python, str(script)], out, expect_marker=TRIAL_MARKER)
+        if failure == 'cancel':
+            assert str(raised.value) == 'cancel after output'
+        else:
+            assert raised.value.timeout == 900
+        assert out.with_suffix('.log').read_text() == 'flushed stdout\nflushed stderr\n'
+    finally:
+        for writer in writers:
+            _winapi.CloseHandle(writer)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows launcher and Job membership')
+def test_windows_trial_waits_for_output_after_early_launcher_exit(
+        monkeypatch, tmp_path, native_trial_python):
+    script, wrapper, out = (tmp_path / name for name in ('trial.py', 'launch.cmd', 'trial.json'))
+    script.write_text(
+        'import json, os, pathlib, time\n'
+        'time.sleep(1)\n'
+        f'pathlib.Path({str(out)!r}).write_text(json.dumps({{"processId": os.getpid()}}))\n'
+        f'print({TRIAL_MARKER!r})\n',
+        encoding='utf-8',
+    )
+    wrapper.write_text(f'@start "" /b "{native_trial_python}" "{script}"\n', encoding='utf-8')
+    launch = bench._launch_demo_trial
+
+    def launch_and_exit(command, **kwargs):
+        return launch([os.environ['COMSPEC'], '/d', '/c', str(wrapper)], **kwargs)
+
+    monkeypatch.setattr(bench, '_launch_demo_trial', launch_and_exit)
+    report = bench._run_trial([native_trial_python, str(script)], out, expect_marker=TRIAL_MARKER)
+    assert report['processId'] > 0
+    assert TRIAL_MARKER in out.with_suffix('.log').read_text()
+
+
 @pytest.mark.skipif(sys.platform != 'win32', reason='Windows Job finalization')
 @pytest.mark.parametrize('fail_log', [False, True])
 @pytest.mark.parametrize('report', ['valid', 'malformed', 'absent'])
