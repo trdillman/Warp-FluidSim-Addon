@@ -315,6 +315,50 @@ def test_job_assignment_failure_never_executes_command(monkeypatch, tmp_path):
     assert not marker.exists()
 
 
+def test_bootstrap_redirector_cannot_start_interpreter_before_job_assignment(monkeypatch, tmp_path):
+    marker = tmp_path / 'interpreter-started'
+    interpreter = tmp_path / 'interpreter.py'
+    interpreter.write_text(
+        'import subprocess, sys\n'
+        'from pathlib import Path\n'
+        'Path(sys.argv[1]).touch()\n'
+        'raise SystemExit(subprocess.call(sys.argv[2:]))\n', encoding='utf-8')
+    redirector = tmp_path / 'redirector.py'
+    redirector.write_text(
+        'import subprocess, sys\n'
+        'raise SystemExit(subprocess.call([sys.executable, *sys.argv[1:]]))\n',
+        encoding='utf-8')
+    popen = subprocess.Popen
+    assign = process._TrialJob.assign
+    started_before_assignment = []
+
+    def start_through_redirector(command, **kwargs):
+        return popen([sys.executable, str(redirector), str(interpreter), str(marker), *command],
+                     **kwargs)
+
+    def delay_assignment(job, bootstrap):
+        deadline = time.monotonic() + 1
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        started_before_assignment.append(marker.exists())
+        return assign(job, bootstrap)
+
+    monkeypatch.setattr(process.subprocess, 'Popen', start_through_redirector)
+    monkeypatch.setattr(process._TrialJob, 'assign', delay_assignment)
+    launcher = process.launch_trial(
+        [sys.executable, '-c', 'print("command ran")'],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        stdout, stderr = launcher.communicate(timeout=10)
+        assert launcher.returncode == 0, stderr
+        assert stdout.strip() == 'command ran'
+        assert marker.exists()
+        assert started_before_assignment == [False]
+    finally:
+        process.terminate_executable_children(launcher, sys.executable)
+        launcher.wait(timeout=5)
+
+
 def test_uncontained_process_is_rejected_without_stopping_it():
     foreign = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(30)'])
     try:

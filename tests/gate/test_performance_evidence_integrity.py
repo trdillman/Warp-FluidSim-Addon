@@ -17,6 +17,15 @@ TRIAL_MARKER = 'DEMO-PERFORMANCE-TRIAL-PASS'
 EXTRACT_MARKER = 'DEMO-SETTINGS-EXTRACT-PASS'
 
 
+@pytest.fixture
+def native_trial_python():
+    """Use a direct Windows executable with a distinct image from any redirector child."""
+    base = Path(sys._base_executable)
+    if base.samefile(sys.executable):
+        return str(base)
+    return str(base.with_name('pythonw.exe'))
+
+
 def test_equal_but_shortened_duration_cannot_override_authored_settings():
     runs = _campaign()
     for run in runs:
@@ -179,7 +188,7 @@ def test_trial_rejects_wrong_actual_process_id(monkeypatch, tmp_path):
     (True, 'none', EXTRACT_MARKER),
 ])
 def test_windows_trial_binds_live_executable_to_launcher(
-        monkeypatch, tmp_path, wrapped, report_pid, marker):
+        monkeypatch, tmp_path, native_trial_python, wrapped, report_pid, marker):
     from tools.gate import windows_trial_process
     out = tmp_path / 'trial.json'
     script = tmp_path / 'trial.py'
@@ -194,10 +203,10 @@ def test_windows_trial_binds_live_executable_to_launcher(
         f'print({marker!r})\n',
         encoding='utf-8',
     )
-    command = [sys.executable, str(script)]
+    command = [native_trial_python, str(script)]
     if wrapped:
         wrapper = tmp_path / 'launch.cmd'
-        wrapper.write_text(f'@"{sys.executable}" "{script}"\n', encoding='utf-8')
+        wrapper.write_text(f'@"{native_trial_python}" "{script}"\n', encoding='utf-8')
         def launch(args, **kwargs):
             assert args == command
             return windows_trial_process.launch_trial(
@@ -270,11 +279,126 @@ def test_trial_failure_drain_is_bounded_when_inherited_pipe_remains(monkeypatch,
     assert out.with_suffix('.log').read_text() == 'partial stdoutpartial stderr'
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows stdio handle inheritance')
+@pytest.mark.parametrize('failure', ['cancel', 'timeout'])
+def test_windows_failed_trial_retains_output_while_writer_handles_stay_open(
+        monkeypatch, tmp_path, native_trial_python, failure):
+    import _winapi
+
+    script, ready, out = (tmp_path / name for name in ('trial.py', 'ready', 'trial.json'))
+    script.write_text(
+        'import os, pathlib, time\n'
+        'os.write(1, b"flushed stdout\\n")\n'
+        'os.write(2, b"flushed stderr\\n")\n'
+        f'pathlib.Path({str(ready)!r}).touch()\n'
+        'time.sleep(30)\n',
+        encoding='utf-8',
+    )
+    get_handles = subprocess.Popen._get_handles
+    parent = _winapi.GetCurrentProcess()
+    writers = []
+
+    def retain_writers(child, stdin, stdout, stderr):
+        handles = get_handles(child, stdin, stdout, stderr)
+        for writer in (handles[3], handles[5]):
+            writers.append(_winapi.DuplicateHandle(
+                parent, writer, parent, 0, False, _winapi.DUPLICATE_SAME_ACCESS))
+        return handles
+
+    def interrupt_after_flush(child, command, timeout):
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert ready.exists()
+        if failure == 'cancel':
+            raise KeyboardInterrupt('cancel after output')
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(subprocess.Popen, '_get_handles', retain_writers)
+    monkeypatch.setattr(bench, '_communicate_demo_trial', interrupt_after_flush)
+    try:
+        original_error = KeyboardInterrupt if failure == 'cancel' else subprocess.TimeoutExpired
+        with pytest.raises(original_error) as raised:
+            bench._run_trial([native_trial_python, str(script)], out, expect_marker=TRIAL_MARKER)
+        if failure == 'cancel':
+            assert str(raised.value) == 'cancel after output'
+        else:
+            assert raised.value.timeout == 900
+        assert out.with_suffix('.log').read_text() == 'flushed stdout\nflushed stderr\n'
+    finally:
+        for writer in writers:
+            _winapi.CloseHandle(writer)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows launcher and Job membership')
+def test_windows_trial_waits_for_output_after_early_launcher_exit(
+        monkeypatch, tmp_path, native_trial_python):
+    script, wrapper, out = (tmp_path / name for name in ('trial.py', 'launch.cmd', 'trial.json'))
+    script.write_text(
+        'import json, os, pathlib, time\n'
+        'time.sleep(1)\n'
+        f'pathlib.Path({str(out)!r}).write_text(json.dumps({{"processId": os.getpid()}}))\n'
+        f'print({TRIAL_MARKER!r})\n',
+        encoding='utf-8',
+    )
+    wrapper.write_text(f'@start "" /b "{native_trial_python}" "{script}"\n', encoding='utf-8')
+    launch = bench._launch_demo_trial
+
+    def launch_and_exit(command, **kwargs):
+        return launch([os.environ['COMSPEC'], '/d', '/c', str(wrapper)], **kwargs)
+
+    monkeypatch.setattr(bench, '_launch_demo_trial', launch_and_exit)
+    report = bench._run_trial([native_trial_python, str(script)], out, expect_marker=TRIAL_MARKER)
+    assert report['processId'] > 0
+    assert TRIAL_MARKER in out.with_suffix('.log').read_text()
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows Job finalization')
+@pytest.mark.parametrize('fail_log', [False, True])
+@pytest.mark.parametrize('report', ['valid', 'malformed', 'absent'])
+def test_windows_finalization_preserves_cleanup_and_failure_identity(
+        monkeypatch, tmp_path, fail_log, report):
+    from tools.gate import windows_trial_process
+
+    child = type('Child', (), {'pid': 123, 'returncode': 0})()
+    out = tmp_path / 'trial.json'
+    report_text = {'valid': '{"processId": 456}', 'malformed': '{"processId":'}.get(report)
+    cleanup = []
+
+    def capture(*_args):
+        if report_text is not None:
+            out.write_text(report_text, encoding='utf-8')
+        return TRIAL_MARKER, '', 456
+
+    def finalize(process, executable):
+        cleanup.append((process, executable))
+        raise RuntimeError('containment cleanup failed')
+
+    if fail_log:
+        out.with_suffix('.log').mkdir()
+    monkeypatch.setattr(bench, '_launch_demo_trial', lambda *_args, **_kwargs: child)
+    monkeypatch.setattr(bench, '_communicate_demo_trial', capture)
+    monkeypatch.setattr(windows_trial_process, 'terminate_executable_children', finalize)
+    monkeypatch.setattr(windows_trial_process, 'process_identity',
+                        lambda _child: {'launcher_pid': child.pid, 'identities': []})
+    expected_error = OSError if fail_log else RuntimeError
+    with pytest.raises(expected_error) as failure:
+        bench._run_trial(['child'], out, expect_marker=TRIAL_MARKER)
+    assert cleanup == [(child, 'child')]
+    if fail_log:
+        assert 'containment cleanup failed' in ' '.join(failure.value.__notes__)
+    else:
+        assert str(failure.value) == 'containment cleanup failed'
+    identity = json.loads(out.with_suffix('.identity.json').read_text(encoding='utf-8'))
+    assert identity['observed_pid'] == 456
+    assert identity['reported_pid'] == (456 if report == 'valid' else None)
+
+
 @pytest.mark.skipif(sys.platform != 'win32', reason='requires real Windows process ancestry')
 @pytest.mark.parametrize('interruption', ['timeout', 'cancel'])
 @pytest.mark.parametrize('marker', [TRIAL_MARKER, EXTRACT_MARKER])
 def test_windows_wrapped_trial_stops_owned_child_and_preserves_foreign_process(
-        monkeypatch, tmp_path, interruption, marker):
+        monkeypatch, tmp_path, native_trial_python, interruption, marker):
     from ctypes import wintypes
 
     from tools.gate import windows_trial_process
@@ -293,10 +417,10 @@ def test_windows_wrapped_trial_stops_owned_child_and_preserves_foreign_process(
         encoding='utf-8',
     )
     wrapper = tmp_path / 'launch.cmd'
-    wrapper.write_text(f'@"{sys.executable}" "{script}"\n', encoding='utf-8')
-    command = [sys.executable, str(script)]
+    wrapper.write_text(f'@"{native_trial_python}" "{script}"\n', encoding='utf-8')
+    command = [native_trial_python, str(script)]
     popen = subprocess.Popen
-    foreign = popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    foreign = popen([native_trial_python, '-c', 'import time; time.sleep(30)'])
     handles, launchers = [], []
     api = windows_trial_process._kernel()
     api.WaitForSingleObject.argtypes = wintypes.HANDLE, wintypes.DWORD
