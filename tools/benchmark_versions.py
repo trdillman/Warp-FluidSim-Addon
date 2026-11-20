@@ -285,6 +285,9 @@ def demo_budget_main(argv):
     parser.add_argument("--full-schedule", action="store_true",
                         help="disable sequential stopping; run every block for every demo")
     args = parser.parse_args(argv)
+    blender = shutil.which(args.blender)
+    if blender is not None:
+        args.blender = os.path.abspath(blender)
     if bool(args.demos) != bool(args.carry_summary):
         parser.error("--demos and --carry-summary go together: carried runs cover the other demos")
     measure = tuple(demo for demo in REFERENCE_VERSIONS if not args.demos or demo in args.demos)

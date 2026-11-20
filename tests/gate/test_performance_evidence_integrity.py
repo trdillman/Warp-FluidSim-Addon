@@ -283,8 +283,11 @@ def test_windows_wrapped_trial_stops_owned_child_and_preserves_foreign_process(
     script = tmp_path / 'trial.py'
     script.write_text(
         'import json, os, pathlib, time\n'
-        f'pathlib.Path({str(ready)!r}).write_text(json.dumps(os.getpid()))\n'
         "print('owned child ready', flush=True)\n"
+        f'ready = pathlib.Path({str(ready)!r})\n'
+        'pending = ready.with_suffix(".tmp")\n'
+        'pending.write_text(json.dumps(os.getpid()))\n'
+        'pending.replace(ready)\n'
         'time.sleep(10)\n'
         f'pathlib.Path({str(completed)!r}).write_text("must not complete")\n',
         encoding='utf-8',

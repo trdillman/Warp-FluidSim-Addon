@@ -63,8 +63,11 @@ def test_multihop_cleanup_preserves_foreign_process(monkeypatch, tmp_path, marke
     script = tmp_path / 'trial.py'
     script.write_text(
         'import json, os, pathlib, time\n'
-        f'pathlib.Path({str(ready)!r}).write_text(json.dumps(os.getpid()))\n'
         'print("owned deep child", flush=True)\n'
+        f'ready = pathlib.Path({str(ready)!r})\n'
+        'pending = ready.with_suffix(".tmp")\n'
+        'pending.write_text(json.dumps(os.getpid()))\n'
+        'pending.replace(ready)\n'
         'time.sleep(15)\n'
         f'pathlib.Path({str(completed)!r}).write_text("must not complete")\n', encoding='utf8')
     popen = subprocess.Popen
@@ -255,7 +258,10 @@ def test_job_finds_and_cleans_leaf_after_unobserved_intermediate_exit(tmp_path):
     leaf = tmp_path / 'leaf.py'
     leaf.write_text(
         'import json, os, pathlib, time\n'
-        f'pathlib.Path({str(ready)!r}).write_text(json.dumps(os.getpid()))\n'
+        f'ready = pathlib.Path({str(ready)!r})\n'
+        'pending = ready.with_suffix(".tmp")\n'
+        'pending.write_text(json.dumps(os.getpid()))\n'
+        'pending.replace(ready)\n'
         'time.sleep(30)\n', encoding='utf8')
     middle = tmp_path / 'middle.py'
     middle.write_text(

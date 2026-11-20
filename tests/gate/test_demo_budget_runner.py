@@ -104,7 +104,7 @@ def test_comparable_profiler_never_double_counts_nested_stages(legacy):
     assert profiler.frame.timers["compute_11"] == 4
 
 
-def _run_release(monkeypatch, tmp_path, fixtures, extra=()):
+def _run_release(monkeypatch, tmp_path, fixtures, extra=(), *, blender="fake"):
     import io
     import re
     import tarfile
@@ -160,7 +160,7 @@ def _run_release(monkeypatch, tmp_path, fixtures, extra=()):
         return row
     monkeypatch.setattr(bench, "_run_trial", child)
     out_dir = tmp_path / "evidence"
-    code = bench.demo_budget_main(["--demo-budget", "--blender", "fake",
+    code = bench.demo_budget_main(["--demo-budget", "--blender", blender,
                                    "--candidate-root", str(source), "--out-dir", str(out_dir),
                                    *extra])
     report = json.loads((out_dir / "summary.json").read_text())
@@ -170,11 +170,21 @@ def _run_release(monkeypatch, tmp_path, fixtures, extra=()):
 def test_release_runner_uses_snapshot_references_and_all_64_trials(monkeypatch, tmp_path):
     from test_performance_budget import _campaign
 
+    # The trial working directory differs from the caller's directory.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    blender = bin_dir / "blender-test.exe"
+    blender.touch(mode=0o755)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", "bin")
+
     # Ratios of 1.00 sit inside the early-stop margin, so every block runs.
-    code, report, calls, archives, source = _run_release(monkeypatch, tmp_path, _campaign())
+    code, report, calls, archives, source = _run_release(
+        monkeypatch, tmp_path, _campaign(), blender=blender.name)
     assert code == 0
     assert len(report["runs"]) == 64
     assert len(calls) == 68  # Four schema extracts plus 64 timed children.
+    assert all(command[0] == str(blender) for command, _ in calls)
     assert set(archives) == set(bench.REFERENCE_COMMITS.values())
     assert report["candidateInventorySha256"] == bench._inventory(source)
 
