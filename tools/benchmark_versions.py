@@ -126,6 +126,29 @@ def _write_trial_identity(out, child, observed_pid, reported_pid=None):
         json.dumps(identity, indent=2), encoding='utf-8')
 
 
+def _write_failed_trial_identity(out, child, observed_pid, error):
+    try:
+        report = json.loads(out.read_text(encoding='utf-8'))
+    except (OSError, ValueError, RecursionError):
+        report = None
+    reported_pid = report.get('processId') if isinstance(report, dict) else None
+    if type(reported_pid) is not int or reported_pid <= 0:
+        reported_pid = None
+    try:
+        _write_trial_identity(out, child, observed_pid, reported_pid)
+    except (OSError, RuntimeError) as evidence_error:
+        error.add_note(f'Could not retain trial identity: {evidence_error}')
+
+
+def _write_trial_output(out, stdout, stderr, error=None):
+    try:
+        out.with_suffix('.log').write_text(stdout + stderr, encoding='utf-8')
+    except OSError as log_error:
+        if error is None:
+            raise
+        error.add_note(f'Could not retain trial output: {log_error}')
+
+
 def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
     """One fresh child process, with retained failure logs for either harness."""
     out = Path(out)
@@ -165,31 +188,34 @@ def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
                         stdout = stdout.decode(errors='replace') if isinstance(stdout, bytes) else stdout
                         stderr = stderr.decode(errors='replace') if isinstance(stderr, bytes) else stderr
                         exc.add_note("Trial output drain exceeded 5 seconds after process cleanup")
-                    out.with_suffix('.log').write_text(stdout + stderr, encoding='utf-8')
-                    _write_trial_identity(out, child, observed_pid)
+                    if not drained:
+                        _write_trial_output(out, stdout, stderr, exc)
                     if isinstance(exc, subprocess.TimeoutExpired):
                         exc.stdout, exc.stderr = stdout, stderr
                     raise
                 proc = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
             finally:
                 try:
-                    if drained:
-                        out.with_suffix('.log').write_text(stdout + stderr, encoding='utf-8')
-                    if sys.platform == 'win32':
-                        from tools.gate.windows_trial_process import (
-                            terminate_executable_children,
-                        )
+                    try:
+                        if drained:
+                            _write_trial_output(out, stdout, stderr, sys.exception())
+                    finally:
+                        if sys.platform == 'win32':
+                            from tools.gate.windows_trial_process import (
+                                terminate_executable_children,
+                            )
 
-                        original_error = sys.exception()
-                        try:
-                            terminate_executable_children(child, command[0])
-                        except (OSError, RuntimeError) as cleanup_error:
-                            if original_error is None:
-                                raise
-                            original_error.add_note(f'Trial containment cleanup failed: {cleanup_error}')
-                        finally:
-                            _write_trial_identity(out, child, observed_pid)
+                            original_error = sys.exception()
+                            try:
+                                terminate_executable_children(child, command[0])
+                            except (OSError, RuntimeError) as cleanup_error:
+                                if original_error is None:
+                                    raise
+                                original_error.add_note(f'Trial containment cleanup failed: {cleanup_error}')
                 finally:
+                    original_error = sys.exception()
+                    if original_error is not None:
+                        _write_failed_trial_identity(out, child, observed_pid, original_error)
                     # Popen.__exit__ would wait without a timeout, defeating a
                     # failed bounded drain. Close only completed captures.
                     if drained:
@@ -202,9 +228,9 @@ def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
     except subprocess.TimeoutExpired as exc:
         def decoded(value):
             return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else value or ''
-        out.with_suffix('.log').write_text(decoded(exc.stdout) + decoded(exc.stderr), encoding='utf-8')
+        _write_trial_output(out, decoded(exc.stdout), decoded(exc.stderr), exc)
         raise
-    out.with_suffix(".log").write_text(proc.stdout + proc.stderr, encoding="utf-8")
+    _write_trial_output(out, proc.stdout, proc.stderr)
     _write_trial_identity(out, child, observed_pid)
     if proc.returncode:
         raise RuntimeError(f"trial failed (exit {proc.returncode}); see {out.with_suffix('.log')}")

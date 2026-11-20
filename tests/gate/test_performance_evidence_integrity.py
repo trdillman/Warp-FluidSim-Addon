@@ -270,6 +270,47 @@ def test_trial_failure_drain_is_bounded_when_inherited_pipe_remains(monkeypatch,
     assert out.with_suffix('.log').read_text() == 'partial stdoutpartial stderr'
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows Job finalization')
+@pytest.mark.parametrize('fail_log', [False, True])
+@pytest.mark.parametrize('report', ['valid', 'malformed', 'absent'])
+def test_windows_finalization_preserves_cleanup_and_failure_identity(
+        monkeypatch, tmp_path, fail_log, report):
+    from tools.gate import windows_trial_process
+
+    child = type('Child', (), {'pid': 123, 'returncode': 0})()
+    out = tmp_path / 'trial.json'
+    report_text = {'valid': '{"processId": 456}', 'malformed': '{"processId":'}.get(report)
+    cleanup = []
+
+    def capture(*_args):
+        if report_text is not None:
+            out.write_text(report_text, encoding='utf-8')
+        return TRIAL_MARKER, '', 456
+
+    def finalize(process, executable):
+        cleanup.append((process, executable))
+        raise RuntimeError('containment cleanup failed')
+
+    if fail_log:
+        out.with_suffix('.log').mkdir()
+    monkeypatch.setattr(bench, '_launch_demo_trial', lambda *_args, **_kwargs: child)
+    monkeypatch.setattr(bench, '_communicate_demo_trial', capture)
+    monkeypatch.setattr(windows_trial_process, 'terminate_executable_children', finalize)
+    monkeypatch.setattr(windows_trial_process, 'process_identity',
+                        lambda _child: {'launcher_pid': child.pid, 'identities': []})
+    expected_error = OSError if fail_log else RuntimeError
+    with pytest.raises(expected_error) as failure:
+        bench._run_trial(['child'], out, expect_marker=TRIAL_MARKER)
+    assert cleanup == [(child, 'child')]
+    if fail_log:
+        assert 'containment cleanup failed' in ' '.join(failure.value.__notes__)
+    else:
+        assert str(failure.value) == 'containment cleanup failed'
+    identity = json.loads(out.with_suffix('.identity.json').read_text(encoding='utf-8'))
+    assert identity['observed_pid'] == 456
+    assert identity['reported_pid'] == (456 if report == 'valid' else None)
+
+
 @pytest.mark.skipif(sys.platform != 'win32', reason='requires real Windows process ancestry')
 @pytest.mark.parametrize('interruption', ['timeout', 'cancel'])
 @pytest.mark.parametrize('marker', [TRIAL_MARKER, EXTRACT_MARKER])
