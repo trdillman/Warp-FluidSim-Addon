@@ -82,25 +82,120 @@ def _snapshot_candidate(source, destination):
     return before
 
 
+def _communicate_demo_trial(child, command, timeout):
+    if sys.platform != "win32":
+        return (*child.communicate(timeout=timeout), child.pid)
+
+    # IFEO can substitute a broker launcher for the actual Blender process.
+    # Read the native executable and parent link while both processes are live.
+    from tools.gate.windows_trial_process import observe_executable
+
+    deadline = time.monotonic() + timeout
+    while True:
+        observed_pid = observe_executable(child, command[0])
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, timeout)
+        if observed_pid is not None:
+            return (*child.communicate(timeout=remaining), observed_pid)
+        try:
+            return (*child.communicate(timeout=min(0.2, remaining)), None)
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _launch_demo_trial(command, **kwargs):
+    if sys.platform == 'win32':
+        from tools.gate.windows_trial_process import launch_trial
+
+        return launch_trial(command, **kwargs)
+    return subprocess.Popen(command, **kwargs)
+
+
+def _write_trial_identity(out, child, observed_pid, reported_pid=None):
+    if child is None:
+        return
+    identity = {'launcher_pid': child.pid, 'identities': []}
+    if sys.platform == 'win32':
+        from tools.gate.windows_trial_process import process_identity
+
+        identity = process_identity(child)
+    identity.update(observed_pid=(observed_pid if observed_pid is not None
+                                  else identity.get('observed_pid')), reported_pid=reported_pid)
+    Path(out).with_suffix('.identity.json').write_text(
+        json.dumps(identity, indent=2), encoding='utf-8')
+
+
 def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
     """One fresh child process, with retained failure logs for either harness."""
     out = Path(out)
     out.unlink(missing_ok=True)
+    out.with_suffix('.identity.json').unlink(missing_ok=True)
+    child = None
+    observed_pid = None
     try:
-        if expect_marker == "DEMO-PERFORMANCE-TRIAL-PASS":
-            with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  text=True, env=env, cwd=cwd) as child:
+        if expect_marker in ("DEMO-PERFORMANCE-TRIAL-PASS", "DEMO-SETTINGS-EXTRACT-PASS"):
+            child = _launch_demo_trial(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, env=env, cwd=cwd)
+            drained = False
+            stdout = stderr = ''
+            try:
                 try:
-                    stdout, stderr = child.communicate(timeout=900)
+                    stdout, stderr, observed_pid = _communicate_demo_trial(child, command, 900)
+                    drained = True
                 except BaseException as exc:
-                    child.kill()
-                    stdout, stderr = child.communicate()
+                    if sys.platform == "win32":
+                        from tools.gate.windows_trial_process import (
+                            terminate_executable_children,
+                        )
+
+                        try:
+                            terminate_executable_children(child, command[0])
+                        except (OSError, RuntimeError) as cleanup_error:
+                            exc.add_note(f"Verified trial child cleanup failed: {cleanup_error}")
+                    try:
+                        child.kill()
+                    except OSError as cleanup_error:
+                        exc.add_note(f"Trial launcher cleanup failed: {cleanup_error}")
+                    try:
+                        stdout, stderr = child.communicate(timeout=5)
+                        drained = True
+                    except subprocess.TimeoutExpired as drain_error:
+                        stdout, stderr = drain_error.stdout or '', drain_error.stderr or ''
+                        stdout = stdout.decode(errors='replace') if isinstance(stdout, bytes) else stdout
+                        stderr = stderr.decode(errors='replace') if isinstance(stderr, bytes) else stderr
+                        exc.add_note("Trial output drain exceeded 5 seconds after process cleanup")
                     out.with_suffix('.log').write_text(stdout + stderr, encoding='utf-8')
+                    _write_trial_identity(out, child, observed_pid)
                     if isinstance(exc, subprocess.TimeoutExpired):
                         exc.stdout, exc.stderr = stdout, stderr
                     raise
                 proc = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
-                observed_pid = child.pid
+            finally:
+                try:
+                    if drained:
+                        out.with_suffix('.log').write_text(stdout + stderr, encoding='utf-8')
+                    if sys.platform == 'win32':
+                        from tools.gate.windows_trial_process import (
+                            terminate_executable_children,
+                        )
+
+                        original_error = sys.exception()
+                        try:
+                            terminate_executable_children(child, command[0])
+                        except (OSError, RuntimeError) as cleanup_error:
+                            if original_error is None:
+                                raise
+                            original_error.add_note(f'Trial containment cleanup failed: {cleanup_error}')
+                        finally:
+                            _write_trial_identity(out, child, observed_pid)
+                finally:
+                    # Popen.__exit__ would wait without a timeout, defeating a
+                    # failed bounded drain. Close only completed captures.
+                    if drained:
+                        for stream in (getattr(child, 'stdout', None), getattr(child, 'stderr', None)):
+                            if stream is not None:
+                                stream.close()
         else:
             proc = subprocess.run(command, capture_output=True, text=True, env=env,
                                   cwd=cwd, timeout=900)
@@ -110,12 +205,15 @@ def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
         out.with_suffix('.log').write_text(decoded(exc.stdout) + decoded(exc.stderr), encoding='utf-8')
         raise
     out.with_suffix(".log").write_text(proc.stdout + proc.stderr, encoding="utf-8")
+    _write_trial_identity(out, child, observed_pid)
     if proc.returncode:
         raise RuntimeError(f"trial failed (exit {proc.returncode}); see {out.with_suffix('.log')}")
     if expect_marker and expect_marker not in proc.stdout:
         raise RuntimeError(f"trial missing marker {expect_marker}; see {out.with_suffix('.log')}")
     report = json.loads(out.read_text(encoding="utf-8"))
-    if expect_marker == "DEMO-PERFORMANCE-TRIAL-PASS" and report.get("processId") != observed_pid:
+    _write_trial_identity(out, child, observed_pid, report.get('processId'))
+    if expect_marker == "DEMO-PERFORMANCE-TRIAL-PASS" and (
+            observed_pid is None or report.get("processId") != observed_pid):
         raise RuntimeError("reported child process identity differs from launched process")
     return report
 
@@ -187,6 +285,9 @@ def demo_budget_main(argv):
     parser.add_argument("--full-schedule", action="store_true",
                         help="disable sequential stopping; run every block for every demo")
     args = parser.parse_args(argv)
+    blender = shutil.which(args.blender)
+    if blender is not None:
+        args.blender = os.path.abspath(blender)
     if bool(args.demos) != bool(args.carry_summary):
         parser.error("--demos and --carry-summary go together: carried runs cover the other demos")
     measure = tuple(demo for demo in REFERENCE_VERSIONS if not args.demos or demo in args.demos)
