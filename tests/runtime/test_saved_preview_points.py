@@ -88,3 +88,47 @@ def test_nothing_is_published_without_saved_points(output, monkeypatch, obj):
 
     assert output.seed_published_points_from_saved_outputs(_scene()) is None
     assert output.latest_published_points() is None
+
+
+def test_saving_surface_preview_preserves_retained_cache_attributes(output, monkeypatch):
+    from fluidSim_warp_blender51 import blender
+
+    scene = _scene()
+    scene.fluidsim = NS(liquid_preview_enabled=True, show_particles=False)
+    cloud = _cloud()
+    ids = np.arange(5, dtype=np.int32) + 100
+    positions = np.ones((5, 3), dtype=np.float32)
+    replacements = []
+
+    def swap(obj, points, radius, colors=None, attributes=None):
+        replacements.append(attributes)
+        obj.data.attributes["uid"] = ids.copy() if attributes is not None else np.zeros(5, np.int32)
+
+    monkeypatch.setattr(blender, "materials", NS(ensure_particle_material=None), raising=False)
+    monkeypatch.setattr(blender, "liquid_display", NS(apply_viewport=lambda *_a, **_k: None), raising=False)
+    monkeypatch.setattr(output, "_require_bpy", lambda: None)
+    monkeypatch.setattr(output, "_ensure_point_object", lambda *_a: cloud)
+    monkeypatch.setattr(output, "output_object", lambda *_a, **_k: cloud)
+    monkeypatch.setattr(output, "_swap_points", swap)
+    monkeypatch.setattr(output, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(output, "_ensure_material", lambda *_a: None)
+    monkeypatch.setattr(output, "_set_hidden", lambda *_a, **_k: None)
+    monkeypatch.setattr(output, "_hide_and_clear_output", lambda *_a: None)
+    monkeypatch.setattr(output, "_sync_render_inputs", lambda *_a: None)
+    monkeypatch.setattr(output, "output_family_policy", lambda *_a, **_k: [
+        NS(name=output.SURFACE_NAME, visible=False),
+        NS(name=output.PARTICLES_NAME, visible=False, radius=0.0125,
+           material="ensure_particle_material"),
+    ])
+    payload = NS(
+        retain_cache_geometry=True, surface_visible=False, viewport_surface=False,
+        publish_surface=False, particles_visible=False, viewport_particles=False,
+        particles=positions, particle_radius=0.0125, particle_attributes={"uid": ids},
+        particle_attribute_mode="NONE", whitewater_visible=False,
+    )
+
+    output.publish_payload(scene, payload)
+    output.persist_preview_points_for_save(scene)
+
+    assert len(replacements) == 1
+    np.testing.assert_array_equal(cloud.data.attributes["uid"], ids)
