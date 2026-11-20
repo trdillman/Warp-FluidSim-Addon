@@ -217,17 +217,18 @@ A clear four-demo pass takes about eight minutes instead of twenty;
 `tools/benchmark_versions.py --demo-budget --full-schedule` always runs every
 block. Trial children skip Blender's teardown after writing their report.
 
-On Windows, demo trials bind the reported Blender PID to an independently
+On Windows, timed demo trials bind the reported Blender PID to an independently
 observed executable in the launcher's OS process tree, including intermediate
-gate or interpreter wrappers. A Windows Job owns a blocked bootstrap before
-the trial command receives GO; inherited Job membership preserves ownership
-even when an intermediate exits before observation. Native handles and
+gate or interpreter wrappers. The runner assigns the suspended bootstrap to a
+Windows Job before resuming it. The trial command receives GO after that
+assignment. Inherited Job membership preserves ownership even when an
+intermediate exits before observation. Native handles and
 creation times pin observed identities. Atomic Job cleanup covers unobserved
 children as well as wrappers. Each trial's `.identity.json` keeps
 the captured ancestry and the observed and reported PIDs, including failed
-trials. A missing or mismatched identity invalidates the measurement. The CPU
-proxy regressions in `tests/gate/test_windows_trial_process_tree.py` exercise
-this containment seam; they do not qualify Blender or GPU performance.
+trials. A missing or mismatched identity invalidates a timed measurement. A
+settings-extraction report may omit `processId`. The CPU regressions in
+`tests/gate/test_windows_trial_process_tree.py` exercise Windows containment.
 
 For changes that do not touch solver or simulation output, run the focused
 tests for the area (for example `tests/gate` for gate tooling) or `--quick`;

@@ -17,6 +17,15 @@ TRIAL_MARKER = 'DEMO-PERFORMANCE-TRIAL-PASS'
 EXTRACT_MARKER = 'DEMO-SETTINGS-EXTRACT-PASS'
 
 
+@pytest.fixture
+def native_trial_python():
+    """Use a direct Windows executable with a distinct image from any redirector child."""
+    base = Path(sys._base_executable)
+    if base.samefile(sys.executable):
+        return str(base)
+    return str(base.with_name('pythonw.exe'))
+
+
 def test_equal_but_shortened_duration_cannot_override_authored_settings():
     runs = _campaign()
     for run in runs:
@@ -179,7 +188,7 @@ def test_trial_rejects_wrong_actual_process_id(monkeypatch, tmp_path):
     (True, 'none', EXTRACT_MARKER),
 ])
 def test_windows_trial_binds_live_executable_to_launcher(
-        monkeypatch, tmp_path, wrapped, report_pid, marker):
+        monkeypatch, tmp_path, native_trial_python, wrapped, report_pid, marker):
     from tools.gate import windows_trial_process
     out = tmp_path / 'trial.json'
     script = tmp_path / 'trial.py'
@@ -194,10 +203,10 @@ def test_windows_trial_binds_live_executable_to_launcher(
         f'print({marker!r})\n',
         encoding='utf-8',
     )
-    command = [sys.executable, str(script)]
+    command = [native_trial_python, str(script)]
     if wrapped:
         wrapper = tmp_path / 'launch.cmd'
-        wrapper.write_text(f'@"{sys.executable}" "{script}"\n', encoding='utf-8')
+        wrapper.write_text(f'@"{native_trial_python}" "{script}"\n', encoding='utf-8')
         def launch(args, **kwargs):
             assert args == command
             return windows_trial_process.launch_trial(
@@ -315,7 +324,7 @@ def test_windows_finalization_preserves_cleanup_and_failure_identity(
 @pytest.mark.parametrize('interruption', ['timeout', 'cancel'])
 @pytest.mark.parametrize('marker', [TRIAL_MARKER, EXTRACT_MARKER])
 def test_windows_wrapped_trial_stops_owned_child_and_preserves_foreign_process(
-        monkeypatch, tmp_path, interruption, marker):
+        monkeypatch, tmp_path, native_trial_python, interruption, marker):
     from ctypes import wintypes
 
     from tools.gate import windows_trial_process
@@ -334,10 +343,10 @@ def test_windows_wrapped_trial_stops_owned_child_and_preserves_foreign_process(
         encoding='utf-8',
     )
     wrapper = tmp_path / 'launch.cmd'
-    wrapper.write_text(f'@"{sys.executable}" "{script}"\n', encoding='utf-8')
-    command = [sys.executable, str(script)]
+    wrapper.write_text(f'@"{native_trial_python}" "{script}"\n', encoding='utf-8')
+    command = [native_trial_python, str(script)]
     popen = subprocess.Popen
-    foreign = popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    foreign = popen([native_trial_python, '-c', 'import time; time.sleep(30)'])
     handles, launchers = [], []
     api = windows_trial_process._kernel()
     api.WaitForSingleObject.argtypes = wintypes.HANDLE, wintypes.DWORD
