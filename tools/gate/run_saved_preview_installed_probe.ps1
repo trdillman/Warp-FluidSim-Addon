@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory)][string]$Archive,
     [Parameter(Mandatory)][string]$ProfileRoot,
     [Parameter(Mandatory)][string]$OutputRoot,
-    [ValidateSet('surface', 'particles')][string]$Case = 'surface',
+    [ValidateSet('surface', 'particles', 'cache-surface')][string]$Case = 'surface',
     [string]$InputBlend
 )
 
@@ -28,7 +28,7 @@ if (-not $installed.StartsWith($extensions + [IO.Path]::DirectorySeparatorChar, 
     throw 'Installed root must belong to the supplied private extension repository'
 }
 
-$probe = @('--phase', $Stage.ToLowerInvariant(), '--case', $Case, '--addon-module', $AddonModule,
+$probe = @('--phase', $Stage.ToLowerInvariant(), '--case', $Case.ToLowerInvariant(), '--addon-module', $AddonModule,
            '--installed-root', $installed, '--source-root', $repo,
            '--archive', $Archive, '--output', $OutputRoot)
 if ($Stage -eq 'Produce') {

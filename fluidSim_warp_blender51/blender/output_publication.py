@@ -1139,6 +1139,7 @@ class PublishedPoints:
     whitewater_types: np.ndarray | None
     whitewater_radius: float
     output_owner_key: tuple[int | None, str] | None = None
+    particle_data_key: int | None = None
 
     @property
     def particle_count(self) -> int:
@@ -1170,7 +1171,16 @@ def _preview_output_owner_key(scene):
     return domain_key, str(getattr(fs, "output_collection_name", "") or "FluidSim Output")
 
 
-def _record_published_points(scene, payload, *, preserve_preview_points=False):
+def _point_output_data_key(obj):
+    data = getattr(obj, "data", None)
+    if data is None:
+        return None
+    pointer = getattr(data, "as_pointer", None)
+    return int(pointer()) if callable(pointer) else id(data)
+
+
+def _record_published_points(
+        scene, payload, *, preserve_preview_points=False, particle_output=None):
     """Remember the published point arrays for draw layers (no copy)."""
     global _LATEST_PUBLISHED_POINTS
     positions, particle_radius = _EMPTY_POINTS, 0.0
@@ -1197,6 +1207,7 @@ def _record_published_points(scene, payload, *, preserve_preview_points=False):
         whitewater_types=types,
         whitewater_radius=whitewater_radius,
         output_owner_key=_preview_output_owner_key(scene),
+        particle_data_key=_point_output_data_key(particle_output),
     )
     return _LATEST_PUBLISHED_POINTS
 
@@ -1223,6 +1234,11 @@ def persist_preview_points_for_save(scene):
     # Selected particle outputs were already published with their attributes.
     if getattr(fs, "show_particles", False):
         return False
+    if record.particle_data_key is not None:
+        obj = output_object(scene, PARTICLES_NAME, ensure=False)
+        if (_point_output_data_key(obj) == record.particle_data_key
+                and live_point_count(obj) == record.particle_count):
+            return False
     if not record.particle_count:
         _clear_points(scene, PARTICLES_NAME)
         return True
@@ -1287,6 +1303,7 @@ def seed_published_points_from_saved_outputs(scene):
         whitewater_types=None,
         whitewater_radius=0.0,
         output_owner_key=_preview_output_owner_key(scene),
+        particle_data_key=_point_output_data_key(obj),
     )
     return _LATEST_PUBLISHED_POINTS
 
@@ -1763,6 +1780,7 @@ def publish_payload(scene, payload, *, preserve_preview_points=False):
                 np.zeros((0, 3), dtype=np.int32),
             )
 
+    particle_output = None
     if policies[PARTICLES_NAME].visible or payload.viewport_particles or payload.retain_cache_geometry:
         values = _selected_attribute_values(
             payload.particle_attributes, payload.particle_attribute_mode)
@@ -1779,6 +1797,7 @@ def publish_payload(scene, payload, *, preserve_preview_points=False):
             _swap_vertex_cloud(
                 obj, payload.particles, colors, payload.particle_attributes)
         _ensure_material(getattr(materials, policies[PARTICLES_NAME].material), scene, obj)
+        particle_output = obj
     else:
         _clear_points(scene, PARTICLES_NAME)
 
@@ -1828,7 +1847,9 @@ def publish_payload(scene, payload, *, preserve_preview_points=False):
     else:
         for name in WHITEWATER_OUTPUT_NAMES:
             _hide_and_clear_output(scene, name)
-    _record_published_points(scene, payload, preserve_preview_points=preserve_preview_points)
+    _record_published_points(
+        scene, payload, preserve_preview_points=preserve_preview_points,
+        particle_output=particle_output)
     from .liquid_display import apply_viewport
     apply_viewport(scene)
     return _sync_render_inputs(scene)
