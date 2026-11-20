@@ -20,6 +20,15 @@ class _ProcessEntry(ctypes.Structure):
     ]
 
 
+class _ThreadEntry(ctypes.Structure):
+    _fields_ = [
+        ("size", wintypes.DWORD), ("usage", wintypes.DWORD),
+        ("tid", wintypes.DWORD), ("owner_pid", wintypes.DWORD),
+        ("base_priority", wintypes.LONG), ("delta_priority", wintypes.LONG),
+        ("flags", wintypes.DWORD),
+    ]
+
+
 def _kernel():
     api = ctypes.WinDLL("kernel32", use_last_error=True)
     api.OpenProcess.argtypes = wintypes.DWORD, wintypes.BOOL, wintypes.DWORD
@@ -45,6 +54,53 @@ def _kernel():
     api.IsProcessInJob.argtypes = wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)
     api.IsProcessInJob.restype = wintypes.BOOL
     return api
+
+
+def _resume_trial_bootstrap(api, child):
+    """Resume the single initial thread of the still-owned suspended launcher."""
+    api.Thread32First.argtypes = (wintypes.HANDLE, ctypes.POINTER(_ThreadEntry))
+    api.Thread32First.restype = wintypes.BOOL
+    api.Thread32Next.argtypes = api.Thread32First.argtypes
+    api.Thread32Next.restype = wintypes.BOOL
+    api.OpenThread.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    api.OpenThread.restype = wintypes.HANDLE
+    api.GetProcessIdOfThread.argtypes = (wintypes.HANDLE,)
+    api.GetProcessIdOfThread.restype = wintypes.DWORD
+    api.ResumeThread.argtypes = (wintypes.HANDLE,)
+    api.ResumeThread.restype = wintypes.DWORD
+
+    snapshot = api.CreateToolhelp32Snapshot(0x00000004, 0)  # TH32CS_SNAPTHREAD
+    if snapshot == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        entry = _ThreadEntry(size=ctypes.sizeof(_ThreadEntry))
+        found = api.Thread32First(snapshot, ctypes.byref(entry))
+        tids = []
+        while found:
+            if entry.owner_pid == child.pid:
+                tids.append(entry.tid)
+            found = api.Thread32Next(snapshot, ctypes.byref(entry))
+        # ERROR_NO_MORE_FILES is the only normal end of enumeration.
+        if ctypes.get_last_error() != 18:
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        api.CloseHandle(snapshot)
+    if len(tids) != 1:
+        raise RuntimeError('Expected one initial thread in suspended trial bootstrap')
+    # THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION
+    thread = api.OpenThread(0x0002 | 0x0800, False, tids[0])
+    if not thread:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if api.GetProcessIdOfThread(thread) != child.pid or child.poll() is not None:
+            raise RuntimeError('Suspended trial thread no longer belongs to the live bootstrap')
+        count = api.ResumeThread(thread)
+        if count == 0xFFFFFFFF:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if count != 1:
+            raise RuntimeError(f'Unexpected trial bootstrap thread suspend count: {count}')
+    finally:
+        api.CloseHandle(thread)
 
 
 def _children(api, parent):
@@ -202,11 +258,13 @@ class _TrialJob:
 
 
 def launch_trial(command, **kwargs):
-    """Keep Popen capture/wait semantics; assign the blocked bootstrap before GO."""
+    """Assign the bootstrap to its Job before it can execute or redirect."""
     if 'stdin' in kwargs:
         raise ValueError('Trial bootstrap owns stdin')
     if kwargs.get('creationflags', 0) & 0x01000000:
         raise ValueError('Trial process must not break away from containment')
+    # CREATE_SUSPENDED holds even a native launcher that redirects before the GO read.
+    kwargs['creationflags'] = kwargs.get('creationflags', 0) | 0x00000004
     job, child = _TrialJob(), None
     try:
         child = subprocess.Popen(
@@ -218,6 +276,7 @@ def launch_trial(command, **kwargs):
         weakref.finalize(child, tree.close)
         child.stdin.write('GO\n' if child.text_mode else b'GO\n')
         child.stdin.flush()
+        _resume_trial_bootstrap(job.k, child)
         return child
     except BaseException:
         try:
