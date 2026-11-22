@@ -1,6 +1,9 @@
 """CPU regressions for preserved evidence and independently checked claims."""
 import json
+import os
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -9,6 +12,18 @@ from test_performance_budget import _campaign
 from tools import benchmark_versions as bench
 from tools import run_production_gate as gate
 from tools.performance_budget import evaluate_budget
+
+TRIAL_MARKER = 'DEMO-PERFORMANCE-TRIAL-PASS'
+EXTRACT_MARKER = 'DEMO-SETTINGS-EXTRACT-PASS'
+
+
+@pytest.fixture
+def native_trial_python():
+    """Use a direct Windows executable with a distinct image from any redirector child."""
+    base = Path(sys._base_executable)
+    if base.samefile(sys.executable):
+        return str(base)
+    return str(base.with_name('pythonw.exe'))
 
 
 def test_equal_but_shortened_duration_cannot_override_authored_settings():
@@ -146,6 +161,8 @@ def test_runner_rejects_wrong_observed_child_identity(monkeypatch, tmp_path, mut
 
 
 def test_trial_rejects_wrong_actual_process_id(monkeypatch, tmp_path):
+    from tools.gate import windows_trial_process
+
     out = tmp_path / 'trial.json'
     class Process:
         pid = 123
@@ -157,12 +174,58 @@ def test_trial_rejects_wrong_actual_process_id(monkeypatch, tmp_path):
         def communicate(self, timeout=None):
             out.write_text(json.dumps({'processId': 999}))
             return 'DEMO-PERFORMANCE-TRIAL-PASS', ''
-    monkeypatch.setattr(bench.subprocess, 'Popen', lambda *args, **kwargs: Process())
+    monkeypatch.setattr(bench, '_launch_demo_trial', lambda *args, **kwargs: Process())
+    monkeypatch.setattr(windows_trial_process, 'observe_executable', lambda child, _: child.pid)
+    monkeypatch.setattr(windows_trial_process, 'terminate_executable_children', lambda *args: None)
     with pytest.raises(RuntimeError, match='process'):
-        bench._run_trial(['child'], out, expect_marker='DEMO-PERFORMANCE-TRIAL-PASS')
+        bench._run_trial(['child'], out, expect_marker=TRIAL_MARKER)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='requires real Windows process ancestry')
+@pytest.mark.parametrize('wrapped, report_pid, marker', [
+    (False, 'child', TRIAL_MARKER), (True, 'child', TRIAL_MARKER),
+    (True, 'launcher', TRIAL_MARKER), (True, 'foreign', TRIAL_MARKER),
+    (True, 'none', EXTRACT_MARKER),
+])
+def test_windows_trial_binds_live_executable_to_launcher(
+        monkeypatch, tmp_path, native_trial_python, wrapped, report_pid, marker):
+    from tools.gate import windows_trial_process
+    out = tmp_path / 'trial.json'
+    script = tmp_path / 'trial.py'
+    pid_expression = {'child': 'os.getpid()', 'launcher': 'os.getppid()',
+                      'foreign': str(os.getpid()), 'none': 'None'}[report_pid]
+    script.write_text(
+        'import json, os, pathlib, time\n'
+        'time.sleep(0.8)\n'
+        f'pid = {pid_expression}\n'
+        'report = {} if pid is None else {"processId": pid}\n'
+        f'pathlib.Path({str(out)!r}).write_text(json.dumps(report))\n'
+        f'print({marker!r})\n',
+        encoding='utf-8',
+    )
+    command = [native_trial_python, str(script)]
+    if wrapped:
+        wrapper = tmp_path / 'launch.cmd'
+        wrapper.write_text(f'@"{native_trial_python}" "{script}"\n', encoding='utf-8')
+        def launch(args, **kwargs):
+            assert args == command
+            return windows_trial_process.launch_trial(
+                [os.environ['COMSPEC'], '/d', '/c', str(wrapper)], **kwargs)
+
+        monkeypatch.setattr(bench, '_launch_demo_trial', launch)
+    if report_pid == 'child':
+        assert bench._run_trial(command, out, expect_marker=marker)['processId'] != os.getpid()
+    elif report_pid == 'none':
+        assert bench._run_trial(command, out, expect_marker=marker) == {}
+    else:
+        with pytest.raises(RuntimeError, match='reported child process identity'):
+            bench._run_trial(command, out, expect_marker=marker)
+        assert marker in out.with_suffix('.log').read_text()
 
 
 def test_cancelled_trial_kills_only_owned_child_and_keeps_output(monkeypatch, tmp_path):
+    from tools.gate import windows_trial_process
+
     out = tmp_path / 'trial.json'
     class Process:
         pid = 123
@@ -172,18 +235,244 @@ def test_cancelled_trial_kills_only_owned_child_and_keeps_output(monkeypatch, tm
         def __exit__(self, *args):
             return None
         def communicate(self, timeout=None):
-            if timeout is not None:
+            if not self.killed:
                 raise KeyboardInterrupt()
-            assert self.killed
+            assert timeout == 5
             return 'interrupted stdout', 'interrupted stderr'
         def kill(self):
             self.killed = True
     child = Process()
-    monkeypatch.setattr(bench.subprocess, 'Popen', lambda *args, **kwargs: child)
+    monkeypatch.setattr(bench, '_launch_demo_trial', lambda *args, **kwargs: child)
+    monkeypatch.setattr(windows_trial_process, 'observe_executable', lambda child, _: child.pid)
+    monkeypatch.setattr(windows_trial_process, 'terminate_executable_children', lambda *args: None)
     with pytest.raises(KeyboardInterrupt):
         bench._run_trial(['child'], out, expect_marker='DEMO-PERFORMANCE-TRIAL-PASS')
     assert child.killed
     assert out.with_suffix('.log').read_text() == 'interrupted stdoutinterrupted stderr'
+
+
+def test_trial_failure_drain_is_bounded_when_inherited_pipe_remains(monkeypatch, tmp_path):
+    from tools.gate import windows_trial_process
+
+    class Process:
+        pid = 123
+        killed = False
+
+        def kill(self):
+            self.killed = True
+
+        def communicate(self, timeout=None):
+            assert self.killed and timeout == 5
+            raise subprocess.TimeoutExpired('child', timeout, output=b'partial stdout',
+                                            stderr=b'partial stderr')
+
+    def cancelled(*args):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(bench, '_launch_demo_trial', lambda *args, **kwargs: Process())
+    monkeypatch.setattr(bench, '_communicate_demo_trial', cancelled)
+    monkeypatch.setattr(windows_trial_process, 'terminate_executable_children', lambda *args: None)
+    out = tmp_path / 'trial.json'
+    with pytest.raises(KeyboardInterrupt) as raised:
+        bench._run_trial(['child'], out, expect_marker=TRIAL_MARKER)
+    assert 'output drain exceeded' in ' '.join(raised.value.__notes__)
+    assert out.with_suffix('.log').read_text() == 'partial stdoutpartial stderr'
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows stdio handle inheritance')
+@pytest.mark.parametrize('failure', ['cancel', 'timeout'])
+def test_windows_failed_trial_retains_output_while_writer_handles_stay_open(
+        monkeypatch, tmp_path, native_trial_python, failure):
+    import _winapi
+
+    script, ready, out = (tmp_path / name for name in ('trial.py', 'ready', 'trial.json'))
+    script.write_text(
+        'import os, pathlib, time\n'
+        'os.write(1, b"flushed stdout\\n")\n'
+        'os.write(2, b"flushed stderr\\n")\n'
+        f'pathlib.Path({str(ready)!r}).touch()\n'
+        'time.sleep(30)\n',
+        encoding='utf-8',
+    )
+    get_handles = subprocess.Popen._get_handles
+    parent = _winapi.GetCurrentProcess()
+    writers = []
+
+    def retain_writers(child, stdin, stdout, stderr):
+        handles = get_handles(child, stdin, stdout, stderr)
+        for writer in (handles[3], handles[5]):
+            writers.append(_winapi.DuplicateHandle(
+                parent, writer, parent, 0, False, _winapi.DUPLICATE_SAME_ACCESS))
+        return handles
+
+    def interrupt_after_flush(child, command, timeout):
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert ready.exists()
+        if failure == 'cancel':
+            raise KeyboardInterrupt('cancel after output')
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(subprocess.Popen, '_get_handles', retain_writers)
+    monkeypatch.setattr(bench, '_communicate_demo_trial', interrupt_after_flush)
+    try:
+        original_error = KeyboardInterrupt if failure == 'cancel' else subprocess.TimeoutExpired
+        with pytest.raises(original_error) as raised:
+            bench._run_trial([native_trial_python, str(script)], out, expect_marker=TRIAL_MARKER)
+        if failure == 'cancel':
+            assert str(raised.value) == 'cancel after output'
+        else:
+            assert raised.value.timeout == 900
+        assert out.with_suffix('.log').read_text() == 'flushed stdout\nflushed stderr\n'
+    finally:
+        for writer in writers:
+            _winapi.CloseHandle(writer)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows launcher and Job membership')
+def test_windows_trial_waits_for_output_after_early_launcher_exit(
+        monkeypatch, tmp_path, native_trial_python):
+    script, wrapper, out = (tmp_path / name for name in ('trial.py', 'launch.cmd', 'trial.json'))
+    script.write_text(
+        'import json, os, pathlib, time\n'
+        'time.sleep(1)\n'
+        f'pathlib.Path({str(out)!r}).write_text(json.dumps({{"processId": os.getpid()}}))\n'
+        f'print({TRIAL_MARKER!r})\n',
+        encoding='utf-8',
+    )
+    wrapper.write_text(f'@start "" /b "{native_trial_python}" "{script}"\n', encoding='utf-8')
+    launch = bench._launch_demo_trial
+
+    def launch_and_exit(command, **kwargs):
+        return launch([os.environ['COMSPEC'], '/d', '/c', str(wrapper)], **kwargs)
+
+    monkeypatch.setattr(bench, '_launch_demo_trial', launch_and_exit)
+    report = bench._run_trial([native_trial_python, str(script)], out, expect_marker=TRIAL_MARKER)
+    assert report['processId'] > 0
+    assert TRIAL_MARKER in out.with_suffix('.log').read_text()
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows Job finalization')
+@pytest.mark.parametrize('fail_log', [False, True])
+@pytest.mark.parametrize('report', ['valid', 'malformed', 'absent'])
+def test_windows_finalization_preserves_cleanup_and_failure_identity(
+        monkeypatch, tmp_path, fail_log, report):
+    from tools.gate import windows_trial_process
+
+    child = type('Child', (), {'pid': 123, 'returncode': 0})()
+    out = tmp_path / 'trial.json'
+    report_text = {'valid': '{"processId": 456}', 'malformed': '{"processId":'}.get(report)
+    cleanup = []
+
+    def capture(*_args):
+        if report_text is not None:
+            out.write_text(report_text, encoding='utf-8')
+        return TRIAL_MARKER, '', 456
+
+    def finalize(process, executable):
+        cleanup.append((process, executable))
+        raise RuntimeError('containment cleanup failed')
+
+    if fail_log:
+        out.with_suffix('.log').mkdir()
+    monkeypatch.setattr(bench, '_launch_demo_trial', lambda *_args, **_kwargs: child)
+    monkeypatch.setattr(bench, '_communicate_demo_trial', capture)
+    monkeypatch.setattr(windows_trial_process, 'terminate_executable_children', finalize)
+    monkeypatch.setattr(windows_trial_process, 'process_identity',
+                        lambda _child: {'launcher_pid': child.pid, 'identities': []})
+    expected_error = OSError if fail_log else RuntimeError
+    with pytest.raises(expected_error) as failure:
+        bench._run_trial(['child'], out, expect_marker=TRIAL_MARKER)
+    assert cleanup == [(child, 'child')]
+    if fail_log:
+        assert 'containment cleanup failed' in ' '.join(failure.value.__notes__)
+    else:
+        assert str(failure.value) == 'containment cleanup failed'
+    identity = json.loads(out.with_suffix('.identity.json').read_text(encoding='utf-8'))
+    assert identity['observed_pid'] == 456
+    assert identity['reported_pid'] == (456 if report == 'valid' else None)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='requires real Windows process ancestry')
+@pytest.mark.parametrize('interruption', ['timeout', 'cancel'])
+@pytest.mark.parametrize('marker', [TRIAL_MARKER, EXTRACT_MARKER])
+def test_windows_wrapped_trial_stops_owned_child_and_preserves_foreign_process(
+        monkeypatch, tmp_path, native_trial_python, interruption, marker):
+    from ctypes import wintypes
+
+    from tools.gate import windows_trial_process
+
+    ready, completed = tmp_path / 'ready.json', tmp_path / 'completed'
+    script = tmp_path / 'trial.py'
+    script.write_text(
+        'import json, os, pathlib, time\n'
+        "print('owned child ready', flush=True)\n"
+        f'ready = pathlib.Path({str(ready)!r})\n'
+        'pending = ready.with_suffix(".tmp")\n'
+        'pending.write_text(json.dumps(os.getpid()))\n'
+        'pending.replace(ready)\n'
+        'time.sleep(10)\n'
+        f'pathlib.Path({str(completed)!r}).write_text("must not complete")\n',
+        encoding='utf-8',
+    )
+    wrapper = tmp_path / 'launch.cmd'
+    wrapper.write_text(f'@"{native_trial_python}" "{script}"\n', encoding='utf-8')
+    command = [native_trial_python, str(script)]
+    popen = subprocess.Popen
+    foreign = popen([native_trial_python, '-c', 'import time; time.sleep(30)'])
+    handles, launchers = [], []
+    api = windows_trial_process._kernel()
+    api.WaitForSingleObject.argtypes = wintypes.HANDLE, wintypes.DWORD
+    api.WaitForSingleObject.restype = wintypes.DWORD
+
+    def launch(args, **kwargs):
+        assert args == command
+        child = windows_trial_process.launch_trial(
+            [os.environ['COMSPEC'], '/d', '/c', str(wrapper)], **kwargs)
+        launchers.append(child)
+        return child
+
+    def interrupt_live_trial(child, args, timeout):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            pid = windows_trial_process.observe_executable(child, args[0])
+            if pid is not None and ready.exists():
+                assert json.loads(ready.read_text()) == pid
+                handle = api.OpenProcess(0x100000 | 0x1000 | 1, False, pid)
+                assert handle
+                handles.append(handle)
+                break
+            time.sleep(.01)
+        else:
+            pytest.fail('Real wrapped executable did not become ready')
+        if interruption == 'timeout':
+            raise subprocess.TimeoutExpired(args, timeout)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(bench, '_launch_demo_trial', launch)
+    monkeypatch.setattr(bench, '_communicate_demo_trial', interrupt_live_trial)
+    out = tmp_path / 'trial.json'
+    try:
+        error = subprocess.TimeoutExpired if interruption == 'timeout' else KeyboardInterrupt
+        with pytest.raises(error):
+            bench._run_trial(command, out, expect_marker=marker)
+        assert len(handles) == 1
+        assert api.WaitForSingleObject(handles[0], 0) == 0, 'Owned child survived cancellation'
+        assert launchers[0].poll() is not None
+        assert foreign.poll() is None, 'Unrelated same-executable process was stopped'
+        assert not completed.exists()
+        assert 'owned child ready' in out.with_suffix('.log').read_text()
+    finally:
+        for handle in handles:
+            if api.WaitForSingleObject(handle, 0) != 0:
+                api.TerminateProcess(handle, 1)
+                api.WaitForSingleObject(handle, 5000)
+            api.CloseHandle(handle)
+        for child in launchers + [foreign]:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
 
 
 def _bound_report(root):

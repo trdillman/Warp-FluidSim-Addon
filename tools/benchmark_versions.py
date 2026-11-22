@@ -21,6 +21,8 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import locale
+import mmap
 import os
 import shutil
 import statistics
@@ -30,6 +32,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 
 _qspec = importlib.util.spec_from_file_location("_qualification", Path(__file__).with_name("gate") / "qualification.py")
@@ -82,40 +85,212 @@ def _snapshot_candidate(source, destination):
     return before
 
 
+def _read_trial_capture(child):
+    encoding = 'utf-8' if sys.flags.utf8_mode else locale.getencoding()
+    output = []
+    for stream in child._trial_capture_files:
+        size = os.fstat(stream.fileno()).st_size
+        data = b''
+        if size:
+            # A mapping reads the flushed prefix without moving the shared writer offset.
+            with mmap.mmap(stream.fileno(), size, access=mmap.ACCESS_READ) as capture:
+                data = capture[:]
+        output.append(data.decode(encoding, errors='replace').replace('\r\n', '\n').replace('\r', '\n'))
+    return tuple(output)
+
+
+def _communicate_trial_output(child, timeout):
+    deadline = time.monotonic() + timeout
+    output = child.communicate(timeout=timeout)
+    if hasattr(child, '_trial_capture_files'):
+        from tools.gate.windows_trial_process import wait_for_trial_job
+
+        wait_for_trial_job(child, deadline, timeout)
+        return _read_trial_capture(child)
+    return output
+
+
+def _communicate_demo_trial(child, command, timeout):
+    if sys.platform != "win32":
+        return (*child.communicate(timeout=timeout), child.pid)
+
+    # IFEO can substitute a broker launcher for the actual Blender process.
+    # Read the native executable and parent link while both processes are live.
+    from tools.gate.windows_trial_process import observe_executable
+
+    deadline = time.monotonic() + timeout
+    while True:
+        observed_pid = observe_executable(child, command[0])
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, timeout)
+        if observed_pid is not None:
+            return (*_communicate_trial_output(child, remaining), observed_pid)
+        try:
+            return (*_communicate_trial_output(child, min(0.2, remaining)), None)
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _launch_demo_trial(command, **kwargs):
+    if sys.platform == 'win32':
+        from tools.gate.windows_trial_process import launch_trial
+
+        # File-backed capture remains readable even if a descendant keeps a writer open.
+        with ExitStack() as scope:
+            stdout = scope.enter_context(tempfile.TemporaryFile('w+b'))
+            stderr = scope.enter_context(tempfile.TemporaryFile('w+b'))
+            kwargs.update(stdout=stdout, stderr=stderr)
+            child = launch_trial(command, **kwargs)
+            child._trial_capture_files = (stdout, stderr)
+            child._trial_capture_scope = scope.pop_all()
+            return child
+    return subprocess.Popen(command, **kwargs)
+
+
+def _write_trial_identity(out, child, observed_pid, reported_pid=None):
+    if child is None:
+        return
+    identity = {'launcher_pid': child.pid, 'identities': []}
+    if sys.platform == 'win32':
+        from tools.gate.windows_trial_process import process_identity
+
+        identity = process_identity(child)
+    identity.update(observed_pid=(observed_pid if observed_pid is not None
+                                  else identity.get('observed_pid')), reported_pid=reported_pid)
+    Path(out).with_suffix('.identity.json').write_text(
+        json.dumps(identity, indent=2), encoding='utf-8')
+
+
+def _write_failed_trial_identity(out, child, observed_pid, error):
+    try:
+        report = json.loads(out.read_text(encoding='utf-8'))
+    except (OSError, ValueError, RecursionError):
+        report = None
+    reported_pid = report.get('processId') if isinstance(report, dict) else None
+    if type(reported_pid) is not int or reported_pid <= 0:
+        reported_pid = None
+    try:
+        _write_trial_identity(out, child, observed_pid, reported_pid)
+    except (OSError, RuntimeError) as evidence_error:
+        error.add_note(f'Could not retain trial identity: {evidence_error}')
+
+
+def _write_trial_output(out, stdout, stderr, error=None):
+    try:
+        out.with_suffix('.log').write_text(stdout + stderr, encoding='utf-8')
+    except OSError as log_error:
+        if error is None:
+            raise
+        error.add_note(f'Could not retain trial output: {log_error}')
+
+
 def _run_trial(command, out, *, env=None, cwd=None, expect_marker=None):
     """One fresh child process, with retained failure logs for either harness."""
     out = Path(out)
     out.unlink(missing_ok=True)
+    out.with_suffix('.identity.json').unlink(missing_ok=True)
+    child = None
+    observed_pid = None
     try:
-        if expect_marker == "DEMO-PERFORMANCE-TRIAL-PASS":
-            with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  text=True, env=env, cwd=cwd) as child:
+        if expect_marker in ("DEMO-PERFORMANCE-TRIAL-PASS", "DEMO-SETTINGS-EXTRACT-PASS"):
+            child = _launch_demo_trial(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, env=env, cwd=cwd)
+            drained = False
+            stdout = stderr = ''
+            try:
                 try:
-                    stdout, stderr = child.communicate(timeout=900)
+                    stdout, stderr, observed_pid = _communicate_demo_trial(child, command, 900)
+                    drained = True
                 except BaseException as exc:
-                    child.kill()
-                    stdout, stderr = child.communicate()
-                    out.with_suffix('.log').write_text(stdout + stderr, encoding='utf-8')
+                    if sys.platform == "win32":
+                        from tools.gate.windows_trial_process import (
+                            terminate_executable_children,
+                        )
+
+                        try:
+                            terminate_executable_children(child, command[0])
+                        except (OSError, RuntimeError) as cleanup_error:
+                            exc.add_note(f"Verified trial child cleanup failed: {cleanup_error}")
+                    try:
+                        child.kill()
+                    except OSError as cleanup_error:
+                        exc.add_note(f"Trial launcher cleanup failed: {cleanup_error}")
+                    try:
+                        stdout, stderr = _communicate_trial_output(child, 5)
+                        drained = True
+                    except subprocess.TimeoutExpired as drain_error:
+                        stdout, stderr = drain_error.stdout or '', drain_error.stderr or ''
+                        stdout = stdout.decode(errors='replace') if isinstance(stdout, bytes) else stdout
+                        stderr = stderr.decode(errors='replace') if isinstance(stderr, bytes) else stderr
+                        exc.add_note("Trial output drain exceeded 5 seconds after process cleanup")
+                        if hasattr(child, '_trial_capture_files'):
+                            try:
+                                stdout, stderr = _read_trial_capture(child)
+                            except OSError as capture_error:
+                                exc.add_note(f'Could not read trial output: {capture_error}')
+                    except OSError as capture_error:
+                        exc.add_note(f'Could not read trial output: {capture_error}')
+                    if not drained:
+                        _write_trial_output(out, stdout, stderr, exc)
                     if isinstance(exc, subprocess.TimeoutExpired):
                         exc.stdout, exc.stderr = stdout, stderr
                     raise
                 proc = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
-                observed_pid = child.pid
+            finally:
+                try:
+                    try:
+                        if drained:
+                            _write_trial_output(out, stdout, stderr, sys.exception())
+                    finally:
+                        if sys.platform == 'win32':
+                            from tools.gate.windows_trial_process import (
+                                terminate_executable_children,
+                            )
+
+                            original_error = sys.exception()
+                            try:
+                                terminate_executable_children(child, command[0])
+                            except (OSError, RuntimeError) as cleanup_error:
+                                if original_error is None:
+                                    raise
+                                original_error.add_note(f'Trial containment cleanup failed: {cleanup_error}')
+                finally:
+                    original_error = sys.exception()
+                    if original_error is not None:
+                        _write_failed_trial_identity(out, child, observed_pid, original_error)
+                    capture_scope = getattr(child, '_trial_capture_scope', None)
+                    if capture_scope is not None:
+                        try:
+                            capture_scope.close()
+                        except OSError as capture_error:
+                            if original_error is None:
+                                raise
+                            original_error.add_note(f'Could not close trial output: {capture_error}')
+                    # Popen.__exit__ would wait without a timeout, defeating a
+                    # failed bounded drain. Close only completed captures.
+                    if drained:
+                        for stream in (getattr(child, 'stdout', None), getattr(child, 'stderr', None)):
+                            if stream is not None:
+                                stream.close()
         else:
             proc = subprocess.run(command, capture_output=True, text=True, env=env,
                                   cwd=cwd, timeout=900)
     except subprocess.TimeoutExpired as exc:
         def decoded(value):
             return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else value or ''
-        out.with_suffix('.log').write_text(decoded(exc.stdout) + decoded(exc.stderr), encoding='utf-8')
+        _write_trial_output(out, decoded(exc.stdout), decoded(exc.stderr), exc)
         raise
-    out.with_suffix(".log").write_text(proc.stdout + proc.stderr, encoding="utf-8")
+    _write_trial_output(out, proc.stdout, proc.stderr)
+    _write_trial_identity(out, child, observed_pid)
     if proc.returncode:
         raise RuntimeError(f"trial failed (exit {proc.returncode}); see {out.with_suffix('.log')}")
     if expect_marker and expect_marker not in proc.stdout:
         raise RuntimeError(f"trial missing marker {expect_marker}; see {out.with_suffix('.log')}")
     report = json.loads(out.read_text(encoding="utf-8"))
-    if expect_marker == "DEMO-PERFORMANCE-TRIAL-PASS" and report.get("processId") != observed_pid:
+    _write_trial_identity(out, child, observed_pid, report.get('processId'))
+    if expect_marker == "DEMO-PERFORMANCE-TRIAL-PASS" and (
+            observed_pid is None or report.get("processId") != observed_pid):
         raise RuntimeError("reported child process identity differs from launched process")
     return report
 
@@ -187,6 +362,9 @@ def demo_budget_main(argv):
     parser.add_argument("--full-schedule", action="store_true",
                         help="disable sequential stopping; run every block for every demo")
     args = parser.parse_args(argv)
+    blender = shutil.which(args.blender)
+    if blender is not None:
+        args.blender = os.path.abspath(blender)
     if bool(args.demos) != bool(args.carry_summary):
         parser.error("--demos and --carry-summary go together: carried runs cover the other demos")
     measure = tuple(demo for demo in REFERENCE_VERSIONS if not args.demos or demo in args.demos)
