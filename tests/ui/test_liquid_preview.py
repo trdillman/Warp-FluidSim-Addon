@@ -8,6 +8,7 @@ doubles, so these run in the regular regression lane. The pixel truth is
 from __future__ import annotations
 
 import ast
+import copy
 import dataclasses
 import importlib
 import math
@@ -215,7 +216,7 @@ def _install_handler_bpy(monkeypatch, scenes=(), *, keyconfig=True):
     fake_bpy = types.ModuleType("bpy")
     fake_bpy.types = SimpleNamespace(SpaceView3D=SpaceView3D)
     fake_bpy.app = SimpleNamespace(handlers=SimpleNamespace(
-        load_post=[], persistent=lambda fn: fn))
+        load_post=[], load_pre=[], save_pre=[], persistent=lambda fn: fn))
     fake_bpy.data = SimpleNamespace(scenes=list(scenes))
     fake_bpy.context = SimpleNamespace(
         window_manager=SimpleNamespace(keyconfigs=SimpleNamespace(
@@ -269,12 +270,16 @@ def test_unregister_leaves_zero_handlers_keymaps_and_load_hooks(monkeypatch):
         ("fluidsim.toggle_liquid_preview", "L", "PRESS")]
     assert keymaps[0].space_type == "VIEW_3D"
     assert len(fake_bpy.app.handlers.load_post) == 1
+    assert fake_bpy.app.handlers.save_pre == [handler._on_preview_save_pre]
+    assert fake_bpy.app.handlers.load_pre == [handler._on_preview_load_pre]
 
     handler.unregister()
     handler.unregister()  # Reload Scripts may call it twice
     assert draw_handlers == []
     assert [item for keymap in keymaps for item in keymap.keymap_items] == []
     assert fake_bpy.app.handlers.load_post == []
+    assert fake_bpy.app.handlers.save_pre == []
+    assert fake_bpy.app.handlers.load_pre == []
     assert handler.is_draw_registered() is False
 
 
@@ -1278,3 +1283,155 @@ def test_apply_viewport_does_not_rewrite_unchanged_hide_state(monkeypatch):
     assert surface.hidden is False and surface.sets == 1
     liquid_display.apply_viewport(scene)
     assert surface.sets == 1
+
+
+@pytest.mark.parametrize("render_particles", [False, True])
+def test_live_preview_survives_save_reopen_with_selected_render_outputs(monkeypatch, render_particles):
+    """Produce real publication buffers, save IDs, lose RAM, then run the load consumer."""
+    from fluidSim_warp_blender51 import blender as blender_package
+    from fluidSim_warp_blender51.blender import output_publication as output
+
+    class Attribute:
+        domain = "POINT"
+
+        def __init__(self, name, components):
+            self.name = name
+            self.data_type = "FLOAT_VECTOR" if components == 3 else "FLOAT"
+            self.data = self
+            self.values = np.zeros((output._point_capacity_for(4), components), np.float32)
+
+        def __len__(self):
+            return len(self.values)
+
+        def foreach_set(self, _prop, values):
+            self.values[:] = np.asarray(values).reshape(self.values.shape)
+
+        def foreach_get(self, _prop, values):
+            values[:] = self.values.ravel()
+
+    class Attributes(dict):
+        def __iter__(self):
+            return iter(self.values())
+
+    class Cloud:
+        users = 1
+
+        def __init__(self):
+            self.points = [None] * output._point_capacity_for(4)
+            self.attributes = Attributes({name: Attribute(name, size)
+                                          for name, size in (("position", 3), ("radius", 1))})
+
+        def resize(self, _count):
+            raise AssertionError("the bounded cloud must reuse its buffer")
+
+        def update_tag(self):
+            pass
+
+    class Obj(dict):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+            self.type = "POINTCLOUD" if name == output.PARTICLES_NAME else "MESH"
+            self.data = Cloud() if self.type == "POINTCLOUD" else SimpleNamespace(vertices=[])
+            self.hide_viewport = self.hide_render = self.hidden = False
+
+        def hide_get(self):
+            return self.hidden
+
+        def hide_set(self, value):
+            self.hidden = value
+
+    scene, domain = _live_scene(True)
+    fs = scene.fluidsim
+    fs.liquid_display_mode = "PREVIEW"
+    fs.is_property_set = lambda _name: True
+    fs.show_surface, fs.show_particles = not render_particles, render_particles
+    fs.domain_object = SimpleNamespace(fluidsim_domain=domain)
+    fs.output_collection_name = "Owned Preview"
+    scene.as_pointer = lambda: 101
+    domain.surface_enabled = True
+    handler, fake_bpy, _draw, _keys = _install_handler_bpy(monkeypatch, [scene])
+    fake_bpy.context.scene = scene
+    objects, readbacks = {}, []
+
+    def resolve(target, name, *, ensure=True):
+        return objects.get((target.fluidsim.output_collection_name, name))
+
+    def ensure(target, name, *_args):
+        return objects.setdefault((target.fluidsim.output_collection_name, name), Obj(name))
+
+    monkeypatch.setattr(output, "_require_bpy", lambda: None)
+    monkeypatch.setattr(output, "output_object", resolve)
+    monkeypatch.setattr(output, "_ensure_object", ensure)
+    monkeypatch.setattr(output, "_ensure_point_object", ensure)
+    monkeypatch.setattr(output, "_supports_pointcloud", lambda: True)
+    monkeypatch.setattr(output, "_swap_mesh", lambda obj, verts, *_a: setattr(obj.data, "vertices", verts))
+    monkeypatch.setattr(output, "_ensure_material", lambda *_a: None)
+    monkeypatch.setattr(output, "_sync_render_inputs", lambda *_a: None)
+    materials = SimpleNamespace(ensure_particle_material=None, ensure_surface_material=None)
+    monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.blender.materials", materials)
+    monkeypatch.setattr(blender_package, "materials", materials, raising=False)
+    positions = np.arange(12, dtype=np.float32).reshape(4, 3)
+
+    class Host:
+        solver = _CountingSolver()
+        surface_mesh = (positions[:3], np.array([[0, 1, 2]], np.int32))
+
+        def positions_strided(self, _stride):
+            readbacks.append("positions")
+            return positions
+
+        def output_attributes(self, *_args, **_kwargs):
+            return {}
+
+    output.clear_published_points()
+    handler.register()
+    payload = output.prepare_live_payload(scene, Host())
+    output.publish_payload(scene, payload)
+    before = resolve(scene, output.PARTICLES_NAME)
+    assert output.live_point_count(before) == (4 if render_particles else 0)
+    assert output.latest_published_points().particle_count == 4
+    assert readbacks == ["positions"]
+
+    # The handler must reject a different scene/domain/output owner, not write
+    # the last scene's RAM buffer into whichever output happens to be active.
+    other = SimpleNamespace(fluidsim=copy.copy(fs), as_pointer=lambda: 202)
+    assert not output.persist_preview_points_for_save(other)
+    for field, value in (("domain_object", object()), ("output_collection_name", "Other")):
+        original = getattr(fs, field)
+        setattr(fs, field, value)
+        assert not output.persist_preview_points_for_save(scene)
+        setattr(fs, field, original)
+
+    for callback in fake_bpy.app.handlers.save_pre:
+        callback(None)
+    particle_obj = resolve(scene, output.PARTICLES_NAME)
+    assert output.live_point_count(particle_obj) == 4
+    assert particle_obj.hide_render is not render_particles
+    assert particle_obj.hidden  # the Liquid Preview overlay owns the viewport
+    saved_objects = copy.deepcopy(objects)
+    for callback in fake_bpy.app.handlers.load_pre:
+        callback(None)
+    assert output.latest_published_points() is None
+    objects = saved_objects
+    scene.as_pointer = lambda: 303
+    for callback in fake_bpy.app.handlers.load_post:
+        callback(None)
+    restored = output.latest_published_points()
+    assert restored is not None and restored.scene_key == 303
+    np.testing.assert_array_equal(restored.positions, positions)
+    assert restored.particle_radius == pytest.approx(payload.particle_radius)
+    assert readbacks == ["positions"], "saving/reopening must never reacquire the solver"
+    assert (fs.show_surface, fs.show_particles) == (not render_particles, render_particles)
+    assert resolve(scene, output.PARTICLES_NAME).hide_render is not render_particles
+    # An emptied live frame must not resurrect the previous saved cloud.
+    positions = np.empty((0, 3), dtype=np.float32)
+    output.publish_payload(scene, output.prepare_live_payload(scene, Host()))
+    for callback in fake_bpy.app.handlers.save_pre:
+        callback(None)
+    assert output.live_point_count(resolve(scene, output.PARTICLES_NAME)) == 0
+    handler._on_preview_load_pre()
+    handler._on_load_post()
+    assert output.latest_published_points() is None
+    handler.unregister()
+    output.clear_published_points()

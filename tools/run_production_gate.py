@@ -169,6 +169,11 @@ SOURCE_REPORT_ACCEPTANCE = (
 # tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
+    "tests/acceptance/blender_saved_preview_acceptance.py": (
+        "Requires an installed candidate, exact archive/source identity, a private "
+        "profile and separate produce/reopen processes for both render selections; "
+        "run both cases with tools/gate/run_saved_preview_installed_probe.ps1 "
+        "under an exclusive lease using the same private profile."),
     "tests/acceptance/blender_frozen_production_acceptance.py":
         "run through tools/gate/run_frozen_input_acceptance.py for six fresh CUDA processes; structural checks and numerical diagnostics remain unqualified until continuation tolerances are approved",
     "tests/acceptance/blender_gpu_particle_preview_acceptance.py": (

@@ -167,6 +167,17 @@ def _draw_callback():
 
 
 @_persistent
+def _on_preview_load_pre(*_args):
+    output_publication.clear_published_points()
+
+
+@_persistent
+def _on_preview_save_pre(*_args):
+    for scene in bpy.data.scenes:
+        output_publication.persist_preview_points_for_save(scene)
+
+
+@_persistent
 def _on_load_post(*_args):
     from .. import liquid_display
     liquid_display.reset_viewport()
@@ -225,7 +236,10 @@ def register():
     _FAILURE = None
     try:
         _register_keymap()
-        with handler_registration(((bpy.app.handlers.load_post, _on_load_post),)):
+        with handler_registration((
+                (bpy.app.handlers.load_post, _on_load_post),
+                (bpy.app.handlers.load_pre, _on_preview_load_pre),
+                (bpy.app.handlers.save_pre, _on_preview_save_pre))):
             _on_load_post()
             timers = getattr(bpy.app, "timers", None)
             if timers is not None and not timers.is_registered(_restore_after_registration):
@@ -257,6 +271,12 @@ def unregister():
     load_post = bpy.app.handlers.load_post
     while _on_load_post in load_post:
         load_post.remove(_on_load_post)
+    save_pre = bpy.app.handlers.save_pre
+    while _on_preview_save_pre in save_pre:
+        save_pre.remove(_on_preview_save_pre)
+    load_pre = bpy.app.handlers.load_pre
+    while _on_preview_load_pre in load_pre:
+        load_pre.remove(_on_preview_load_pre)
     _unregister_keymap()
     _remove_draw_handler()
     _FAILURE = None
