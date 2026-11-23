@@ -1876,17 +1876,22 @@ def refresh_existing_output_settings(scene):
 
     # Metadata only: no solver readback or attribute/geometry reconstruction.
     ds = _domain_settings(scene)
+    from .liquid_display import apply_viewport, viewport_families
+    # An output shown only by its viewport eye (render flag off) still draws, so
+    # it needs its material and radius too.
+    in_viewport = dict(zip(
+        (SURFACE_NAME, PARTICLES_NAME),
+        viewport_families(scene, bool(getattr(ds, "surface_enabled", False)))))
     for policy in output_family_policy(scene, voxel_size=_effective_voxel_size(scene, ds)):
         obj = output_object(scene, policy.name)
         if obj is None:
             continue
         visible = policy.visible_with_legacy(obj.get(LEGACY_UNCLASSIFIED_COUNT_TAG, 0))
         _set_hidden(obj, not visible)
-        if visible:
+        if visible or in_viewport.get(policy.name, False):
             if policy.radius is not None:
                 _set_point_radius(obj, policy.radius)
             _ensure_material(getattr(materials, policy.material), scene, obj)
-    from .liquid_display import apply_viewport
     apply_viewport(scene)
     return _sync_render_inputs(scene)
 

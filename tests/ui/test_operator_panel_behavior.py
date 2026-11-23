@@ -2805,6 +2805,17 @@ def test_workflow_stage_look_has_one_whitewater_row(monkeypatch):
     assert [c for c in look.prop_calls if c["name"] == "whitewater_enabled"][0].get("text") is None
 
 
+def test_look_materials_follow_the_eyes_as_well_as_the_render_flags(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "HIDDEN", "view_particles": True}
+    )
+    drawn = set(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look_materials, context).props)
+    assert "particle_material" in drawn      # shown in the 3D view, though not rendered
+    assert "surface_material" not in drawn
+
+
 def _patch_bake_runtime(
     monkeypatch, ui_stages, *, status=None, action="START", cache_dir=None, managed=False
 ):

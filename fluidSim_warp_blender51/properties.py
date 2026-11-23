@@ -959,8 +959,12 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     view_particles: BoolProperty(
         name="Show Particles in Viewport", default=False, update=_view_particles_changed,
         description="Show the liquid particles in the 3D view when Viewport is set to Outputs; the render icon beside it separately includes them in the render")
-    view_surface_overridden: BoolProperty(default=False, options={"HIDDEN"})
-    view_particles_overridden: BoolProperty(default=False, options={"HIDDEN"})
+    view_surface_overridden: BoolProperty(
+        name="Surface Eye Set Separately", default=False, options={"HIDDEN"},
+        description="Internal: the surface eye was set apart from its render icon, so render icon changes no longer move it")
+    view_particles_overridden: BoolProperty(
+        name="Particles Eye Set Separately", default=False, options={"HIDDEN"},
+        description="Internal: the particles eye was set apart from its render icon, so render icon changes no longer move it")
     show_whitewater: BoolProperty(
         name="Show Whitewater", default=True, update=_show_whitewater_changed,
         description="Enable to show simulated whitewater particles in the 3D view (including Liquid Preview) and in the render; disable to hide them without disabling whitewater simulation")

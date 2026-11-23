@@ -968,8 +968,8 @@ class FLUIDSIM_PT_output_materials(FluidSimScenePanel, bpy.types.Panel):
         fs = context.scene.fluidsim
         # Material pickers are scene-scoped; whitewater_enabled is not.
         layout.prop(fs, "output_collection_name")
-        _gated(layout, fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"}).prop(fs, "surface_material")
-        _gated(layout, fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"}).prop(fs, "particle_material")
+        _gated(layout, fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"} or fs.view_surface).prop(fs, "surface_material")
+        _gated(layout, fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"} or fs.view_particles).prop(fs, "particle_material")
         whitewater = _gated(layout, _whitewater_enabled(context))
         whitewater.prop(fs, "whitewater_material")
         streams = _gated(whitewater, fs.whitewater_output_mode in {"SEPARATE", "BOTH"})

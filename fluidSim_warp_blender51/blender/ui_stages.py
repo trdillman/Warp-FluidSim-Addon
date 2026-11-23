@@ -434,9 +434,10 @@ class FLUIDSIM_STAGE_PT_look_materials(FluidSimStagePanel, bpy.types.Panel):
         scene = context.scene
         fs = scene.fluidsim
         domain = active_domain_settings(scene)
-        if fs.liquid_view_mode in _SURFACE_VIEW_MODES:
+        # An output shown by its eye is styled even when it is not rendered.
+        if fs.liquid_view_mode in _SURFACE_VIEW_MODES or fs.view_surface:
             _prop(layout, scene, "surface_material")
-        if fs.liquid_view_mode in _PARTICLE_VIEW_MODES:
+        if fs.liquid_view_mode in _PARTICLE_VIEW_MODES or fs.view_particles:
             _prop(layout, scene, "particle_material")
         if domain is not None and domain.whitewater_enabled:
             _prop(layout, scene, "whitewater_material")

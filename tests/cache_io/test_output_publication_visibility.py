@@ -198,3 +198,48 @@ def test_family_policy_resolves_modes_materials_radii_and_legacy(mode, typed, co
         assert policies[name].material == material
         assert policies[name].radius == pytest.approx(0.045)
         assert policies[name].radius_scale == 3.0
+
+
+def test_metadata_refresh_styles_an_output_shown_only_by_its_eye(monkeypatch):
+    """Material and radius edits on a paused cache reach an output whose eye is
+    open but whose render flag is off, as well as one that is rendered."""
+    import sys
+
+    import fluidSim_warp_blender51.blender as blender_package
+    from fluidSim_warp_blender51.blender import liquid_display
+
+    # The real materials module needs Blender; the refresh only looks a name up on it.
+    fake_materials = SimpleNamespace(particle_material=object())
+    monkeypatch.setitem(sys.modules, "fluidSim_warp_blender51.blender.materials", fake_materials)
+    monkeypatch.setattr(blender_package, "materials", fake_materials, raising=False)
+
+    scene = _scene(surface_enabled=False, whitewater_enabled=False)
+    scene.fluidsim.show_particles = False        # not rendered
+    scene.fluidsim.show_surface = False
+    scene.fluidsim.view_particles = True          # but shown in the 3D view
+    scene.fluidsim.view_surface = False
+    scene.fluidsim.liquid_display_mode = "SURFACE"
+    obj = _Output(output.PARTICLES_NAME)
+    styled = []
+    policies = [SimpleNamespace(
+        name=output.PARTICLES_NAME, material="particle_material", radius=0.25,
+        visible_with_legacy=lambda _count: False)]
+    monkeypatch.setattr(output, "_require_bpy", lambda: None)
+    monkeypatch.setattr(output, "output_family_policy", lambda *_a, **_k: policies)
+    monkeypatch.setattr(output, "output_object", lambda _scene, _name: obj)
+    monkeypatch.setattr(output, "_effective_voxel_size", lambda *_a: 0.1)
+    monkeypatch.setattr(output, "_set_point_radius", lambda target, radius: styled.append(("radius", radius)))
+    monkeypatch.setattr(output, "_ensure_material", lambda *_a: styled.append(("material",)))
+    monkeypatch.setattr(output, "_sync_render_inputs", lambda _scene: None)
+    monkeypatch.setattr(liquid_display, "apply_viewport", lambda _scene: None)
+
+    output.refresh_existing_output_settings(scene)
+    assert styled == [("radius", 0.25), ("material",)]
+
+    # With the eye closed as well, nothing is styled.
+    styled.clear()
+    scene.fluidsim.view_particles = False
+    scene.fluidsim.view_surface = True            # a surface is shown instead, so no fallback to particles
+    scene.fluidsim.domain_object.fluidsim_domain.surface_enabled = True
+    output.refresh_existing_output_settings(scene)
+    assert styled == []
