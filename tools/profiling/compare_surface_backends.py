@@ -19,7 +19,9 @@ your Blender Gate session as BLENDER_GATE_SESSION, and use a private profile:
 
     $env:BLENDER_USER_RESOURCES = Join-Path $env:TEMP ("fluidsim-compare-" + [guid]::NewGuid())
     $env:BLENDER_USER_EXTENSIONS = Join-Path $env:BLENDER_USER_RESOURCES 'extensions'
-    bgate run --class shared --session $env:BLENDER_GATE_SESSION --max-seconds 600 -- --background --factory-startup --python-use-system-env --python-exit-code 1 --python tools/profiling/compare_surface_backends.py -- --demo dam_break --frames 20 60 120 --json-out artifacts/surface_dam_break.json
+    bgate run --class exclusive --session $env:BLENDER_GATE_SESSION --max-seconds 600 --report artifacts/surface_dam_break_lease.json -- --background --factory-startup --python-use-system-env --python-exit-code 1 --python tools/profiling/compare_surface_backends.py -- --demo dam_break --frames 20 60 120 --json-out artifacts/surface_dam_break.json
+
+Use the timings only when the accompanying lease report records a clean run.
 
 Or without Blender, on the bpy-free dam-break benchmark scene:
 
@@ -211,6 +213,10 @@ def run_blender_demo(args):
 
     scene = bpy.context.scene
     wanted = sorted(set(args.frames))
+    if wanted[0] <= scene.frame_start or wanted[-1] > scene.frame_end:
+        raise ValueError(
+            f"Demo frames must be between {scene.frame_start + 1} and "
+            f"{scene.frame_end} inclusive; got {wanted}")
     frames = []
     for frame in range(scene.frame_start + 1, max(wanted) + 1):
         scene.frame_set(frame)  # the real playback path, colliders included

@@ -2,6 +2,7 @@
 
 import os
 import sys
+import types
 
 import numpy as np
 import pytest
@@ -79,3 +80,20 @@ def test_solver_comparison_emits_for_requested_steps(monkeypatch, emit_frames):
 
     assert active_steps == [True] * emit_frames + [False] * (5 - emit_frames)
     assert released == [True]
+
+
+@pytest.mark.parametrize("frames", [["1"], ["1", "20"], ["81"]])
+def test_demo_comparison_rejects_frames_outside_playback(monkeypatch, frames):
+    from tools import repo_addon_loader
+
+    scene = types.SimpleNamespace(frame_start=1, frame_end=80)
+    bpy = types.SimpleNamespace(
+        context=types.SimpleNamespace(scene=scene),
+        ops=types.SimpleNamespace(wm=types.SimpleNamespace(open_mainfile=lambda **kwargs: None)),
+    )
+    monkeypatch.setitem(sys.modules, "bpy", bpy)
+    monkeypatch.setattr(repo_addon_loader, "enable_repo_addon", lambda *args, **kwargs: None)
+    args = CMP.parse(["--demo", "dam_break", "--frames", *frames])
+
+    with pytest.raises(ValueError, match="Demo frames must be between 2 and 80"):
+        CMP.run_blender_demo(args)
