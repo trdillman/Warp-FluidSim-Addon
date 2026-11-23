@@ -620,7 +620,7 @@ def test_render_detail_memory_is_reserved_at_its_render_resolution(separate_grid
 
     settings.surface_smooth_preserve_splashes = 0.5
     render_voxels = (8 if separate_grid else 1) * 512
-    assert estimate_solver_bytes(settings) - sharp == 8 * render_voxels
+    assert estimate_solver_bytes(settings) - sharp == 4 * (512 + render_voxels)
     settings.surface_smooth_iterations = 0
     assert estimate_solver_bytes(settings) == sharp
 

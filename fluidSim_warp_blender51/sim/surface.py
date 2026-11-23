@@ -506,9 +506,8 @@ class SurfacePipeline:
         smooth_iterations = max(0, int(s.surface_smooth_iterations))
         if preserve > 0.0 and smooth_iterations > 0:
             weight = self.anisotropic_surfacer().smoothing_weight(
-                grid, nvox, positions, solver.particles.count,
-                solver._np_dim(), voxel_size=h,
-                sim_voxel_size=float(s.voxel_size),
+                grid, solver.grid, nvox, positions, solver.particles.count,
+                solver._np_dim(),
                 particles_per_voxel=float(getattr(s, "particles_per_voxel", 8.0)),
                 preserve=preserve)
             apply_preserving(self.filter_kernel(int(s.surface_smooth_type)),

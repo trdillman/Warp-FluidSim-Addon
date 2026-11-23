@@ -44,7 +44,7 @@ SURFACE_DENSE_BYTES_PER_VOXEL = 40
 # workspace (two double-buffered int32 arrays reserved at 1.5x capacity).
 SHARP_SURFACE_BYTES_PER_PARTICLE = 52 + 24
 SHARP_SURFACE_HASH_BYTES = 8 * SHARP_SURFACE_HASH_GRID_DIM ** 3
-SURFACE_SPLASH_BYTES_PER_VOXEL = 8  # density and smoothing weight
+SURFACE_SPLASH_FIELD_BYTES_PER_VOXEL = 4  # simulation density or render weight
 SURFACE_DETAIL_FIELDS_BYTES_PER_VOXEL = 8  # render SDF and filter scratch
 PARTICLE_BYTES = 128
 AFFINE_BYTES_PER_PARTICLE = _AFFINE_BYTES_PER_PARTICLE
@@ -326,5 +326,5 @@ def estimate_solver_bytes(settings) -> int:
     if sharp:
         estimate += particles * SHARP_SURFACE_BYTES_PER_PARTICLE + SHARP_SURFACE_HASH_BYTES
     if preserve and int(_value(settings, "surface_smooth_iterations", 1)) > 0:
-        estimate += render_leaves * LEAF_VOLUME * SURFACE_SPLASH_BYTES_PER_VOXEL
+        estimate += (leaves + render_leaves) * LEAF_VOLUME * SURFACE_SPLASH_FIELD_BYTES_PER_VOXEL
     return int(estimate)

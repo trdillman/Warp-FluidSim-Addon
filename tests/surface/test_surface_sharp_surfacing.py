@@ -64,9 +64,9 @@ def _k_sdf_sample_points(
                                     float(ijk[2]) + 0.5)
 
 
-def _grid(device, lo, hi):
+def _grid(device, lo, hi, *, voxel_size=H):
     grid = SparseGrid(origin=(0.0, 0.0, 0.0), size=(SIZE, SIZE, SIZE),
-                      voxel_size=H, leaf_capacity=512, device=device)
+                      voxel_size=voxel_size, leaf_capacity=512, device=device)
     grid.begin_topology()
     grid.mark_world_box(lo, hi)
     grid.finalize_topology()
@@ -105,7 +105,7 @@ def _samples(grid, field, device):
     n = int(grid.active_voxel_count)
     pts = wp.zeros(n, dtype=wp.vec3, device=device)
     wp.launch(_k_sdf_sample_points, dim=n, device=device,
-              inputs=[grid.leaf_coords, grid.origin, H], outputs=[pts])
+              inputs=[grid.leaf_coords, grid.origin, grid.voxel_size], outputs=[pts])
     return pts.numpy(), field.data.numpy()[:n]
 
 
@@ -218,8 +218,8 @@ def test_splash_weight_is_full_in_dense_liquid_and_low_in_spray(cuda_device):
     grid = _grid(dev, (0.16, 0.16, 0.16), (0.50, 0.50, 0.50))
     surfacer = ANISO.AnisotropicSurfacer(dev)
     weight = surfacer.smoothing_weight(
-        grid, grid.voxel_capacity, positions, count, len(pts), voxel_size=H,
-        sim_voxel_size=H, particles_per_voxel=8.0, preserve=0.8)
+        grid, grid, grid.voxel_capacity, positions, count, len(pts),
+        particles_per_voxel=8.0, preserve=0.8)
     sample_pts, w = _samples(grid, ScalarField(grid), dev)
     w = weight.numpy()[:len(w)]
 
@@ -232,10 +232,11 @@ def test_splash_weight_is_full_in_dense_liquid_and_low_in_spray(cuda_device):
     assert nearest((0.40, 0.21, 0.45)) == pytest.approx(0.2, abs=1e-6)
 
 
-def test_splash_weight_window_scales_with_fine_render_voxels(cuda_device):
-    """At an 8x render resolution dense liquid still gets smoothed.
+@pytest.mark.parametrize("multiplier", [8, 16])
+def test_splash_weight_window_scales_with_fine_render_voxels(cuda_device, multiplier):
+    """Dense liquid receives smoothing at both multiplier and finer custom resolutions.
 
-    Particles sit 4 render voxels apart, so a 3x3x3 render-voxel window is
+    Particles sit at least 4 render voxels apart, so a 3x3x3 render-voxel window is
     often empty; the density window must span simulation voxels instead.
     """
     dev = cuda_device
@@ -246,27 +247,20 @@ def test_splash_weight_window_scales_with_fine_render_voxels(cuda_device):
     pts = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], 1).astype(np.float32)
     positions = wp.array(pts, dtype=wp.vec3, device=dev)
     count = wp.array([len(pts)], dtype=wp.int32, device=dev)
-    grid = _grid(dev, (0.0, 0.0, 0.0), (SIZE, SIZE, SIZE))
-    assert ANISO.density_block(H / sim_h) == 8
+    bounds = ((0.0, 0.0, 0.0), (SIZE, SIZE, SIZE))
+    sim_grid = _grid(dev, *bounds, voxel_size=sim_h)
+    grid = _grid(dev, *bounds, voxel_size=sim_h / multiplier)
     surfacer = ANISO.AnisotropicSurfacer(dev)
     weight = surfacer.smoothing_weight(
-        grid, grid.voxel_capacity, positions, count, len(pts), voxel_size=H,
-        sim_voxel_size=sim_h, particles_per_voxel=8.0, preserve=1.0)
+        grid, sim_grid, grid.voxel_capacity, positions, count, len(pts),
+        particles_per_voxel=8.0, preserve=1.0)
     sample_pts, _ = _samples(grid, ScalarField(grid), dev)
     w = weight.numpy()[:len(sample_pts)]
     inside = np.all(sample_pts < 2.0 * sim_h, axis=1)
-    assert inside.sum() == 16 ** 3
+    assert inside.sum() == (2 * multiplier) ** 3
     assert w[inside].min() > 0.5
     far = np.all(sample_pts > 3.0 * sim_h, axis=1)
     assert far.sum() > 0 and np.all(w[far] == 0.0)
-
-
-def test_density_block_is_about_one_simulation_voxel():
-    assert ANISO.density_block(1.0) == 1
-    assert ANISO.density_block(2.0) == 1
-    assert ANISO.density_block(0.5) == 2
-    assert ANISO.density_block(0.25) == 4
-    assert ANISO.density_block(1.0 / 16.0) == 8
 
 
 def test_render_detail_flags_follow_the_settings():
