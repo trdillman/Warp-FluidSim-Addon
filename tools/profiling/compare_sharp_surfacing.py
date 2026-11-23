@@ -69,6 +69,9 @@ def measure_variant(solver, overrides, repeats):
         verts = tris = None
         for _ in range(max(1, repeats) + 1):  # first run warms up
             pipeline.built_key = None
+            # Rebuild the solver SDF too, so the plain surface pays the same
+            # reconstruction cost the sharp ones do (it is cached otherwise).
+            pipeline.solver_sdf_key = None
             pipeline.invalidate()
             wp.synchronize_device(solver.device)
             t0 = time.perf_counter()

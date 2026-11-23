@@ -247,3 +247,21 @@ def test_render_detail_flags_follow_the_settings():
     before = pipeline._render_detail_signature()
     pipeline.solver.settings.surface_detail_max_stretch = 2.0
     assert pipeline._render_detail_signature() != before
+
+
+def test_fine_render_grid_allocates_leaves_for_stretched_ellipsoids():
+    from types import SimpleNamespace
+
+    pipeline = object.__new__(SURF.SurfacePipeline)
+    s = SimpleNamespace(voxel_size=0.08, particle_radius_scale=1.2,
+                        topology_expand=1, surface_detail_enabled=False,
+                        surface_detail_max_stretch=8.0)
+    pipeline.solver = SimpleNamespace(settings=s)
+    fine = SimpleNamespace(voxel_size=0.01)  # an 8x render multiplier
+    assert pipeline._render_topology_expand(fine) == 1
+    s.surface_detail_enabled = True
+    leaves = pipeline._render_topology_expand(fine)
+    reach_voxels = (0.048 * ANISO.max_axis_multiplier(8.0) + 4 * 0.01) / 0.01
+    assert leaves * 8 >= reach_voxels and leaves > 1
+    # At simulation resolution one leaf of margin already covers the reach.
+    assert pipeline._render_topology_expand(SimpleNamespace(voxel_size=0.08)) == 1

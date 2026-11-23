@@ -345,6 +345,10 @@ class SurfacePipeline:
             self.nvox = getattr(solver, "_nvox", max(1, solver.grid.active_voxel_count))
             self.invalidate()
             return
+        if not self.render_detail_active():
+            # Same cleanup as the simulation-resolution branch above: a
+            # decoupled render grid must not keep the ellipsoid buffers either.
+            self.release_anisotropic()
         key = self.resource_key()
         if not force and self.grid_key == key:
             self.render_extractor.max_dense_dim = max_dense
@@ -514,6 +518,25 @@ class SurfacePipeline:
 
     # --- render-only surface detail -----------------------------------------
 
+    def _render_topology_expand(self, grid):
+        """Leaves to grow the render topology by around the particles.
+
+        A stretched ellipsoid reaches past the particle's own leaf; on a fine
+        render grid (Multiplier or Custom mode) that can be several leaves,
+        and the splat silently skips cells in unallocated leaves.
+        """
+        s = self.solver.settings
+        expand = max(1, int(getattr(s, "topology_expand", 1)))
+        if not self.detail_enabled():
+            return expand
+        from .surface_anisotropy import max_axis_multiplier
+        radius = 0.5 * float(s.voxel_size) * float(s.particle_radius_scale)
+        reach = radius * max_axis_multiplier(
+            float(getattr(s, "surface_detail_max_stretch", 4.0)))
+        reach += 4.0 * float(grid.voxel_size)  # the splat's far distance
+        leaves = int(math.ceil(reach / (C.LEAF_DIM * float(grid.voxel_size))))
+        return max(expand, leaves)
+
     def detail_enabled(self):
         return bool(getattr(self.solver.settings, "surface_detail_enabled", False))
 
@@ -607,7 +630,7 @@ class SurfacePipeline:
             narrow_band = getattr(solver, "narrow_band", None)
             if narrow_band is not None:
                 narrow_band.mark_render_leaves(grid)
-            grid.expand(max(1, int(getattr(solver.settings, "topology_expand", 1))))
+            grid.expand(self._render_topology_expand(grid))
             grid.finalize_topology(sync=True)
             self.nvox = max(1, grid.active_voxel_count)
             self.topology_generation += 1
