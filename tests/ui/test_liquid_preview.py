@@ -139,6 +139,23 @@ def test_toggle_operator_flips_the_scene_setting(monkeypatch):
     assert fs.liquid_preview_enabled is False
 
 
+def test_preview_draws_whitewater_only_while_it_is_shown():
+    from types import SimpleNamespace
+
+    from fluidSim_warp_blender51.blender.liquid_preview import passes
+
+    def read(show, preview):
+        fs = SimpleNamespace(
+            liquid_preview_scale=0.5, liquid_preview_radius_multiplier=2.0,
+            liquid_preview_absorption=(0.25, 0.6, 0.75),
+            liquid_preview_whitewater=preview, show_whitewater=show)
+        return passes.preview_settings(fs).whitewater
+
+    assert read(True, True) is True
+    assert read(False, True) is False  # the eye in Look hides it in Preview too
+    assert read(True, False) is False  # the Properties-only setting still narrows it
+
+
 def _preview_scene_overrides(**overrides):
     values = {
         "liquid_preview_enabled": False, "liquid_preview_scale": 0.5,
@@ -163,8 +180,10 @@ def test_look_stage_mirrors_the_toggle_on_the_scene_group(monkeypatch):
         scene_overrides=_preview_scene_overrides(liquid_preview_enabled=True, liquid_display_mode="PREVIEW"))
     look = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context)
     drawn = {call["name"]: call["data"] for call in look.prop_calls}
-    for name in set(PREVIEW_SETTINGS) - {"liquid_preview_enabled"}:
+    # Preview whitewater has no row of its own: the Whitewater eye covers it.
+    for name in set(PREVIEW_SETTINGS) - {"liquid_preview_enabled", "liquid_preview_whitewater"}:
         assert drawn[name] is scene_settings, name
+    assert "liquid_preview_whitewater" not in drawn
 
 
 def test_look_stage_explains_a_preview_with_no_published_particles(monkeypatch):

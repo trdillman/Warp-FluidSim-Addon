@@ -97,7 +97,6 @@ LOOK_PROPS = (
     "liquid_preview_scale",
     "liquid_preview_radius_multiplier",
     "liquid_preview_absorption",
-    "liquid_preview_whitewater",
 )
 LOOK_MATERIAL_PROPS = ("surface_material", "particle_material", "whitewater_material")
 BAKE_PROPS = ("cache_path", "export_attributes")
@@ -372,10 +371,14 @@ class FLUIDSIM_STAGE_PT_look(FluidSimStagePanel, bpy.types.Panel):
             _prop(particles, scene, "particle_display_scale")
 
         whitewater = layout.column(align=True)
-        _prop(whitewater, scene, "whitewater_enabled")
+        # One Whitewater row: the checkbox simulates it and the eye beside it
+        # shows or hides it, so simulating-but-hiding is still possible.
+        row = whitewater.row(align=True)
+        _prop(row, scene, "whitewater_enabled")
         if domain.whitewater_enabled:
+            _prop(row, scene, "show_whitewater", text="",
+                  icon="HIDE_OFF" if fs.show_whitewater else "HIDE_ON")
             _prop(whitewater, scene, "ww_emission_rate", text="Amount")
-            _prop(whitewater, scene, "show_whitewater")
 
         _prop(layout, scene, "show_overlay", text="Viewport HUD")
 
@@ -386,8 +389,6 @@ class FLUIDSIM_STAGE_PT_look(FluidSimStagePanel, bpy.types.Panel):
             _prop(preview, scene, "liquid_preview_radius_multiplier",
                   text="Radius")
             _prop(preview, scene, "liquid_preview_absorption")
-            _prop(preview, scene, "liquid_preview_whitewater",
-                  text="Whitewater")
 
 
 class FLUIDSIM_STAGE_PT_look_materials(FluidSimStagePanel, bpy.types.Panel):

@@ -311,6 +311,12 @@ def _request_output_refresh(self, context):
     _request_scene_update(context, SceneUpdate.OUTPUT)
 
 
+def _show_whitewater_changed(self, context):
+    """Shown whitewater is also drawn in Liquid Preview, so redraw it too."""
+    _request_output_refresh(self, context)
+    _redraw_liquid_preview(self, context)
+
+
 def _gpu_particle_preview_changed(self, context):
     if not self.gpu_particle_preview:
         from .blender import gpu_particle_owner
@@ -920,8 +926,8 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Render Particles", default=False, update=_sync_liquid_view_mode,
         description="Include liquid particles in rendering; Liquid Display independently controls viewport visibility")
     show_whitewater: BoolProperty(
-        name="Whitewater", default=True, update=_request_output_refresh,
-        description="Enable to display simulated whitewater particles; disable to hide them without disabling whitewater simulation")
+        name="Show Whitewater", default=True, update=_show_whitewater_changed,
+        description="Enable to display simulated whitewater particles in the viewport, including Liquid Preview; disable to hide them without disabling whitewater simulation")
     gpu_particle_preview: BoolProperty(
         name="GPU Particle Preview", default=False, update=_gpu_particle_preview_changed,
         description="Use the GPU texture preview for live liquid particles when available")
@@ -1094,7 +1100,7 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     liquid_preview_whitewater: BoolProperty(
         name="Preview Whitewater", default=True,
         update=_redraw_liquid_preview,
-        description="Enable to draw published foam, spray and bubbles on top of Liquid Preview; disable to show only the liquid body")
+        description="Enable to draw published foam, spray and bubbles on top of Liquid Preview when whitewater is shown; disable to show only the liquid body")
     deck_shown: BoolProperty(
         name="Liquid Deck", default=True,
         update=_deck_shown_changed,

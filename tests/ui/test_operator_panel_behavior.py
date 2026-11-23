@@ -2736,6 +2736,25 @@ def test_workflow_stage_look_hides_inactive_controls(monkeypatch):
     }
 
 
+def test_workflow_stage_look_has_one_whitewater_row(monkeypatch):
+    """Simulate and show share one row (checkbox plus eye); no second Whitewater box."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    context, scene_settings, _domain = _stage_context(
+        whitewater_enabled=True,
+        scene_overrides={"liquid_view_mode": "SURFACE", "liquid_display_mode": "PREVIEW",
+                         "liquid_preview_enabled": True, "show_whitewater": True},
+    )
+    look = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context)
+    names = [call["name"] for call in look.prop_calls]
+    assert names.count("whitewater_enabled") == 1
+    assert names.count("show_whitewater") == 1
+    assert "liquid_preview_whitewater" not in names
+    eye = next(call for call in look.prop_calls if call["name"] == "show_whitewater")
+    assert eye["text"] == "" and eye["icon"] == "HIDE_OFF"
+    assert [c for c in look.prop_calls if c["name"] == "whitewater_enabled"][0].get("text") is None
+
+
 def _patch_bake_runtime(
     monkeypatch, ui_stages, *, status=None, action="START", cache_dir=None, managed=False
 ):

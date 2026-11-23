@@ -100,7 +100,8 @@ def preview_settings(fs):
         scale=float(fs.liquid_preview_scale),
         radius_multiplier=float(fs.liquid_preview_radius_multiplier),
         absorption=tuple(float(c) for c in fs.liquid_preview_absorption)[:3],
-        whitewater=bool(fs.liquid_preview_whitewater),
+        # Shown whitewater is the one switch; the preview setting only narrows it.
+        whitewater=bool(fs.liquid_preview_whitewater and getattr(fs, "show_whitewater", True)),
     )
 
 
