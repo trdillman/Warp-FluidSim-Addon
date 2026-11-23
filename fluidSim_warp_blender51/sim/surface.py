@@ -535,6 +535,10 @@ class SurfacePipeline:
         radius = 0.5 * float(s.voxel_size) * float(s.particle_radius_scale)
         reach = radius * max_axis_multiplier(
             float(getattr(s, "surface_detail_max_stretch", 4.0)))
+        # Flatten pulls the centre up to flatten * neighbour radius away.
+        flatten = min(1.0, max(0.0, float(getattr(s, "surface_detail_flatten", 0.5))))
+        reach += flatten * float(getattr(s, "surface_detail_neighbor_radius", 2.0)) \
+            * float(s.voxel_size)
         reach += 4.0 * float(grid.voxel_size)  # the splat's far distance
         leaves = int(math.ceil(reach / (C.LEAF_DIM * float(grid.voxel_size))))
         return max(expand, leaves)

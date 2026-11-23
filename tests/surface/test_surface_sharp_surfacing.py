@@ -302,6 +302,11 @@ def test_fine_render_grid_allocates_leaves_for_stretched_ellipsoids():
     assert leaves * 8 >= reach_voxels and leaves > 1
     # At simulation resolution one leaf of margin already covers the reach.
     assert pipeline._render_topology_expand(SimpleNamespace(voxel_size=0.08)) == 1
+    # Flatten can move a centre up to flatten * neighbour radius away.
+    s.surface_detail_flatten, s.surface_detail_neighbor_radius = 1.0, 4.0
+    flat_leaves = pipeline._render_topology_expand(fine)
+    assert flat_leaves * 8 >= reach_voxels + 4.0 * 0.08 / 0.01
+    assert flat_leaves > leaves
 
 
 @pytest.mark.parametrize("separate_grid", [False, True])
