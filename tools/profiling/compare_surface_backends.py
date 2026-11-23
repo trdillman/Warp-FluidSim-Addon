@@ -15,9 +15,14 @@ Reported per backend and frame:
 
 Run on a saved demo (needs Blender; use this for dam_break and crown_splash):
 
-    blender --background --factory-startup --python \\
+    blender --background --python \\
         tools/profiling/compare_surface_backends.py -- \\
         --demo dam_break --frames 20 60 120 --json-out artifacts/surface_dam_break.json
+
+Do not add ``--factory-startup`` here: without a private
+``BLENDER_USER_EXTENSIONS`` folder it makes Blender delete the installed Warp
+wheels from your profile (see AGENTS.md). The script loads this checkout's
+add-on itself and only reads the demo, so a normal startup is safe.
 
 Or without Blender, on the bpy-free dam-break benchmark scene:
 
@@ -243,7 +248,8 @@ def run_solver_preset(args):
     frames = []
     try:
         for frame in range(1, max(wanted) + 1):
-            if frame == args.emit_frames:
+            # Frames are numbered from 1: emit for exactly ``--emit-frames``.
+            if frame == args.emit_frames + 1:
                 solver.set_source_batch()
             solver.step_frame()
             if frame not in wanted:
