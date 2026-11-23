@@ -212,6 +212,26 @@ def main(report_path=None):
             fs.view_particles = True
             liquid_display.apply_viewport(scene, deferred=False)
             check("opening the eye reveals the cached particles", not particles.hide_get())
+            fs.show_surface = fs.show_particles = False
+            fs.view_surface = fs.view_particles = True
+            fs.surface_attribute_mode = fs.particle_attribute_mode = "NONE"
+            before = len(reads)
+            fs.surface_material = bpy.data.materials.new("Paused Surface Material")
+            fs.particle_material = bpy.data.materials.new("Paused Particle Material")
+            fs.particle_display_scale *= 1.5
+            liquid_display.apply_viewport(scene, deferred=False)
+            check("viewport-only surface uses its edited material",
+                  surface.data.materials[0] == fs.surface_material)
+            check("viewport-only particles use their edited material",
+                  particles.data.materials[0] == fs.particle_material)
+            expected_radius = output._effective_voxel_size(scene, domain.fluidsim_domain) * (
+                0.25 * fs.particle_display_scale)
+            actual_radius = particles.data.attributes["radius"].data[0].value
+            check(f"viewport-only particle radius is {expected_radius}, got {actual_radius}",
+                  np.isclose(actual_radius, expected_radius))
+            check("viewport-only metadata edits preserve camera flags and use no cache reads",
+                  surface.hide_render and particles.hide_render
+                  and not surface.hide_get() and not particles.hide_get() and len(reads) == before)
         finally:
             cache.read_frame = original_read
 
