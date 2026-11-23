@@ -31,10 +31,10 @@ Two directions of flow exist, and a field uses one or the other:
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
 | WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
-| READ_ONLY | 25 | something reads it; nothing resolved writes it |
+| READ_ONLY | 27 | something reads it; nothing resolved writes it |
 | INTERNAL | 9 | written outside the UI; no resolved reader |
 | UNOBSERVED | 1 | no access of any kind resolved -- a dead property |
-| **total** | **226** | |
+| **total** | **228** | |
 
 ## Mirrored panels
 
@@ -53,8 +53,10 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `domain_object` | REINITIALIZE | scene | scene | scene | - | scene | 1 | OK |
 | `capacity_show_alternatives` | PRESENTATION | scene | - | - | scene | scene | 0 | UI_STATE |
 | `liquid_view_mode` | OUTPUT | scene | - | - | scene | scene | 0 | UI_STATE |
-| `show_surface` | OUTPUT | scene | scene | - | scene | scene | 3 | OK |
-| `show_particles` | OUTPUT | scene | scene | - | scene | scene | 5 | OK |
+| `show_surface` | OUTPUT | - | scene | - | - | scene | 4 | READ_ONLY |
+| `show_particles` | OUTPUT | - | scene | - | scene | scene | 6 | READ_ONLY |
+| `view_surface` | OUTPUT | scene | scene | scene | - | scene | 1 | OK |
+| `view_particles` | OUTPUT | scene | scene | scene | scene | scene | 1 | OK |
 | `show_whitewater` | OUTPUT | scene | scene | - | scene | scene | 1 | OK |
 | `gpu_particle_preview` | OUTPUT | scene | scene | - | - | scene | 3 | OK |
 | `particle_display_fraction` | OUTPUT | scene | scene | - | - | scene | 1 | OK |

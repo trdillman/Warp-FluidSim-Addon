@@ -928,6 +928,9 @@ class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):
         # Display choices are scene-scoped; the two *_enabled gates are
         # domain-owned, so read them from the owner the solver uses.
         layout.prop(fs, "liquid_view_mode")
+        eyes = layout.row(align=True)
+        eyes.prop(fs, "view_surface")
+        eyes.prop(fs, "view_particles")
         layout.prop(fs, "show_overlay", text="Viewport HUD")
         surface = _gated(layout, fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"} and _surface_enabled(context))
         surface.prop(fs, "surface_attribute_mode")

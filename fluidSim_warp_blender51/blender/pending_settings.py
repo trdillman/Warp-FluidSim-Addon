@@ -104,7 +104,7 @@ _LIVE_REGISTRY_FIELDS = frozenset({
 })
 _OUTPUT_REGISTRY_FIELDS = frozenset({
     "liquid_view_mode", "show_surface", "show_particles", "show_whitewater",
-    "particle_display_fraction", "particle_display_scale", "gpu_particle_preview",
+    "view_surface", "view_particles", "particle_display_fraction", "particle_display_scale", "gpu_particle_preview",
     "surface_attribute_mode", "particle_attribute_mode",
     "whitewater_attribute_mode", "whitewater_display_scale",
     "whitewater_display_fraction",

@@ -1127,6 +1127,49 @@ def test_load_seeds_the_displayed_preview_scene_of_several(monkeypatch):
     assert seeded == [active]
 
 
+def test_viewport_eyes_decide_the_3d_view_not_the_render_flags(monkeypatch):
+    from fluidSim_warp_blender51.blender import liquid_display
+    scene, _domain = _live_scene(False)
+    fs = scene.fluidsim
+    fs.liquid_display_mode = "SURFACE"
+    fs.show_surface, fs.show_particles = True, False       # render: surface only
+    fs.view_surface, fs.view_particles = False, True       # eyes: particles only
+    assert liquid_display.viewport_families(scene, True) == (False, True)
+    fs.view_surface, fs.view_particles = True, True
+    assert liquid_display.viewport_families(scene, True) == (True, True)
+    # A surface that is not generated cannot be shown, whatever its eye says.
+    assert liquid_display.viewport_families(scene, False) == (False, True)
+    # Both eyes closed still never leaves Outputs blank; Off is the way to hide.
+    fs.view_surface = fs.view_particles = False
+    assert liquid_display.viewport_families(scene, True) == (True, False)
+
+
+def test_scene_without_eyes_still_follows_its_render_flags():
+    from fluidSim_warp_blender51.blender import liquid_display
+    scene, _domain = _live_scene(False)
+    scene.fluidsim.liquid_display_mode = "SURFACE"
+    scene.fluidsim.show_surface, scene.fluidsim.show_particles = True, True
+    assert liquid_display.viewport_families(scene, True) == (True, True)
+
+
+def test_old_files_start_their_eyes_at_the_render_flags(monkeypatch):
+    from fluidSim_warp_blender51.blender import liquid_display
+    scene, domain = _live_scene(False)
+    fs = scene.fluidsim
+    fs.liquid_display_mode = "SURFACE"
+    fs.show_surface, fs.show_particles = False, True
+    fs.view_surface, fs.view_particles = True, False       # the property defaults
+    fs.is_property_set = lambda name: name == "liquid_display_mode"
+    monkeypatch.setattr(liquid_display, "apply_viewport", lambda _scene: None)
+    liquid_display.restore_scene(scene)
+    assert (fs.view_surface, fs.view_particles) == (False, True)
+    # A file that already has eyes keeps them.
+    fs.view_surface, fs.view_particles = True, True
+    fs.is_property_set = lambda _name: True
+    liquid_display.restore_scene(scene)
+    assert (fs.view_surface, fs.view_particles) == (True, True)
+
+
 def test_particle_only_legacy_scene_migrates_to_preview(monkeypatch):
     from fluidSim_warp_blender51.blender import liquid_display, scene_access
     scene, domain = _live_scene(False)

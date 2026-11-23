@@ -85,8 +85,10 @@ def simulate_readouts(domain) -> tuple[tuple[str, str], ...]:
 
 LOOK_PROPS = (
     "surface_enabled",
+    "view_surface",
     "show_surface",
     "surface_smooth_iterations",
+    "view_particles",
     "show_particles",
     "particle_display_fraction",
     "particle_display_scale",
@@ -343,6 +345,17 @@ class FLUIDSIM_STAGE_PT_simulate(FluidSimStagePanel, bpy.types.Panel):
         )
 
 
+def _draw_output_icons(row, scene, view_name, render_name):
+    """The eye (3D view) and camera (render) toggles that sit beside an output."""
+    group = declaring_group(scene, view_name)
+    shown = bool(getattr(group, view_name, False))
+    _prop(row, scene, view_name, text="", icon="HIDE_OFF" if shown else "HIDE_ON")
+    group = declaring_group(scene, render_name)
+    rendered = bool(getattr(group, render_name, False))
+    _prop(row, scene, render_name, text="",
+          icon="RESTRICT_RENDER_OFF" if rendered else "RESTRICT_RENDER_ON")
+
+
 class FLUIDSIM_STAGE_PT_look(FluidSimStagePanel, bpy.types.Panel):
     """Stage 3: what the viewport shows, and which surfaces the solver builds."""
 
@@ -360,26 +373,29 @@ class FLUIDSIM_STAGE_PT_look(FluidSimStagePanel, bpy.types.Panel):
             return
 
         # Outputs: one row per thing the solver can build. The checkbox builds
-        # it; the small icon beside it includes it in the render.
+        # it, the eye shows it in the 3D view and the camera includes it in
+        # the render.
         outputs = layout.column(align=True)
         outputs.label(text="Outputs")
         surface = outputs.column(align=True)
         row = surface.row(align=True)
         _prop(row, scene, "surface_enabled")
-        _prop(row, scene, "show_surface", text="",
-              icon="RESTRICT_RENDER_OFF" if fs.show_surface else "RESTRICT_RENDER_ON")
+        _draw_output_icons(row, scene, "view_surface", "show_surface")
         if domain.surface_enabled:
             _prop(surface, scene, "surface_smooth_iterations", text="Smoothing")
 
         particles = outputs.column(align=True)
-        _prop(particles, scene, "show_particles")
-        if fs.show_particles:
+        row = particles.row(align=True)
+        row.label(text="Particles")
+        _draw_output_icons(row, scene, "view_particles", "show_particles")
+        if fs.show_particles or fs.view_particles:
             _prop(particles, scene, "particle_display_fraction")
             _prop(particles, scene, "particle_display_scale")
 
         whitewater = outputs.column(align=True)
         # One Whitewater row: the checkbox simulates it and the eye beside it
-        # shows or hides it, so simulating-but-hiding is still possible.
+        # shows or hides it (3D view and render together), so simulating but
+        # hiding is still possible.
         row = whitewater.row(align=True)
         _prop(row, scene, "whitewater_enabled")
         if domain.whitewater_enabled:

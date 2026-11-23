@@ -130,15 +130,29 @@ QUALITY_ITEMS = (
 _LIQUID_VIEW_SYNCING = False
 
 
+def _follow_render_flags(self, was_surface, was_particles):
+    """Move an output's viewport eye with its render flag when that flag changes.
+
+    The eye and the render icon start linked, as they were before the eyes
+    existed. Clicking an eye afterwards splits them for that output only.
+    """
+    if self.show_surface != was_surface:
+        self.view_surface = self.show_surface
+    if self.show_particles != was_particles:
+        self.view_particles = self.show_particles
+
+
 def _apply_liquid_view_mode(self, context):
     global _LIQUID_VIEW_SYNCING
     if _LIQUID_VIEW_SYNCING:
         return
     _LIQUID_VIEW_SYNCING = True
     try:
+        was = (bool(self.show_surface), bool(self.show_particles))
         mode = self.liquid_view_mode
         self.show_surface = mode in {"SURFACE", "SURFACE_PARTICLES"}
         self.show_particles = mode in {"PARTICLES", "SURFACE_PARTICLES"}
+        _follow_render_flags(self, *was)
     finally:
         _LIQUID_VIEW_SYNCING = False
     _request_output_refresh(self, context)
@@ -150,6 +164,11 @@ def _sync_liquid_view_mode(self, context):
         return
     _LIQUID_VIEW_SYNCING = True
     try:
+        # The menu still holds the value from before this edit, so it says
+        # which flag just changed.
+        previous = self.liquid_view_mode
+        was = (previous in {"SURFACE", "SURFACE_PARTICLES"},
+               previous in {"PARTICLES", "SURFACE_PARTICLES"})
         if self.show_surface and self.show_particles:
             self.liquid_view_mode = "SURFACE_PARTICLES"
         elif self.show_surface:
@@ -158,6 +177,7 @@ def _sync_liquid_view_mode(self, context):
             self.liquid_view_mode = "PARTICLES"
         else:
             self.liquid_view_mode = "HIDDEN"
+        _follow_render_flags(self, *was)
     finally:
         _LIQUID_VIEW_SYNCING = False
     _request_output_refresh(self, context)
@@ -919,9 +939,15 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     show_particles: BoolProperty(
         name="Render Particles", default=False, update=_sync_liquid_view_mode,
         description="Include liquid particles in rendering; Viewport independently controls what the 3D view shows")
+    view_surface: BoolProperty(
+        name="Show Surface in Viewport", default=True, update=_request_output_refresh,
+        description="Show the surface mesh in the 3D view when Viewport is set to Outputs; the render icon beside it separately includes it in the render")
+    view_particles: BoolProperty(
+        name="Show Particles in Viewport", default=False, update=_request_output_refresh,
+        description="Show the liquid particles in the 3D view when Viewport is set to Outputs; the render icon beside it separately includes them in the render")
     show_whitewater: BoolProperty(
         name="Show Whitewater", default=True, update=_show_whitewater_changed,
-        description="Enable to display simulated whitewater particles in the viewport, including Liquid Preview; disable to hide them without disabling whitewater simulation")
+        description="Enable to show simulated whitewater particles in the 3D view (including Liquid Preview) and in the render; disable to hide them without disabling whitewater simulation")
     gpu_particle_preview: BoolProperty(
         name="GPU Particle Preview", default=False, update=_gpu_particle_preview_changed,
         description="Use the GPU texture preview for live liquid particles when available")
@@ -1070,10 +1096,10 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         description="Enable to show FluidSim status and statistics in the viewport; disable to hide the overlay without stopping simulation")
     liquid_display_mode: EnumProperty(
         name="Viewport", items=(("PREVIEW", "Liquid Preview", "Draw the particles as a smooth liquid"),
-                                ("SURFACE", "As Rendered", "Show the surface and/or particles that are included in the render"),
+                                ("SURFACE", "Outputs", "Show the surface and/or particles whose eye is on"),
                                 ("OFF", "Off", "Show no liquid in the 3D view; rendering is unaffected")),
         default="SURFACE", update=_on_liquid_display_changed,
-        description="Choose what the 3D view shows for the liquid: a smooth preview, the outputs included in the render, or nothing")
+        description="Choose what the 3D view shows for the liquid: a smooth preview, the outputs whose eye is on, or nothing")
     liquid_preview_enabled: BoolProperty(
         name="Liquid Preview", default=False,
         update=_on_liquid_preview_changed,
