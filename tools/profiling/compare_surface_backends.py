@@ -13,16 +13,13 @@ Reported per backend and frame:
   legitimately has open edges, so compare backends against each other)
 - ``repeatable``: two fresh extractors give identical mesh bytes
 
-Run on a saved demo (needs Blender; use this for dam_break and crown_splash):
+Run on a saved demo from PowerShell (use this for dam_break and crown_splash).
+Set an absolute path to the certified Warp dependencies on PYTHONPATH, supply
+your Blender Gate session as BLENDER_GATE_SESSION, and use a private profile:
 
-    blender --background --python \\
-        tools/profiling/compare_surface_backends.py -- \\
-        --demo dam_break --frames 20 60 120 --json-out artifacts/surface_dam_break.json
-
-Do not add ``--factory-startup`` here: without a private
-``BLENDER_USER_EXTENSIONS`` folder it makes Blender delete the installed Warp
-wheels from your profile (see AGENTS.md). The script loads this checkout's
-add-on itself and only reads the demo, so a normal startup is safe.
+    $env:BLENDER_USER_RESOURCES = Join-Path $env:TEMP ("fluidsim-compare-" + [guid]::NewGuid())
+    $env:BLENDER_USER_EXTENSIONS = Join-Path $env:BLENDER_USER_RESOURCES 'extensions'
+    bgate run --class shared --session $env:BLENDER_GATE_SESSION --max-seconds 600 -- --background --factory-startup --python-use-system-env --python-exit-code 1 --python tools/profiling/compare_surface_backends.py -- --demo dam_break --frames 20 60 120 --json-out artifacts/surface_dam_break.json
 
 Or without Blender, on the bpy-free dam-break benchmark scene:
 

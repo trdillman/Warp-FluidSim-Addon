@@ -43,3 +43,39 @@ def test_compare_reports_every_available_backend(cuda_device):
         assert record["open_edges"] == 0 and record["bad_edges"] == 0
     if SURF.SURFACE_NETS_AVAILABLE:
         assert result["nets"]["quality_mean"] > result["dense"]["quality_mean"]
+
+
+@pytest.mark.parametrize("emit_frames", [0, 1, 4])
+def test_solver_comparison_emits_for_requested_steps(monkeypatch, emit_frames):
+    from fluidSim_warp_blender51.sim import solver
+    from tools.profiling import profile_gpu_solver as profile
+
+    active_steps = []
+    released = []
+    sources = object()
+
+    class RecordingSolver:
+        active = False
+
+        def __init__(self, settings):
+            pass
+
+        def set_source_batch(self, batch=None):
+            self.active = batch is sources
+
+        def step_frame(self):
+            active_steps.append(self.active)
+
+        def release(self):
+            released.append(True)
+
+    monkeypatch.setattr(solver, "FluidSolver", RecordingSolver)
+    monkeypatch.setattr(profile, "_build_settings", lambda args: None)
+    monkeypatch.setattr(profile, "build_sources", lambda args: sources)
+    monkeypatch.setattr(CMP, "_sample", lambda *args: {"backends": {}})
+    args = CMP.parse(["--solver-preset", "dam_break", "--frames", "5",
+                      "--emit-frames", str(emit_frames)])
+    CMP.run_solver_preset(args)
+
+    assert active_steps == [True] * emit_frames + [False] * (5 - emit_frames)
+    assert released == [True]
