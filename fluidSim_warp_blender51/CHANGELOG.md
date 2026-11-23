@@ -14,6 +14,14 @@
   Growth keeps the running solver's own settings, effects, frozen inputs and
   collider motion, and a bake that grew can still be resumed: the solver is
   sized from the checkpoint's leaf count.
+- The Look panel no longer repeats itself. Each output is one row: Generate
+  Surface with a render icon beside it, Render Particles, and Whitewater with an
+  eye beside it. The old "Liquid Display" menu is now "Viewport" (Liquid Preview,
+  As Rendered, Off; the saved values are unchanged). Liquid Preview draws
+  whitewater only while the eye is on; "Preview Whitewater" is now "Draw
+  Whitewater" and lives in the full Properties.
+- Removed two unused settings, Advanced Playback and Advanced Surface (never
+  shown or read). Saved files open as before.
 - Fixed: particles chosen under Render Outputs were hidden in the viewport
   (only whitewater showed), so attribute colours on them could not be seen
   either. The "Render Outputs" Liquid Display mode (formerly "Surface Mesh")

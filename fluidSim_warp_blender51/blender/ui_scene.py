@@ -950,7 +950,7 @@ class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):
         sub.prop(fs, "liquid_preview_scale", text="Resolution")
         sub.prop(fs, "liquid_preview_radius_multiplier", text="Radius")
         sub.prop(fs, "liquid_preview_absorption")
-        sub.prop(fs, "liquid_preview_whitewater", text="Whitewater")
+        sub.prop(fs, "liquid_preview_whitewater", text="Draw Whitewater")
 
 
 class FLUIDSIM_PT_output_materials(FluidSimScenePanel, bpy.types.Panel):

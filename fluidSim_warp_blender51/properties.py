@@ -311,6 +311,12 @@ def _request_output_refresh(self, context):
     _request_scene_update(context, SceneUpdate.OUTPUT)
 
 
+def _show_whitewater_changed(self, context):
+    """Shown whitewater is also drawn in Liquid Preview, so redraw it too."""
+    _request_output_refresh(self, context)
+    _redraw_liquid_preview(self, context)
+
+
 def _gpu_particle_preview_changed(self, context):
     if not self.gpu_particle_preview:
         from .blender import gpu_particle_owner
@@ -884,9 +890,6 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Live Simulation", default=False,
         update=_on_live_changed,
         description="Enable to step the GPU solver as the timeline plays; disable to stop live stepping while keeping the current state")
-    playback_advanced_expanded: BoolProperty(
-        name="Advanced Playback", default=False, options={"SKIP_SAVE"},
-        description="Show or hide expert controls for recovering timeline frames dropped during live playback")
     max_frame_catchup: IntProperty(
         name="Maximum Playback Recovery Frames", default=8, min=1, max=120,
         description=(
@@ -901,9 +904,6 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Show Capacity Alternatives", default=False,
         options={"SKIP_SAVE"},
         description="Expand lower-priority resolution and domain alternatives")
-    surface_advanced_expanded: BoolProperty(
-        name="Advanced Surface", default=False, options={"SKIP_SAVE"},
-        description="Show or hide sparse-capacity and simulation-field retention controls")
 
     # Viewport display / output
     liquid_view_mode: EnumProperty(
@@ -911,17 +911,17 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         items=LIQUID_VIEW_ITEMS,
         default="SURFACE",
         update=_apply_liquid_view_mode,
-        description="Choose liquid outputs for rendering; export tools use their own output selection. Independent of Liquid Display, which controls the viewport",
+        description="Choose liquid outputs for rendering; export tools use their own output selection. Independent of Viewport, which controls what the 3D view shows",
     )
     show_surface: BoolProperty(
         name="Render Surface Mesh", default=True, update=_sync_liquid_view_mode,
-        description="Include the generated mesh in rendering; Liquid Display independently controls viewport visibility")
+        description="Include the generated surface mesh in rendering; Viewport independently controls what the 3D view shows")
     show_particles: BoolProperty(
         name="Render Particles", default=False, update=_sync_liquid_view_mode,
-        description="Include liquid particles in rendering; Liquid Display independently controls viewport visibility")
+        description="Include liquid particles in rendering; Viewport independently controls what the 3D view shows")
     show_whitewater: BoolProperty(
-        name="Whitewater", default=True, update=_request_output_refresh,
-        description="Enable to display simulated whitewater particles; disable to hide them without disabling whitewater simulation")
+        name="Show Whitewater", default=True, update=_show_whitewater_changed,
+        description="Enable to display simulated whitewater particles in the viewport, including Liquid Preview; disable to hide them without disabling whitewater simulation")
     gpu_particle_preview: BoolProperty(
         name="GPU Particle Preview", default=False, update=_gpu_particle_preview_changed,
         description="Use the GPU texture preview for live liquid particles when available")
@@ -1069,11 +1069,11 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         update=_request_output_refresh,
         description="Enable to show FluidSim status and statistics in the viewport; disable to hide the overlay without stopping simulation")
     liquid_display_mode: EnumProperty(
-        name="Liquid Display", items=(("PREVIEW", "Preview", ""),
-                                      ("SURFACE", "Render Outputs", "Show the surface and/or particles chosen under Render Outputs"),
-                                      ("OFF", "Off", "")),
+        name="Viewport", items=(("PREVIEW", "Liquid Preview", "Draw the particles as a smooth liquid"),
+                                ("SURFACE", "As Rendered", "Show the surface and/or particles that are included in the render"),
+                                ("OFF", "Off", "Show no liquid in the 3D view; rendering is unaffected")),
         default="SURFACE", update=_on_liquid_display_changed,
-        description="Choose the liquid representation shown in the viewport")
+        description="Choose what the 3D view shows for the liquid: a smooth preview, the outputs included in the render, or nothing")
     liquid_preview_enabled: BoolProperty(
         name="Liquid Preview", default=False,
         update=_on_liquid_preview_changed,
@@ -1094,7 +1094,7 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
     liquid_preview_whitewater: BoolProperty(
         name="Preview Whitewater", default=True,
         update=_redraw_liquid_preview,
-        description="Enable to draw published foam, spray and bubbles on top of Liquid Preview; disable to show only the liquid body")
+        description="Enable to draw published foam, spray and bubbles on top of Liquid Preview when whitewater is shown; disable to show only the liquid body")
     deck_shown: BoolProperty(
         name="Liquid Deck", default=True,
         update=_deck_shown_changed,

@@ -2469,6 +2469,14 @@ def _stage_context(
     )
     for name, value in (scene_overrides or {}).items():
         setattr(scene_settings, name, value)
+    # The Look panel draws the two render flags the Render Outputs menu keeps in
+    # step; a test that picks a menu value gets the flags that value implies.
+    overrides = scene_overrides or {}
+    mode = overrides.get("liquid_view_mode", "SURFACE")
+    scene_settings.show_surface = overrides.get(
+        "show_surface", mode in {"SURFACE", "SURFACE_PARTICLES"})
+    scene_settings.show_particles = overrides.get(
+        "show_particles", mode in {"PARTICLES", "SURFACE_PARTICLES"})
     domain_obj = SimpleNamespace(
         fluidsim=SimpleNamespace(role="NONE"),
         fluidsim_domain=domain_settings,
@@ -2653,7 +2661,8 @@ def test_workflow_stage_advanced_shelf_is_gated_by_ui_mode(monkeypatch):
 
 
 _LOOK_SCENE_OWNED = {
-    "liquid_view_mode",
+    "show_surface",
+    "show_particles",
     "particle_display_fraction",
     "particle_display_scale",
     "show_whitewater",
@@ -2673,7 +2682,8 @@ def test_workflow_stage_look_binds_each_control_to_its_owner(monkeypatch):
     context, scene_settings, domain_settings = _stage_context(
         surface_enabled=True,
         whitewater_enabled=True,
-        scene_overrides={"liquid_preview_enabled": True},
+        scene_overrides={"liquid_preview_enabled": True,
+                         "liquid_view_mode": "SURFACE_PARTICLES"},
     )
 
     look = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context)
@@ -2700,7 +2710,8 @@ def test_workflow_stage_look_hides_inactive_controls(monkeypatch):
         scene_overrides={"liquid_view_mode": "SURFACE"}
     )
     assert set(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context).props) == {
-        "liquid_view_mode",
+        "show_surface",
+        "show_particles",
         "surface_enabled",
         "whitewater_enabled",
         "show_overlay",
@@ -2734,6 +2745,25 @@ def test_workflow_stage_look_hides_inactive_controls(monkeypatch):
         "particle_material",
         "whitewater_material",
     }
+
+
+def test_workflow_stage_look_has_one_whitewater_row(monkeypatch):
+    """Simulate and show share one row (checkbox plus eye); no second Whitewater box."""
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    context, scene_settings, _domain = _stage_context(
+        whitewater_enabled=True,
+        scene_overrides={"liquid_view_mode": "SURFACE", "liquid_display_mode": "PREVIEW",
+                         "liquid_preview_enabled": True, "show_whitewater": True},
+    )
+    look = _draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context)
+    names = [call["name"] for call in look.prop_calls]
+    assert names.count("whitewater_enabled") == 1
+    assert names.count("show_whitewater") == 1
+    assert "liquid_preview_whitewater" not in names
+    eye = next(call for call in look.prop_calls if call["name"] == "show_whitewater")
+    assert eye["text"] == "" and eye["icon"] == "HIDE_OFF"
+    assert [c for c in look.prop_calls if c["name"] == "whitewater_enabled"][0].get("text") is None
 
 
 def _patch_bake_runtime(

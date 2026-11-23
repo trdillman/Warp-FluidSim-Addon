@@ -84,9 +84,10 @@ def simulate_readouts(domain) -> tuple[tuple[str, str], ...]:
 
 
 LOOK_PROPS = (
-    "liquid_view_mode",
     "surface_enabled",
+    "show_surface",
     "surface_smooth_iterations",
+    "show_particles",
     "particle_display_fraction",
     "particle_display_scale",
     "whitewater_enabled",
@@ -97,7 +98,6 @@ LOOK_PROPS = (
     "liquid_preview_scale",
     "liquid_preview_radius_multiplier",
     "liquid_preview_absorption",
-    "liquid_preview_whitewater",
 )
 LOOK_MATERIAL_PROPS = ("surface_material", "particle_material", "whitewater_material")
 BAKE_PROPS = ("cache_path", "export_attributes")
@@ -359,35 +359,43 @@ class FLUIDSIM_STAGE_PT_look(FluidSimStagePanel, bpy.types.Panel):
             layout.label(text="Set up a liquid domain first.", icon="INFO")
             return
 
-        _prop(layout, scene, "liquid_view_mode")
-
-        surface = layout.column(align=True)
-        _prop(surface, scene, "surface_enabled")
+        # Outputs: one row per thing the solver can build. The checkbox builds
+        # it; the small icon beside it includes it in the render.
+        outputs = layout.column(align=True)
+        outputs.label(text="Outputs")
+        surface = outputs.column(align=True)
+        row = surface.row(align=True)
+        _prop(row, scene, "surface_enabled")
+        _prop(row, scene, "show_surface", text="",
+              icon="RESTRICT_RENDER_OFF" if fs.show_surface else "RESTRICT_RENDER_ON")
         if domain.surface_enabled:
             _prop(surface, scene, "surface_smooth_iterations", text="Smoothing")
 
-        if fs.liquid_view_mode in _PARTICLE_VIEW_MODES:
-            particles = layout.column(align=True)
+        particles = outputs.column(align=True)
+        _prop(particles, scene, "show_particles")
+        if fs.show_particles:
             _prop(particles, scene, "particle_display_fraction")
             _prop(particles, scene, "particle_display_scale")
 
-        whitewater = layout.column(align=True)
-        _prop(whitewater, scene, "whitewater_enabled")
+        whitewater = outputs.column(align=True)
+        # One Whitewater row: the checkbox simulates it and the eye beside it
+        # shows or hides it, so simulating-but-hiding is still possible.
+        row = whitewater.row(align=True)
+        _prop(row, scene, "whitewater_enabled")
         if domain.whitewater_enabled:
+            _prop(row, scene, "show_whitewater", text="",
+                  icon="HIDE_OFF" if fs.show_whitewater else "HIDE_ON")
             _prop(whitewater, scene, "ww_emission_rate", text="Amount")
-            _prop(whitewater, scene, "show_whitewater")
 
         _prop(layout, scene, "show_overlay", text="Viewport HUD")
 
-        preview = layout.column(align=True)
-        _prop(preview, scene, "liquid_display_mode")
+        viewport = layout.column(align=True)
+        _prop(viewport, scene, "liquid_display_mode")
         if fs.liquid_preview_enabled:
-            _prop(preview, scene, "liquid_preview_scale", text="Resolution")
-            _prop(preview, scene, "liquid_preview_radius_multiplier",
+            _prop(viewport, scene, "liquid_preview_scale", text="Resolution")
+            _prop(viewport, scene, "liquid_preview_radius_multiplier",
                   text="Radius")
-            _prop(preview, scene, "liquid_preview_absorption")
-            _prop(preview, scene, "liquid_preview_whitewater",
-                  text="Whitewater")
+            _prop(viewport, scene, "liquid_preview_absorption")
 
 
 class FLUIDSIM_STAGE_PT_look_materials(FluidSimStagePanel, bpy.types.Panel):

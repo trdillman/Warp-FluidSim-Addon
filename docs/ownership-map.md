@@ -22,7 +22,7 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 155 | UI writes exactly where the consumer reads |
+| OK | 157 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
@@ -31,10 +31,10 @@ Two directions of flow exist, and a field uses one or the other:
 | PUBLISHED_BROKEN | 0 | **the runtime writes one datablock and the panel displays the other** |
 | UI_STATE | 3 | a panel writes it and a panel reads it; nothing outside the UI observes it |
 | WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
-| READ_ONLY | 27 | something reads it; nothing resolved writes it |
+| READ_ONLY | 25 | something reads it; nothing resolved writes it |
 | INTERNAL | 9 | written outside the UI; no resolved reader |
-| UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **228** | |
+| UNOBSERVED | 1 | no access of any kind resolved -- a dead property |
+| **total** | **226** | |
 
 ## Mirrored panels
 
@@ -49,15 +49,13 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `ui_mode` | PRESENTATION | scene | - | - | scene | scene | 0 | UI_STATE |
 | `quality` | REINITIALIZE | scene | scene | - | scene | scene | 0 | OK |
 | `live` | ADAPTER | - | scene | scene | - | scene | 5 | PUBLISHED |
-| `playback_advanced_expanded` | PRESENTATION | - | - | - | - | scene | 0 | UNOBSERVED |
 | `max_frame_catchup` | ADAPTER | scene | scene | - | - | scene | 1 | OK |
 | `domain_object` | REINITIALIZE | scene | scene | scene | - | scene | 1 | OK |
 | `capacity_show_alternatives` | PRESENTATION | scene | - | - | scene | scene | 0 | UI_STATE |
-| `surface_advanced_expanded` | PRESENTATION | - | - | - | - | scene | 0 | UNOBSERVED |
 | `liquid_view_mode` | OUTPUT | scene | - | - | scene | scene | 0 | UI_STATE |
-| `show_surface` | OUTPUT | - | scene | - | - | scene | 3 | READ_ONLY |
-| `show_particles` | OUTPUT | - | scene | - | - | scene | 5 | READ_ONLY |
-| `show_whitewater` | OUTPUT | scene | scene | - | scene | scene | 0 | OK |
+| `show_surface` | OUTPUT | scene | scene | - | scene | scene | 3 | OK |
+| `show_particles` | OUTPUT | scene | scene | - | scene | scene | 5 | OK |
+| `show_whitewater` | OUTPUT | scene | scene | - | scene | scene | 1 | OK |
 | `gpu_particle_preview` | OUTPUT | scene | scene | - | - | scene | 3 | OK |
 | `particle_display_fraction` | OUTPUT | scene | scene | - | - | scene | 1 | OK |
 | `particle_display_scale` | OUTPUT | scene | scene | - | - | scene | 0 | OK |
@@ -281,8 +279,6 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 
 | field | verdict | written at |
 |---|---|---|
-| `playback_advanced_expanded` | UNOBSERVED | (never written either) |
-| `surface_advanced_expanded` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
 | `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:886` |
 | `stat_liquid_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:549`, `fluidSim_warp_blender51/blender/scene_bridge.py:514` |
