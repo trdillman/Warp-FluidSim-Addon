@@ -1669,7 +1669,7 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
     surface_filter_type: EnumProperty(
         name="Filter", items=_items(SdfFilterType), default="BOX",
         update=_request_surface_refresh,
-        description="Choose the SDF operation used by Filter Iterations; changing it switches between expansion, contraction, box smoothing, and curvature smoothing")
+        description="Choose the operation of the Filter pass, which runs first, before Dilate, Erode and Smooth; the same four operations exist as their own passes, so use this one to change their order, for example Erode first and then Dilate")
     surface_filter_iterations: IntProperty(
         name="Filter Iterations", default=0, min=0, max=16,
         update=_request_surface_refresh,
