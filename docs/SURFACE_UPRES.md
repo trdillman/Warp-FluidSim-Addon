@@ -38,8 +38,9 @@ How it works (`sim/surface_anisotropy.py`):
 - The splat writes the ray distance to the ellipsoid, `|v| (1 - 1/|G v|)`,
   with atomic min. It is exact for a ball, signed correctly, and zero exactly
   on the ellipsoid, so the mesh is the true union of ellipsoids.
-- Preserve Splashes counts particles per voxel, sums the 3x3x3 neighbourhood,
-  and blends each Smooth pass back toward its input by a weight that is 1 in
+- Preserve Splashes counts particles in blocks about one simulation voxel wide
+  (so a fine render grid still sees the liquid), sums the 3x3x3 blocks around
+  each voxel, and blends each Smooth pass back toward its input by a weight that is 1 in
   calm liquid and `1 - Preserve` with no particles nearby.
 
 Boundaries:

@@ -226,6 +226,18 @@ register_fn(k_build_surface_sdf_aniso, "fluidSimBuildSurfaceSdfAniso",
             notes="Union-of-ellipsoids particle splat with atomic min distance.")
 
 
+def density_block(render_to_sim_ratio):
+    """Render voxels per side of a density block: about one simulation voxel.
+
+    A power of two from 1 to a leaf's width, so a block never straddles a leaf.
+    """
+    want = 1.0 / max(1.0e-12, float(render_to_sim_ratio))
+    block = 1
+    while block * 2 <= C.LEAF_DIM and block * 2 <= want * 1.5:
+        block *= 2
+    return block
+
+
 @wp.kernel
 def k_density_reset(
     num_leaves: wp.array(dtype=wp.int32),
@@ -246,14 +258,21 @@ def k_density_count(
     leaves_dim: wp.vec3i,
     origin: wp.vec3,
     voxel_size: float,
+    block: int,
     density: wp.array(dtype=float),
 ):
+    """Count particles per ``block``-sized cube of render voxels.
+
+    Each count lands on the cube's lowest voxel. ``block`` is a power of two
+    no larger than a leaf, so that voxel is in the particle's own leaf.
+    """
     tid = wp.tid()
     if tid >= count[0]:
         return
     vp = world_to_voxel(positions[tid], origin, voxel_size)
-    ijk = wp.vec3i(int(wp.floor(vp[0])), int(wp.floor(vp[1])),
-                   int(wp.floor(vp[2])))
+    ijk = wp.vec3i(int(wp.floor(vp[0] / float(block))) * block,
+                   int(wp.floor(vp[1] / float(block))) * block,
+                   int(wp.floor(vp[2] / float(block))) * block)
     flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
     if flat >= 0:
         wp.atomic_add(density, flat, 1.0)
@@ -267,13 +286,16 @@ def k_density_to_smooth_weight(
     voxels_dim: wp.vec3i,
     leaves_dim: wp.vec3i,
     num_leaves: wp.array(dtype=wp.int32),
+    block: int,
     dense_count: float,
     preserve: float,
     weight: wp.array(dtype=float),
 ):
-    """Smoothing weight per voxel from the 3x3x3 particle count.
+    """Smoothing weight per voxel from the 3x3x3 block particle count.
 
-    ``dense_count`` is the 27-cell count of calm liquid at the surface (about
+    Blocks are ``block`` render voxels wide (about one simulation voxel), so
+    the window covers the same liquid at any render resolution.
+    ``dense_count`` is the 27-block count of calm liquid at the surface (about
     half full). At or above it the weight is 1 (smooth as before); with no
     particles nearby it falls to ``1 - preserve``.
     """
@@ -281,11 +303,15 @@ def k_density_to_smooth_weight(
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
+    b0 = wp.vec3i(int(wp.floor(float(ijk[0]) / float(block))),
+                  int(wp.floor(float(ijk[1]) / float(block))),
+                  int(wp.floor(float(ijk[2]) / float(block))))
     total = float(0.0)
     for dk in range(-1, 2):
         for dj in range(-1, 2):
             for di in range(-1, 2):
-                n = wp.vec3i(ijk[0] + di, ijk[1] + dj, ijk[2] + dk)
+                n = wp.vec3i((b0[0] + di) * block, (b0[1] + dj) * block,
+                             (b0[2] + dk) * block)
                 flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, n)
                 if flat >= 0:
                     total += density[flat]
@@ -396,20 +422,21 @@ class AnisotropicSurfacer:
         if self.density is None or self.density.shape[0] < size:
             self.density = wp.zeros(size, dtype=float, device=dev)
             self.weight = wp.zeros(size, dtype=float, device=dev)
+        ratio = float(voxel_size) / max(1.0e-12, float(sim_voxel_size))
+        block = density_block(ratio)
         fast_launch(k_density_reset, dim=size,
                     inputs=[grid.num_leaves], outputs=[self.density],
                     device=dev)
         fast_launch(k_density_count, dim=max(1, int(np_dim)),
                     inputs=[positions, count, grid.leaf_table,
                             grid.voxels_dim, grid.leaves_dim, grid.origin,
-                            float(voxel_size)],
+                            float(voxel_size), block],
                     outputs=[self.density], device=dev)
-        ratio = float(voxel_size) / max(1.0e-12, float(sim_voxel_size))
-        # Calm surface: 27 cells, about half of them liquid.
-        dense = 13.5 * float(particles_per_voxel) * ratio ** 3
+        # Calm surface: 27 blocks, about half of them liquid.
+        dense = 13.5 * float(particles_per_voxel) * (ratio * block) ** 3
         fast_launch(k_density_to_smooth_weight, dim=size,
                     inputs=[self.density, grid.leaf_table, grid.leaf_coords,
                             grid.voxels_dim, grid.leaves_dim, grid.num_leaves,
-                            dense, float(preserve)],
+                            block, dense, float(preserve)],
                     outputs=[self.weight], device=dev)
         return self.weight
