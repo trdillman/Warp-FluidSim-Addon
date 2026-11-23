@@ -41,7 +41,9 @@ def _scene(*, surface_enabled, whitewater_enabled, mode="COMBINED"):
 def _outputs(monkeypatch):
     objects = {name: _Output(name) for name in (
         output.SURFACE_NAME, output.PARTICLES_NAME, *output.WHITEWATER_OUTPUT_NAMES)}
-    monkeypatch.setattr(output, "output_object", lambda _scene, name: objects.get(name))
+    monkeypatch.setattr(
+        output, "output_object", lambda _scene, name, *, ensure=True: objects.get(name)
+    )
     return objects
 
 
@@ -137,7 +139,9 @@ def test_steady_state_publication_never_rewrites_visibility(monkeypatch):
     shown = _CountingOutput(output.WHITEWATER_NAME, hidden=True)
     hidden = _CountingOutput(output.FOAM_NAME, hidden=False)
     objects = {shown.name: shown, hidden.name: hidden}
-    monkeypatch.setattr(output, "output_object", lambda _scene, name: objects.get(name))
+    monkeypatch.setattr(
+        output, "output_object", lambda _scene, name, *, ensure=True: objects.get(name)
+    )
     monkeypatch.setattr(output, "_ensure_point_object", lambda _s, name, _k=(): objects[name])
     monkeypatch.setattr(output, "_supports_pointcloud", lambda: True)
     monkeypatch.setattr(output, "_swap_points", lambda *_args, **_kwargs: None)
@@ -220,13 +224,21 @@ def test_metadata_refresh_styles_an_output_shown_only_by_its_eye(monkeypatch):
     scene.fluidsim.view_surface = False
     scene.fluidsim.liquid_display_mode = "SURFACE"
     obj = _Output(output.PARTICLES_NAME)
+    surface = SimpleNamespace(data=SimpleNamespace(vertices=[object()]))
     styled = []
     policies = [SimpleNamespace(
         name=output.PARTICLES_NAME, material="particle_material", radius=0.25,
         visible_with_legacy=lambda _count: False)]
     monkeypatch.setattr(output, "_require_bpy", lambda: None)
     monkeypatch.setattr(output, "output_family_policy", lambda *_a, **_k: policies)
-    monkeypatch.setattr(output, "output_object", lambda _scene, _name: obj)
+
+    def find_output(_scene, name, *, ensure=True):
+        if name == output.SURFACE_NAME:
+            assert ensure is False
+            return surface
+        return obj if name == output.PARTICLES_NAME else None
+
+    monkeypatch.setattr(output, "output_object", find_output)
     monkeypatch.setattr(output, "_effective_voxel_size", lambda *_a: 0.1)
     monkeypatch.setattr(output, "_set_point_radius", lambda target, radius: styled.append(("radius", radius)))
     monkeypatch.setattr(output, "_ensure_material", lambda *_a: styled.append(("material",)))
