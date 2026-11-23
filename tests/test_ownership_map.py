@@ -42,7 +42,9 @@ GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 # The hidden learned pressure guess added pressure_learned_guess and
 # stat_learned_guess_message (224 -> 226).
 # Optional native GPU particle preview adds one scene-owned display toggle.
-EXPECTED_FIELD_COUNT = 228
+# Removing the two unused expand-state toggles (playback_advanced_expanded and
+# surface_advanced_expanded) dropped it to 226.
+EXPECTED_FIELD_COUNT = 226
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested

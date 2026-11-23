@@ -168,7 +168,7 @@ def main(report_path=None):
         # still control viewport mode without mutating the authored choice.
         check("render output RNA describes its separate scope",
               fs.bl_rna.properties["liquid_view_mode"].name == "Render Outputs"
-              and "Independent of Liquid Display" in
+              and "Independent of Viewport" in
               fs.bl_rna.properties["liquid_view_mode"].description)
         surface = output.output_object(scene, output.SURFACE_NAME)
         particles = output.output_object(scene, output.PARTICLES_NAME)

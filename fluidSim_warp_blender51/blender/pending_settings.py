@@ -161,8 +161,7 @@ _ADAPTER_FIELDS = frozenset({
 })
 _PRESENTATION_FIELDS = frozenset({
     "ui_mode", "deck_shown", "deck_stage",
-    "playback_advanced_expanded", "capacity_show_alternatives",
-    "surface_advanced_expanded", "height_error", "status", "stat_particles",
+    "capacity_show_alternatives", "height_error", "status", "stat_particles",
     "stat_voxels", "stat_liquid_voxels", "stat_whitewater", "stat_step_ms",
     "stat_substeps",
     "stat_cfl_clamped", "stat_whitewater_admitted",

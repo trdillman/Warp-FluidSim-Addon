@@ -147,9 +147,9 @@ SETTING_SPECS: dict[str, SettingSpec] = {
 # ``tests/runtime/test_pending_settings_registry.py`` pins it equal to the
 # field set of ``FLUIDSIM_PG_scene``, so it cannot drift into a second opinion.
 SCENE_OWNED_SETTINGS = frozenset({
-    "ui_mode", "quality", "live", "playback_advanced_expanded",
+    "ui_mode", "quality", "live",
     "max_frame_catchup", "domain_object", "capacity_show_alternatives",
-    "surface_advanced_expanded", "liquid_view_mode", "show_surface",
+    "liquid_view_mode", "show_surface",
     "show_particles", "show_whitewater", "gpu_particle_preview", "particle_display_fraction",
     "particle_display_scale", "surface_attribute_mode",
     "particle_attribute_mode", "whitewater_attribute_mode",
