@@ -46,6 +46,9 @@ LEAF_SHIFT = 3          # log2(LEAF_DIM)
 LEAF_MASK = LEAF_DIM - 1
 LEAF_VOLUME = LEAF_DIM ** 3  # 512 voxels per leaf
 
+# Warp's spatial hash grid wraps, so this bounds its storage independently of the domain.
+SHARP_SURFACE_HASH_GRID_DIM = 128
+
 # Default allocation policy
 DEFAULT_MAX_PARTICLES = 2_000_000
 DEFAULT_MAX_WHITEWATER = 1_000_000

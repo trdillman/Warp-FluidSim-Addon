@@ -325,9 +325,18 @@ class SurfacePipeline:
         s = solver.settings
         h = self.voxel_size()
         max_dense = max(8, int(getattr(s, "surface_max_dense_dim", 512)))
+        detail_active = self.render_detail_active()
+        scratch = getattr(self, "_anisotropic", None)
+        if not detail_active:
+            self.release_anisotropic()
+        elif scratch is not None:
+            if not self.detail_enabled():
+                scratch.release_shape_buffers()
+            if self.preserve_splashes() == 0.0 or s.surface_smooth_iterations <= 0:
+                scratch.release_smoothing_buffers()
         if abs(h - float(solver.grid.voxel_size)) <= 1.0e-8:
             self.grid, self.render_extractor = solver.grid, self.extractor
-            if self.render_detail_active():
+            if detail_active:
                 # Render-only detail must never leak into the solver SDF that
                 # surface tension, whitewater and effects read, so the render
                 # surface gets its own field on the simulation grid.
@@ -337,7 +346,6 @@ class SurfacePipeline:
                     self.render_tmp = ScalarField(solver.grid, name="render_surface_tmp")
             else:
                 self.render_sdf, self.render_tmp = self.sdf, self.tmp
-                self.release_anisotropic()
             self.render_extractor.max_dense_dim = max_dense
             if force:
                 self.render_extractor.reset_buffers()
@@ -345,10 +353,6 @@ class SurfacePipeline:
             self.nvox = getattr(solver, "_nvox", max(1, solver.grid.active_voxel_count))
             self.invalidate()
             return
-        if not self.render_detail_active():
-            # Same cleanup as the simulation-resolution branch above: a
-            # decoupled render grid must not keep the ellipsoid buffers either.
-            self.release_anisotropic()
         key = self.resource_key()
         if not force and self.grid_key == key:
             self.render_extractor.max_dense_dim = max_dense
@@ -489,7 +493,6 @@ class SurfacePipeline:
                           grid.leaves_dim, grid.num_leaves, h, float(strength)], outputs=[tmp.data], device=solver.device)
                 sdf.data, tmp.data = tmp.data, sdf.data
         def apply_preserving(kernel, iterations, strength, weight):
-            surfacer = self.anisotropic_surfacer()
             for _ in range(max(0, int(iterations))):
                 fast_launch(kernel, dim=nvox, inputs=[sdf.data, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
                           grid.leaves_dim, grid.num_leaves, h, float(strength)], outputs=[tmp.data], device=solver.device)
@@ -497,7 +500,6 @@ class SurfacePipeline:
                             inputs=[sdf.data, weight, grid.num_leaves],
                             outputs=[tmp.data], device=solver.device)
                 sdf.data, tmp.data = tmp.data, sdf.data
-            return surfacer
         apply(self.filter_kernel(int(s.surface_filter_type)), s.surface_filter_iterations, s.surface_filter_strength)
         apply(k_smooth_surface_sdf_dilate, s.surface_dilate_iterations, s.surface_dilate_strength)
         apply(k_smooth_surface_sdf_erode, s.surface_erode_iterations, s.surface_erode_strength)

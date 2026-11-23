@@ -67,12 +67,10 @@ def measure_variant(solver, overrides, repeats):
         pipeline = solver.surface
         times = []
         verts = tris = None
-        for _ in range(max(1, repeats) + 1):  # first run warms up
-            pipeline.built_key = None
-            # Rebuild the solver SDF too, so the plain surface pays the same
-            # reconstruction cost the sharp ones do (it is cached otherwise).
-            pipeline.solver_sdf_key = None
-            pipeline.invalidate()
+        for _ in range(repeats + 1):  # first run warms up
+            # Plain can reuse the physical field, so invalidate it along
+            # with the render products to time a fresh build for each variant.
+            pipeline.invalidate_particle_state()
             wp.synchronize_device(solver.device)
             t0 = time.perf_counter()
             verts, tris = pipeline.mesh()
@@ -153,8 +151,16 @@ def parse(argv):
     p.add_argument("--repeats", type=int, default=3)
     p.add_argument("--obj-dir")
     p.add_argument("--json-out")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if min(args.frames) < 1:
+        p.error("--frames must be at least 1")
+    if args.emit_frames < 0:
+        p.error("--emit-frames must be nonnegative")
+    if args.repeats < 1:
+        p.error("--repeats must be at least 1")
+    return args
 
 
 if __name__ == "__main__":
-    run(parse(sys.argv[1:]))
+    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
+    run(parse(argv))

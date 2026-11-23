@@ -265,3 +265,30 @@ def test_fine_render_grid_allocates_leaves_for_stretched_ellipsoids():
     assert leaves * 8 >= reach_voxels and leaves > 1
     # At simulation resolution one leaf of margin already covers the reach.
     assert pipeline._render_topology_expand(SimpleNamespace(voxel_size=0.08)) == 1
+
+
+@pytest.mark.parametrize("separate_grid", [False, True])
+def test_turning_detail_off_releases_render_scratch(separate_grid):
+    from types import SimpleNamespace
+
+    settings = SimpleNamespace(surface_detail_enabled=False)
+    grid = SimpleNamespace(voxel_size=1.0, active_voxel_count=1)
+    pipeline = object.__new__(SURF.SurfacePipeline)
+    pipeline.solver = SimpleNamespace(settings=settings, grid=grid)
+    pipeline.grid = object() if separate_grid else grid
+    pipeline.extractor = pipeline.render_extractor = SimpleNamespace()
+    pipeline.voxel_size = lambda: 0.5 if separate_grid else 1.0
+    pipeline.resource_key = lambda: "same resources"
+    pipeline.grid_key = pipeline.resource_key()
+    pipeline.sdf, pipeline.tmp = object(), object()
+    pipeline.render_sdf, pipeline.render_tmp = object(), object()
+    old_field = pipeline.render_sdf
+    scratch = ANISO.AnisotropicSurfacer("cpu")
+    scratch.centers = scratch.weight = object()
+    pipeline._anisotropic = scratch
+
+    pipeline.ensure_resources()
+
+    assert pipeline._anisotropic is None
+    assert scratch.centers is scratch.weight is None
+    assert pipeline.render_sdf is (old_field if separate_grid else pipeline.sdf)

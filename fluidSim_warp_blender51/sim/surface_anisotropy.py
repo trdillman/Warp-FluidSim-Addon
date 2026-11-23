@@ -49,10 +49,6 @@ wp.set_module_options({"enable_backward": False})
 #: and sparse spray have too few neighbours for a stable covariance.
 MIN_NEIGHBORS = 6
 
-#: Hash grid resolution. The grid wraps, so this bounds memory, not domain.
-_HASH_DIM = 128
-
-
 def ellipsoid_axis_scales(sd, max_stretch):
     """Host mirror of the kernel's axis rule, for tests.
 
@@ -329,14 +325,19 @@ class AnisotropicSurfacer:
         self.rmax = None
         self.density = None
         self.weight = None
-        self.before = None
         self.last_stats = {}
 
     def release(self):
+        self.release_shape_buffers()
+        self.release_smoothing_buffers()
+
+    def release_shape_buffers(self):
         self._capacity = 0
         self._grid = None
         self.centers = self.shapes = self.rmax = None
-        self.density = self.weight = self.before = None
+
+    def release_smoothing_buffers(self):
+        self.density = self.weight = None
 
     def _ensure(self, capacity):
         capacity = max(1, int(capacity))
@@ -347,8 +348,8 @@ class AnisotropicSurfacer:
         self.shapes = wp.zeros(capacity, dtype=wp.mat33, device=dev)
         self.rmax = wp.zeros(capacity, dtype=float, device=dev)
         if self._grid is None:
-            self._grid = wp.HashGrid(_HASH_DIM, _HASH_DIM, _HASH_DIM,
-                                     device=dev)
+            dim = C.SHARP_SURFACE_HASH_GRID_DIM
+            self._grid = wp.HashGrid(dim, dim, dim, device=dev)
         self._capacity = capacity
 
     def splat(self, grid, sdf, positions, count, np_dim, *, voxel_size,
@@ -395,7 +396,6 @@ class AnisotropicSurfacer:
         if self.density is None or self.density.shape[0] < size:
             self.density = wp.zeros(size, dtype=float, device=dev)
             self.weight = wp.zeros(size, dtype=float, device=dev)
-            self.before = wp.zeros(size, dtype=float, device=dev)
         fast_launch(k_density_reset, dim=size,
                     inputs=[grid.num_leaves], outputs=[self.density],
                     device=dev)

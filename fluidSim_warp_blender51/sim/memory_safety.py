@@ -10,7 +10,7 @@ import subprocess
 import time
 from collections.abc import Mapping
 
-from .constants import LEAF_VOLUME
+from .constants import LEAF_VOLUME, SHARP_SURFACE_HASH_GRID_DIM
 from .quality_contract import resolve_quality
 from .grid_storage_layout import (
     GRID_TABLE_BYTES_PER_CELL,
@@ -40,6 +40,12 @@ SURFACE_TENSION_BYTES_PER_VOXEL = CAPILLARY_BYTES_PER_VOXEL
 SURFACE_TENSION_PROPAGATION_BYTES_PER_VOXEL = 28
 RENDER_BYTES_PER_VOXEL = 16
 SURFACE_DENSE_BYTES_PER_VOXEL = 40
+# Center (vec3), shape (mat33), radius (float), and Warp's ungrouped hash
+# workspace (two double-buffered int32 arrays reserved at 1.5x capacity).
+SHARP_SURFACE_BYTES_PER_PARTICLE = 52 + 24
+SHARP_SURFACE_HASH_BYTES = 8 * SHARP_SURFACE_HASH_GRID_DIM ** 3
+SURFACE_SPLASH_BYTES_PER_VOXEL = 8  # density and smoothing weight
+SURFACE_DETAIL_FIELDS_BYTES_PER_VOXEL = 8  # render SDF and filter scratch
 PARTICLE_BYTES = 128
 AFFINE_BYTES_PER_PARTICLE = _AFFINE_BYTES_PER_PARTICLE
 WHITEWATER_BYTES = WHITEWATER_BYTES_PER_PARTICLE
@@ -297,17 +303,28 @@ def estimate_solver_bytes(settings) -> int:
         )
     if bool(_value(settings, "narrow_band_enabled", False)):
         estimate += leaves * LEAF_VOLUME * NARROW_BAND_BYTES_PER_VOXEL
-    if surface_enabled:
-        estimate += _surface_dense_voxels(settings, surface_h) * SURFACE_DENSE_BYTES_PER_VOXEL
-    if surface_enabled and abs(surface_h - sim_h) > 1.0e-8:
+    if not surface_enabled:
+        return int(estimate)
+    estimate += _surface_dense_voxels(settings, surface_h) * SURFACE_DENSE_BYTES_PER_VOXEL
+    render_leaves = leaves
+    separate_grid = abs(surface_h - sim_h) > 1.0e-8
+    if separate_grid:
         scale = max(1.0, float(_value(settings, "surface_leaf_capacity_scale", 8.0)))
         render_leaf_cells = _domain_leaf_cells({
             "domain_min": _value(settings, "domain_min", (-2.0, -2.0, 0.0)),
             "domain_max": _value(settings, "domain_max", (2.0, 2.0, 4.0)),
-            "voxel_size": _surface_voxel_size(settings),
+            "voxel_size": surface_h,
         })
         render_leaves = min(render_leaf_cells, max(1, math.ceil(
             max(1, int(_value(settings, "leaf_capacity", 8192))) * scale)))
         estimate += render_leaves * LEAF_VOLUME * RENDER_BYTES_PER_VOXEL
         estimate += render_leaf_cells * TOPOLOGY_BYTES_PER_LEAF_CELL
+    sharp = bool(_value(settings, "surface_detail_enabled", False))
+    preserve = float(_value(settings, "surface_smooth_preserve_splashes", 0.0)) > 0.0
+    if (sharp or preserve) and not separate_grid:
+        estimate += leaves * LEAF_VOLUME * SURFACE_DETAIL_FIELDS_BYTES_PER_VOXEL
+    if sharp:
+        estimate += particles * SHARP_SURFACE_BYTES_PER_PARTICLE + SHARP_SURFACE_HASH_BYTES
+    if preserve and int(_value(settings, "surface_smooth_iterations", 1)) > 0:
+        estimate += render_leaves * LEAF_VOLUME * SURFACE_SPLASH_BYTES_PER_VOXEL
     return int(estimate)

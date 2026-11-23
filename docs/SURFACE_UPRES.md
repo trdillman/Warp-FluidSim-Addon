@@ -66,3 +66,6 @@ python tools/profiling/compare_sharp_surfacing.py --solver-preset dam_break --de
 The second command prints, per frame, the render-surface build+extract time,
 triangle count and triangle quality for plain, Sharp Surfacing, and Sharp
 Surfacing with Preserve Splashes 0.75, and writes each mesh as OBJ.
+For timing evidence, run the comparison under an exclusive GPU lease in
+Blender's Python with the locked Warp version. Pass the comparison arguments
+after Blender's `--`, and retain the lease report alongside the comparison JSON.
