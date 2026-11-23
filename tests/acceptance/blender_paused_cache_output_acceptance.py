@@ -197,6 +197,24 @@ def main(report_path=None):
               and not output.output_object(scene, output.PARTICLES_NAME).hide_get())
         playback.play_cache_frame(session(), scene, 7)
 
+        fs.liquid_view_mode = "SURFACE_PARTICLES"
+        fs.liquid_display_mode = "SURFACE"
+        before = len(reads)
+        cache.read_frame = counted_read
+        try:
+            fs.view_particles = False
+            fs.show_particles = False
+            fs.show_particles = True
+            liquid_display.apply_viewport(scene, deferred=False)
+            check("viewport eye stays closed through camera toggles",
+                  not fs.view_particles and particles.hide_get() and not particles.hide_render)
+            check("eye override uses the paused cache without new IO", len(reads) == before)
+            fs.view_particles = True
+            liquid_display.apply_viewport(scene, deferred=False)
+            check("opening the eye reveals the cached particles", not particles.hide_get())
+        finally:
+            cache.read_frame = original_read
+
         # A UI lookup must neither create/link a collection nor adopt a legacy object.
         lookup_scene = bpy.data.scenes.new("ReadOnlyOutputLookup")
         lookup_scene.fluidsim.output_collection_name = "ReadOnlyOutputCollection"

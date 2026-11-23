@@ -1152,9 +1152,27 @@ def test_scene_without_eyes_still_follows_its_render_flags():
     assert liquid_display.viewport_families(scene, True) == (True, True)
 
 
+def test_gpu_particles_remain_visible_when_surface_eye_opens(monkeypatch):
+    from fluidSim_warp_blender51.blender import gpu_particle_owner, output_publication
+
+    scene, _domain = _live_scene(False)
+    scene.fluidsim.liquid_display_mode = "SURFACE"
+    scene.fluidsim.view_surface = False
+    scene.fluidsim.view_particles = True
+    settings = SimpleNamespace(surface_enabled=True)
+    monkeypatch.setattr(output_publication, "_domain_settings", lambda _scene: settings)
+    surface = SimpleNamespace(data=SimpleNamespace(vertices=(1,)))
+    monkeypatch.setattr(output_publication, "output_object", lambda *_args: surface)
+    assert gpu_particle_owner._particles_visible(scene)
+    scene.fluidsim.view_surface = True
+    assert gpu_particle_owner._particles_visible(scene)
+    scene.fluidsim.view_particles = False
+    assert not gpu_particle_owner._particles_visible(scene)
+
+
 def test_old_files_start_their_eyes_at_the_render_flags(monkeypatch):
     from fluidSim_warp_blender51.blender import liquid_display
-    scene, domain = _live_scene(False)
+    scene, _domain = _live_scene(False)
     fs = scene.fluidsim
     fs.liquid_display_mode = "SURFACE"
     fs.show_surface, fs.show_particles = False, True

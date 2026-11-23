@@ -445,13 +445,16 @@ def test_render_icons_move_their_own_eye_and_leave_the_other_alone(monkeypatch):
     monkeypatch.setattr(properties, "_request_output_refresh", lambda _self, _context: None)
     state = SimpleNamespace(
         liquid_view_mode="SURFACE", show_surface=True, show_particles=False,
-        view_surface=True, view_particles=False)
+        view_surface=True, view_particles=False,
+        view_surface_overridden=False, view_particles_overridden=False)
 
     # Split the particles eye from the render flag: render on, eye still off.
     state.show_particles = True
     properties._sync_liquid_view_mode(state, None)
     assert state.view_particles is True            # the changed flag drags its eye
     state.view_particles = False                    # the artist closes the eye
+    properties._view_particles_changed(state, None)
+    assert state.view_particles_overridden is True
     # Turning the surface render flag off moves only the surface eye.
     state.show_surface = False
     properties._sync_liquid_view_mode(state, None)
@@ -461,6 +464,12 @@ def test_render_icons_move_their_own_eye_and_leave_the_other_alone(monkeypatch):
     state.liquid_view_mode = "SURFACE_PARTICLES"
     properties._apply_liquid_view_mode(state, None)
     assert (state.view_surface, state.view_particles) == (True, False)
+    # Future edits of the same render flag also preserve the eye override.
+    state.show_particles = False
+    properties._sync_liquid_view_mode(state, None)
+    state.show_particles = True
+    properties._sync_liquid_view_mode(state, None)
+    assert state.view_particles is False
 
 
 class _PermissiveSettings:
@@ -3814,6 +3823,10 @@ def test_display_panel_exposes_hud_overlay_toggle(monkeypatch):
     fs = SimpleNamespace(
         liquid_view_mode="PARTICLES",
         surface_enabled=False,
+        show_surface=False,
+        view_surface=False,
+        show_particles=False,
+        view_particles=True,
         whitewater_enabled=False,
         show_overlay=True,
         particle_display_fraction=1.0,
@@ -3829,8 +3842,17 @@ def test_display_panel_exposes_hud_overlay_toggle(monkeypatch):
     )
     panel = ui_scene.FLUIDSIM_PT_output_display()
     panel.layout = _Layout()
+    active = []
+    gated = ui_scene._gated
+
+    def capture_gate(layout, enabled):
+        active.append(enabled)
+        return gated(layout, enabled)
+
+    monkeypatch.setattr(ui_scene, "_gated", capture_gate)
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
     assert "show_overlay" in panel.layout.props
+    assert active[:2] == [False, True]
 
 
 def test_attribute_toggles_are_drawn_on_the_domain_group(monkeypatch):

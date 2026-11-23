@@ -136,9 +136,9 @@ def _follow_render_flags(self, was_surface, was_particles):
     The eye and the render icon start linked, as they were before the eyes
     existed. Clicking an eye afterwards splits them for that output only.
     """
-    if self.show_surface != was_surface:
+    if self.show_surface != was_surface and not getattr(self, "view_surface_overridden", False):
         self.view_surface = self.show_surface
-    if self.show_particles != was_particles:
+    if self.show_particles != was_particles and not getattr(self, "view_particles_overridden", False):
         self.view_particles = self.show_particles
 
 
@@ -329,6 +329,20 @@ def _request_output_refresh(self, context):
     from .blender.pending_settings import SceneUpdate
 
     _request_scene_update(context, SceneUpdate.OUTPUT)
+
+
+def _view_surface_changed(self, context):
+    if not _LIQUID_VIEW_SYNCING:
+        if self.view_surface != self.show_surface:
+            self.view_surface_overridden = True
+        _request_output_refresh(self, context)
+
+
+def _view_particles_changed(self, context):
+    if not _LIQUID_VIEW_SYNCING:
+        if self.view_particles != self.show_particles:
+            self.view_particles_overridden = True
+        _request_output_refresh(self, context)
 
 
 def _show_whitewater_changed(self, context):
@@ -940,11 +954,13 @@ class FLUIDSIM_PG_scene(bpy.types.PropertyGroup):
         name="Render Particles", default=False, update=_sync_liquid_view_mode,
         description="Include liquid particles in rendering; Viewport independently controls what the 3D view shows")
     view_surface: BoolProperty(
-        name="Show Surface in Viewport", default=True, update=_request_output_refresh,
+        name="Show Surface in Viewport", default=True, update=_view_surface_changed,
         description="Show the surface mesh in the 3D view when Viewport is set to Outputs; the render icon beside it separately includes it in the render")
     view_particles: BoolProperty(
-        name="Show Particles in Viewport", default=False, update=_request_output_refresh,
+        name="Show Particles in Viewport", default=False, update=_view_particles_changed,
         description="Show the liquid particles in the 3D view when Viewport is set to Outputs; the render icon beside it separately includes them in the render")
+    view_surface_overridden: BoolProperty(default=False, options={"HIDDEN"})
+    view_particles_overridden: BoolProperty(default=False, options={"HIDDEN"})
     show_whitewater: BoolProperty(
         name="Show Whitewater", default=True, update=_show_whitewater_changed,
         description="Enable to show simulated whitewater particles in the 3D view (including Liquid Preview) and in the render; disable to hide them without disabling whitewater simulation")

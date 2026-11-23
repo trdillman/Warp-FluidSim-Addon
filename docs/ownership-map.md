@@ -33,8 +33,8 @@ Two directions of flow exist, and a field uses one or the other:
 | WRITE_ONLY | 1 | UI writes it; no consumer read resolved statically |
 | READ_ONLY | 27 | something reads it; nothing resolved writes it |
 | INTERNAL | 9 | written outside the UI; no resolved reader |
-| UNOBSERVED | 1 | no access of any kind resolved -- a dead property |
-| **total** | **228** | |
+| UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
+| **total** | **230** | |
 
 ## Mirrored panels
 
@@ -53,10 +53,12 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `domain_object` | REINITIALIZE | scene | scene | scene | - | scene | 1 | OK |
 | `capacity_show_alternatives` | PRESENTATION | scene | - | - | scene | scene | 0 | UI_STATE |
 | `liquid_view_mode` | OUTPUT | scene | - | - | scene | scene | 0 | UI_STATE |
-| `show_surface` | OUTPUT | - | scene | - | - | scene | 4 | READ_ONLY |
+| `show_surface` | OUTPUT | - | scene | - | scene | scene | 4 | READ_ONLY |
 | `show_particles` | OUTPUT | - | scene | - | scene | scene | 6 | READ_ONLY |
-| `view_surface` | OUTPUT | scene | scene | scene | - | scene | 1 | OK |
+| `view_surface` | OUTPUT | scene | scene | scene | scene | scene | 1 | OK |
 | `view_particles` | OUTPUT | scene | scene | scene | scene | scene | 1 | OK |
+| `view_surface_overridden` | OUTPUT | - | - | - | - | scene | 0 | UNOBSERVED |
+| `view_particles_overridden` | OUTPUT | - | - | - | - | scene | 0 | UNOBSERVED |
 | `show_whitewater` | OUTPUT | scene | scene | - | scene | scene | 1 | OK |
 | `gpu_particle_preview` | OUTPUT | scene | scene | - | - | scene | 3 | OK |
 | `particle_display_fraction` | OUTPUT | scene | scene | - | - | scene | 1 | OK |
@@ -281,6 +283,8 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 
 | field | verdict | written at |
 |---|---|---|
+| `view_surface_overridden` | UNOBSERVED | (never written either) |
+| `view_particles_overridden` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
 | `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:886` |
 | `stat_liquid_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:549`, `fluidSim_warp_blender51/blender/scene_bridge.py:514` |
