@@ -79,6 +79,13 @@ _CACHE_METADATA_IGNORED_SETTINGS = frozenset({
 # change any cache identity either; on, it changes results and is hashed.
 _IDENTITY_OMITTED_AT_DEFAULT = {
     "pressure_learned_guess": False,
+    # Sharp surfacing and splash-preserving smoothing (render surface only):
+    # off by default, and off they leave every cached mesh byte unchanged.
+    "surface_detail_enabled": False,
+    "surface_detail_neighbor_radius": 2.0,
+    "surface_detail_max_stretch": 4.0,
+    "surface_detail_flatten": 0.5,
+    "surface_smooth_preserve_splashes": 0.0,
 }
 
 

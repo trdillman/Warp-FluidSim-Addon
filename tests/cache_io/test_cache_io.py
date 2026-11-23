@@ -161,7 +161,10 @@ def _pre_d1_signature(settings):
               if not f.name.startswith("_")
               and f.name != "live_surface_publish_cadence"
               # added in 4.0, after D1: no pre-D1 cache can have hashed it
-              and f.name != "pressure_learned_guess"}
+              and f.name != "pressure_learned_guess"
+              # sharp surfacing, added after D1 and omitted at its defaults
+              and not f.name.startswith("surface_detail_")
+              and f.name != "surface_smooth_preserve_splashes"}
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"),
                          allow_nan=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

@@ -1584,6 +1584,11 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
         surface_smooth_type="MEAN_CURVATURE_FLOW",
         surface_smooth_iterations=3,
         surface_smooth_strength=0.6,
+        surface_detail_enabled=True,
+        surface_detail_neighbor_radius=2.5,
+        surface_detail_max_stretch=3.0,
+        surface_detail_flatten=0.25,
+        surface_smooth_preserve_splashes=0.8,
         status="",
     )
     scene = SimpleNamespace(fluidsim=split_settings(fs))
@@ -1600,6 +1605,9 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
     assert solver.settings.surface_smooth_type.name == "MEAN_CURVATURE_FLOW"
     assert solver.settings.surface_smooth_iterations == 3
     assert solver.settings.surface_smooth_strength == 0.6
+    assert solver.settings.surface_detail_enabled is True
+    assert solver.settings.surface_detail_max_stretch == 3.0
+    assert solver.settings.surface_smooth_preserve_splashes == 0.8
     assert surface_calls == ["rebuilt"]
     assert output_calls == [(scene, sess, {"force_surface": True})]
 
@@ -4576,6 +4584,11 @@ def test_surface_filters_chunked_into_labeled_boxes(monkeypatch):
         surface_smooth_type="LAPLACIAN",
         surface_smooth_iterations=1,
         surface_smooth_strength=1.0,
+        surface_smooth_preserve_splashes=0.5,
+        surface_detail_enabled=True,
+        surface_detail_neighbor_radius=2.0,
+        surface_detail_max_stretch=4.0,
+        surface_detail_flatten=0.5,
     )
     context = SimpleNamespace(scene=SimpleNamespace(fluidsim=split_settings(fs)))
     root = _Layout()
@@ -4595,6 +4608,13 @@ def test_surface_filters_chunked_into_labeled_boxes(monkeypatch):
             "surface_smooth_type",
             "surface_smooth_iterations",
             "surface_smooth_strength",
+            "surface_smooth_preserve_splashes",
+        },
+        "sharp": {
+            "surface_detail_enabled",
+            "surface_detail_neighbor_radius",
+            "surface_detail_max_stretch",
+            "surface_detail_flatten",
         },
     }
     scope_of = {}
@@ -4610,12 +4630,12 @@ def test_surface_filters_chunked_into_labeled_boxes(monkeypatch):
         assert scope, f"{name} pass not wrapped in a box()"
         pass_scopes[name] = scope
 
-    # The four passes occupy four distinct boxes.
-    assert len(set(pass_scopes.values())) == 4, "passes must occupy four distinct boxes"
+    # The four passes and Sharp Surfacing occupy five distinct boxes.
+    assert len(set(pass_scopes.values())) == 5, "passes must occupy distinct boxes"
 
     # Every box carries a header label naming its pass.
     texts = [item["text"].lower() for item in root.labels]
-    for header in ("filter", "dilate", "erode", "smooth"):
+    for header in ("filter", "dilate", "erode", "smooth", "sharp surfacing"):
         assert any(header in t for t in texts), f"missing '{header}' box header"
 
 

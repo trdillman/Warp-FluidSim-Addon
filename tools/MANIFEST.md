@@ -52,6 +52,7 @@ checkpoints stay outside git. Tests: `tests/solver/test_learned_guess_tooling.py
 | `profile_user_path.py` | Blender user-path (viewport playback) profiler | gate, `tests/perf/test_profile_user_path_contract.py`, `tests/perf/test_performance_hotpath_contracts.py` |
 | `profile_kernel_breakdown.py` | Per-kernel GPU vs wall time | manual |
 | `profile_host_breakdown.py` | cProfile of host side of `step_frame` | manual |
+| `compare_sharp_surfacing.py` | Sharp Surfacing before/after on the same particles: render-surface build+extract ms, triangles, quality, OBJ export (needs CUDA) | manual |
 | `check_launch_identity.py` | Proves a solver change leaves a bake bitwise identical (plain vs cached-launch SHA-256) | manual |
 | `profile_source_pipeline.py` | Source-compiler profile (`SOURCE-PIPELINE-PROFILE-PASS`), cited in AGENTS.md | manual |
 
