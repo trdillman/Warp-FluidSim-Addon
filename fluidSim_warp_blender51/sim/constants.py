@@ -33,6 +33,7 @@ VOXEL_COLLISION_Y = 2048
 VOXEL_COLLISION_Z = 4096
 VOXEL_ACTIVE = 8192
 VOXEL_COLOR = 16384
+VOXEL_GUIDED_CORE = 32768  # Temporary pressure-only flag for a coarse-driven core.
 
 REDUCE_CHUNK = 4
 

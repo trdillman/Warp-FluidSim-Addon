@@ -54,6 +54,7 @@ from .fields import (
     world_to_voxel,
 )
 from .kernels_narrow_band import k_nb_eikonal_inward, k_nb_reseed_reserve
+from .pressure import neighbor_flat
 from .registry import register_fn
 
 wp.set_module_options({"enable_backward": False})
@@ -414,6 +415,125 @@ register_fn(k_guide_interior_velocity, "fluidSimGuideUpresVelocity",
 
 
 @wp.kernel
+def k_guide_stamp_core(
+    voxel_type: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    h: float,
+    depth: float,
+    a_sdf: wp.array(dtype=float),
+    a_table: wp.array(dtype=wp.int32),
+    b_sdf: wp.array(dtype=float),
+    b_table: wp.array(dtype=wp.int32),
+    g_voxels_dim: wp.vec3i,
+    g_leaves_dim: wp.vec3i,
+    g_origin: wp.vec3,
+    g_h: float,
+    alpha: float,
+):
+    """Exclude deep guide liquid from pressure unknowns without tagging real solids."""
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    vt = voxel_type[tid]
+    if (vt & C.VOXEL_FLUID) == 0 or (vt & (C.VOXEL_COLLISION | C.VOXEL_SINK)) != 0:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    x = voxel_center_world(ijk, origin, h)
+    ga = _guide_phi_at(a_sdf, a_table, g_voxels_dim, g_leaves_dim, g_origin, g_h, x)
+    gb = _guide_phi_at(b_sdf, b_table, g_voxels_dim, g_leaves_dim, g_origin, g_h, x)
+    g = _guide_blend(ga, gb, alpha)
+    if g < -depth:
+        voxel_type[tid] = vt | C.VOXEL_COLLISION | C.VOXEL_GUIDED_CORE
+
+
+register_fn(k_guide_stamp_core, "fluidSimGuideUpresStampCore",
+            notes="Guided upres: deep core is a coarse-driven solid for pressure.")
+
+
+@wp.kernel
+def k_guide_core_faces(
+    voxel_type: wp.array(dtype=wp.int32),
+    leaf_table: wp.array(dtype=wp.int32),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    origin: wp.vec3,
+    h: float,
+    a_u: wp.array(dtype=float), a_v: wp.array(dtype=float), a_w: wp.array(dtype=float),
+    a_wu: wp.array(dtype=float), a_wv: wp.array(dtype=float), a_ww: wp.array(dtype=float),
+    a_table: wp.array(dtype=wp.int32),
+    b_u: wp.array(dtype=float), b_v: wp.array(dtype=float), b_w: wp.array(dtype=float),
+    b_wu: wp.array(dtype=float), b_wv: wp.array(dtype=float), b_ww: wp.array(dtype=float),
+    b_table: wp.array(dtype=wp.int32),
+    g_voxels_dim: wp.vec3i,
+    g_leaves_dim: wp.vec3i,
+    g_origin: wp.vec3,
+    g_h: float,
+    alpha: float,
+    u: wp.array(dtype=float), v: wp.array(dtype=float), w: wp.array(dtype=float),
+    wu: wp.array(dtype=float), wv: wp.array(dtype=float), ww: wp.array(dtype=float),
+):
+    """Prescribe guide flux at the MAC faces. Physical walls take precedence."""
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    solid_mask = C.VOXEL_COLLISION | C.VOXEL_GUIDED_CORE
+    here = voxel_type[tid]
+    if (here & solid_mask) == C.VOXEL_COLLISION:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    center = voxel_center_world(ijk, origin, h)
+    for axis in range(3):
+        n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
+        if n < 0:
+            continue
+        other = voxel_type[n]
+        if (other & solid_mask) == C.VOXEL_COLLISION:
+            continue
+        if ((here | other) & C.VOXEL_GUIDED_CORE) == 0:
+            continue
+        x = center
+        x[axis] = x[axis] - 0.5 * h
+        if axis == 0:
+            u[tid] = _guide_face(a_u, a_wu, a_table, b_u, b_wu, b_table,
+                                 g_voxels_dim, g_leaves_dim, g_origin, g_h, x, 0, alpha)
+            wu[tid] = wp.max(wu[tid], 1.0e-6)
+        elif axis == 1:
+            v[tid] = _guide_face(a_v, a_wv, a_table, b_v, b_wv, b_table,
+                                 g_voxels_dim, g_leaves_dim, g_origin, g_h, x, 1, alpha)
+            wv[tid] = wp.max(wv[tid], 1.0e-6)
+        else:
+            w[tid] = _guide_face(a_w, a_ww, a_table, b_w, b_ww, b_table,
+                                 g_voxels_dim, g_leaves_dim, g_origin, g_h, x, 2, alpha)
+            ww[tid] = wp.max(ww[tid], 1.0e-6)
+
+
+register_fn(k_guide_core_faces, "fluidSimGuideUpresCoreFaces",
+            notes="Guided upres: prescribe coarse velocity on staggered core faces.")
+
+
+@wp.kernel
+def k_guide_unstamp_core(
+    voxel_type: wp.array(dtype=wp.int32),
+    num_leaves: wp.array(dtype=wp.int32),
+):
+    """Undo ``k_guide_stamp_core`` after the pressure solve."""
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    vt = voxel_type[tid]
+    if (vt & C.VOXEL_GUIDED_CORE) != 0:
+        voxel_type[tid] = vt & (~(C.VOXEL_COLLISION | C.VOXEL_GUIDED_CORE))
+
+
+register_fn(k_guide_unstamp_core, "fluidSimGuideUpresUnstampCore",
+            notes="Guided upres: restore the core after the pressure solve.")
+
+
+@wp.kernel
 def k_guide_mark_leaves(
     g_sdf: wp.array(dtype=float),
     g_leaf_coords: wp.array(dtype=wp.vec3i),
@@ -598,8 +718,14 @@ class ShellGuide:
     the current fine substep between the two frames (0 at ``a``, 1 at ``b``).
     """
 
-    def __init__(self, shell_voxels):
+    def __init__(self, shell_voxels, core_shells=2.0):
         self.shell_voxels = max(1.0, float(shell_voxels))
+        # Fine liquid deeper than this many shells below the coarse surface
+        # is a coarse-driven solid in the pressure solve (0 turns it off).
+        core_shells = float(core_shells or 0.0)
+        if not math.isfinite(core_shells):
+            raise ValueError("core_shells must be finite")
+        self.core_shells = max(0.0, core_shells)
         self.a = None
         self.b = None
         self.alpha = 0.0
@@ -607,6 +733,7 @@ class ShellGuide:
         self.bootstrap = True
         self._demand = None
         self._budget = None
+        self._stamp_live = False
 
     def set_frames(self, a, b):
         self.a, self.b = a, (b if b is not None else a)
@@ -724,6 +851,40 @@ class ShellGuide:
                     particles.alive],
             device=device)
         # The caller (NarrowBand.reseed) refreshes the host particle count.
+
+    def stamp_core(self, grid, voxel_type, velocity, nvox, device):
+        """Before the fine pressure solve: the deep core becomes a solid that
+        moves with the coarse velocity, so the solve only covers the shell."""
+        self._stamp_live = False
+        if not self.ready or self.core_shells <= 0.0:
+            return
+        a, b, common = self._guide_inputs()
+        h = float(grid.voxel_size)
+        nv = max(1, int(nvox))
+        fast_launch(
+            k_guide_stamp_core, dim=nv,
+            inputs=[voxel_type, grid.leaf_coords, grid.num_leaves,
+                    grid.origin, h, self.core_shells * self.shell_voxels * h,
+                    a.sdf, a.leaf_table, b.sdf, b.leaf_table,
+                    *common, float(self.alpha)], device=device)
+        self._stamp_live = True
+        fast_launch(
+            k_guide_core_faces, dim=nv,
+            inputs=[voxel_type, grid.leaf_table, grid.leaf_coords, grid.num_leaves,
+                    grid.voxels_dim, grid.leaves_dim, grid.origin, h,
+                    a.u, a.v, a.w, a.wu, a.wv, a.ww, a.leaf_table,
+                    b.u, b.v, b.w, b.wu, b.wv, b.ww, b.leaf_table,
+                    *common, float(self.alpha), *velocity.arrays()], device=device)
+
+    def unstamp_core(self, grid, voxel_type, nvox, device):
+        """After the pressure solve: the core is fine liquid again."""
+        if not self._stamp_live:
+            return
+        self._stamp_live = False
+        fast_launch(
+            k_guide_unstamp_core, dim=max(1, int(nvox)),
+            inputs=[voxel_type, grid.num_leaves],
+            device=device)
 
     def mark_leaves(self, grid, device):
         if not self.ready:
@@ -843,7 +1004,8 @@ class GuidedUpres:
     """
 
     def __init__(self, coarse, factor=2, shell_voxels=4.0, *,
-                 particle_budget_scale=None, leaf_budget_scale=None):
+                 particle_budget_scale=None, leaf_budget_scale=None,
+                 core_shells=2.0, profiler=None):
         import dataclasses
 
         from .enums import SurfaceResolutionMode
@@ -895,16 +1057,17 @@ class GuidedUpres:
         self._meshes = {}
         colliders = fine_colliders(getattr(coarse, "colliders", ()),
                                    self._meshes)  # refuses Dynamic early
-        self.fine = FluidSolver(fine_settings)
+        self.guide = ShellGuide(shell_voxels, core_shells)
+        self.fine = FluidSolver(fine_settings, profiler=profiler)
         self.fine.set_colliders(colliders)
-        self.guide = ShellGuide(shell_voxels)
         self.fine.narrow_band.guide = self.guide
         self._sources = None
         self._force_fields = None
         self._sync_scene()
-        # The guide must reach below the deepest test it makes (2 shells,
-        # plus the velocity band and a coarse voxel of slack).
-        self.guide_depth = (3.0 * float(shell_voxels) * float(fine_settings.voxel_size)
+        # Keep the original velocity band and reconstruct past the configured
+        # pressure boundary so even its interpolated samples can be deeper.
+        shell_depth = self.guide.shell_voxels * float(fine_settings.voxel_size)
+        self.guide_depth = (max(3.0, self.guide.core_shells) * shell_depth
                             + 2.0 * float(cs.voxel_size))
         self._last = self._snapshot()
         # One-shot sources the coarse solve already consumed must not fire

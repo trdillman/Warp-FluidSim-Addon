@@ -95,17 +95,62 @@ a private fine mesh. The
 fine solve exports no per-particle attributes, anything narrow-band reseeding
 cannot carry (species, particle-derived viscosity, scalar field sources) is refused,
 and factors run from 2 to 8.
+Only the shell gets a fine pressure solve. Fine liquid deeper than
+`core_shells` shells (default 2) below the coarse surface is a solid that
+moves with the coarse velocity for the pressure solve only, which is the
+boundary condition Nielsen and Bridson use. Without it the fine pressure solve
+spans the whole liquid volume and costs as much as a full fine sim. The core
+leaves stay allocated so the fine level set and mesh stay whole; only the
+pressure unknowns shrink. The guide supplies velocity at the staggered core
+faces. These faces stay valid for level-set advection after projection, and
+real colliders keep their own boundary velocities. `core_shells=0` solves
+the whole depth.
 `GuidedUpres(coarse, factor=2, shell_voxels=4)` builds the fine solver from
 the coarse settings. Not wired to Blender yet.
 
 ```
 python -m pytest -q tests/solver/test_guided_upres_kernels.py
-python tools/profiling/compare_guided_upres.py --device cuda:0 --voxel-size 0.06 --factor 2 --shell 4 --frames 20 40 --full-fine --obj-dir artifacts/guided_upres --json-out artifacts/guided_upres/report.json
+python tools/profiling/compare_guided_upres.py --device cuda:0 --voxel-size 0.06 --factor 2 --shell 4 --frames 20 40 --full-fine --phases --obj-dir artifacts/guided_upres --json-out artifacts/guided_upres/report.json
 ```
 
 The second command steps the coarse dam break, the guided fine solve and
 (with `--full-fine`) an unguided full solve at the fine size, and prints
 per-frame ms, particle counts and triangle counts, plus OBJ meshes.
+
+### Review scene: `upres_cove`
+
+`upres_cove` is the dam_break cove (same reservoir and colliders) at 2 cm
+voxels, compared with the shipped demo's 3 cm. The coarse sim emits about
+864,000 particles and the guided fine solve runs at 1 cm. It is opt-in
+and stays out of the Demo Gallery and the demo gate, like `tsunami_parthenon`.
+Its numbers live in `tools/demos/upres_cove.py`.
+
+From PowerShell (the private extension folder keeps `--factory-startup` from
+deleting your installed extension wheels, Warp included; see AGENTS.md):
+
+```
+$env:BLENDER_USER_RESOURCES = Join-Path $env:TEMP ("fluidsim-upres-" + [guid]::NewGuid())
+$env:BLENDER_USER_EXTENSIONS = Join-Path $env:BLENDER_USER_RESOURCES 'extensions'
+blender --background --factory-startup --python-use-system-env --python tools/profiling/compare_guided_upres.py -- --demo upres_cove --full-fine --phases --json-out artifacts/guided_upres/upres_cove.json
+```
+
+This needs no built `.blend`: until `build_demo_scenes.py -- upres_cove`
+has saved `artifacts/review_demos/upres_cove.blend`, the scene is authored on
+the fly. The build saves there, not in `demos/`, because the demo gate
+(`check_demo_blends.py`) fails on any `demos/*.blend` outside its inventory. The demo's own add-on solver is the coarse sim. The guided fine solve
+follows it, then the full fine sim runs from the same inputs in a second
+pass, so the two fine solves never share VRAM. At the preset resolutions,
+both grids have room for every leaf in the domain, including the collider
+bounds and the spreading liquid. The report's
+`summary.speedup_vs_full_fine` is full fine ms over coarse plus guided fine ms,
+after one warm-up frame; above
+1 the upres is faster. `artifacts/guided_upres/upres_cove_review.blend` holds
+the coarse, guided and full fine surfaces of frames 24, 48 and 72, one
+collection each, every mesh visible only on its own frame. `--voxel-size`,
+`--factor`, `--core-shells` and `--frames` override the scene's defaults.
+Demo mode requires static simulation inputs. The unguided `--full-fine`
+reference keeps the authored narrow-band setting and requires a scene without
+automatic particle-object seeds.
 
 ## How to check it (Windows GPU host)
 

@@ -209,6 +209,19 @@ class NarrowBand:
             inputs=[self.phi, g.num_leaves], outputs=[sv.voxel_type.data],
             device=sv.device)
 
+    def before_pressure(self):
+        """Guided upres: the deep core is a coarse-driven solid in the solve."""
+        if self.guide is not None:
+            sv = self.solver
+            self.guide.stamp_core(sv.grid, sv.voxel_type.data, sv.vel,
+                                  sv._nvox, sv.device)
+
+    def after_pressure(self):
+        if self.guide is not None:
+            sv = self.solver
+            self.guide.unstamp_core(sv.grid, sv.voxel_type.data,
+                                    sv._nvox, sv.device)
+
     def credit_interior_counts(self):
         """Make the particle-free interior look full to the source top-up."""
         self._adjust_interior_counts(INTERIOR_COUNT_CREDIT)

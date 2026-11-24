@@ -14,6 +14,7 @@ wp = pytest.importorskip("warp")
 
 from fluidSim_warp_blender51.sim import guided_upres as GU
 from fluidSim_warp_blender51.sim.fields import (
+    MacVelocityField,
     ScalarField,
     SparseGrid,
     voxel_coord_of_flat,
@@ -55,12 +56,12 @@ def _grid(device, h, lo=(0.08, 0.08, 0.08), hi=(0.56, 0.56, 0.56)):
     return g
 
 
-def _coarse_frame(device, time, velocity=VEL, radius=RADIUS):
+def _coarse_frame(device, time, velocity=VEL, radius=RADIUS, centre=CENTRE):
     g = _grid(device, COARSE_H)
     sdf = ScalarField(g, name="coarse_sdf")
     wp.launch(_k_sphere, dim=g.voxel_capacity, device=device,
               inputs=[sdf.data, g.leaf_coords, g.origin, COARSE_H,
-                      wp.vec3(*CENTRE), radius])
+                      wp.vec3(*centre), radius])
     n = g.voxel_capacity
 
     def full(value):
@@ -76,7 +77,7 @@ def _centres(grid, device):
     n = int(grid.active_voxel_count)
     out = wp.zeros(n, dtype=wp.vec3, device=device)
     wp.launch(_k_centres, dim=n, device=device,
-              inputs=[grid.leaf_coords, grid.origin, FINE_H], outputs=[out])
+              inputs=[grid.leaf_coords, grid.origin, grid.voxel_size], outputs=[out])
     return out.numpy()
 
 
@@ -683,3 +684,165 @@ def test_snapshot_records_the_coarse_one_shot_sources_already_fired(monkeypatch)
     coarse.sourcing._initial_fired.add("later")
     assert frame.fired == frozenset({"sink", "edit"})
     assert frame.frame == 7
+
+
+def test_deep_core_is_a_coarse_driven_solid_only_during_the_pressure_solve(cuda_device):
+    from fluidSim_warp_blender51.sim import constants as C
+
+    dev = cuda_device
+    fine = _grid(dev, FINE_H)
+    n, m = fine.voxel_capacity, int(fine.active_voxel_count)
+    x = _centres(fine, dev)
+    r = np.linalg.norm(x - np.array(CENTRE), axis=1)
+    vtype = np.zeros(n, dtype=np.int32)
+    vtype[:m] = 4                                       # VOXEL_FLUID
+    collider = (x[:, 2] < 0.20) & (r < RADIUS)          # a real collider at the bottom
+    vtype[:m][collider] = 1                              # VOXEL_COLLISION
+    voxel_type = wp.array(vtype, dtype=wp.int32, device=dev)
+    velocity = MacVelocityField(fine)
+
+    guide = GU.ShellGuide(1.0, core_shells=2.0)          # core below 2 fine voxels
+    guide.set_frames(_coarse_frame(dev, 0.0), _coarse_frame(dev, 1.0))
+    guide.set_time(0.5)
+    guide.stamp_core(fine, voxel_type, velocity, m, dev)
+
+    vt = voxel_type.numpy()[:m]
+    depth = 2.0 * 1.0 * FINE_H
+    deep = (r < RADIUS - depth - COARSE_H) & ~collider
+    shallow = r > RADIUS - depth + COARSE_H
+    assert deep.sum() > 100
+    assert np.all(vt[deep] == C.VOXEL_FLUID | C.VOXEL_COLLISION | C.VOXEL_GUIDED_CORE)
+    away_from_collider = deep & (x[:, 2] > 0.22)
+    for component, expected in zip(velocity.arrays()[:3], VEL, strict=True):
+        np.testing.assert_allclose(component.numpy()[:m][away_from_collider],
+                                   expected, atol=1e-5)
+    assert np.all(vt[shallow & ~collider] == 4)
+    assert np.all(vt[collider] == 1)
+
+    guide.unstamp_core(fine, voxel_type, m, dev)
+    np.testing.assert_array_equal(voxel_type.numpy(), vtype)
+
+
+def test_core_stamp_can_be_turned_off(cuda_device):
+    dev = cuda_device
+    fine = _grid(dev, FINE_H)
+    n, m = fine.voxel_capacity, int(fine.active_voxel_count)
+    voxel_type = wp.full(n, 4, dtype=wp.int32, device=dev)
+    velocity = MacVelocityField(fine)
+    guide = GU.ShellGuide(2.0, core_shells=0.0)
+    guide.set_frames(_coarse_frame(dev, 0.0), None)
+    guide.stamp_core(fine, voxel_type, velocity, m, dev)
+    guide.unstamp_core(fine, voxel_type, m, dev)
+    assert np.all(voxel_type.numpy() == 4)
+
+
+@pytest.mark.parametrize("thin_core", [False, True])
+def test_pressure_uses_face_sampled_guide_flux_and_keeps_the_core_valid(cuda_device, thin_core):
+    from fluidSim_warp_blender51.sim import constants as C
+    from fluidSim_warp_blender51.sim.pressure import PressureSolver
+
+    dev = cuda_device
+    coarse = _grid(dev, COARSE_H)
+    mid = CENTRE[1] + FINE_H / 2
+    frame = _coarse_frame(dev, 0.0, velocity=(0.0, 0.0, 0.0),
+                          radius=0.070 if thin_core else RADIUS,
+                          centre=(mid, mid, mid) if thin_core else CENTRE)
+    # A linear X velocity distinguishes the two faces of each core cell.
+    coarse_values = np.zeros(coarse.voxel_capacity, dtype=np.float32)
+    coarse_centres = _centres(coarse, dev)
+    coarse_values[:len(coarse_centres)] = 1.0 + 2.0 * (coarse_centres[:, 0] - COARSE_H / 2)
+    frame.u.assign(coarse_values)
+
+    fine = _grid(dev, FINE_H)
+    n = fine.voxel_capacity
+    centres = _centres(fine, dev)
+    row = np.flatnonzero(np.isclose(centres[:, 1], mid) & np.isclose(centres[:, 2], mid))
+    row = row[np.argsort(centres[row, 0])]
+    flags = np.full(n, C.VOXEL_FLUID, dtype=np.int32)
+    flags[row[:2]] = C.VOXEL_COLLISION
+    voxel_type = wp.array(flags, dtype=wp.int32, device=dev)
+    collision_vel = wp.full(n, wp.vec3(7.0, 0.0, 0.0), dtype=wp.vec3, device=dev)
+    velocity = MacVelocityField(fine)
+    if thin_core:
+        for weights in velocity.arrays()[3:]:
+            weights.fill_(0.7)
+    guide = GU.ShellGuide(1.0)
+    guide.set_frames(frame, None)
+    guide.stamp_core(fine, voxel_type, velocity, len(centres), dev)
+
+    live_flags = voxel_type.numpy()[row]
+    core = (live_flags & (C.VOXEL_FLUID | C.VOXEL_COLLISION)) == (
+        C.VOXEL_FLUID | C.VOXEL_COLLISION)
+    lo_interface, = row[1:][core[1:] & ~core[:-1]]
+    hi_interface, = row[1:][~core[1:] & core[:-1]]
+    inner = row[1:][core[1:] & core[:-1]]
+
+    pressure = PressureSolver(fine, dev)
+    counts = wp.zeros(n, dtype=wp.int32, device=dev)
+    pressure.build_rhs(velocity, voxel_type, collision_vel, counts)
+    pressure.pressure.zero_()
+    pressure.project(velocity, voxel_type, collision_vel)
+    guide.unstamp_core(fine, voxel_type, len(centres), dev)
+
+    guided_faces = np.concatenate(([lo_interface, hi_interface], inner))
+    if thin_core:
+        assert np.count_nonzero(core) == 1
+    else:
+        assert inner.size > 0
+    assert np.all(velocity.wu.numpy()[guided_faces] > 0.0)
+    expected = 1.0 + 2.0 * (centres[guided_faces, 0] - FINE_H / 2)
+    np.testing.assert_allclose(velocity.u.numpy()[guided_faces], expected, atol=1e-6)
+    before_core = row[np.flatnonzero(row == lo_interface)[0] - 1]
+    divergence = pressure.divergence.numpy()
+    np.testing.assert_allclose(divergence[[before_core, hi_interface]],
+                               [expected[0] / FINE_H, -expected[1] / FINE_H], atol=1e-4)
+    assert velocity.wu.numpy()[row[1]] == 0.0
+    assert velocity.u.numpy()[row[2]] == 7.0
+    np.testing.assert_array_equal(collision_vel.numpy(),
+                                  np.broadcast_to((7.0, 0.0, 0.0), (n, 3)))
+    np.testing.assert_array_equal(voxel_type.numpy(), flags)
+
+
+@pytest.mark.parametrize("core_shells", [float("inf"), float("nan")])
+def test_core_shell_count_must_be_finite(core_shells):
+    with pytest.raises(ValueError, match="core_shells must be finite"):
+        GU.ShellGuide(1.0, core_shells)
+
+
+def test_deeper_pressure_shell_keeps_the_core_in_reconstructed_depth(
+        cuda_device, monkeypatch):
+    from fluidSim_warp_blender51.sim import constants as C, solver
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+    from fluidSim_warp_blender51.sim.sourcing import SourceBatch
+
+    dev = cuda_device
+    coarse = SimpleNamespace(
+        settings=SolverSettings(domain_min=(0.0, 0.0, 0.0), domain_max=SIZE,
+                                device=dev, voxel_size=COARSE_H,
+                                leaf_capacity=32, max_particles=1024),
+        colliders=(), sourcing=SimpleNamespace(batch=SourceBatch()))
+
+    def snapshot(upres):
+        frame = _coarse_frame(dev, 0.0, radius=0.24)
+        frame.reconstruct_depth(upres.guide_depth)
+        return frame
+
+    # The constructor's distance policy and the guide kernels also run on CPU.
+    # Stub the CUDA-only fine solver allocation for this kernel-level test.
+    monkeypatch.setattr(solver, "FluidSolver", lambda *a, **kw: SimpleNamespace(
+        narrow_band=SimpleNamespace(), sourcing=SimpleNamespace(),
+        set_colliders=lambda _: None, set_source_batch=lambda *_: None))
+    monkeypatch.setattr(GU.GuidedUpres, "_snapshot", snapshot)
+    upres = GU.GuidedUpres(coarse, shell_voxels=1.0, core_shells=8.0)
+    fine = _grid(dev, FINE_H)
+    n, m = fine.voxel_capacity, int(fine.active_voxel_count)
+    voxel_type = wp.full(n, C.VOXEL_FLUID, dtype=wp.int32, device=dev)
+    velocity = MacVelocityField(fine)
+    upres.guide.stamp_core(fine, voxel_type, velocity, m, dev)
+    stamped = (voxel_type.numpy()[:m] & C.VOXEL_COLLISION) != 0
+    near_centre = np.linalg.norm(_centres(fine, dev) - CENTRE, axis=1) < FINE_H
+    assert near_centre.any()
+    assert np.all(stamped[near_centre])
+    assert not np.all(stamped)
+    upres.guide.unstamp_core(fine, voxel_type, m, dev)
+    assert np.all(voxel_type.numpy() == C.VOXEL_FLUID)
