@@ -192,7 +192,8 @@ class NarrowBand:
         self.nb_w, self.nb_tmp_w = self.nb_tmp_w, self.nb_w
         if self.guide is not None:
             self.guide.set_time(float(sv.sim_time) + 0.5 * float(dt))
-            self.guide.apply_phi(g, self.phi, nv, self.limit, sv.device)
+            self.guide.apply_phi(g, self.phi, nv, self.limit, sv.device,
+                                 sv.collision_sdf.data, sv.voxel_type.data)
             self.guide.apply_velocity(g, self.phi, self.nb_u, self.nb_v,
                                       self.nb_w, nv, sv.device)
         fast_launch(
@@ -252,7 +253,8 @@ class NarrowBand:
             outputs=[self.phi], device=dev)
         if self.guide is not None:
             self.guide.set_time(float(sv.sim_time) + float(dt))
-            self.guide.apply_phi(g, self.phi, nv, self.limit, dev)
+            self.guide.apply_phi(g, self.phi, nv, self.limit, dev,
+                                 sv.collision_sdf.data, sv.voxel_type.data)
         for _ in range(self.eikonal_iterations):
             fast_launch(
                 k_nb_eikonal_inward, dim=nv,

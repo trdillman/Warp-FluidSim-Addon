@@ -83,7 +83,10 @@ air). The fine solve only carries particles in the
 shell, so its particle budget follows the surface area (`factor**2`); its
 leaves cover the whole coarse liquid, so the leaf budget follows the volume
 (`factor**3`). Dynamic (two-way) colliders are refused for now; other
-colliders are copied, so the fine solve never writes into the coarse ones.
+colliders are copied, so the fine solve never writes into the coarse ones, and
+fine solid and sink cells stay air under the guide. The fine solve gets every
+coarse source except liquid emission (sinks, forces, collision and activation
+regions); the guide seeds its liquid.
 `GuidedUpres(coarse, factor=2, shell_voxels=4)` builds the fine solver from
 the coarse settings. Not wired to Blender yet.
 

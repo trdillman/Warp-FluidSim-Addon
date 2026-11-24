@@ -210,6 +210,8 @@ def _guide_blend(ga: float, gb: float, alpha: float) -> float:
 @wp.kernel
 def k_guide_phi(
     phi: wp.array(dtype=float),
+    collision_sdf: wp.array(dtype=float),
+    voxel_type: wp.array(dtype=wp.int32),
     leaf_coords: wp.array(dtype=wp.vec3i),
     num_leaves: wp.array(dtype=wp.int32),
     origin: wp.vec3,
@@ -226,9 +228,16 @@ def k_guide_phi(
     g_h: float,
     alpha: float,
 ):
-    """Keep the fine level set within the coarse liquid's shell."""
+    """Keep the fine level set within the coarse liquid's shell.
+
+    Fine solid and sink cells stay air, as the narrow band's own union
+    leaves them: the coarse level set does not resolve the finer walls.
+    """
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    if collision_sdf[tid] < 0.0 or (voxel_type[tid] & C.VOXEL_SINK) != 0:
+        phi[tid] = limit
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     x = origin + h * wp.vec3(float(ijk[0]) + 0.5, float(ijk[1]) + 0.5,
@@ -522,14 +531,21 @@ class ShellGuide:
         a, b = self.a, self.b
         return a, b, [a.voxels_dim, a.leaves_dim, a.origin, a.voxel_size]
 
-    def apply_phi(self, grid, phi, nvox, limit, device):
+    def apply_phi(self, grid, phi, nvox, limit, device,
+                  collision_sdf=None, voxel_type=None):
+        """Bound the fine level set by the coarse one; solid and sink stay air."""
         if not self.ready:
             return
         a, b, common = self._guide_inputs()
         h = float(grid.voxel_size)
+        n = int(phi.shape[0])
+        if collision_sdf is None:
+            collision_sdf = wp.full(n, 1.0, dtype=float, device=device)
+        if voxel_type is None:
+            voxel_type = wp.zeros(n, dtype=wp.int32, device=device)
         fast_launch(
             k_guide_phi, dim=max(1, int(nvox)),
-            inputs=[phi, grid.leaf_coords, grid.num_leaves, grid.origin, h,
+            inputs=[phi, collision_sdf, voxel_type, grid.leaf_coords, grid.num_leaves, grid.origin, h,
                     self.shell_voxels * h, float(limit),
                     a.sdf, a.leaf_table, b.sdf, b.leaf_table, *common,
                     float(self.alpha)],
@@ -629,6 +645,25 @@ def fine_budget_scales(factor):
     return float(factor * factor), float(factor * factor * factor)
 
 
+def fine_source_batch(batch):
+    """The coarse sources the fine solve also needs: everything but liquid.
+
+    Sinks must reach the fine solve (they stamp the sink bit its particle
+    lifecycle kills by), as must forces, collision and activation regions.
+    Liquid emission is left out: the guide seeds the fine shell itself.
+    Returns ``(legacy_descriptors, native_plans)``.
+    """
+    from .enums import SourceOperation
+    from .source_compat import _operation
+
+    liquid = SourceOperation.LIQUID
+    descriptors = tuple(d for d in batch.legacy_descriptors
+                        if _operation(d) != liquid)
+    plans = tuple(p for p in batch.native_plans
+                  if SourceOperation(p.operation) != liquid)
+    return descriptors, plans
+
+
 def fine_colliders(colliders):
     """Private copies of the coarse colliders for the fine solve.
 
@@ -700,12 +735,23 @@ class GuidedUpres:
         self.fine.set_colliders(fine_colliders(getattr(coarse, "colliders", ())))
         self.guide = ShellGuide(shell_voxels)
         self.fine.narrow_band.guide = self.guide
+        self._sources = None
+        self._sync_sources()
         # The guide must reach below the deepest test it makes (2 shells,
         # plus the velocity band and a coarse voxel of slack).
         self.guide_depth = (3.0 * float(shell_voxels) * float(fine_settings.voxel_size)
                             + 2.0 * float(cs.voxel_size))
         self._last = self._snapshot()
         self.guide.set_frames(self._last, None)
+
+    def _sync_sources(self):
+        """Give the fine solve the coarse non-liquid sources when they change."""
+        batch = self.coarse.sourcing.batch
+        if batch is self._sources:
+            return
+        self._sources = batch
+        descriptors, plans = fine_source_batch(batch)
+        self.fine.set_source_batch(descriptors, plans)
 
     def _snapshot(self):
         return GuideFrame.from_solver(self.coarse, float(self.coarse.sim_time),
@@ -718,6 +764,7 @@ class GuidedUpres:
         # The fine clock starts where the coarse one did for this frame.
         self.fine.sim_time = float(self._last.time)
         self.fine.set_colliders(fine_colliders(getattr(self.coarse, "colliders", ())))
+        self._sync_sources()
         stats = self.fine.step_frame()
         # Keep filling the whole shell until the fine solve holds liquid (a
         # coarse solve that has not emitted yet gives nothing to fill).

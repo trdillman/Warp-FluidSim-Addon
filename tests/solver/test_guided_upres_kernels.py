@@ -404,3 +404,44 @@ def test_fine_colliders_are_private_copies_and_dynamic_ones_are_refused():
     assert static.base_points is None
     with pytest.raises(NotImplementedError):
         GU.fine_colliders([SimpleNamespace(mesh=object(), dynamic=True)])
+
+
+def test_guide_phi_leaves_fine_solid_and_sink_cells_as_air(cuda_device):
+    dev = cuda_device
+    guide = GU.ShellGuide(shell_voxels=3)
+    frame = _coarse_frame(dev, 0.0)
+    frame.reconstruct_depth(3 * 3 * FINE_H + 2 * COARSE_H)
+    guide.set_frames(frame, None)
+    fine = _grid(dev, FINE_H)
+    n = fine.voxel_capacity
+    m = int(fine.active_voxel_count)
+    limit = 8.0 * FINE_H
+    x = _centres(fine, dev)
+    solid = np.ones(n, dtype=np.float32)
+    solid[:m][x[:, 0] < CENTRE[0]] = -1.0
+    sink = np.zeros(n, dtype=np.int32)
+    sink[:m][(x[:, 0] >= CENTRE[0]) & (x[:, 1] < CENTRE[1])] = 2  # VOXEL_SINK
+    phi = wp.full(n, -limit, dtype=float, device=dev)
+    guide.apply_phi(fine, phi, m, limit, dev,
+                    wp.array(solid, dtype=float, device=dev),
+                    wp.array(sink, dtype=wp.int32, device=dev))
+    out = phi.numpy()[:m]
+    blocked = (solid[:m] < 0.0) | (sink[:m] != 0)
+    assert np.all(out[blocked] == limit)
+    assert np.any(out[~blocked] < 0.0)
+
+
+def test_fine_sources_keep_sinks_and_drop_liquid_emission():
+    from fluidSim_warp_blender51.sim.enums import SourceShapeType
+    from fluidSim_warp_blender51.sim.sourcing import SourceBatch, SourceShapeDesc
+
+    liquid = SourceShapeDesc()
+    liquid.stype = SourceShapeType.SOURCE
+    sink = SourceShapeDesc()
+    sink.stype = SourceShapeType.SINK
+    plans = (SimpleNamespace(operation=0), SimpleNamespace(operation=1))  # LIQUID, SINK
+    descriptors, kept = GU.fine_source_batch(SimpleNamespace(
+        legacy_descriptors=(liquid, sink), native_plans=plans))
+    assert descriptors == (sink,)
+    assert kept == (plans[1],)
+    assert GU.fine_source_batch(SourceBatch()) == ((), ())
