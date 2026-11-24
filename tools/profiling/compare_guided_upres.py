@@ -14,9 +14,9 @@ demo's own add-on solver is the coarse sim (colliders and all), and the run
 saves a review file, ``artifacts/guided_upres/NAME_review.blend``, holding
 the coarse, guided and full fine surfaces of the sampled frames in one
 collection each (only the guided one is shown at first; each mesh is visible
-on its own timeline frame). ``upres_cove`` is the scene made for this; when
-``demos/NAME.blend`` has not been built yet, the scene is authored on the fly
-from ``tools/demos/build_demo_scenes.py``. The full fine sim runs after the
+on its own timeline frame). ``upres_cove`` is the scene made for this; until
+it is built (into ``artifacts/review_demos/``, never ``demos/``), the scene
+is authored on the fly from ``tools/demos/build_demo_scenes.py``. The full fine sim runs after the
 guided one, so the two fine solves never hold VRAM at the same time. Demo
 mode requires static collider, source and force inputs because it steps the
 solvers without advancing the timeline. ``--full-fine`` requires a scene
@@ -202,14 +202,24 @@ def resolve_demo_args(args, mod):
     return args
 
 
+def demo_blend_path(name):
+    """Where a built demo lives: shipped demos in ``demos/``, opt-in review
+    scenes (such as ``upres_cove``) in ``artifacts/review_demos/``."""
+    for folder in (("demos",), ("artifacts", "review_demos")):
+        path = os.path.join(REPO, *folder, name + ".blend")
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def open_demo(name):
-    """Open ``demos/<name>.blend``, or author it when it has not been built."""
+    """Open the built demo, or author it when it has not been built."""
     import bpy
 
     from tools.repo_addon_loader import enable_repo_addon
 
-    path = os.path.join(REPO, "demos", name + ".blend")
-    if os.path.exists(path):
+    path = demo_blend_path(name)
+    if path is not None:
         bpy.ops.wm.open_mainfile(filepath=path)
         enable_repo_addon(REPO, default_set=False, persistent=False)
         return bpy.context.scene, path
@@ -219,7 +229,8 @@ def open_demo(name):
     author = getattr(builder, f"author_{name}", None)
     if author is None:
         raise FileNotFoundError(
-            f"{path} does not exist and build_demo_scenes has no author_{name}")
+            f"no built {name}.blend in demos/ or artifacts/review_demos/, and "
+            f"build_demo_scenes has no author_{name}")
     return author(), None
 
 

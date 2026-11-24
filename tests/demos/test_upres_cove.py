@@ -224,3 +224,29 @@ def test_demo_mode_identifies_enabled_automatic_seeds_from_scene_inputs():
     initial_fill = _Obj("Initial fill", "SOURCE")
     initial_fill.fluidsim.enabled = True
     assert CMP.automatic_seed_objects([seed, disabled, initial_fill]) == ["Water seed"]
+
+
+def test_review_scene_is_never_saved_into_the_demo_gate_folder():
+    """check_demo_blends.py fails on any demos/*.blend outside its inventory."""
+    with open(os.path.join(REPO, "tools", "demos", "build_demo_scenes.py"),
+              encoding="utf-8") as fh:
+        src = fh.read()
+    body = src.split("def build_upres_cove")[1].split("\ndef ")[0]
+    assert "save_scene(" not in body
+    for call in ("save_playable(", "write_meta(", "render_preview("):
+        tail = body.split(call, 1)[1].split(")\n", 1)[0]
+        assert "directory=REVIEW_DEMOS" in tail, call
+    assert 'os.path.join(REPO, "artifacts", "review_demos")' in src
+
+
+def test_compare_tool_finds_built_review_scenes(tmp_path, monkeypatch):
+    monkeypatch.setattr(CMP, "REPO", str(tmp_path))
+    assert CMP.demo_blend_path("upres_cove") is None
+    review = tmp_path / "artifacts" / "review_demos"
+    review.mkdir(parents=True)
+    (review / "upres_cove.blend").write_bytes(b"")
+    assert CMP.demo_blend_path("upres_cove") == str(review / "upres_cove.blend")
+    shipped = tmp_path / "demos"
+    shipped.mkdir()
+    (shipped / "dam_break.blend").write_bytes(b"")
+    assert CMP.demo_blend_path("dam_break") == str(shipped / "dam_break.blend")

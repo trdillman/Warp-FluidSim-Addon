@@ -134,9 +134,10 @@ $env:BLENDER_USER_EXTENSIONS = Join-Path $env:BLENDER_USER_RESOURCES 'extensions
 blender --background --factory-startup --python-use-system-env --python tools/profiling/compare_guided_upres.py -- --demo upres_cove --full-fine --phases --json-out artifacts/guided_upres/upres_cove.json
 ```
 
-This needs no built `.blend`: without `demos/upres_cove.blend` the scene is
-authored on the fly (`build_demo_scenes.py -- upres_cove` builds and saves
-it). The demo's own add-on solver is the coarse sim. The guided fine solve
+This needs no built `.blend`: until `build_demo_scenes.py -- upres_cove`
+has saved `artifacts/review_demos/upres_cove.blend`, the scene is authored on
+the fly. The build saves there, not in `demos/`, because the demo gate
+(`check_demo_blends.py`) fails on any `demos/*.blend` outside its inventory. The demo's own add-on solver is the coarse sim. The guided fine solve
 follows it, then the full fine sim runs from the same inputs in a second
 pass, so the two fine solves never share VRAM. At the preset resolutions,
 both grids have room for every leaf in the domain, including the collider

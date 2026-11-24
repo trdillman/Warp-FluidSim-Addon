@@ -21,7 +21,8 @@ not become source-control assets.
                      `-- tsunami_parthenon`).
 5. upres_cove      - the dam_break cove at 2 cm (~864k particles), the
                      guided upres review scene (build explicitly with
-                     `-- upres_cove`; tools/profiling/compare_guided_upres.py
+                     `-- upres_cove`; saved to artifacts/review_demos/, not
+                     demos/; tools/profiling/compare_guided_upres.py
                      --demo upres_cove runs the upres on it).
 
 The exported data is analyzed offline by tools/demos/analyze_demos.py.
@@ -47,6 +48,10 @@ from tools.demos.metadata import (  # noqa: E402
 
 DEMOS = os.path.join(REPO, "demos")
 CACHE = os.path.join(REPO, "artifacts", "demo_cache")
+# Opt-in review scenes that are not shipped demos. They are saved here, not in
+# demos/, because check_demo_blends.py requires every demos/*.blend to be in
+# its tracked inventory.
+REVIEW_DEMOS = os.path.join(REPO, "artifacts", "review_demos")
 FPS = 24
 STANDARD_CACHE_SCENES = ("dam_break", "crown_splash")
 DEFAULT_SCENES = ("dam_break", "crown_splash")
@@ -295,10 +300,11 @@ def run_scene(name, frames, dump_velocities=True, advance_timeline=False,
     return series
 
 
-def save_scene_file(name):
+def save_scene_file(name, directory=DEMOS):
     prepare_scene_for_save(bpy.context.scene, name)
+    os.makedirs(directory, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(
-        filepath=os.path.join(DEMOS, f"{name}.blend"), check_existing=False)
+        filepath=os.path.join(directory, f"{name}.blend"), check_existing=False)
 
 
 def save_scene(name, preview=True):
@@ -389,14 +395,15 @@ def use_material_shading(scene):
         scene.world.color = (0.66, 0.70, 0.73)
 
 
-def render_preview(name, *, min_water_fraction):
+def render_preview(name, *, min_water_fraction, directory=DEMOS):
     """Render the current solver state and require visible water in it."""
     from fluidSim_warp_blender51.blender import playback
 
     scene = bpy.context.scene
     scene.render.resolution_x = 640
     scene.render.resolution_y = 420
-    path = os.path.join(DEMOS, f"{name}_preview.png")
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"{name}_preview.png")
     scene.render.filepath = path
     # A still render re-sends the current frame; while live that would reset
     # the running simulation back to frame 1.
@@ -949,7 +956,7 @@ def body_states(sess):
     return states
 
 
-def save_playable(name, scene, frames, seed_particles=None):
+def save_playable(name, scene, frames, seed_particles=None, directory=DEMOS):
     """Reset to frame 1 (clears the published poses) and save live-ready.
 
     INITIAL_FILL sources emit on the first step, so a bare reset leaves frame 1
@@ -978,16 +985,16 @@ def save_playable(name, scene, frames, seed_particles=None):
     fs.live = True
     scene["fluidsim_playback_ready"] = True
     scene["fluidsim_simulated_frames"] = frames
-    save_scene_file(name)
+    save_scene_file(name, directory)
     log(f"{name}: saved live-playback-ready frame 1")
     bpy.ops.fluidsim.release()
 
 
-def write_meta(name, meta):
-    os.makedirs(os.path.join(DEMOS, name), exist_ok=True)
+def write_meta(name, meta, directory=DEMOS):
+    os.makedirs(os.path.join(directory, name), exist_ok=True)
     meta["playable_live_setup"] = True
     meta["seed_objects"] = []
-    write_metadata(os.path.join(DEMOS, name, "meta.json"), meta)
+    write_metadata(os.path.join(directory, name, "meta.json"), meta)
 
 
 # Density Ladder: four flat blocks of rising density dropped onto a still
@@ -1965,7 +1972,8 @@ def build_upres_cove():
 
     def preview(frame):
         if frame == UPRES_COVE_PREVIEW_FRAME:
-            render_preview("upres_cove", min_water_fraction=DAM_BREAK_PREVIEW_MIN_WATER)
+            render_preview("upres_cove", min_water_fraction=DAM_BREAK_PREVIEW_MIN_WATER,
+                           directory=REVIEW_DEMOS)
 
     series = run_scene("upres_cove", uc.FRAMES, dump_velocities=False,
                        on_frame=preview)
@@ -1979,7 +1987,6 @@ def build_upres_cove():
             f"upres_cove emitted {first:,} particles, expected about {expected:,.0f}")
     if sess.solver is None:
         raise RuntimeError("upres_cove: solver released during the build")
-    save_scene("upres_cove", preview=False)
     write_meta("upres_cove", {
         "scene": "upres_cove",
         "domain": [list(uc.DOMAIN_LO), list(uc.DOMAIN_HI)],
@@ -1998,8 +2005,10 @@ def build_upres_cove():
         "build_frames": uc.FRAMES,
         "build_peak_particles": int(max(series["particle_count"])),
         "build_mean_step_ms": float(np.mean(series["step_ms"])),
-    })
-    save_playable("upres_cove", scene, uc.FRAMES, seed_particles=first)
+    }, directory=REVIEW_DEMOS)
+    # Not demos/: check_demo_blends.py fails on any untracked demos/*.blend.
+    save_playable("upres_cove", scene, uc.FRAMES, seed_particles=first,
+                  directory=REVIEW_DEMOS)
 
 # ---------------------------------------------------------------------------
 
