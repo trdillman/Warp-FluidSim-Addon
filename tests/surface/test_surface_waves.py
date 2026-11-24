@@ -265,7 +265,7 @@ def test_the_pipeline_steps_waves_once_per_frame_and_serves_that_mesh(
         surface_waves_strength=4.0, surface_waves_damping=1.5,
         surface_update_cadence=0, time_scale=1.0, frame_rate=24.0)
     solver = SimpleNamespace(settings=settings, device=cuda_device,
-                             _phase=lambda name: _Null())
+                             _phase=_strict_phase)
     pipe = SURF.SurfacePipeline.__new__(SURF.SurfacePipeline)
     pipe.solver = solver
     pipe.waves = None
@@ -288,6 +288,14 @@ def test_the_pipeline_steps_waves_once_per_frame_and_serves_that_mesh(
     assert np.abs(out - verts).max() > 0.0
 
 
+def _strict_phase(name):
+    # The real profiler refuses phases without a timer slot.
+    from fluidSim_warp_blender51.sim.constants import TIMER_PHASE_SLOTS
+
+    assert name in TIMER_PHASE_SLOTS, f"unknown profiler phase: {name}"
+    return _Null()
+
+
 class _Null:
     def __enter__(self):
         return self
@@ -306,7 +314,7 @@ def test_waves_build_the_surface_first_when_the_cadence_did_not(
         surface_waves_strength=1.0, surface_waves_damping=1.5,
         surface_update_cadence=2, time_scale=1.0, frame_rate=24.0)
     solver = SimpleNamespace(settings=settings, device=cuda_device,
-                             _phase=lambda name: _Null())
+                             _phase=_strict_phase)
     pipe = SURF.SurfacePipeline.__new__(SURF.SurfacePipeline)
     pipe.solver = solver
     pipe.waves = None
@@ -341,7 +349,7 @@ def test_a_rebuilt_surface_keeps_the_current_waves(cuda_device, monkeypatch):
         surface_waves_strength=4.0, surface_waves_damping=1.5,
         surface_update_cadence=1, time_scale=1.0, frame_rate=24.0)
     solver = SimpleNamespace(settings=settings, device=cuda_device,
-                             _phase=lambda name: _Null())
+                             _phase=_strict_phase)
     pipe = SURF.SurfacePipeline.__new__(SURF.SurfacePipeline)
     pipe.solver = solver
     pipe.waves = None

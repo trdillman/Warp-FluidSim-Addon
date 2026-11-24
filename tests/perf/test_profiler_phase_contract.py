@@ -145,3 +145,18 @@ def test_sync_disabled_profiler_never_synchronizes():
             pass
 
     assert calls == []
+
+
+def test_every_solver_phase_name_has_a_timer_slot():
+    # A phase without a slot only fails when the profiler is on (as it is in
+    # Blender), so catch it statically.
+    import re
+    from pathlib import Path
+
+    from fluidSim_warp_blender51.sim.constants import TIMER_PHASE_SLOTS
+
+    sim = Path(__file__).resolve().parents[2] / "fluidSim_warp_blender51" / "sim"
+    used = set()
+    for path in sim.rglob("*.py"):
+        used |= set(re.findall(r'_phase\(\s*"([a-z_]+)"', path.read_text("utf-8")))
+    assert used and used <= set(TIMER_PHASE_SLOTS), sorted(used - set(TIMER_PHASE_SLOTS))

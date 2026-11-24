@@ -779,7 +779,7 @@ class SurfacePipeline:
                 self.build(build_render=True, build_lowres=bool(
                     getattr(s, "surface_build_lowres_sdf", False)))
         if s.surface_enabled and bool(getattr(s, "surface_waves_enabled", False)):
-            with self.solver._phase("surface_waves"):
+            with self.solver._phase("surface"):  # waves are surface work
                 self.step_waves()
 
     # Surface waves (sim/surface_waves.py): per-frame wave detail on the
