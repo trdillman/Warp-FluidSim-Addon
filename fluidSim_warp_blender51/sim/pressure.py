@@ -44,7 +44,7 @@ from .fastlaunch import launch as fast_launch
 
 wp.set_module_options({"enable_backward": False})
 
-from .constants import LEAF_VOLUME, VOXEL_COLLISION, VOXEL_FLUID
+from .constants import LEAF_VOLUME, VOXEL_COLLISION, VOXEL_FLUID, VOXEL_GUIDED_CORE
 from .enums import ProjectNonDivergentSolver
 from .fields import (
     leaf_linear_index,
@@ -259,10 +259,12 @@ def k_compute_divergence(
                 f_lo = w[tid]
             if hi >= 0:
                 f_hi = w[hi]
-        # solid neighbors: face takes collider velocity component
-        if lo_n >= 0 and (voxel_type[lo_n] & VOXEL_COLLISION) != 0:
+        # Physical walls use collider velocity. Guided faces already carry
+        # their prescribed flux in the staggered velocity field.
+        solid_mask = VOXEL_COLLISION | VOXEL_GUIDED_CORE
+        if lo_n >= 0 and (voxel_type[lo_n] & solid_mask) == VOXEL_COLLISION:
             f_lo = collision_vel[lo_n][axis]
-        if hi >= 0 and (voxel_type[hi] & VOXEL_COLLISION) != 0:
+        if hi >= 0 and (voxel_type[hi] & solid_mask) == VOXEL_COLLISION:
             f_hi = collision_vel[hi][axis]
         div += f_hi - f_lo
     div = div / voxel_size
@@ -1356,7 +1358,8 @@ def k_project(
     vt = voxel_type[tid]
     inv_h = 1.0 / voxel_size
     here_fluid = (vt & VOXEL_FLUID) != 0 and (vt & VOXEL_COLLISION) == 0
-    here_solid = (vt & VOXEL_COLLISION) != 0
+    solid_mask = VOXEL_COLLISION | VOXEL_GUIDED_CORE
+    here_solid = (vt & solid_mask) == VOXEL_COLLISION
     limit = wp.max(max_gradient, 1.0e-6)
     x_here = float(0.0)
     if here_fluid:
@@ -1365,12 +1368,13 @@ def k_project(
         n = neighbor_flat(tid, leaf_table, voxels_dim, leaves_dim, ijk, axis, -1)
         n_fluid = wp.int32(0)
         n_solid = wp.int32(0)
+        nvt = wp.int32(0)
         x_n = float(0.0)
         if n >= 0:
             nvt = voxel_type[n]
-            if (nvt & VOXEL_COLLISION) != 0:
+            if (nvt & solid_mask) == VOXEL_COLLISION:
                 n_solid = 1
-            elif (nvt & VOXEL_FLUID) != 0:
+            elif (nvt & (VOXEL_FLUID | VOXEL_COLLISION)) == VOXEL_FLUID:
                 n_fluid = 1
                 x_n = finite_pressure_value(x[n])
         else:
@@ -1391,7 +1395,9 @@ def k_project(
             else:
                 w[tid] = vel_c[2]
                 ww[tid] = solid_face_weight(ww[tid], here_solid, n_solid)
-        elif here_fluid or n_fluid != 0:
+        elif (here_fluid or n_fluid != 0) and ((vt | nvt) & VOXEL_GUIDED_CORE) == 0:
+            # Guided faces keep their sampled velocity and validity, including
+            # core-to-core faces that will be liquid again after projection.
             g = bounded_pressure_gradient(x_here, x_n, inv_h, limit)
             if axis == 0:
                 u[tid] = u[tid] - g

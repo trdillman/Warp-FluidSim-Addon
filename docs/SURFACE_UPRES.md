@@ -101,7 +101,10 @@ moves with the coarse velocity for the pressure solve only, which is the
 boundary condition Nielsen and Bridson use. Without it the fine pressure solve
 spans the whole liquid volume and costs as much as a full fine sim. The core
 leaves stay allocated so the fine level set and mesh stay whole; only the
-pressure unknowns shrink. `core_shells=0` solves the whole depth.
+pressure unknowns shrink. The guide supplies velocity at the staggered core
+faces. These faces stay valid for level-set advection after projection, and
+real colliders keep their own boundary velocities. `core_shells=0` solves
+the whole depth.
 `GuidedUpres(coarse, factor=2, shell_voxels=4)` builds the fine solver from
 the coarse settings. Not wired to Blender yet.
 

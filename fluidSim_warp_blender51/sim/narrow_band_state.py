@@ -213,14 +213,13 @@ class NarrowBand:
         """Guided upres: the deep core is a coarse-driven solid in the solve."""
         if self.guide is not None:
             sv = self.solver
-            self.guide.stamp_core(sv.grid, sv.voxel_type.data, sv.collision_vel,
-                                  sv._nvox, sv.device,
-                                  weights=(sv.vel.wu, sv.vel.wv, sv.vel.ww))
+            self.guide.stamp_core(sv.grid, sv.voxel_type.data, sv.vel,
+                                  sv._nvox, sv.device)
 
     def after_pressure(self):
         if self.guide is not None:
             sv = self.solver
-            self.guide.unstamp_core(sv.grid, sv.voxel_type.data, sv.collision_vel,
+            self.guide.unstamp_core(sv.grid, sv.voxel_type.data,
                                     sv._nvox, sv.device)
 
     def credit_interior_counts(self):

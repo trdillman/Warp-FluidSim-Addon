@@ -2475,9 +2475,9 @@ class FluidSolver:
             self.features.run(
                 FrameFeaturePhase.BEFORE_PRESSURE, self, time_ctx)
             with self._phase("pressure"):
-                if self.narrow_band is not None:
-                    self.narrow_band.before_pressure()
                 try:
+                    if self.narrow_band is not None:
+                        self.narrow_band.before_pressure()
                     projected = self._pressure(dt)
                 finally:
                     if self.narrow_band is not None:
