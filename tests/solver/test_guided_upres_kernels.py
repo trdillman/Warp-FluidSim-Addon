@@ -543,6 +543,15 @@ def test_moving_colliders_get_a_private_mesh_kept_in_step(cuda_device):
     again, _ = GU.fine_colliders([moving, still], cache)
     assert again.mesh is first.mesh               # reused, refreshed
     np.testing.assert_array_equal(again.mesh.points.numpy(), pts + 1.0)
+    replacement = wp.Mesh(points=wp.array(pts + 2.0, dtype=wp.vec3, device=dev),
+                          indices=src.indices)
+    moving.mesh = replacement
+    (updated,) = GU.fine_colliders([moving], cache)
+    assert updated.mesh is not first.mesh
+    assert set(cache) == {id(replacement)}
+    np.testing.assert_array_equal(updated.mesh.points.numpy(), pts + 2.0)
+    assert GU.fine_colliders([], cache) == []
+    assert not cache
 
 
 def test_factors_beyond_one_leaf_per_coarse_voxel_are_refused():

@@ -744,9 +744,9 @@ def _private_mesh(src, cache):
 def fine_colliders(colliders, mesh_cache=None):
     """Private copies of the coarse colliders for the fine solve.
 
-    A moving collider also gets its own mesh (``mesh_cache`` reuses it across
-    frames): the fine solve re-poses moving meshes in place every substep,
-    and those writes must never reach the coarse mesh.
+    A moving collider also gets its own mesh. ``mesh_cache`` keeps the
+    copies for moving colliders that are still present in the current frame.
+    The fine solver can re-pose these copies without touching coarse meshes.
 
     ``FluidSolver.set_colliders`` writes into the descriptors (moving-mesh
     base points, Dynamic body state), so sharing them would let the fine solve
@@ -755,6 +755,7 @@ def fine_colliders(colliders, mesh_cache=None):
     replaying the coarse body poses is not built yet.
     """
     out = []
+    active_meshes = set()
     for col in colliders:
         if getattr(col, "dynamic", False) and getattr(col, "mesh", None) is not None:
             raise NotImplementedError(
@@ -763,8 +764,12 @@ def fine_colliders(colliders, mesh_cache=None):
         c = copy.copy(col)
         if _moves(col):
             c.mesh = _private_mesh(col.mesh, mesh_cache)
+            active_meshes.add(id(col.mesh))
             c.reposed = False
         out.append(c)
+    if mesh_cache is not None:
+        for key in mesh_cache.keys() - active_meshes:
+            del mesh_cache[key]
     return out
 
 
