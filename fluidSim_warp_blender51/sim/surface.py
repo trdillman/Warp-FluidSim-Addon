@@ -44,9 +44,17 @@ try:  # Warp >= 1.18 replacement for the deprecated ``wp.MarchingCubes``.
     from warp.geometry import IsoSurfaceMarchingCubes as _DenseMarchingCubes
 except ImportError:
     _DenseMarchingCubes = None
+try:  # Warp >= 1.19: Surface Nets (one vertex per cell, more even triangles).
+    from warp.geometry import IsoSurfaceNets as _IsoSurfaceNets
+except ImportError:
+    _IsoSurfaceNets = None
 
 SPARSE_MARCHING_CUBES_AVAILABLE = _sparse_mc_from_cells is not None
-SURFACE_EXTRACTOR_BACKENDS = ("auto", "sparse", "dense")
+SURFACE_NETS_AVAILABLE = _IsoSurfaceNets is not None
+SURFACE_EXTRACTOR_BACKENDS = ("auto", "sparse", "dense", "nets")
+# Developer override for what ``backend="auto"`` resolves to, so a profile or
+# an A/B run can switch the liquid surface backend without a settings change.
+SURFACE_BACKEND_ENV = "FLUIDSIM_SURFACE_BACKEND"
 
 
 # --- particle-SDF splat modes -------------------------------------------------
@@ -1272,6 +1280,19 @@ register_fn(k_expand_shift_axis_velocity_in_collider,
 # Marching cubes surface extraction (host orchestrated, GPU compute)
 
 
+def _auto_backend():
+    """What ``backend="auto"`` means: the env override, else sparse, else dense."""
+    import os
+
+    requested = os.environ.get(SURFACE_BACKEND_ENV, "").strip().lower()
+    if requested in ("sparse", "dense", "nets"):
+        ok = {"sparse": SPARSE_MARCHING_CUBES_AVAILABLE, "dense": True,
+              "nets": SURFACE_NETS_AVAILABLE}[requested]
+        if ok:
+            return requested
+    return "sparse" if SPARSE_MARCHING_CUBES_AVAILABLE else "dense"
+
+
 class SurfaceExtractor:
     """Extracts a triangle mesh from the liquid surface SDF.
 
@@ -1293,7 +1314,16 @@ class SurfaceExtractor:
         and grow monotonically within a session to avoid reallocating the
         marching cubes buffers every frame.
 
-    ``backend="auto"`` picks ``sparse`` whenever the installed Warp has it.
+    ``nets`` (Warp >= 1.19, opt-in)
+        Same padded dense sub-box as ``dense``, but extracted with Surface
+        Nets: one vertex per surface cell, so the triangles are far more even
+        (almost no slivers).  The mesh is *not* the marching-cubes mesh, so
+        ``auto`` never picks it; ask for it with ``backend="nets"`` or set the
+        ``FLUIDSIM_SURFACE_BACKEND=nets`` environment variable.  It pays for
+        the dense sub-box and is limited by ``max_dense_dim``.
+
+    ``backend="auto"`` picks ``sparse`` whenever the installed Warp has it,
+    unless ``FLUIDSIM_SURFACE_BACKEND`` names another available backend.
     """
 
     _PAD = 32
@@ -1307,10 +1337,13 @@ class SurfaceExtractor:
                 f"unknown surface extractor backend {backend!r}; "
                 f"expected one of {SURFACE_EXTRACTOR_BACKENDS}")
         if backend == "auto":
-            backend = "sparse" if SPARSE_MARCHING_CUBES_AVAILABLE else "dense"
+            backend = _auto_backend()
         if backend == "sparse" and not SPARSE_MARCHING_CUBES_AVAILABLE:
             raise RuntimeError(
                 "FluidSim: the sparse surface extractor needs Warp >= 1.18")
+        if backend == "nets" and not SURFACE_NETS_AVAILABLE:
+            raise RuntimeError(
+                "FluidSim: the Surface Nets extractor needs Warp >= 1.19")
         self.backend = backend
         self._mc = None
         self._dense = None
@@ -1328,7 +1361,9 @@ class SurfaceExtractor:
             return
         self._dense = wp.zeros((nx, ny, nz), dtype=float, device=self.device)
         self._dense_dim = (nx, ny, nz)
-        if _DenseMarchingCubes is not None:
+        if self.backend == "nets":
+            self._mc = _IsoSurfaceNets(nx, ny, nz)
+        elif _DenseMarchingCubes is not None:
             self._mc = _DenseMarchingCubes(nx=nx, ny=ny, nz=nz)
         else:
             self._mc = wp.MarchingCubes(

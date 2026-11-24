@@ -21,10 +21,12 @@ from fluidSim_warp_blender51.sim import surface as SURF  # noqa: E402
 from test_surface_extractor_parity import CASES, _sphere_field  # noqa: E402
 
 
-@pytest.mark.parametrize("backend", ["sparse", "dense"])
+@pytest.mark.parametrize("backend", ["sparse", "dense", "nets"])
 def test_two_extractions_give_identical_mesh_bytes(cuda_device, backend):
     if backend == "sparse" and not SURF.SPARSE_MARCHING_CUBES_AVAILABLE:
         pytest.skip("sparse backend needs Warp >= 1.18")
+    if backend == "nets" and not SURF.SURFACE_NETS_AVAILABLE:
+        pytest.skip("nets backend needs Warp >= 1.19")
     meshes = []
     for _ in range(2):
         grid, field = _sphere_field(cuda_device, *CASES["interior"])
