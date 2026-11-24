@@ -698,6 +698,46 @@ def test_learned_guess_on_is_still_an_omission():
 	assert any("pressure_learned_guess" in reason for reason in result["reasons"])
 
 
+def _surface_detail_campaign(*, detail=False, preserve=0.0):
+	runs = _campaign()
+	for run in runs:
+		if run["label"] == "candidate":
+			run["effectiveSettings"].update(
+				surface_detail_enabled=detail,
+				surface_detail_flatten=0.75,
+				surface_detail_max_stretch=3.0,
+				surface_detail_neighbor_radius=1.5,
+				surface_smooth_preserve_splashes=preserve,
+			)
+	return runs
+
+
+def test_surface_detail_off_is_equivalent_to_reference_without_settings():
+	result = evaluate_budget(_surface_detail_campaign())
+	assert result["status"] == "pass", result["reasons"]
+	omissions = result["demos"]["dam_break"]["effectiveSettings"]["neutralAbsentFields"]
+	assert omissions["surface_detail_enabled"] == {"presentIn": "candidate", "neutralValue": False}
+	assert omissions["surface_smooth_preserve_splashes"] == {"presentIn": "candidate", "neutralValue": 0.0}
+	for field in ("surface_detail_flatten", "surface_detail_max_stretch", "surface_detail_neighbor_radius"):
+		assert omissions[field] == {
+			"presentIn": "candidate",
+			"inertWhile": {"surface_detail_enabled": False},
+		}
+
+
+@pytest.mark.parametrize(
+	("settings", "field"),
+	[
+		({"detail": True}, "surface_detail_enabled"),
+		({"preserve": 0.5}, "surface_smooth_preserve_splashes"),
+	],
+)
+def test_active_surface_detail_cannot_replace_an_older_reference_workload(settings, field):
+	result = evaluate_budget(_surface_detail_campaign(**settings))
+	assert result["status"] == "invalid"
+	assert any(f"effectiveSettings.{field} is an unsupported" in reason for reason in result["reasons"])
+
+
 def _early(runs):
 	"""Keep only the first ABBA and BAAB blocks (four trials per variant)."""
 	return [run for run in runs if run["round"] in (0, 1)]
