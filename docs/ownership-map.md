@@ -22,7 +22,7 @@ Two directions of flow exist, and a field uses one or the other:
 
 | verdict | fields | meaning |
 |---|---:|---|
-| OK | 157 | UI writes exactly where the consumer reads |
+| OK | 162 | UI writes exactly where the consumer reads |
 | OK_MULTI | 0 | write and read meet, but more than one path exists |
 | MIRROR_ONLY | 0 | **only** the Physics mirror writes where the consumer reads; the Scene-tab control edits the wrong datablock |
 | BROKEN | 0 | **UI writes a datablock no consumer reads** |
@@ -34,7 +34,7 @@ Two directions of flow exist, and a field uses one or the other:
 | READ_ONLY | 27 | something reads it; nothing resolved writes it |
 | INTERNAL | 9 | written outside the UI; no resolved reader |
 | UNOBSERVED | 3 | no access of any kind resolved -- a dead property |
-| **total** | **230** | |
+| **total** | **235** | |
 
 ## Mirrored panels
 
@@ -216,6 +216,11 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `surface_smooth_type` | SURFACE | domain | domain | - | - | domain | 0 | OK |
 | `surface_smooth_iterations` | SURFACE | domain | domain | - | domain | domain | 0 | OK |
 | `surface_smooth_strength` | SURFACE | domain | domain | - | - | domain | 0 | OK |
+| `surface_smooth_preserve_splashes` | SURFACE | domain | domain | - | - | domain | 0 | OK |
+| `surface_detail_enabled` | SURFACE | domain | domain | - | domain | domain | 0 | OK |
+| `surface_detail_neighbor_radius` | SURFACE | domain | domain | - | - | domain | 0 | OK |
+| `surface_detail_max_stretch` | SURFACE | domain | domain | - | - | domain | 0 | OK |
+| `surface_detail_flatten` | SURFACE | domain | domain | - | - | domain | 0 | OK |
 | `whitewater_enabled` | WHITEWATER | domain | domain | - | domain | domain | 1 | OK |
 | `max_whitewater` | REINITIALIZE | domain | domain | - | - | domain | 0 | OK |
 | `ww_churn_decay` | LIVE | domain | domain | - | - | domain | 0 | OK |

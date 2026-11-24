@@ -1726,6 +1726,31 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         name="Smooth Strength", default=0.7, min=0.0, max=1.0,
         update=_request_surface_refresh,
         description="Blend each smoothing pass with the current SDF; higher values soften the surface more, while zero prevents smoothing")
+    surface_smooth_preserve_splashes: FloatProperty(
+        name="Preserve Splashes", default=0.0, min=0.0, max=1.0,
+        update=_request_surface_refresh,
+        description=("Lower the Smooth pass where particles are sparse (splashes, thin sheets, drops) while calm, dense liquid is smoothed as before; "
+                     "higher values keep more splash detail, while zero smooths everywhere equally"))
+    surface_detail_enabled: BoolProperty(
+        name="Sharp Surfacing", default=False,
+        update=_request_surface_refresh,
+        description=("Draw each particle as an ellipsoid shaped by its neighbours instead of a round ball, giving flatter calm water, thin sheets and crisper edges from the same particles; "
+                     "costs one neighbour search per particle and changes only the render surface, never the simulation"))
+    surface_detail_neighbor_radius: FloatProperty(
+        name="Neighbour Radius", default=2.0, min=1.0, max=4.0,
+        update=_request_surface_refresh,
+        description=("Set how far each particle looks for neighbours to choose its shape, in simulation voxels; "
+                     "higher values give smoother, more stable shapes at more GPU cost, while lower values follow small features but can flicker"))
+    surface_detail_max_stretch: FloatProperty(
+        name="Max Stretch", default=4.0, min=1.0, max=8.0,
+        update=_request_surface_refresh,
+        description=("Cap how much longer an ellipsoid's longest axis may be than its shortest; "
+                     "higher values make thinner sheets and sharper edges but can streak, while 1 keeps round balls"))
+    surface_detail_flatten: FloatProperty(
+        name="Flatten", default=0.5, min=0.0, max=1.0,
+        update=_request_surface_refresh,
+        description=("Pull each particle toward the centre of its neighbours before drawing it; "
+                     "higher values flatten bumpy calm water more but can slightly shrink thin features, while zero leaves particles in place"))
 
     # Whitewater
     whitewater_enabled: BoolProperty(

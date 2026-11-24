@@ -33,6 +33,7 @@ from .fields import (
     field_read_i,
 )
 from .registry import register_fn
+from .surface_anisotropy import AnisotropicSurfacer, k_blend_by_weight
 
 try:  # Warp >= 1.18: sparse marching cubes over a caller-supplied cell list.
     from warp.geometry import (
@@ -310,7 +311,8 @@ class SurfacePipeline:
                 round(float(getattr(s, "surface_voxel_size", 0.0)), 9), round(float(getattr(s, "surface_leaf_capacity_scale", 8.0)), 6),
                 int(getattr(s, "surface_max_dense_dim", 512)), int(getattr(s, "surface_update_cadence", 1)),
                 bool(getattr(s, "surface_build_lowres_sdf", False)),
-                self._sdf_settings_signature(), self.topology_generation)
+                self._sdf_settings_signature(), self._render_detail_signature(),
+                self.topology_generation)
 
     def build_key(self):
         solver = self.solver
@@ -331,8 +333,27 @@ class SurfacePipeline:
         s = solver.settings
         h = self.voxel_size()
         max_dense = max(8, int(getattr(s, "surface_max_dense_dim", 512)))
+        detail_active = self.render_detail_active()
+        scratch = getattr(self, "_anisotropic", None)
+        if not detail_active:
+            self.release_anisotropic()
+        elif scratch is not None:
+            if not self.detail_enabled():
+                scratch.release_shape_buffers()
+            if self.preserve_splashes() == 0.0 or s.surface_smooth_iterations <= 0:
+                scratch.release_smoothing_buffers()
         if abs(h - float(solver.grid.voxel_size)) <= 1.0e-8:
-            self.grid, self.render_sdf, self.render_tmp, self.render_extractor = solver.grid, self.sdf, self.tmp, self.extractor
+            self.grid, self.render_extractor = solver.grid, self.extractor
+            if detail_active:
+                # Render-only detail must never leak into the solver SDF that
+                # surface tension, whitewater and effects read, so the render
+                # surface gets its own field on the simulation grid.
+                if (self.render_sdf is self.sdf
+                        or getattr(self.render_sdf, "grid", None) is not solver.grid):
+                    self.render_sdf = ScalarField(solver.grid, name="render_surface_sdf")
+                    self.render_tmp = ScalarField(solver.grid, name="render_surface_tmp")
+            else:
+                self.render_sdf, self.render_tmp = self.sdf, self.tmp
             self.render_extractor.max_dense_dim = max_dense
             if force:
                 self.render_extractor.reset_buffers()
@@ -364,8 +385,18 @@ class SurfacePipeline:
                 int(SdfFilterType.BOX): k_smooth_surface_sdf_box,
                 int(SdfFilterType.MEAN_CURVATURE_FLOW): k_smooth_surface_sdf_mean_curvature}[int(filter_type)]
 
-    def build_sdf(self, grid, sdf, tmp, nvox, positions, voxel_size):
+    def build_sdf(self, grid, sdf, tmp, nvox, positions, voxel_size,
+                  render_detail=False):
+        """Build a liquid SDF from particles.
+
+        ``render_detail`` is set only for the render surface: it switches on
+        the ellipsoid splat and the splash-preserving smooth when the domain
+        asks for them. Solver SDF builds never pass it.
+        """
         solver, s = self.solver, self.solver.settings
+        detail_splat = bool(render_detail) and self.detail_enabled()
+        preserve = (self.preserve_splashes()
+                    if render_detail and self.render_detail_active() else 0.0)
         h, nvox = float(voxel_size), max(1, int(nvox))
         radius = 0.5 * float(s.voxel_size) * float(s.particle_radius_scale)
         splat = max(1, int(s.surface_splat_radius), int(math.ceil(radius / h + 1.0)))
@@ -435,7 +466,25 @@ class SurfacePipeline:
         self.last_sdf_splat["bandMode"] = self.band_mode()
         self.last_sdf_splat["seedSplatRadiusVoxels"] = int(seed_splat)
         self.last_sdf_splat["propagationPasses"] = int(passes)
-        if passes > 0:
+        if detail_splat:
+            self.last_sdf_splat["mode"] = "anisotropic"
+            self.last_sdf_splat["propagationPasses"] = 0
+            fast_launch(
+                k_surface_sdf_reset, dim=nvox,
+                inputs=[sdf.data, grid.num_leaves, far_distance],
+                device=solver.device)
+            surfacer = self.anisotropic_surfacer()
+            surfacer.splat(
+                grid, sdf, positions, solver.particles.count, solver._np_dim(),
+                voxel_size=h, sim_voxel_size=float(s.voxel_size),
+                particle_radius=radius,
+                neighbor_radius_voxels=float(getattr(
+                    s, "surface_detail_neighbor_radius", 2.0)),
+                max_stretch=float(getattr(s, "surface_detail_max_stretch", 4.0)),
+                flatten=float(getattr(s, "surface_detail_flatten", 0.5)),
+                max_distance=far_distance)
+            self.last_sdf_splat["anisotropic"] = dict(surfacer.last_stats)
+        elif passes > 0:
             sdf.data, tmp.data = self._build_sdf_by_propagation(
                 grid, sdf, tmp, nvox, positions, h, radius,
                 seed_splat, passes, far_distance)
@@ -451,11 +500,88 @@ class SurfacePipeline:
                 fast_launch(kernel, dim=nvox, inputs=[sdf.data, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
                           grid.leaves_dim, grid.num_leaves, h, float(strength)], outputs=[tmp.data], device=solver.device)
                 sdf.data, tmp.data = tmp.data, sdf.data
+        def apply_preserving(kernel, iterations, strength, weight):
+            for _ in range(max(0, int(iterations))):
+                fast_launch(kernel, dim=nvox, inputs=[sdf.data, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
+                          grid.leaves_dim, grid.num_leaves, h, float(strength)], outputs=[tmp.data], device=solver.device)
+                fast_launch(k_blend_by_weight, dim=nvox,
+                            inputs=[sdf.data, weight, grid.num_leaves],
+                            outputs=[tmp.data], device=solver.device)
+                sdf.data, tmp.data = tmp.data, sdf.data
         apply(self.filter_kernel(int(s.surface_filter_type)), s.surface_filter_iterations, s.surface_filter_strength)
         apply(k_smooth_surface_sdf_dilate, s.surface_dilate_iterations, s.surface_dilate_strength)
         apply(k_smooth_surface_sdf_erode, s.surface_erode_iterations, s.surface_erode_strength)
-        apply(self.filter_kernel(int(s.surface_smooth_type)), s.surface_smooth_iterations, s.surface_smooth_strength)
+        smooth_iterations = max(0, int(s.surface_smooth_iterations))
+        if preserve > 0.0 and smooth_iterations > 0:
+            weight = self.anisotropic_surfacer().smoothing_weight(
+                grid, solver.grid, nvox, positions, solver.particles.count,
+                solver._np_dim(),
+                particles_per_voxel=float(getattr(s, "particles_per_voxel", 8.0)),
+                preserve=preserve)
+            apply_preserving(self.filter_kernel(int(s.surface_smooth_type)),
+                             smooth_iterations, s.surface_smooth_strength,
+                             weight)
+        else:
+            apply(self.filter_kernel(int(s.surface_smooth_type)), s.surface_smooth_iterations, s.surface_smooth_strength)
         return sdf
+
+    # --- render-only surface detail -----------------------------------------
+
+    def _render_topology_expand(self, grid):
+        """Leaves to grow the render topology by around the particles.
+
+        A stretched ellipsoid reaches past the particle's own leaf; on a fine
+        render grid (Multiplier or Custom mode) that can be several leaves,
+        and the splat silently skips cells in unallocated leaves.
+        """
+        s = self.solver.settings
+        expand = max(1, int(getattr(s, "topology_expand", 1)))
+        if not self.detail_enabled():
+            return expand
+        from .surface_anisotropy import max_axis_multiplier
+        radius = 0.5 * float(s.voxel_size) * float(s.particle_radius_scale)
+        reach = radius * max_axis_multiplier(
+            float(getattr(s, "surface_detail_max_stretch", 4.0)))
+        # Flatten pulls the centre up to flatten * neighbour radius away.
+        flatten = min(1.0, max(0.0, float(getattr(s, "surface_detail_flatten", 0.5))))
+        reach += flatten * float(getattr(s, "surface_detail_neighbor_radius", 2.0)) \
+            * float(s.voxel_size)
+        reach += 4.0 * float(grid.voxel_size)  # the splat's far distance
+        leaves = int(math.ceil(reach / (C.LEAF_DIM * float(grid.voxel_size))))
+        return max(expand, leaves)
+
+    def detail_enabled(self):
+        return bool(getattr(self.solver.settings, "surface_detail_enabled", False))
+
+    def preserve_splashes(self):
+        value = float(getattr(self.solver.settings,
+                              "surface_smooth_preserve_splashes", 0.0))
+        return min(1.0, max(0.0, value))
+
+    def render_detail_active(self):
+        """True when the render surface differs from the solver SDF recipe."""
+        return self.detail_enabled() or self.preserve_splashes() > 0.0
+
+    def _render_detail_signature(self):
+        s = self.solver.settings
+        return (self.detail_enabled(),
+                round(float(getattr(s, "surface_detail_neighbor_radius", 2.0)), 6),
+                round(float(getattr(s, "surface_detail_max_stretch", 4.0)), 6),
+                round(float(getattr(s, "surface_detail_flatten", 0.5)), 6),
+                round(self.preserve_splashes(), 6))
+
+    def anisotropic_surfacer(self):
+        surfacer = getattr(self, "_anisotropic", None)
+        if surfacer is None:
+            surfacer = AnisotropicSurfacer(self.solver.device)
+            self._anisotropic = surfacer
+        return surfacer
+
+    def release_anisotropic(self):
+        surfacer = getattr(self, "_anisotropic", None)
+        if surfacer is not None:
+            surfacer.release()
+        self._anisotropic = None
 
     def _build_sdf_by_propagation(self, grid, sdf, tmp, nvox, positions,
                                   h, radius, seed_splat, passes, far_distance):
@@ -517,7 +643,7 @@ class SurfacePipeline:
             narrow_band = getattr(solver, "narrow_band", None)
             if narrow_band is not None:
                 narrow_band.mark_render_leaves(grid)
-            grid.expand(max(1, int(getattr(solver.settings, "topology_expand", 1))))
+            grid.expand(self._render_topology_expand(grid))
             grid.finalize_topology(sync=True)
             self.nvox = max(1, grid.active_voxel_count)
             self.topology_generation += 1
@@ -599,12 +725,21 @@ class SurfacePipeline:
             return True
         positions = solver._surface_positions()
         self.ensure_resources()
-        if self.grid is solver.grid:
+        if self.grid is solver.grid and self.render_sdf is self.sdf:
             if not build_lowres and not self.ensure_solver_sdf_current():
                 raise RuntimeError(self.solver_sdf_error)
             self.nvox = solver._nvox
+        elif self.grid is solver.grid:
+            self.nvox = solver._nvox
+            self.build_sdf(solver.grid, self.render_sdf, self.render_tmp,
+                           self.nvox, positions, float(s.voxel_size),
+                           render_detail=True)
+            narrow_band = getattr(solver, "narrow_band", None)
+            if narrow_band is not None:
+                narrow_band.union_into_solver_sdf(self.render_sdf)
         else:
-            self.build_sdf(self.grid, self.render_sdf, self.render_tmp, self.rebuild_topology(positions), positions, float(self.grid.voxel_size))
+            self.build_sdf(self.grid, self.render_sdf, self.render_tmp, self.rebuild_topology(positions), positions, float(self.grid.voxel_size),
+                           render_detail=True)
             narrow_band = getattr(solver, "narrow_band", None)
             if narrow_band is not None:
                 narrow_band.union_into_render_sdf(self.grid, self.render_sdf)

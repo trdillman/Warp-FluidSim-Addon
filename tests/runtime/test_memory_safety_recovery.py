@@ -603,6 +603,28 @@ def test_disabled_surface_does_not_allocate_secondary_grid_estimate():
     assert secondary_mode == estimate_solver_bytes(settings)
 
 
+@pytest.mark.parametrize("separate_grid", [False, True])
+def test_render_detail_memory_is_reserved_at_its_render_resolution(separate_grid):
+    settings = SimpleNamespace(
+        domain_min=(0.0, 0.0, 0.0), domain_max=(0.8, 0.8, 0.8),
+        voxel_size=0.1, leaf_capacity=8, max_particles=1000,
+        surface_resolution_mode=int(separate_grid),
+        surface_resolution_multiplier=2.0, surface_leaf_capacity_scale=1.0,
+        surface_smooth_iterations=1,
+    )
+    base = estimate_solver_bytes(settings)
+    settings.surface_detail_enabled = True
+    sharp = estimate_solver_bytes(settings)
+    extra_fields = 0 if separate_grid else 8 * 512
+    assert sharp - base == 76 * 1000 + 8 * 128**3 + extra_fields
+
+    settings.surface_smooth_preserve_splashes = 0.5
+    render_voxels = (8 if separate_grid else 1) * 512
+    assert estimate_solver_bytes(settings) - sharp == 4 * (512 + render_voxels)
+    settings.surface_smooth_iterations = 0
+    assert estimate_solver_bytes(settings) == sharp
+
+
 def test_solver_release_breaks_gpu_owning_backreferences():
     from fluidSim_warp_blender51.sim.solver import FluidSolver
 

@@ -130,6 +130,13 @@ class SolverSettings:
     surface_smooth_type: int = int(SdfFilterType.BOX)
     surface_smooth_iterations: int = 1
     surface_smooth_strength: float = 0.7
+    # Sharp surfacing (render surface only): particles drawn as ellipsoids
+    # shaped by their neighbours, plus splash-preserving smoothing.
+    surface_detail_enabled: bool = False
+    surface_detail_neighbor_radius: float = 2.0
+    surface_detail_max_stretch: float = 4.0
+    surface_detail_flatten: float = 0.5
+    surface_smooth_preserve_splashes: float = 0.0
 
     # Artist-ready output inventory.  These fields are signature-bound and
     # selected before initialization so optional particle channels stay opt-in.

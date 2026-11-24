@@ -129,6 +129,9 @@ _SURFACE_REGISTRY_FIELDS = frozenset({
     "surface_erode_iterations", "surface_erode_strength",
     "surface_smooth_type", "surface_smooth_iterations",
     "surface_smooth_strength",
+    "surface_detail_enabled", "surface_detail_neighbor_radius",
+    "surface_detail_max_stretch", "surface_detail_flatten",
+    "surface_smooth_preserve_splashes",
 })
 _RESET_REGISTRY_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
@@ -313,6 +316,9 @@ _SURFACE_SETTING_FIELDS = frozenset({
     "surface_erode_iterations", "surface_erode_strength",
     "surface_smooth_type", "surface_smooth_iterations",
     "surface_smooth_strength",
+    "surface_detail_enabled", "surface_detail_neighbor_radius",
+    "surface_detail_max_stretch", "surface_detail_flatten",
+    "surface_smooth_preserve_splashes",
 })
 
 

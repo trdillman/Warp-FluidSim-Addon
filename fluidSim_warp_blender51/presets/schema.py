@@ -97,6 +97,11 @@ SETTING_SPECS: dict[str, SettingSpec] = {
     "surface_filter_iterations": SettingSpec(int, 0, 16),
     "surface_smooth_iterations": SettingSpec(int, 0, 16),
     "surface_smooth_strength": SettingSpec(float, 0.0, 1.0),
+    "surface_detail_enabled": SettingSpec(bool),
+    "surface_detail_neighbor_radius": SettingSpec(float, 1.0, 4.0),
+    "surface_detail_max_stretch": SettingSpec(float, 1.0, 8.0),
+    "surface_detail_flatten": SettingSpec(float, 0.0, 1.0),
+    "surface_smooth_preserve_splashes": SettingSpec(float, 0.0, 1.0),
     "surface_update_cadence": SettingSpec(
         str, choices=("SUBSTEP", "FRAME", "MANUAL")
     ),

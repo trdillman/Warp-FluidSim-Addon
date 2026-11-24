@@ -812,6 +812,15 @@ class FLUIDSIM_PT_surface_filters(_SurfaceChild, FluidSimScenePanel, bpy.types.P
         smooth.prop(fs, "surface_smooth_type")
         smooth.prop(fs, "surface_smooth_iterations")
         _gated(smooth, fs.surface_smooth_iterations > 0).prop(fs, "surface_smooth_strength")
+        _gated(smooth, fs.surface_smooth_iterations > 0).prop(fs, "surface_smooth_preserve_splashes")
+
+        detail = layout.box()
+        detail.label(text="Sharp Surfacing", icon="MOD_REMESH")
+        detail.prop(fs, "surface_detail_enabled")
+        sub = _gated(detail, fs.surface_detail_enabled)
+        sub.prop(fs, "surface_detail_neighbor_radius")
+        sub.prop(fs, "surface_detail_max_stretch")
+        sub.prop(fs, "surface_detail_flatten")
 
 
 class FLUIDSIM_PT_scene_whitewater(FluidSimScenePanel, bpy.types.Panel):

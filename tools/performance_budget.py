@@ -48,6 +48,9 @@ NEUTRAL_ABSENT_EFFECTIVE_SETTINGS = {
 	# 3.0: narrow band (off) and the explicit preconditioner (1.x pressure PCG
 	# was inverse-diagonal, i.e. Jacobi) are new; ST-FLIP's switch is removed.
 	"narrow_band_enabled": False,
+	# 4.1: these render options leave the reference surface recipe unchanged.
+	"surface_detail_enabled": False,
+	"surface_smooth_preserve_splashes": 0.0,
 	# 4.0 learned initial guess: ships hidden and off (no weights).
 	"pressure_learned_guess": False,
 	"pressure_preconditioner": "JACOBI",
@@ -81,6 +84,9 @@ RIGID_COUPLING_RATIO = 1.05
 # must itself be a neutral absence for the same variant.
 INERT_WHEN_SWITCHED_OFF = {
 	"narrow_band_voxels": ("narrow_band_enabled", False),
+	"surface_detail_neighbor_radius": ("surface_detail_enabled", False),
+	"surface_detail_max_stretch": ("surface_detail_enabled", False),
+	"surface_detail_flatten": ("surface_detail_enabled", False),
 	**{f"spacetime_{name}": ("spacetime_enabled", False) for name in (
 		"adaptive_jitter", "gas_density", "jitter_strength", "liquid_density",
 		"local_cfl", "max_local_substeps", "min_density", "phase_eta",
