@@ -43,8 +43,9 @@ GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 # stat_learned_guess_message (224 -> 226).
 # Optional native GPU particle preview adds one scene-owned display toggle.
 # Removing the two unused expand-state toggles (playback_advanced_expanded and
-# surface_advanced_expanded) dropped it to 226.
-EXPECTED_FIELD_COUNT = 226
+# surface_advanced_expanded) dropped it to 226. The viewport eyes view_surface
+# and view_particles plus their saved override flags bring it to 230.
+EXPECTED_FIELD_COUNT = 230
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested

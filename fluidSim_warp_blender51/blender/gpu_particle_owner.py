@@ -68,7 +68,7 @@ def _particles_visible(scene):
     settings = output._domain_settings(scene)
     surface, particles = liquid_display.viewport_families(
         scene, getattr(settings, 'surface_enabled', False))
-    if surface:
+    if surface and not particles:
         obj = output.output_object(scene, output.SURFACE_NAME)
         particles = obj is None or not len(getattr(getattr(obj, 'data', None), 'vertices', (1,)))
     return particles

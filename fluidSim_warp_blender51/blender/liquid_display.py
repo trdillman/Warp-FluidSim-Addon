@@ -49,10 +49,13 @@ def viewport_families(scene, surface_enabled):
     ordinary = mode == "SURFACE" or (mode == "PREVIEW" and handler.failure() is not None)
     if not ordinary:
         return False, False
-    # The ordinary viewport shows what Render Outputs selects, so particles
-    # (and their attribute colours) are visible whenever they are selected.
-    surface = bool(surface_enabled and getattr(fs, "show_surface", False))
-    particles = bool(getattr(fs, "show_particles", False))
+    # The ordinary viewport shows the outputs whose eye is on. The eyes start
+    # linked to the render flags (and follow them when those change), so with
+    # no eye touched this is exactly what Render Outputs selects. Scenes that
+    # predate the eyes fall back to the render flags.
+    surface = bool(surface_enabled and getattr(
+        fs, "view_surface", getattr(fs, "show_surface", False)))
+    particles = bool(getattr(fs, "view_particles", getattr(fs, "show_particles", False)))
     if not (surface or particles):
         return bool(surface_enabled), not surface_enabled
     return surface, particles
@@ -232,6 +235,12 @@ def restore_scene(scene):
                                        and getattr(ds, "surface_enabled", False)))
             settings.liquid_display_mode = "PREVIEW" if settings.liquid_preview_enabled or particles_only else "SURFACE"
         settings.liquid_preview_enabled = settings.liquid_display_mode == "PREVIEW"
+        # Files saved before the viewport eyes: the 3D view followed the render
+        # flags, so the eyes start there.
+        if hasattr(settings, "view_surface") and not is_set("view_surface"):
+            settings.view_surface = bool(getattr(settings, "show_surface", True))
+        if hasattr(settings, "view_particles") and not is_set("view_particles"):
+            settings.view_particles = bool(getattr(settings, "show_particles", False))
         apply_viewport(scene)
     finally:
         _SYNCING = False

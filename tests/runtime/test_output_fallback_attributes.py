@@ -61,7 +61,7 @@ def world(monkeypatch):
         obj.attributes = attributes or {}
 
     monkeypatch.setattr(op, "_require_bpy", lambda: None)
-    monkeypatch.setattr(op, "output_object", lambda _scene, name: objects.get(name))
+    monkeypatch.setattr(op, "output_object", lambda _scene, name, *, ensure=True: objects.get(name))
     monkeypatch.setattr(op, "_ensure_point_object", ensure)
     monkeypatch.setattr(op, "_ensure_object", ensure)
     monkeypatch.setattr(op, "_supports_pointcloud", lambda: False)
