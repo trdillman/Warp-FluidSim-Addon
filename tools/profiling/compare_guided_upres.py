@@ -137,6 +137,7 @@ def run(args):
                 "full_fine": _solver_stats(full_stats, full_prof),
                 "coarse_particles": int(coarse.particles.count.numpy()[0]),
                 "fine_particles": int(upres.fine.particles.count.numpy()[0]),
+                "fine_out_of_particles": bool(upres.particle_budget_hit),
             }
             if full is not None:
                 rec["full_fine_particles"] = int(full.particles.count.numpy()[0])
@@ -306,6 +307,14 @@ class ReviewFile:
             "camera. Live simulation is off in this file.\n\n"
             + json.dumps({k: report[k] for k in report if k != "frames"}, indent=2)
             + "\n")
+        # Demos save with Workbench for their playable preview, which shows
+        # the liquid flat-shaded; the review is about the look, so use EEVEE.
+        self.scene.render.engine = "BLENDER_EEVEE"
+        for screen in bpy.data.screens:
+            for area in screen.areas:
+                for space in area.spaces:
+                    if space.type == "VIEW_3D":
+                        space.shading.type = "MATERIAL"
         self.scene.frame_set(min(report["review_frames"]))
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(path), copy=True,
@@ -456,6 +465,7 @@ def run_demo(args):
                 "full_fine": None,
                 "coarse_particles": int(coarse.particles.count.numpy()[0]),
                 "fine_particles": int(upres.fine.particles.count.numpy()[0]),
+                "fine_out_of_particles": bool(upres.particle_budget_hit),
             }
             if frame in wanted:
                 rec["coarse_tris"] = grab("coarse", frame, coarse)

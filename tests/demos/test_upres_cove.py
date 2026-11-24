@@ -101,7 +101,8 @@ def test_fine_budgets_match_what_guided_upres_allocates():
     assert full.voxel_size == pytest.approx(coarse.voxel_size / 2)
     assert full.max_particles == coarse.max_particles * 8
     assert full.whitewater_enabled is False
-    assert int(coarse.max_particles * p_scale) == 4 * uc.MAX_PARTICLES
+    # Thin sheets are all shell: the guided budget matches full fine.
+    assert int(coarse.max_particles * p_scale) == full.max_particles
 
 
 def test_each_pass_fits_a_16_gb_card():

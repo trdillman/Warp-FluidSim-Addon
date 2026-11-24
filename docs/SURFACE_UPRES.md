@@ -80,9 +80,14 @@ Before use, each coarse level set is rebuilt as a true inside distance
 (`GuideFrame.reconstruct_depth`), because a particle-splat SDF is never
 deeper than a particle radius (a collider next to the liquid is a wall, not
 air). The fine solve only carries particles in the
-shell, so its particle budget follows the surface area (`factor**2`); its
-leaves cover the whole coarse liquid, so the leaf budget follows the volume
-(`factor**3`). Dynamic (two-way) colliders are refused for now; other
+shell, but liquid thinner than the shell (a sheet spreading over a beach) is
+all shell, so both its particle and leaf budgets follow the volume
+(`factor**3`). A surface-area budget (`factor**2`) ran out on Upres Cove and
+left holes in the fine surface. When the fine solve still fills its particle
+budget, it prints a warning once and `GuidedUpres.particle_budget_hit` is set
+(the compare tool reports it as `fine_out_of_particles`). Guided upres only
+saves work where the liquid is much deeper than the shell; on thin water it
+costs about as much as a full fine solve. Dynamic (two-way) colliders are refused for now; other
 colliders are copied, so the fine solve never writes into the coarse ones, and
 fine solid and sink cells stay air under the guide. The fine solve gets every
 coarse source except liquid emission (sinks, forces, collision and activation

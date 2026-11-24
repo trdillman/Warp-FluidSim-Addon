@@ -416,8 +416,8 @@ def test_seeded_particles_carry_the_coarse_velocity(cuda_device, a_faces_valid):
 
 
 def test_fine_budgets_scale_leaves_with_volume_and_particles_with_area():
-    assert GU.fine_budget_scales(2) == (4.0, 8.0)
-    assert GU.fine_budget_scales(3) == (9.0, 27.0)
+    assert GU.fine_budget_scales(2) == (8.0, 8.0)
+    assert GU.fine_budget_scales(3) == (27.0, 27.0)
 
 
 def test_fine_colliders_are_private_copies_and_dynamic_ones_are_refused():
@@ -617,14 +617,40 @@ def test_fine_frame_counter_follows_the_coarse_frame_it_replays():
     upres.fine = SimpleNamespace(
         frame=0, sim_time=0.0, step_frame=fine_step,
         set_colliders=lambda c: None, set_source_batch=lambda d, p: None,
-        particles=SimpleNamespace(refresh_host_count=lambda: 0))
+        particles=SimpleNamespace(refresh_host_count=lambda: 0),
+        settings=SimpleNamespace(max_particles=100))
     upres.guide = SimpleNamespace(set_frames=lambda a, b: None, bootstrap=True)
     upres._meshes, upres._sources, upres._force_fields = {}, None, None
+    upres.particle_budget_hit = upres._warned_budget = False
     upres._snapshot = lambda: SimpleNamespace(time=coarse.sim_time, frame=coarse.frame)
     upres._last = upres._snapshot()            # built around an advanced coarse solve
     coarse.frame, coarse.sim_time = 11, 4.1      # the coarse frame then runs
     upres.step_frame()
     assert seen == [(10, 4.0)]
+    assert not upres.particle_budget_hit
+
+
+def test_a_full_fine_particle_budget_is_reported_once(capsys):
+    from fluidSim_warp_blender51.sim.sourcing import SourceBatch
+
+    coarse = SimpleNamespace(frame=0, sim_time=0.0, colliders=(), force_fields=None,
+                             sourcing=SimpleNamespace(batch=SourceBatch()))
+    upres = GU.GuidedUpres.__new__(GU.GuidedUpres)
+    upres.coarse = coarse
+    upres.fine = SimpleNamespace(
+        frame=0, sim_time=0.0, step_frame=lambda: None,
+        set_colliders=lambda c: None, set_source_batch=lambda d, p: None,
+        particles=SimpleNamespace(refresh_host_count=lambda: 100),
+        settings=SimpleNamespace(max_particles=100))
+    upres.guide = SimpleNamespace(set_frames=lambda a, b: None, bootstrap=True)
+    upres._meshes, upres._sources, upres._force_fields = {}, None, None
+    upres.particle_budget_hit = upres._warned_budget = False
+    upres._snapshot = lambda: SimpleNamespace(time=0.0, frame=0)
+    upres._last = upres._snapshot()
+    upres.step_frame()
+    upres.step_frame()
+    assert upres.particle_budget_hit
+    assert capsys.readouterr().out.count("ran out of fine particles") == 1
 
 
 def test_guide_max_speed_bounds_the_valid_coarse_faces(cuda_device):

@@ -904,13 +904,16 @@ class ShellGuide:
 def fine_budget_scales(factor):
     """(particle, leaf) budget multipliers for a fine solve ``factor`` finer.
 
-    Particles live only in the shell, so they scale with surface area
-    (``factor**2``). Leaves cover the whole coarse liquid volume, deep
-    interior included (the fine level set and guide velocity live there), so
-    they scale with volume (``factor**3``).
+    Both scale with volume (``factor**3``). Particles live only in the shell,
+    but liquid thinner than the shell (a sheet spreading over a beach) is all
+    shell, and a budget sized for surface area (``factor**2``) then runs out
+    and leaves holes in the fine surface. Leaves cover the whole coarse
+    liquid volume, deep interior included (the fine level set and guide
+    velocity live there).
     """
     factor = int(factor)
-    return float(factor * factor), float(factor * factor * factor)
+    volume = float(factor * factor * factor)
+    return volume, volume
 
 
 def fine_source_batch(batch):
@@ -1069,6 +1072,8 @@ class GuidedUpres:
         shell_depth = self.guide.shell_voxels * float(fine_settings.voxel_size)
         self.guide_depth = (max(3.0, self.guide.core_shells) * shell_depth
                             + 2.0 * float(cs.voxel_size))
+        self.particle_budget_hit = False
+        self._warned_budget = False
         self._last = self._snapshot()
         # One-shot sources the coarse solve already consumed must not fire
         # again in the fine one (it replays from this frame, not frame 0).
@@ -1110,9 +1115,20 @@ class GuidedUpres:
                                                self._meshes))
         self._sync_scene()
         stats = self.fine.step_frame()
+        # A full particle budget means the shell could not be filled: the
+        # fine surface has holes. Say so instead of meshing them silently.
+        count = self.fine.particles.refresh_host_count()
+        if count >= int(self.fine.settings.max_particles) * 0.99:
+            self.particle_budget_hit = True
+            if not self._warned_budget:
+                self._warned_budget = True
+                print("[fluidsim] Guided upres ran out of fine particles "
+                      f"({count:,} of {int(self.fine.settings.max_particles):,}); "
+                      "the upres surface will have holes. Raise "
+                      "particle_budget_scale or the coarse Max Particles.")
         # Keep filling the whole shell until the fine solve holds liquid (a
         # coarse solve that has not emitted yet gives nothing to fill).
-        if self.fine.particles.refresh_host_count() > 0:
+        if count > 0:
             self.guide.bootstrap = False
         self._last = current
         return stats
