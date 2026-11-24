@@ -50,7 +50,55 @@ def test_substeps_keep_the_explicit_wave_step_stable():
     assert SW.substep_count(0.0, 0.01, 0.3) == 0
     assert SW.substep_count(DT, 0.01, 0.0) == 1
     n = SW.substep_count(DT, 0.01, 0.3)
-    assert DT / n * 0.3 <= 0.5 * 0.01 + 1e-12
+    # The stiffest mode: two points half a spacing apart, swinging apart.
+    omega_max = np.sqrt(32.0) * 0.3 / 0.01
+    assert omega_max * DT / n <= 1.0 + 1e-12
+    assert SW.substep_count(DT, 1.0, 0.0, damping=20.0) * 0.5 >= 20.0 * DT
+
+
+def test_two_close_points_alone_do_not_blow_up(cuda_device):
+    # The worst case for the explicit step: one isolated pair at the
+    # thinning distance, with a tiny opposite perturbation.
+    spacing = 0.01
+    waves = _waves(cuda_device, spacing=spacing, strength=0.0)
+    dev = waves.device
+    pos = wp.array(np.array([[0, 0, 0], [0.51 * spacing, 0, 0]], np.float32),
+                   dtype=wp.vec3, device=dev)
+    nrm = wp.array(np.array([[0, 0, 1], [0, 0, 1]], np.float32), dtype=wp.vec3,
+                   device=dev)
+    h = wp.array(np.array([1e-6, -1e-6], np.float32), dtype=float, device=dev)
+    hv = wp.zeros(2, dtype=float, device=dev)
+    zeros = wp.zeros(2, dtype=float, device=dev)
+    h_tmp, hv_tmp = wp.empty_like(h), wp.empty_like(hv)
+    grid = waves._grid(pos, 2)
+    steps = SW.substep_count(DT, spacing, waves.speed, 1.5)
+    sub_dt = DT / steps
+    for _ in range(24 * steps):
+        wp.launch(SW.k_wave_step, dim=2,
+                  inputs=[grid.id, pos, nrm, zeros, zeros, h, hv, waves.radius,
+                          waves.speed ** 2, 1.5, 0.0, 1e9, 0.0, 0.0, sub_dt, 1.0,
+                          (SW.MIN_SEPARATION * spacing) ** 2, h_tmp, hv_tmp],
+                  device=dev)
+        h, h_tmp = h_tmp, h
+        hv, hv_tmp = hv_tmp, hv
+    assert np.abs(h.numpy()).max() <= 1e-6
+
+
+def test_candidates_never_exceed_the_point_budget(cuda_device, monkeypatch):
+    verts, tris = _plane()
+    sizes = []
+    real_empty = SW.wp.empty
+
+    def spy(n, *a, **kw):
+        if kw.get("dtype") is SW.wp.vec3:
+            sizes.append(int(n))
+        return real_empty(n, *a, **kw)
+
+    waves = _waves(cuda_device, spacing=0.002, max_points=500)
+    monkeypatch.setattr(SW.wp, "empty", spy)
+    waves.step(verts, tris, np.zeros_like(verts), DT)
+    monkeypatch.undo()
+    assert max(sizes) <= 500 and 0 < waves.count <= 500
 
 
 # --- the frame step -------------------------------------------------------------
@@ -160,6 +208,20 @@ def test_the_same_inputs_give_the_same_waves(cuda_device):
     np.testing.assert_allclose(outs[0], outs[1], atol=1e-6)
 
 
+def test_wave_state_survives_a_checkpoint_round_trip(cuda_device):
+    verts, tris = _plane(bump=0.03, width=0.02)
+    a = _waves(cuda_device, strength=4.0)
+    b = _waves(cuda_device, strength=4.0)
+    for _ in range(3):
+        a.step(verts, tris, np.zeros_like(verts), DT)
+    arrays, scalars = a.export_state()
+    b.import_state(arrays, scalars)
+    assert b.count == a.count and b.frame == 3
+    out_a = a.step(verts, tris, np.zeros_like(verts), DT)
+    out_b = b.step(verts, tris, np.zeros_like(verts), DT)
+    np.testing.assert_allclose(out_a, out_b, atol=1e-6)
+
+
 def test_reset_forgets_the_waves(cuda_device):
     verts, tris = _plane(bump=0.03, width=0.02)
     waves = _waves(cuda_device, strength=4.0)
@@ -186,6 +248,7 @@ def test_the_pipeline_steps_waves_once_per_frame_and_serves_that_mesh(
     pipe.solver = solver
     pipe.waves = None
     pipe.render_sdf = object()
+    pipe.built_key = ("k",)
     calls = []
     pipe.render_extractor = SimpleNamespace(
         extract=lambda sdf: (calls.append(sdf), (verts, tris))[1])
@@ -209,3 +272,39 @@ class _Null:
 
     def __exit__(self, *a):
         return False
+
+
+def test_waves_build_the_surface_first_when_the_cadence_did_not(
+        cuda_device, monkeypatch):
+    from fluidSim_warp_blender51.sim import surface as SURF
+
+    verts, tris = _plane()
+    settings = SimpleNamespace(
+        surface_enabled=True, surface_waves_enabled=True, surface_waves_detail=0.5,
+        surface_waves_strength=1.0, surface_waves_damping=1.5,
+        surface_update_cadence=2, time_scale=1.0, frame_rate=24.0)
+    solver = SimpleNamespace(settings=settings, device=cuda_device,
+                             _phase=lambda name: _Null())
+    pipe = SURF.SurfacePipeline.__new__(SURF.SurfacePipeline)
+    pipe.solver = solver
+    pipe.waves = None
+    pipe.render_sdf = object()
+    pipe.built_key = None
+    events = []
+
+    def build(build_render=True, build_lowres=None):
+        events.append("build")
+        pipe.built_key = ("k",)
+        return True
+
+    pipe.render_extractor = SimpleNamespace(
+        extract=lambda sdf: (events.append("extract"), (verts, tris))[1])
+    monkeypatch.setattr(pipe, "build", build, raising=False)
+    monkeypatch.setattr(pipe, "voxel_size", lambda: 0.02, raising=False)
+    monkeypatch.setattr(pipe, "build_key", lambda: ("k",), raising=False)
+    monkeypatch.setattr(pipe, "_vertex_velocity", lambda v: np.zeros_like(v),
+                        raising=False)
+    pipe.step_waves()
+    pipe.step_waves()
+    assert events == ["build", "extract", "extract"]
+    assert pipe.mesh_key == pipe.built_key == ("k",)

@@ -55,11 +55,27 @@ def wave_speed(wavelength):
     return math.sqrt(GRAVITY / k + WATER_SURFACE_TENSION * k / WATER_DENSITY)
 
 
-def substep_count(dt, spacing, speed, cfl=0.5):
-    """Explicit wave substeps for one frame (at least one)."""
+# Thinning keeps points at least half a spacing apart, and the Laplacian
+# clamps tangent distances to that, so one neighbour at that distance is the
+# stiffest case: two points swinging against each other have squared
+# frequency 2 * 4 * c^2 / (0.5 * spacing)^2 = 32 c^2 / spacing^2.
+MIN_SEPARATION = 0.5
+STIFFEST_MODE = math.sqrt(8.0) / MIN_SEPARATION
+
+
+def substep_count(dt, spacing, speed, damping=0.0, cfl=1.0):
+    """Explicit wave substeps for one frame (at least one).
+
+    Keeps ``omega_max * sub_dt <= cfl`` for the stiffest mode the point
+    Laplacian can produce (symplectic Euler is stable below 2, so 1 leaves
+    room for damping), and ``damping * sub_dt <= 0.5``.
+    """
     if dt <= 0.0:
         return 0
-    return max(1, int(math.ceil(float(dt) * float(speed) / (cfl * float(spacing)))))
+    omega_max = STIFFEST_MODE * float(speed) / float(spacing)
+    waves = math.ceil(float(dt) * omega_max / cfl)
+    damp = math.ceil(float(dt) * max(float(damping), 0.0) / 0.5)
+    return max(1, int(waves), int(damp))
 
 
 # Mesh helpers
@@ -287,6 +303,7 @@ def k_wave_step(
     time: float,
     dt: float,
     max_amp: float,
+    min_r2: float,
     h_out: wp.array(dtype=float),
     hv_out: wp.array(dtype=float),
 ):
@@ -302,9 +319,12 @@ def k_wave_step(
         if j != i:
             d = pos[j] - x
             d = d - wp.dot(d, n) * n  # tangent plane distance
-            r2 = wp.dot(d, d)
-            if r2 > 1.0e-20:
-                w = _kernel_weight(wp.sqrt(r2), radius)
+            # On a bend the tangent distance can be shorter than the true
+            # one; clamp it to the thinning distance so the stiffest mode
+            # stays the one substep_count plans for.
+            r2 = wp.max(wp.dot(d, d), min_r2)
+            w = _kernel_weight(wp.sqrt(r2), radius)
+            if w > 0.0:
                 acc += w * (h_in[j] - hi) / r2
                 weight += w
     lap = float(0.0)  # noqa: UP018 - Warp needs a dynamic variable here
@@ -510,17 +530,25 @@ class SurfaceWaves:
             grid = self._grid(self.pos, n)
             thinned = wp.zeros(n, dtype=wp.int32, device=dev)
             wp.launch(k_wave_thin, dim=n,
-                      inputs=[grid.id, self.pos, 0.5 * self.spacing, alive, thinned],
+                      inputs=[grid.id, self.pos, MIN_SEPARATION * self.spacing, alive, thinned],
                       device=dev)
             alive = thinned
         else:
             grid = self._grid(self.pos, 0)
 
         # 2. Fill sparse triangles with new points.
+        # The candidates never exceed the point budget: on a surface too big
+        # for it, they are drawn sparser (the budget caps the points anyway).
         demand = wp.zeros(nt, dtype=wp.int32, device=dev)
-        wp.launch(k_wave_triangle_demand, dim=nt,
-                  inputs=[v_dev, t_dev, self.spacing, seed, demand], device=dev)
-        offsets, nc = _scan(demand, dev)
+        cap = max(int(s.max_points), 1)
+        draw = self.spacing
+        while True:
+            wp.launch(k_wave_triangle_demand, dim=nt,
+                      inputs=[v_dev, t_dev, draw, seed, demand], device=dev)
+            offsets, nc = _scan(demand, dev)
+            if nc <= cap:
+                break
+            draw *= 1.02 * math.sqrt(nc / cap)
         cand_pos = wp.empty(nc, dtype=wp.vec3, device=dev)
         cand_vel = wp.empty(nc, dtype=wp.vec3, device=dev)
         cand_nrm = wp.empty(nc, dtype=wp.vec3, device=dev)
@@ -572,14 +600,14 @@ class SurfaceWaves:
             ones = wp.full(total, 1, dtype=wp.int32, device=dev)
             keep = wp.zeros(total, dtype=wp.int32, device=dev)
             wp.launch(k_wave_thin, dim=total,
-                      inputs=[grid.id, self.pos, 0.5 * self.spacing, ones, keep],
+                      inputs=[grid.id, self.pos, MIN_SEPARATION * self.spacing, ones, keep],
                       device=dev)
             keep_off, total = _scan(keep, dev)
             added = total - kept
             self._gather(keep, keep_off, total)
 
         # 3-4. Seed and propagate waves.
-        steps = substep_count(dt, self.spacing, self.speed)
+        steps = substep_count(dt, self.spacing, self.speed, float(s.damping))
         out = wp.empty_like(v_dev)
         if total:
             grid = self._grid(self.pos, total)
@@ -606,6 +634,7 @@ class SurfaceWaves:
                                   self.h, self.hv, self.radius, c2, float(s.damping),
                                   seed_gain, curvature_min, omega,
                                   self.time + k * sub_dt, sub_dt, max_amp,
+                                  (MIN_SEPARATION * self.spacing) ** 2,
                                   h_tmp, hv_tmp], device=dev)
                 self.h, h_tmp = h_tmp, self.h
                 self.hv, hv_tmp = hv_tmp, self.hv
@@ -624,3 +653,30 @@ class SurfaceWaves:
 
     def heights(self):
         return self.h.numpy()[: self.count]
+
+    # Checkpoints: the layer is state, not scratch, so a resumed bake must
+    # carry it on rather than start new waves.
+
+    STATE_FIELDS = (("pos", wp.vec3, 3), ("vel", wp.vec3, 3), ("nrm", wp.vec3, 3),
+                    ("h", float, 0), ("hv", float, 0), ("phase", float, 0))
+
+    def export_state(self):
+        """Host copy of the wave layer: ``(arrays, scalars)``."""
+        arrays = {}
+        for name, _dtype, width in self.STATE_FIELDS:
+            value = getattr(self, name).numpy()[: self.count].astype(np.float32)
+            arrays[name] = np.ascontiguousarray(
+                value.reshape(self.count, width) if width else value.reshape(self.count))
+        return arrays, {"time": float(self.time), "frame": int(self.frame)}
+
+    def import_state(self, arrays, scalars):
+        count = int(np.asarray(arrays["h"]).shape[0])
+        for name, dtype, width in self.STATE_FIELDS:
+            value = np.asarray(arrays[name], dtype=np.float32)
+            if value.shape != ((count, width) if width else (count,)):
+                raise ValueError(f"surface wave state {name!r} has the wrong shape")
+            setattr(self, name, wp.array(value, dtype=dtype, device=self.device))
+        self.count = count
+        self.time = float(scalars["time"])
+        self.frame = int(scalars["frame"])
+        self.stats = {}

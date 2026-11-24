@@ -817,14 +817,11 @@ class SurfacePipeline:
 
     def step_waves(self):
         """Advance the surface waves one frame and cache the displaced mesh."""
-        from .surface_waves import SurfaceWaves
-
         s = self.solver.settings
-        settings = self._wave_settings()
-        if self.waves is None:
-            self.waves = SurfaceWaves(settings, device=self.solver.device)
-        else:
-            self.waves.settings = settings
+        # Manual and substep cadence may not have built this frame's surface.
+        if self.built_key != self.build_key():
+            self.build(build_render=True, build_lowres=False)
+        self._ensure_waves()
         verts, tris = self.render_extractor.extract(self.render_sdf)
         dt = float(s.time_scale) / max(float(s.frame_rate), 1e-6)
         displaced = self.waves.step(verts, tris, self._vertex_velocity(verts), dt)
@@ -834,6 +831,34 @@ class SurfacePipeline:
         if host is not None:
             host.invalidate_surface()
         return self.mesh_cache
+
+    def _ensure_waves(self):
+        from .surface_waves import SurfaceWaves
+
+        settings = self._wave_settings()
+        if self.waves is None:
+            self.waves = SurfaceWaves(settings, device=self.solver.device)
+        else:
+            self.waves.settings = settings
+        return self.waves
+
+    def export_wave_state(self):
+        """Checkpoint arrays and scalars for the wave layer (empty when off)."""
+        if self.waves is None or not bool(
+                getattr(self.solver.settings, "surface_waves_enabled", False)):
+            return {}, {}
+        arrays, scalars = self.waves.export_state()
+        return ({f"surface_waves_{k}": v for k, v in arrays.items()},
+                {f"surface_waves_{k}": v for k, v in scalars.items()})
+
+    def import_wave_state(self, arrays, scalars):
+        if "surface_waves_h" not in arrays or not bool(
+                getattr(self.solver.settings, "surface_waves_enabled", False)):
+            return
+        prefix = "surface_waves_"
+        self._ensure_waves().import_state(
+            {k[len(prefix):]: v for k, v in arrays.items() if k.startswith(prefix)},
+            {k[len(prefix):]: v for k, v in scalars.items() if k.startswith(prefix)})
 
     def rebuild(self):
         self.built_key = None

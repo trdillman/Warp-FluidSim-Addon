@@ -181,17 +181,24 @@ never changes the simulation. Each frame:
    from smooth noise of each point's birth position, so neighbours oscillate
    together and form wave fronts.
 4. A damped wave equation (capillary-gravity speed of the finest wave, four
-   spacings long; tangent-plane point Laplacian; explicit substeps under a 0.5
-   CFL) carries them across the surface. Heights are capped at half a surface
+   spacings long; tangent-plane point Laplacian with distances clamped to
+   the half-spacing thinning distance; explicit substeps sized for the
+   stiffest mode that allows, two points swinging against each other) carries
+   them across the surface. Heights are capped at half a surface
    voxel.
 5. The render mesh is displaced along its vertex normals by the wave height
    (same vertices and triangles).
 
 Cost follows surface area: one neighbour search per point per substep. The
-wave points are capped at 4 million, and `memory_safety` counts that budget
-when the option is on. Settings: **Surface Waves**, **Wave Detail**,
+wave points are capped at 4 million, and so are each frame's new-point
+candidates (drawn sparser on a surface too big for the budget), and
+`memory_safety` counts that budget when the option is on. Settings: **Surface Waves**, **Wave Detail**,
 **Wave Strength**, **Wave Damping** (Surface Filters panel, under Sharp
-Surfacing). Waves step once per solver frame in `SurfacePipeline.after_frame`.
+Surfacing). Waves step once per solver frame in `SurfacePipeline.after_frame`,
+building the render surface first when the update cadence has not. The wave
+layer is state, not scratch: solver checkpoints carry it (`surface_waves_*`
+arrays and scalars), so a resumed bake or a leaf-capacity regrow keeps its
+waves.
 
 Review it on Upres Cove (same PowerShell setup as below):
 
