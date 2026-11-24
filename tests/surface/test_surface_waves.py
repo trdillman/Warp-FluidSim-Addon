@@ -138,6 +138,28 @@ def test_a_resolved_bend_seeds_nothing(cuda_device):
     np.testing.assert_allclose(out, verts, atol=1e-6)
 
 
+def test_the_far_side_of_a_thin_sheet_is_not_a_bend(cuda_device):
+    # Two flat faces 1 cm apart, facing away from each other: each is flat,
+    # so neither may read the other as curvature and seed waves.
+    top, tris = _plane()
+    bottom = top - np.array([0.0, 0.0, 0.01], np.float32)
+    flipped = tris.reshape(-1, 3)[:, ::-1].reshape(-1)
+    verts = np.concatenate([top, bottom])
+    both = np.concatenate([tris, flipped + len(top)]).astype(np.int32)
+    waves = _waves(cuda_device, strength=4.0)
+    for _ in range(4):
+        out = waves.step(verts, both, np.zeros_like(verts), DT)
+    np.testing.assert_allclose(out, verts, atol=1e-6)
+
+
+def test_a_surface_far_beyond_the_budget_does_not_overflow(cuda_device):
+    # 100 m square at 0.1 mm spacing asks for 10^12 points: far past int32.
+    verts, tris = _plane(n=3, size=100.0)
+    waves = _waves(cuda_device, spacing=1e-4, max_points=1000)
+    waves.step(verts, tris, np.zeros_like(verts), DT)
+    assert 0 < waves.count <= 1000
+
+
 def test_points_ride_the_surface_and_keep_their_waves(cuda_device):
     verts, tris = _plane()
     waves = _waves(cuda_device)

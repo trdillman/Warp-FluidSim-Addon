@@ -247,6 +247,17 @@ def k_wave_accept_candidates(
 # 3-4. Curvature, seeding, wave equation
 
 
+# Neighbours whose normals differ by more than about 60 degrees belong to
+# another sheet (the far side of a thin sheet or a drop): they never count as
+# the same local surface.
+SAME_SHEET = 0.5
+
+
+@wp.func
+def _same_sheet(a: wp.vec3, b: wp.vec3):
+    return wp.dot(a, b) > float(SAME_SHEET)
+
+
 @wp.func
 def _kernel_weight(r: float, radius: float):
     q = 1.0 - r / radius
@@ -272,7 +283,7 @@ def k_wave_curvature(
     query = wp.hash_grid_query(grid, x, radius)
     j = int(0)  # noqa: UP018 - Warp needs a dynamic variable here
     while wp.hash_grid_query_next(query, j):
-        if j != i:
+        if j != i and _same_sheet(n, nrm[j]):
             d = pos[j] - x
             r2 = wp.dot(d, d)
             if r2 > 1.0e-20:
@@ -316,7 +327,7 @@ def k_wave_step(
     query = wp.hash_grid_query(grid, x, radius)
     j = int(0)  # noqa: UP018 - Warp needs a dynamic variable here
     while wp.hash_grid_query_next(query, j):
-        if j != i:
+        if j != i and _same_sheet(n, nrm[j]):
             d = pos[j] - x
             d = d - wp.dot(d, n) * n  # tangent plane distance
             # On a bend the tangent distance can be shorter than the true
@@ -347,6 +358,7 @@ def k_wave_step(
 def k_wave_displace(
     grid: wp.uint64,
     pos: wp.array(dtype=wp.vec3),
+    nrm: wp.array(dtype=wp.vec3),
     h: wp.array(dtype=float),
     verts: wp.array(dtype=wp.vec3),
     normals: wp.array(dtype=wp.vec3),
@@ -355,14 +367,16 @@ def k_wave_displace(
 ):
     i = wp.tid()
     x = verts[i]
+    n = normals[i]
     total = float(0.0)  # noqa: UP018 - Warp needs a dynamic variable here
     weight = float(0.0)  # noqa: UP018 - Warp needs a dynamic variable here
     query = wp.hash_grid_query(grid, x, radius)
     j = int(0)  # noqa: UP018 - Warp needs a dynamic variable here
     while wp.hash_grid_query_next(query, j):
-        w = _kernel_weight(wp.length(pos[j] - x), radius)
-        total += w * h[j]
-        weight += w
+        if _same_sheet(n, nrm[j]):
+            w = _kernel_weight(wp.length(pos[j] - x), radius)
+            total += w * h[j]
+            weight += w
     height = float(0.0)  # noqa: UP018 - Warp needs a dynamic variable here
     if weight > 0.0:
         height = total / weight
@@ -542,6 +556,13 @@ class SurfaceWaves:
         demand = wp.zeros(nt, dtype=wp.int32, device=dev)
         cap = max(int(s.max_points), 1)
         draw = self.spacing
+        # Size the draw from the area first (float64 on the host), so the
+        # int32 demand scan can never overflow on a huge surface.
+        tri = verts[tris.reshape(-1, 3)].astype(np.float64)
+        area = 0.5 * float(np.linalg.norm(
+            np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1).sum())
+        if area / draw ** 2 > 0.9 * cap:
+            draw = math.sqrt(area / (0.9 * cap))
         while True:
             wp.launch(k_wave_triangle_demand, dim=nt,
                       inputs=[v_dev, t_dev, draw, seed, demand], device=dev)
@@ -641,7 +662,8 @@ class SurfaceWaves:
 
             # 5. Displace the render mesh.
             wp.launch(k_wave_displace, dim=nv,
-                      inputs=[grid.id, self.pos, self.h, v_dev, normals, self.radius,
+                      inputs=[grid.id, self.pos, self.nrm, self.h, v_dev, normals,
+                              self.radius,
                               out], device=dev)
         else:
             wp.copy(out, v_dev)
