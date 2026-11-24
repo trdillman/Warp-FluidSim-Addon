@@ -1,14 +1,15 @@
 # Unreleased: surface upres pipeline
 
-Status: stage 2 (Sharp Surfacing) implemented and unit-tested on CPU; **no
-GPU or Blender run yet**. Stage 1 (guided shell upres) is planned, not built.
+Status: stage 2 (Sharp Surfacing) implemented and checked on CUDA. Stage 1
+(guided shell upres) has its solver core and CPU kernel tests; **no GPU run,
+Blender settings, live playback or bake post-pass yet**.
 Research survey and owner decisions: Claude Docs "Surface upres: research
 survey" (23 November 2026).
 
 The goal is detail on low-resolution liquid simulations of any kind without
 the cost of a full high-resolution simulation. Two stages, both opt-in:
 
-1. **Guided shell upres** (planned). Re-simulate only a thin outer shell of
+1. **Guided shell upres** (core built, see below). Re-simulate only a thin outer shell of
    the liquid at 2x to 4x finer resolution, driven from below by the coarse
    velocity (Nielsen and Bridson 2011, the idea behind Houdini FLIP upres and
    Bifrost guided liquids). Runs on a coarse bake and live. Reuses the
@@ -56,6 +57,33 @@ Boundaries:
 - Not verified: GPU cost, the look on real demos, and mesh repeatability
   (the ellipsoid splat uses float atomic min like the ball splat, so the SDF
   is order-independent, but the hash grid build has not been checked).
+
+## Guided shell upres (core only)
+
+`sim/guided_upres.py` runs a second, finer `FluidSolver` with the narrow band
+on, behind a coarse one. Each frame the coarse liquid SDF and MAC velocity are
+copied into a `GuideFrame`; the fine narrow band's `guide` hook then:
+
+- marks fine leaves wherever the coarse liquid is (`mark_leaves`);
+- sets the fine phi to the coarse phi eroded by the shell, so deep liquid is
+  liquid and the outer `shell_voxels` fine voxels are left to fine particles,
+  and caps deep fine liquid at the coarse surface plus the shell
+  (`apply_phi`, after advection and again after the band union);
+- writes the coarse velocity, blended in time between the two coarse frames,
+  into the fine faces deeper than the shell (`apply_velocity`).
+
+The fine solve only carries particles in the shell, so its cost follows the
+surface area, not the volume. `GuidedUpres(coarse, factor=2, shell_voxels=4)`
+builds the fine solver from the coarse settings. Not wired to Blender yet.
+
+```
+python -m pytest -q tests/solver/test_guided_upres_kernels.py
+python tools/profiling/compare_guided_upres.py --device cuda:0 --voxel-size 0.06 --factor 2 --shell 4 --frames 20 40 --full-fine --obj-dir artifacts/guided_upres --json-out artifacts/guided_upres/report.json
+```
+
+The second command steps the coarse dam break, the guided fine solve and
+(with `--full-fine`) an unguided full solve at the fine size, and prints
+per-frame ms, particle counts and triangle counts, plus OBJ meshes.
 
 ## How to check it (Windows GPU host)
 
