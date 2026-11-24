@@ -72,12 +72,14 @@ copied into a `GuideFrame`; the fine narrow band's `guide` hook then:
 - writes the coarse velocity, blended in time between the two coarse frames,
   into the fine faces deeper than the shell (`apply_velocity`).
 
-- fills the coarse shell with fine particles on the first frame, then only
-  where the coarse liquid advances, at the coarse velocity (`seed`).
+- fills the coarse shell with fine particles until the fine solve holds
+  liquid, then only where the coarse liquid advances (including liquid the
+  previous coarse frame did not cover at all), at the coarse velocity (`seed`).
 
 Before use, each coarse level set is rebuilt as a true inside distance
 (`GuideFrame.reconstruct_depth`), because a particle-splat SDF is never
-deeper than a particle radius. The fine solve only carries particles in the
+deeper than a particle radius (a collider next to the liquid is a wall, not
+air). The fine solve only carries particles in the
 shell, so its particle budget follows the surface area (`factor**2`); its
 leaves cover the whole coarse liquid, so the leaf budget follows the volume
 (`factor**3`). Dynamic (two-way) colliders are refused for now; other

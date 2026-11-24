@@ -65,6 +65,7 @@ GUIDE_FAR = 1.0e6
 @wp.kernel
 def k_guide_deepen_init(
     sdf: wp.array(dtype=float),
+    collision: wp.array(dtype=float),
     leaf_table: wp.array(dtype=wp.int32),
     leaf_coords: wp.array(dtype=wp.vec3i),
     num_leaves: wp.array(dtype=wp.int32),
@@ -78,6 +79,8 @@ def k_guide_deepen_init(
     A particle-splat SDF is only a union of balls: inside the liquid it never
     goes below minus the particle radius. The inward eikonal sweeps that
     follow rebuild the true distance from the surface cells kept here.
+    A solid neighbour (``collision < 0``) is a wall, not air, so liquid
+    resting on a collider is deepened too.
     """
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
@@ -94,7 +97,7 @@ def k_guide_deepen_init(
             n[axis] = n[axis] + 2 * sign - 1
             flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, n)
             if flat >= 0:
-                if sdf[flat] >= 0.0:
+                if sdf[flat] >= 0.0 and collision[flat] >= 0.0:
                     touches_air = 1
     if touches_air == 0:
         out[tid] = -depth
@@ -146,7 +149,7 @@ class GuideFrame:
         dim = self.active_voxels
         fast_launch(
             k_guide_deepen_init, dim=dim,
-            inputs=[self.sdf, self.leaf_table, self.leaf_coords,
+            inputs=[self.sdf, collision, self.leaf_table, self.leaf_coords,
                     self.num_leaves, self.voxels_dim, self.leaves_dim, depth],
             outputs=[tmp], device=dev)
         phi, out = tmp, self.sdf
@@ -189,6 +192,21 @@ def _guide_phi_at(
         world_to_voxel(x, origin, h), GUIDE_FAR)
 
 
+@wp.func
+def _guide_blend(ga: float, gb: float, alpha: float) -> float:
+    """Blend two guide samples; ``GUIDE_FAR`` if frame ``b`` has none.
+
+    A frame ``a`` sample outside its leaves (an empty first frame, or liquid
+    the coarse solve has just added) is not a constraint, so frame ``b``
+    alone is used there.
+    """
+    if gb >= GUIDE_FAR * 0.5:
+        return GUIDE_FAR
+    if ga >= GUIDE_FAR * 0.5:
+        return gb
+    return ga + (gb - ga) * alpha
+
+
 @wp.kernel
 def k_guide_phi(
     phi: wp.array(dtype=float),
@@ -217,9 +235,9 @@ def k_guide_phi(
                              float(ijk[2]) + 0.5)
     ga = _guide_phi_at(a_sdf, a_table, g_voxels_dim, g_leaves_dim, g_origin, g_h, x)
     gb = _guide_phi_at(b_sdf, b_table, g_voxels_dim, g_leaves_dim, g_origin, g_h, x)
-    if ga >= GUIDE_FAR * 0.5 or gb >= GUIDE_FAR * 0.5:
+    g = _guide_blend(ga, gb, alpha)
+    if g >= GUIDE_FAR * 0.5:
         return
-    g = ga + (gb - ga) * alpha
     p = phi[tid]
     # Coarse liquid deeper than the shell is always liquid here too.
     p = wp.min(p, g + shell)
@@ -378,11 +396,12 @@ def k_guide_seed_demand(
     x = voxel_center_world(ijk, origin, h)
     ga = _guide_phi_at(a_sdf, a_table, g_voxels_dim, g_leaves_dim, g_origin, g_h, x)
     gb = _guide_phi_at(b_sdf, b_table, g_voxels_dim, g_leaves_dim, g_origin, g_h, x)
-    if ga >= GUIDE_FAR * 0.5 or gb >= GUIDE_FAR * 0.5:
+    g = _guide_blend(ga, gb, alpha)
+    if g >= GUIDE_FAR * 0.5:
         return
-    g = ga + (gb - ga) * alpha
     if g > -0.5 * h or g < -(shell + h):
         return
+    # A missing frame-a sample (``GUIDE_FAR``) counts as new liquid.
     if bootstrap == 0 and ga < 0.0:
         return
     demand[tid] = fill
@@ -700,7 +719,10 @@ class GuidedUpres:
         self.fine.sim_time = float(self._last.time)
         self.fine.set_colliders(fine_colliders(getattr(self.coarse, "colliders", ())))
         stats = self.fine.step_frame()
-        self.guide.bootstrap = False
+        # Keep filling the whole shell until the fine solve holds liquid (a
+        # coarse solve that has not emitted yet gives nothing to fill).
+        if self.fine.particles.refresh_host_count() > 0:
+            self.guide.bootstrap = False
         self._last = current
         return stats
 

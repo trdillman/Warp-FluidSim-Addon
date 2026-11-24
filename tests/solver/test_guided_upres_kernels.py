@@ -211,6 +211,39 @@ def test_reconstruct_depth_turns_a_splat_sdf_into_interior_distance(cuda_device)
     np.testing.assert_array_equal(after[before >= 0.0], before[before >= 0.0])
 
 
+@wp.kernel
+def _k_wall(sdf: wp.array(dtype=float), collision: wp.array(dtype=float),
+            leaf_coords: wp.array(dtype=wp.vec3i), origin: wp.vec3, h: float,
+            wall_x: float):
+    """Solid below ``wall_x``; a splat SDF finds no particles inside it."""
+    tid = wp.tid()
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    x = origin[0] + h * (float(ijk[0]) + 0.5)
+    collision[tid] = x - wall_x
+    if x < wall_x:
+        sdf[tid] = h
+
+
+def test_reconstruct_depth_keeps_liquid_on_a_wall_deep(cuda_device):
+    dev = cuda_device
+    frame = _splat_like_frame(dev)
+    n = int(frame.sdf.shape[0])
+    collision = wp.zeros(n, dtype=float, device=dev)
+    wall_x = CENTRE[0]
+    wp.launch(_k_wall, dim=n, device=dev,
+              inputs=[frame.sdf, collision, frame.leaf_coords, frame.origin,
+                      COARSE_H, wall_x])
+    frame.reconstruct_depth(4.0 * COARSE_H, collision)
+    m = frame.active_voxels
+    after = frame.sdf.numpy()[:m]
+    x = _coarse_centres(frame, dev)
+    r = np.linalg.norm(x[:, 1:] - np.asarray(CENTRE[1:]), axis=1)
+    # Liquid against the wall, near the sphere's middle, is the deep interior.
+    on_wall = (x[:, 0] > wall_x) & (x[:, 0] < wall_x + COARSE_H) & (r < 0.5 * RADIUS)
+    assert on_wall.sum() > 0
+    assert np.all(after[on_wall] < -2.0 * COARSE_H)
+
+
 def test_shell_guidance_works_from_a_splat_sdf_once_deepened(cuda_device):
     dev = cuda_device
     fine = _grid(dev, FINE_H)
@@ -287,6 +320,40 @@ def test_seed_after_the_first_frame_only_fills_new_coarse_liquid(cuda_device):
     inp = _seed_inputs(dev, fine)
     inp["counts"] = wp.full(fine.voxel_capacity, 1, dtype=wp.int32, device=dev)
     assert _demand(guide, fine, inp, dev).sum() == 0
+
+
+def _empty_frame(device, time):
+    g = SparseGrid(origin=(0.0, 0.0, 0.0), size=SIZE, voxel_size=COARSE_H,
+                   leaf_capacity=512, device=device)
+    g.begin_topology()
+    g.finalize_topology()
+    sdf = ScalarField(g, name="coarse_sdf")
+    n = g.voxel_capacity
+    zero = wp.zeros(n, dtype=float, device=device)
+    vel = SimpleNamespace(u=zero, v=zero, w=zero, wu=zero, wv=zero, ww=zero)
+    return GU.GuideFrame(g, sdf, vel, time)
+
+
+def test_seed_fills_liquid_missing_from_an_empty_previous_frame(cuda_device):
+    dev = cuda_device
+    fine = _grid(dev, FINE_H)
+    first = GU.ShellGuide(shell_voxels=3)
+    first.set_frames(_coarse_frame(dev, 1.0), None)
+    expected = _demand(first, fine, _seed_inputs(dev, fine), dev)
+    # The coarse solve emitted its liquid during this frame: frame a is empty.
+    guide = GU.ShellGuide(shell_voxels=3)
+    guide.set_frames(_empty_frame(dev, 0.0), _coarse_frame(dev, 1.0))
+    guide.set_time(0.5)
+    for bootstrap in (True, False):
+        guide.bootstrap = bootstrap
+        dem = _demand(guide, fine, _seed_inputs(dev, fine), dev)
+        assert dem.sum() > 0
+        np.testing.assert_array_equal(dem, expected)
+    # The fine level set follows frame b alone there.
+    limit = 8.0 * FINE_H
+    phi = wp.full(fine.voxel_capacity, limit, dtype=float, device=dev)
+    guide.apply_phi(fine, phi, fine.active_voxel_count, limit, dev)
+    assert int((phi.numpy()[:int(fine.active_voxel_count)] < 0.0).sum()) > 0
 
 
 def test_seeded_particles_carry_the_coarse_velocity(cuda_device):
