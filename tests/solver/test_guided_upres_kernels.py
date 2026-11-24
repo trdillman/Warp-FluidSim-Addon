@@ -270,6 +270,7 @@ def _seed_inputs(dev, fine, phi_value=None):
     zeros = wp.zeros(n, dtype=wp.int32, device=dev)
     return {"phi": phi, "cls": wp.zeros(n, dtype=wp.int32, device=dev),
             "collision": wp.full(n, 1.0, dtype=float, device=dev),
+            "vtype": wp.zeros(n, dtype=wp.int32, device=dev),
             "counts": zeros, "band": wp.zeros(n, dtype=wp.int32, device=dev),
             "demand": wp.zeros(n, dtype=wp.int32, device=dev)}
 
@@ -278,7 +279,8 @@ def _demand(guide, fine, inp, dev, fill=4):
     a, b, common = guide._guide_inputs()
     h = FINE_H
     wp.launch(GU.k_guide_seed_demand, dim=fine.voxel_capacity, device=dev,
-              inputs=[inp["phi"], inp["cls"], inp["collision"], inp["counts"],
+              inputs=[inp["phi"], inp["cls"], inp["collision"], inp["vtype"],
+                      inp["counts"],
                       inp["band"], fine.leaf_coords, fine.num_leaves, fine.origin,
                       h, guide.shell_voxels * h, a.sdf, a.leaf_table, b.sdf,
                       b.leaf_table, *common, float(guide.alpha),
@@ -319,6 +321,10 @@ def test_seed_after_the_first_frame_only_fills_new_coarse_liquid(cuda_device):
     guide.bootstrap = True
     inp = _seed_inputs(dev, fine)
     inp["counts"] = wp.full(fine.voxel_capacity, 1, dtype=wp.int32, device=dev)
+    assert _demand(guide, fine, inp, dev).sum() == 0
+    # Fine sink cells are never seeded either.
+    inp = _seed_inputs(dev, fine)
+    inp["vtype"] = wp.full(fine.voxel_capacity, 2, dtype=wp.int32, device=dev)  # VOXEL_SINK
     assert _demand(guide, fine, inp, dev).sum() == 0
 
 
@@ -378,7 +384,7 @@ def test_seeded_particles_carry_the_coarse_velocity(cuda_device):
     scratch = [wp.zeros(n, dtype=wp.int32, device=dev)] + [
         wp.zeros(1, dtype=wp.int32, device=dev) for _ in range(3)]
     guide.seed(fine, fine.active_voxel_count, inp["phi"], inp["cls"],
-               inp["collision"], inp["counts"], inp["band"], *scratch,
+               inp["collision"], inp["vtype"], inp["counts"], inp["band"], *scratch,
                particles, 4, 123, dev)
     count = int(particles.count.numpy()[0])
     assert count > 1000
@@ -445,3 +451,24 @@ def test_fine_sources_keep_sinks_and_drop_liquid_emission():
     assert descriptors == (sink,)
     assert kept == (plans[1],)
     assert GU.fine_source_batch(SourceBatch()) == ((), ())
+
+
+def test_scene_sync_copies_sources_and_force_fields_only_when_replaced():
+    from fluidSim_warp_blender51.sim.sourcing import SourceBatch
+
+    calls = []
+    fine = SimpleNamespace(
+        set_source_batch=lambda d, p: calls.append(("sources", d, p)),
+        set_force_fields=lambda f: calls.append(("fields", f)))
+    coarse = SimpleNamespace(sourcing=SimpleNamespace(batch=SourceBatch()),
+                             force_fields=["wind"])
+    upres = GU.GuidedUpres.__new__(GU.GuidedUpres)
+    upres.coarse, upres.fine = coarse, fine
+    upres._sources = upres._force_fields = None
+    upres._sync_scene()
+    assert calls == [("sources", (), ()), ("fields", ["wind"])]
+    upres._sync_scene()
+    assert len(calls) == 2          # unchanged: nothing reinstalled
+    coarse.force_fields = ["vortex"]
+    upres._sync_scene()
+    assert calls[-1] == ("fields", ["vortex"]) and len(calls) == 3

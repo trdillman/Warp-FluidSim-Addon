@@ -365,6 +365,7 @@ def k_guide_seed_demand(
     phi: wp.array(dtype=float),
     cls: wp.array(dtype=wp.int32),
     collision_sdf: wp.array(dtype=float),
+    voxel_type: wp.array(dtype=wp.int32),
     voxel_counts: wp.array(dtype=wp.int32),
     band_demand: wp.array(dtype=wp.int32),
     leaf_coords: wp.array(dtype=wp.vec3i),
@@ -398,6 +399,8 @@ def k_guide_seed_demand(
         return
     demand[tid] = 0
     if cls[tid] == 2 or collision_sdf[tid] < 0.0:
+        return
+    if (voxel_type[tid] & C.VOXEL_SINK) != 0:
         return
     if voxel_counts[tid] > 0 or band_demand[tid] > 0:
         return
@@ -565,7 +568,7 @@ class ShellGuide:
                     *common, float(self.alpha)],
             outputs=[nb_u, nb_v, nb_w], device=device)
 
-    def seed(self, grid, nvox, phi, cls, collision_sdf, voxel_counts,
+    def seed(self, grid, nvox, phi, cls, collision_sdf, voxel_type, voxel_counts,
              band_demand, offsets, slot_base, slot_limit, overflow,
              particles, fill, seed, device):
         """Fill empty coarse-shell cells with fine particles; returns nothing.
@@ -588,7 +591,7 @@ class ShellGuide:
             self._budget = wp.zeros(1, dtype=wp.int32, device=device)
         fast_launch(
             k_guide_seed_demand, dim=nv,
-            inputs=[phi, cls, collision_sdf, voxel_counts, band_demand,
+            inputs=[phi, cls, collision_sdf, voxel_type, voxel_counts, band_demand,
                     grid.leaf_coords, grid.num_leaves, grid.origin, h,
                     self.shell_voxels * h, a.sdf, a.leaf_table, b.sdf,
                     b.leaf_table, *common, float(self.alpha),
@@ -736,7 +739,8 @@ class GuidedUpres:
         self.guide = ShellGuide(shell_voxels)
         self.fine.narrow_band.guide = self.guide
         self._sources = None
-        self._sync_sources()
+        self._force_fields = None
+        self._sync_scene()
         # The guide must reach below the deepest test it makes (2 shells,
         # plus the velocity band and a coarse voxel of slack).
         self.guide_depth = (3.0 * float(shell_voxels) * float(fine_settings.voxel_size)
@@ -744,14 +748,18 @@ class GuidedUpres:
         self._last = self._snapshot()
         self.guide.set_frames(self._last, None)
 
-    def _sync_sources(self):
-        """Give the fine solve the coarse non-liquid sources when they change."""
+    def _sync_scene(self):
+        """Give the fine solve the coarse non-liquid sources and proxy force
+        fields when they change (both are replaced whole on the coarse side)."""
         batch = self.coarse.sourcing.batch
-        if batch is self._sources:
-            return
-        self._sources = batch
-        descriptors, plans = fine_source_batch(batch)
-        self.fine.set_source_batch(descriptors, plans)
+        if batch is not self._sources:
+            self._sources = batch
+            descriptors, plans = fine_source_batch(batch)
+            self.fine.set_source_batch(descriptors, plans)
+        fields = getattr(self.coarse, "force_fields", None)
+        if fields is not None and fields is not self._force_fields:
+            self._force_fields = fields
+            self.fine.set_force_fields(fields)
 
     def _snapshot(self):
         return GuideFrame.from_solver(self.coarse, float(self.coarse.sim_time),
@@ -764,7 +772,7 @@ class GuidedUpres:
         # The fine clock starts where the coarse one did for this frame.
         self.fine.sim_time = float(self._last.time)
         self.fine.set_colliders(fine_colliders(getattr(self.coarse, "colliders", ())))
-        self._sync_sources()
+        self._sync_scene()
         stats = self.fine.step_frame()
         # Keep filling the whole shell until the fine solve holds liquid (a
         # coarse solve that has not emitted yet gives nothing to fill).

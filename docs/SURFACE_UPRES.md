@@ -86,7 +86,8 @@ leaves cover the whole coarse liquid, so the leaf budget follows the volume
 colliders are copied, so the fine solve never writes into the coarse ones, and
 fine solid and sink cells stay air under the guide. The fine solve gets every
 coarse source except liquid emission (sinks, forces, collision and activation
-regions); the guide seeds its liquid.
+regions) and the coarse proxy force fields; the guide seeds its liquid, never
+into fine solid or sink cells.
 `GuidedUpres(coarse, factor=2, shell_voxels=4)` builds the fine solver from
 the coarse settings. Not wired to Blender yet.
 
