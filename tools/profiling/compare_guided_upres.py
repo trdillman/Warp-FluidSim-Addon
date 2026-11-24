@@ -364,6 +364,7 @@ def run_demo(args):
     # Opening the demo reloads the repository add-on. Use the same module
     # instances as its registered Blender operators.
     from fluidSim_warp_blender51.blender.scene_bridge import session
+    from fluidSim_warp_blender51.blender.simulation_admission import capacity_blocking_message
     from fluidSim_warp_blender51.sim.guided_upres import GuidedUpres, fine_colliders
     from fluidSim_warp_blender51.sim.solver import FluidSolver
 
@@ -389,7 +390,10 @@ def run_demo(args):
             f"({', '.join(sorted(seeded))}). Run without it")
     assign_input_identities(scene)
     if bpy.ops.fluidsim.initialize() != {"FINISHED"}:
-        raise RuntimeError(f"{args.demo}: the add-on refused to initialize the scene")
+        plan = session().capacity_plan
+        detail = (capacity_blocking_message(plan.blockers) if plan and plan.blockers
+                  else "the add-on refused to initialize the scene")
+        raise RuntimeError(f"{args.demo}: {detail}")
     sess = session()
     coarse = sess.solver
     if coarse is None:

@@ -41,12 +41,13 @@ CORE_SHELLS = 2.0
 # Budgets. The coarse reserve sits above the ~2.05M Initial Fill. Leaves are
 # fixed (the review run steps the solvers directly, without the add-on's leaf
 # growth, which would swap the coarse solver out from under the upres): the
-# reservoir takes ~1k coarse leaves and the spread surge ~2.5k, so 6144 has
-# headroom. The fine solves get a fixed 32768 (the coarse liquid volume at
+# default scene needs 6205 leaves at admission, including collider topology.
+# A reserve of 8192 leaves also gives the moving surge room to spread.
+# The fine solves get a fixed 32768 (the coarse liquid volume at
 # factor 2 is 8 fine leaves per coarse leaf), which keeps either fine solve
 # near 10 GB by the add-on's conservative estimate.
 MAX_PARTICLES = 2_500_000
-LEAF_CAPACITY = 6144
+LEAF_CAPACITY = 8192
 FINE_LEAF_CAPACITY = 32768
 
 DOMAIN_LO = cove.DOMAIN_LO

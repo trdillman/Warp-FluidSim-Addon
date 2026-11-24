@@ -65,6 +65,11 @@ def test_coarse_leaves_hold_the_reservoir_with_room_for_the_surge():
     assert 3 * leaves < uc.LEAF_CAPACITY
 
 
+def test_coarse_budget_covers_default_scene_admission():
+    # Blender's capacity planner counted the authored source and all colliders.
+    assert uc.LEAF_CAPACITY >= 6205
+
+
 def test_fine_budgets_match_what_guided_upres_allocates():
     from fluidSim_warp_blender51.sim.guided_upres import fine_budget_scales
 
