@@ -278,6 +278,15 @@ def _guide_face(
     vp = world_to_voxel(x, g_origin, g_h)
     ua = sample_mac_component(a_u, a_wu, a_table, g_voxels_dim, g_leaves_dim, vp, axis)
     ub = sample_mac_component(b_u, b_wu, b_table, g_voxels_dim, g_leaves_dim, vp, axis)
+    # A frame with no leaf here has no velocity (the sampler's 0 is not one):
+    # use the other frame alone, as ``_guide_blend`` does for phi.
+    ijk = voxel_floor(vp)
+    has_a = voxel_flat_index(a_table, g_voxels_dim, g_leaves_dim, ijk) >= 0
+    has_b = voxel_flat_index(b_table, g_voxels_dim, g_leaves_dim, ijk) >= 0
+    if has_a and not has_b:
+        return ua
+    if has_b and not has_a:
+        return ub
     return ua + (ub - ua) * alpha
 
 
@@ -368,6 +377,8 @@ def k_guide_seed_demand(
     voxel_type: wp.array(dtype=wp.int32),
     voxel_counts: wp.array(dtype=wp.int32),
     band_demand: wp.array(dtype=wp.int32),
+    band_offsets: wp.array(dtype=wp.int32),
+    band_admitted: wp.array(dtype=wp.int32),
     leaf_coords: wp.array(dtype=wp.vec3i),
     num_leaves: wp.array(dtype=wp.int32),
     origin: wp.vec3,
@@ -395,14 +406,19 @@ def k_guide_seed_demand(
     fine shell keeps its own shape where it already lives.
     """
     tid = wp.tid()
+    demand[tid] = 0
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
         return
-    demand[tid] = 0
     if cls[tid] == 2 or collision_sdf[tid] < 0.0:
         return
     if (voxel_type[tid] & C.VOXEL_SINK) != 0:
         return
-    if voxel_counts[tid] > 0 or band_demand[tid] > 0:
+    if voxel_counts[tid] > 0:
+        return
+    # The band's own reseed already filled this cell (its block start fits
+    # in what the band admitted; a cell it asked for but could not get is
+    # still the guide's to fill).
+    if band_demand[tid] > 0 and band_offsets[tid] < band_admitted[0]:
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     x = voxel_center_world(ijk, origin, h)
@@ -592,6 +608,7 @@ class ShellGuide:
         fast_launch(
             k_guide_seed_demand, dim=nv,
             inputs=[phi, cls, collision_sdf, voxel_type, voxel_counts, band_demand,
+                    offsets, slot_limit,
                     grid.leaf_coords, grid.num_leaves, grid.origin, h,
                     self.shell_voxels * h, a.sdf, a.leaf_table, b.sdf,
                     b.leaf_table, *common, float(self.alpha),
@@ -619,7 +636,7 @@ class ShellGuide:
                     particles.attr("density"), particles.attr("time_offset"),
                     particles.alive],
             device=device)
-        particles.refresh_host_count()
+        # The caller (NarrowBand.reseed) refreshes the host particle count.
 
     def mark_leaves(self, grid, device):
         if not self.ready:
@@ -667,8 +684,33 @@ def fine_source_batch(batch):
     return descriptors, plans
 
 
-def fine_colliders(colliders):
+def _moves(col):
+    return getattr(col, "mesh", None) is not None and (
+        any(abs(v) > 1.0e-9 for v in getattr(col, "linear_velocity", (0.0,)))
+        or any(abs(v) > 1.0e-9 for v in getattr(col, "angular_velocity", (0.0,))))
+
+
+def _private_mesh(src, cache):
+    """A fine-owned copy of ``src`` with its current points (cached by source)."""
+    key = id(src)
+    entry = cache.get(key) if cache is not None else None
+    if entry is not None and entry[0] is src and entry[1].points.shape == src.points.shape:
+        mesh = entry[1]
+        wp.copy(mesh.points, src.points)
+        mesh.refit()
+        return mesh
+    mesh = wp.Mesh(points=wp.clone(src.points), indices=src.indices)
+    if cache is not None:
+        cache[key] = (src, mesh)
+    return mesh
+
+
+def fine_colliders(colliders, mesh_cache=None):
     """Private copies of the coarse colliders for the fine solve.
+
+    A moving collider also gets its own mesh (``mesh_cache`` reuses it across
+    frames): the fine solve re-poses moving meshes in place every substep,
+    and those writes must never reach the coarse mesh.
 
     ``FluidSolver.set_colliders`` writes into the descriptors (moving-mesh
     base points, Dynamic body state), so sharing them would let the fine solve
@@ -682,7 +724,11 @@ def fine_colliders(colliders):
             raise NotImplementedError(
                 "guided upres does not support Dynamic colliders yet; "
                 "the fine solve cannot follow the coarse rigid bodies")
-        out.append(copy.copy(col))
+        c = copy.copy(col)
+        if _moves(col):
+            c.mesh = _private_mesh(col.mesh, mesh_cache)
+            c.reposed = False
+        out.append(c)
     return out
 
 
@@ -696,9 +742,8 @@ class GuidedUpres:
         upres.step_frame()       # fine solve over the same frame
         verts, tris = upres.fine.surface_mesh()
 
-    Baked use feeds ``step_to(frame)`` from restored coarse checkpoints in
-    order instead of a live coarse solver; the guide only needs the coarse
-    grid, level set and MAC velocity at each frame.
+    A baked post-pass (driving it from restored coarse checkpoints) is not
+    built yet.
 
     The fine solver reuses every coarse setting except resolution, particle
     and leaf budgets, narrow-band mode (forced on, band = shell depth) and
@@ -715,6 +760,10 @@ class GuidedUpres:
         factor = int(factor)
         if factor < 2:
             raise ValueError("guided upres needs a factor of at least 2")
+        if factor > C.LEAF_DIM:
+            # Leaf marking samples each coarse voxel's corners, which covers
+            # every fine leaf it touches only while it spans at most one leaf.
+            raise ValueError(f"guided upres supports factors up to {C.LEAF_DIM}")
         self.coarse = coarse
         self.factor = factor
         cs = coarse.settings
@@ -732,10 +781,19 @@ class GuidedUpres:
             surface_build_lowres_sdf=False,
             # The fine grid already is the high resolution: mesh at it.
             surface_resolution_mode=int(SurfaceResolutionMode.SIMULATION),
+            # Reseeded narrow-band particles carry no per-particle product
+            # channels (colour, source id, uid); the fine solve exports none.
+            export_attributes=False,
         )
-        fine_colliders(getattr(coarse, "colliders", ()))  # refuse early
+        if bool(getattr(cs, "species_enabled", False)):
+            raise NotImplementedError(
+                "guided upres does not support species yet; narrow-band "
+                "reseeding cannot carry particle colour")
+        self._meshes = {}
+        colliders = fine_colliders(getattr(coarse, "colliders", ()),
+                                   self._meshes)  # refuses Dynamic early
         self.fine = FluidSolver(fine_settings)
-        self.fine.set_colliders(fine_colliders(getattr(coarse, "colliders", ())))
+        self.fine.set_colliders(colliders)
         self.guide = ShellGuide(shell_voxels)
         self.fine.narrow_band.guide = self.guide
         self._sources = None
@@ -771,7 +829,8 @@ class GuidedUpres:
         self.guide.set_frames(self._last, current)
         # The fine clock starts where the coarse one did for this frame.
         self.fine.sim_time = float(self._last.time)
-        self.fine.set_colliders(fine_colliders(getattr(self.coarse, "colliders", ())))
+        self.fine.set_colliders(fine_colliders(getattr(self.coarse, "colliders", ()),
+                                               self._meshes))
         self._sync_scene()
         stats = self.fine.step_frame()
         # Keep filling the whole shell until the fine solve holds liquid (a
@@ -784,4 +843,5 @@ class GuidedUpres:
     def release(self):
         self.guide.set_frames(None, None)
         self._last = None
+        self._meshes = {}
         self.fine.release()

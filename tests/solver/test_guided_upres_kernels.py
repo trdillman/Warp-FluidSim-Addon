@@ -272,7 +272,9 @@ def _seed_inputs(dev, fine, phi_value=None):
             "collision": wp.full(n, 1.0, dtype=float, device=dev),
             "vtype": wp.zeros(n, dtype=wp.int32, device=dev),
             "counts": zeros, "band": wp.zeros(n, dtype=wp.int32, device=dev),
-            "demand": wp.zeros(n, dtype=wp.int32, device=dev)}
+            "demand": wp.zeros(n, dtype=wp.int32, device=dev),
+            "band_offsets": wp.zeros(n, dtype=wp.int32, device=dev),
+            "band_admitted": wp.zeros(1, dtype=wp.int32, device=dev)}
 
 
 def _demand(guide, fine, inp, dev, fill=4):
@@ -280,8 +282,8 @@ def _demand(guide, fine, inp, dev, fill=4):
     h = FINE_H
     wp.launch(GU.k_guide_seed_demand, dim=fine.voxel_capacity, device=dev,
               inputs=[inp["phi"], inp["cls"], inp["collision"], inp["vtype"],
-                      inp["counts"],
-                      inp["band"], fine.leaf_coords, fine.num_leaves, fine.origin,
+                      inp["counts"], inp["band"], inp["band_offsets"],
+                      inp["band_admitted"], fine.leaf_coords, fine.num_leaves, fine.origin,
                       h, guide.shell_voxels * h, a.sdf, a.leaf_table, b.sdf,
                       b.leaf_table, *common, float(guide.alpha),
                       1 if guide.bootstrap else 0, fill],
@@ -297,7 +299,10 @@ def test_seed_fills_the_whole_coarse_shell_on_the_first_frame(cuda_device):
     dem = _demand(guide, fine, _seed_inputs(dev, fine), dev)
     d = np.linalg.norm(_centres(fine, dev) - np.asarray(CENTRE), axis=1) - RADIUS
     shell = 3 * FINE_H
-    assert np.all(dem[(d < -0.5 * FINE_H - COARSE_H) & (d > -shell + COARSE_H)] == 4)
+    # Well inside the eligible band (-(shell + h), -h/2), clear of sampling error.
+    inner = (d < -0.5 * FINE_H - 0.25 * COARSE_H) & (d > -(shell + FINE_H) + 0.25 * COARSE_H)
+    assert inner.sum() > 100
+    assert np.all(dem[inner] == 4)
     assert np.all(dem[d > COARSE_H] == 0)            # air
     assert np.all(dem[d < -shell - FINE_H - COARSE_H] == 0)   # deep interior
 
@@ -472,3 +477,64 @@ def test_scene_sync_copies_sources_and_force_fields_only_when_replaced():
     coarse.force_fields = ["vortex"]
     upres._sync_scene()
     assert calls[-1] == ("fields", ["vortex"]) and len(calls) == 3
+
+
+def test_seed_skips_only_cells_the_band_reseed_actually_filled(cuda_device):
+    dev = cuda_device
+    guide = GU.ShellGuide(shell_voxels=3)
+    guide.set_frames(_coarse_frame(dev, 0.0), None)
+    fine = _grid(dev, FINE_H)
+    expected = _demand(guide, fine, _seed_inputs(dev, fine), dev)
+    inp = _seed_inputs(dev, fine)
+    inp["band"] = wp.full(fine.voxel_capacity, 1, dtype=wp.int32, device=dev)
+    # The band asked everywhere but got no budget: the guide still fills.
+    np.testing.assert_array_equal(_demand(guide, fine, inp, dev), expected)
+    # The band got everything it asked for: nothing left for the guide.
+    inp["band_admitted"] = wp.full(1, 1 << 30, dtype=wp.int32, device=dev)
+    assert _demand(guide, fine, inp, dev).sum() == 0
+
+
+def test_interior_velocity_uses_the_only_frame_that_has_liquid(cuda_device):
+    dev = cuda_device
+    guide = GU.ShellGuide(shell_voxels=2)
+    guide.set_frames(_empty_frame(dev, 0.0),
+                     _coarse_frame(dev, 1.0, velocity=(1.0, -2.0, 4.0)))
+    guide.set_time(0.25)
+    fine = _grid(dev, FINE_H)
+    n = fine.voxel_capacity
+    limit = 8.0 * FINE_H
+    phi = wp.full(n, limit, dtype=float, device=dev)
+    guide.apply_phi(fine, phi, fine.active_voxel_count, limit, dev)
+    nb = [wp.full(n, 9.0, dtype=float, device=dev) for _ in range(3)]
+    guide.apply_velocity(fine, phi, *nb, fine.active_voxel_count, dev)
+    m = int(fine.active_voxel_count)
+    deep = phi.numpy()[:m] < -2 * FINE_H
+    assert deep.sum() > 50
+    for arr, expected in zip(nb, (1.0, -2.0, 4.0)):
+        np.testing.assert_allclose(arr.numpy()[:m][deep], expected, atol=1e-5)
+
+
+def test_moving_colliders_get_a_private_mesh_kept_in_step(cuda_device):
+    dev = cuda_device
+    pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+    src = wp.Mesh(points=wp.array(pts, dtype=wp.vec3, device=dev),
+                  indices=wp.array([0, 1, 2], dtype=wp.int32, device=dev))
+    moving = SimpleNamespace(mesh=src, dynamic=False, linear_velocity=(1.0, 0.0, 0.0),
+                             angular_velocity=(0.0, 0.0, 0.0), reposed=False)
+    still = SimpleNamespace(mesh=src, dynamic=False, linear_velocity=(0.0, 0.0, 0.0),
+                            angular_velocity=(0.0, 0.0, 0.0))
+    cache = {}
+    first, kept = GU.fine_colliders([moving, still], cache)
+    assert kept.mesh is src                       # static: shared, never written
+    assert first.mesh is not src
+    first.mesh.points.assign(pts + 5.0)           # a fine re-pose
+    np.testing.assert_array_equal(src.points.numpy(), pts)
+    src.points.assign(pts + 1.0)                  # the scene moves the source
+    again, _ = GU.fine_colliders([moving, still], cache)
+    assert again.mesh is first.mesh               # reused, refreshed
+    np.testing.assert_array_equal(again.mesh.points.numpy(), pts + 1.0)
+
+
+def test_factors_beyond_one_leaf_per_coarse_voxel_are_refused():
+    with pytest.raises(ValueError):
+        GU.GuidedUpres(None, factor=16)

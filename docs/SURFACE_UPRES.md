@@ -87,7 +87,9 @@ colliders are copied, so the fine solve never writes into the coarse ones, and
 fine solid and sink cells stay air under the guide. The fine solve gets every
 coarse source except liquid emission (sinks, forces, collision and activation
 regions) and the coarse proxy force fields; the guide seeds its liquid, never
-into fine solid or sink cells.
+into fine solid or sink cells. Moving colliders get a private fine mesh. The
+fine solve exports no per-particle attributes, species are refused for now,
+and factors run from 2 to 8.
 `GuidedUpres(coarse, factor=2, shell_voxels=4)` builds the fine solver from
 the coarse settings. Not wired to Blender yet.
 
