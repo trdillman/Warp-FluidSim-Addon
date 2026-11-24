@@ -101,6 +101,9 @@ class NarrowBand:
         self.liquid_voxels = 0
         self.owed = wp.zeros(1, dtype=wp.int32, device=dev)
         self._substep_index = 0
+        # Guided upres (sim/guided_upres.py): when set, the deep interior
+        # follows a coarse liquid instead of this solve's own history.
+        self.guide = None
         self._check_particle_channels()
 
     def reset(self):
@@ -141,6 +144,8 @@ class NarrowBand:
             inputs=[self.phi, g.leaf_coords, g.num_leaves, g.leaves_dim,
                     g.leaf_flags],
             device=self.solver.device)
+        if self.guide is not None:
+            self.guide.mark_leaves(g, self.solver.device)
 
     def _old_voxels(self):
         return max(1, int(self.solver.grid.active_voxel_count))
@@ -185,6 +190,12 @@ class NarrowBand:
         self.nb_u, self.nb_tmp_u = self.nb_tmp_u, self.nb_u
         self.nb_v, self.nb_tmp_v = self.nb_tmp_v, self.nb_v
         self.nb_w, self.nb_tmp_w = self.nb_tmp_w, self.nb_w
+        if self.guide is not None:
+            self.guide.set_time(float(sv.sim_time) + 0.5 * float(dt))
+            self.guide.apply_phi(g, self.phi, nv, self.limit, sv.device,
+                                 sv.collision_sdf.data, sv.voxel_type.data)
+            self.guide.apply_velocity(g, self.phi, self.nb_u, self.nb_v,
+                                      self.nb_w, nv, sv.device)
         fast_launch(
             k_nb_fill_interior_velocity, dim=nv,
             inputs=[self.phi, sv.voxel_type.data,
@@ -240,6 +251,10 @@ class NarrowBand:
                     sv.voxel_type.data, g.num_leaves, self.pin_depth,
                     self.limit],
             outputs=[self.phi], device=dev)
+        if self.guide is not None:
+            self.guide.set_time(float(sv.sim_time) + float(dt))
+            self.guide.apply_phi(g, self.phi, nv, self.limit, dev,
+                                 sv.collision_sdf.data, sv.voxel_type.data)
         for _ in range(self.eikonal_iterations):
             fast_launch(
                 k_nb_eikonal_inward, dim=nv,
@@ -325,6 +340,12 @@ class NarrowBand:
                     p.attr("temperature"), p.attr("viscosity"),
                     p.attr("density"), p.attr("time_offset"), p.alive],
             device=dev)
+        if self.guide is not None:
+            self.guide.seed(
+                g, nv, self.phi, self.cls, sv.collision_sdf.data,
+                sv.voxel_type.data, sv.voxel_counts.data, self.demand, self.offsets,
+                self.slot_base, self.slot_limit, self.overflow_flag, p,
+                target, seed, dev)
         self.reseed_epoch += 1
         p.refresh_host_count()
 

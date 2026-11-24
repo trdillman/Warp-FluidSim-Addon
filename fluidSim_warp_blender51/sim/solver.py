@@ -2279,6 +2279,12 @@ class FluidSolver:
         source_max_speed = (
             armed_speed() if policy.adaptive and armed_speed is not None
             else 0.0)
+        # A guided (upres) narrow band imposes the coarse velocity it follows
+        # after scheduling, often into an empty fine solve: count it like an
+        # armed source so the CFL clamp does not cut it down.
+        guide = getattr(getattr(self, "narrow_band", None), "guide", None)
+        if policy.adaptive and guide is not None and getattr(guide, "ready", False):
+            source_max_speed = max(source_max_speed, float(guide.max_speed()))
         # A fixed-substep scene cannot adapt to CFL, so avoid the synchronous
         # device reduction/readback entirely. Pure capillary demand is still
         # calculated by select_substeps so clamp diagnostics remain truthful.
