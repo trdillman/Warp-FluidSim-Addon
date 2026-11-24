@@ -175,7 +175,8 @@ def _finish(args, report):
 
 # --- Demo mode (inside Blender) -------------------------------------------
 
-REVIEW_SETS = (("coarse", "Coarse"), ("guided", "Guided upres"), ("full", "Full fine"))
+REVIEW_SETS = (("coarse", "Coarse"), ("waves", "Surface waves"),
+               ("guided", "Guided upres"), ("full", "Full fine"))
 
 
 def demo_defaults(name):
@@ -264,7 +265,7 @@ def _mesh_object(name, verts, tris, collection, material, frame, frame_start):
 class ReviewFile:
     """Collections of sampled surfaces, saved as a separate review .blend."""
 
-    def __init__(self, scene, demo):
+    def __init__(self, scene, demo, shown="guided"):
         import bpy
 
         self.scene = scene
@@ -276,8 +277,8 @@ class ReviewFile:
         for key, label in REVIEW_SETS:
             col = bpy.data.collections.new(f"{label} ({demo})")
             root.children.link(col)
-            # Guided upres shows first; tick the others on to compare.
-            col.hide_viewport = col.hide_render = key != "guided"
+            # The upres under review shows first; tick the others on to compare.
+            col.hide_viewport = col.hide_render = key != shown
             self.collections[key] = col
         self.count = {key: 0 for key, _ in REVIEW_SETS}
 
@@ -434,15 +435,34 @@ def run_demo(args):
         fine_prof = Profiler(device=coarse.device)
         full_prof = Profiler(device=coarse.device)
     leaf_scale = mod.leaf_budget_scale() if mod is not None else None
-    upres = GuidedUpres(coarse, factor=args.factor, shell_voxels=args.shell,
-                        core_shells=args.core_shells, leaf_budget_scale=leaf_scale,
-                        profiler=fine_prof)
-    upres.fine.settings.surface_detail_enabled = bool(args.sharp)
-    review = ReviewFile(scene, args.demo) if args.review_blend != "none" else None
+    upres = None
+    if not args.no_guided:
+        upres = GuidedUpres(coarse, factor=args.factor, shell_voxels=args.shell,
+                            core_shells=args.core_shells, leaf_budget_scale=leaf_scale,
+                            profiler=fine_prof)
+        upres.fine.settings.surface_detail_enabled = bool(args.sharp)
+    waves = None
+    if args.waves:
+        from fluidSim_warp_blender51.sim.surface_waves import SurfaceWaves
+
+        coarse.settings.surface_waves_detail = float(args.wave_detail)
+        waves = SurfaceWaves(coarse.surface._wave_settings(), device=coarse.device)
+    shown = "guided" if upres is not None else "waves"
+    review = (ReviewFile(scene, args.demo, shown=shown)
+              if args.review_blend != "none" else None)
     records = []
+    waves_mesh = {}
+
+    def step_waves():
+        # The add-on's own path (SurfacePipeline.step_waves) on a private
+        # SurfaceWaves, so the coarse surface itself stays undisplaced.
+        verts, tris = coarse.surface_mesh()
+        vel = coarse.surface._vertex_velocity(verts)
+        dt = float(coarse.settings.time_scale) / float(coarse.settings.frame_rate)
+        waves_mesh["mesh"] = (waves.step(verts, tris, vel, dt), tris)
 
     def grab(key, frame, solver):
-        verts, tris = solver.surface_mesh()
+        verts, tris = waves_mesh["mesh"] if key == "waves" else solver.surface_mesh()
         if review is not None:
             review.add(key, frame, verts, tris)
         if args.obj_dir:
@@ -454,29 +474,42 @@ def run_demo(args):
     try:
         for frame in range(1, last + 1):
             _, coarse_ms = _timed(coarse.device, coarse.step_frame)
-            fine_stats, fine_ms = _timed(coarse.device, upres.step_frame)
             rec = {
                 "frame": frame,
                 "coarse_ms": coarse_ms,
-                "guided_fine_ms": fine_ms,
-                "guided_total_ms": coarse_ms + fine_ms,
                 "full_fine_ms": None,
-                "guided_fine": _solver_stats(fine_stats, fine_prof),
                 "full_fine": None,
                 "coarse_particles": int(coarse.particles.count.numpy()[0]),
-                "fine_particles": int(upres.fine.particles.count.numpy()[0]),
-                "fine_out_of_particles": bool(upres.particle_budget_hit),
             }
+            if upres is not None:
+                fine_stats, fine_ms = _timed(coarse.device, upres.step_frame)
+                rec.update({
+                    "guided_fine_ms": fine_ms,
+                    "guided_total_ms": coarse_ms + fine_ms,
+                    "guided_fine": _solver_stats(fine_stats, fine_prof),
+                    "fine_particles": int(upres.fine.particles.count.numpy()[0]),
+                    "fine_out_of_particles": bool(upres.particle_budget_hit),
+                })
+            if waves is not None:
+                # Includes extracting the coarse mesh and sampling its velocity.
+                _, waves_ms = _timed(coarse.device, step_waves)
+                rec.update({"waves_ms": waves_ms,
+                            "waves_total_ms": coarse_ms + waves_ms,
+                            "wave_points": int(waves.count)})
             if frame in wanted:
                 rec["coarse_tris"] = grab("coarse", frame, coarse)
-                rec["fine_tris"] = grab("guided", frame, upres.fine)
+                if upres is not None:
+                    rec["fine_tris"] = grab("guided", frame, upres.fine)
+                if waves is not None:
+                    rec["waves_tris"] = grab("waves", frame, None)
             print(json.dumps(rec))
             records.append(rec)
     finally:
         # Drop every reference too: release() keeps the fine solver object,
         # and pass 2 must not allocate while it still holds VRAM.
-        upres.release()
-        upres = None
+        if upres is not None:
+            upres.release()
+        upres = waves = None
         gc.collect()
 
     # Pass 2: the unguided full sim at the fine size, from the same inputs.
@@ -508,6 +541,8 @@ def run_demo(args):
         "voxel_size": float(cs.voxel_size),
         "fine_voxel_size": float(cs.voxel_size) / args.factor,
         "factor": args.factor, "shell": args.shell, "core_shells": args.core_shells,
+        "guided": not args.no_guided,
+        "waves": bool(args.waves), "wave_detail": float(args.wave_detail),
         "review_frames": wanted,
         "summary": summarize(records),
         "frames": records,
@@ -526,7 +561,8 @@ def summarize(records, skip=1):
 
     rows = records[skip:] or records
     out = {}
-    for key in ("coarse_ms", "guided_fine_ms", "guided_total_ms", "full_fine_ms"):
+    for key in ("coarse_ms", "guided_fine_ms", "guided_total_ms", "waves_ms",
+                "waves_total_ms", "full_fine_ms"):
         values = [r[key] for r in rows if r.get(key) is not None]
         if values:
             out[f"mean_{key}"] = round(statistics.fmean(values), 3)
@@ -534,6 +570,10 @@ def summarize(records, skip=1):
     if total and full:
         # Above 1: the upres (coarse + guided fine) beats the full fine sim.
         out["speedup_vs_full_fine"] = round(full / total, 3)
+    waves = out.get("mean_waves_total_ms")
+    if waves and full:
+        # Above 1: coarse + surface waves beats the full fine sim.
+        out["waves_speedup_vs_full_fine"] = round(full / waves, 3)
     return out
 
 
@@ -563,6 +603,14 @@ def parse(argv):
     p.add_argument("--emit-frames", type=int, default=6)
     p.add_argument("--sharp", action="store_true",
                    help="also turn on Sharp Surfacing for the fine surface")
+    p.add_argument("--waves", action="store_true",
+                   help="--demo: also run Surface Waves on the coarse surface "
+                        "(a 'Surface waves' collection in the review file)")
+    p.add_argument("--wave-detail", type=float, default=0.5,
+                   help="--waves: wave point spacing / coarse surface voxel")
+    p.add_argument("--no-guided", action="store_true",
+                   help="--demo: skip the guided fine solve (with --waves, "
+                        "compares coarse, surface waves and full fine only)")
     p.add_argument("--full-fine", action="store_true",
                    help="also run an unguided full-depth sim at the fine size")
     p.add_argument("--obj-dir")

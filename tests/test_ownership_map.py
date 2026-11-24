@@ -46,7 +46,8 @@ GENERATOR = REPO_ROOT / "tools" / "ownership_map.py"
 # surface_advanced_expanded) dropped it to 226. The viewport eyes view_surface
 # and view_particles plus their saved override flags bring it to 230.
 # Sharp surfacing adds five surface_detail/preserve-splash settings (230 -> 235).
-EXPECTED_FIELD_COUNT = 235
+# Surface waves add four surface_waves_* settings (235 -> 239).
+EXPECTED_FIELD_COUNT = 239
 
 # UI writes a datablock no consumer reads: on a migrated scene those edits
 # never reach the solver. Phase 1 emptied this set by repointing the contested

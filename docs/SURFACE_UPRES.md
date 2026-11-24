@@ -16,6 +16,11 @@ the cost of a full high-resolution simulation. Two stages, both opt-in:
    narrow-band FLIP machinery.
 2. **Sharp Surfacing** (this change). Mesh particles as ellipsoids shaped by
    their neighbours, plus splash-preserving smoothing.
+3. **Surface Waves** (see below). Wave detail finer than the surface voxels on
+   the coarse surface itself, with no second simulation (Mercier et al. 2015).
+   Owner decision, 24 November 2026: after guided upres came out slower than
+   full fine and broke into specks on Upres Cove, upres moves to this
+   surface-only method.
 
 ## Sharp Surfacing
 
@@ -156,6 +161,48 @@ collection each, every mesh visible only on its own frame. `--voxel-size`,
 Demo mode requires static simulation inputs. The unguided `--full-fine`
 reference keeps the authored narrow-band setting and requires a scene without
 automatic particle-object seeds.
+
+## Surface Waves
+
+`sim/surface_waves.py`, after Mercier, Beauchemin, Thuerey, Kim and
+Nowrouzezahrai, "Surface Turbulence for Particle-Based Liquid Simulations"
+(SIGGRAPH Asia 2015), in the line of Kim, Thuerey and Tessendorf, "Closest
+Point Turbulence for Liquid Surfaces" (TOG 2013). It works on the extracted
+render mesh, so it runs with every surfacing backend and any scene, and it
+never changes the simulation. Each frame:
+
+1. Wave points (spacing **Wave Detail** times the surface voxel) move with
+   the coarse velocity at the surface and are projected back onto the new
+   mesh. Points that lose the surface die.
+2. Points closer than half the spacing to an older point die; triangles left
+   sparse get new points, thinned against each other the same way.
+3. Waves start where the coarse surface bends more sharply than its grid
+   resolves (mean curvature above one over two surface voxels), with a phase
+   from smooth noise of each point's birth position, so neighbours oscillate
+   together and form wave fronts.
+4. A damped wave equation (capillary-gravity speed of the finest wave, four
+   spacings long; tangent-plane point Laplacian; explicit substeps under a 0.5
+   CFL) carries them across the surface. Heights are capped at half a surface
+   voxel.
+5. The render mesh is displaced along its vertex normals by the wave height
+   (same vertices and triangles).
+
+Cost follows surface area: one neighbour search per point per substep. The
+wave points are capped at 4 million, and `memory_safety` counts that budget
+when the option is on. Settings: **Surface Waves**, **Wave Detail**,
+**Wave Strength**, **Wave Damping** (Surface Filters panel, under Sharp
+Surfacing). Waves step once per solver frame in `SurfacePipeline.after_frame`.
+
+Review it on Upres Cove (same PowerShell setup as below):
+
+```
+blender --background --factory-startup --python-use-system-env --python tools/profiling/compare_guided_upres.py -- --demo upres_cove --waves --no-guided --full-fine --json-out artifacts/guided_upres/upres_cove_waves.json
+```
+
+The review file then holds Coarse, Surface waves and Full fine collections,
+Surface waves shown first. `summary.waves_speedup_vs_full_fine` is full fine
+ms over coarse plus waves ms (waves ms include extracting the coarse mesh and
+sampling its velocity).
 
 ## How to check it (Windows GPU host)
 

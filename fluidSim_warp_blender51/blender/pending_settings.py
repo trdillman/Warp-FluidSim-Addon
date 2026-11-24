@@ -132,6 +132,8 @@ _SURFACE_REGISTRY_FIELDS = frozenset({
     "surface_detail_enabled", "surface_detail_neighbor_radius",
     "surface_detail_max_stretch", "surface_detail_flatten",
     "surface_smooth_preserve_splashes",
+    "surface_waves_enabled", "surface_waves_detail",
+    "surface_waves_strength", "surface_waves_damping",
 })
 _RESET_REGISTRY_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
@@ -319,6 +321,8 @@ _SURFACE_SETTING_FIELDS = frozenset({
     "surface_detail_enabled", "surface_detail_neighbor_radius",
     "surface_detail_max_stretch", "surface_detail_flatten",
     "surface_smooth_preserve_splashes",
+    "surface_waves_enabled", "surface_waves_detail",
+    "surface_waves_strength", "surface_waves_damping",
 })
 
 

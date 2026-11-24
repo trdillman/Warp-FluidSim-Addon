@@ -252,3 +252,24 @@ def test_compare_tool_finds_built_review_scenes(tmp_path, monkeypatch):
     shipped.mkdir()
     (shipped / "dam_break.blend").write_bytes(b"")
     assert CMP.demo_blend_path("dam_break") == str(shipped / "dam_break.blend")
+
+
+def test_summary_reports_surface_waves_against_full_fine():
+    records = [
+        {"coarse_ms": 900.0, "waves_ms": 900.0, "waves_total_ms": 1800.0,
+         "full_fine_ms": 900.0},
+        {"coarse_ms": 20.0, "waves_ms": 5.0, "waves_total_ms": 25.0,
+         "full_fine_ms": 100.0},
+    ]
+    out = CMP.summarize(records)
+    assert out["mean_waves_total_ms"] == 25.0
+    assert out["waves_speedup_vs_full_fine"] == 4.0
+    assert "speedup_vs_full_fine" not in out  # no guided run
+
+
+def test_surface_waves_review_options():
+    args = CMP.parse(["--demo", "upres_cove", "--waves", "--no-guided"])
+    assert args.waves and args.no_guided and args.wave_detail == 0.5
+    args = CMP.parse(["--demo", "upres_cove"])
+    assert not args.waves and not args.no_guided
+    assert ("waves", "Surface waves") in CMP.REVIEW_SETS

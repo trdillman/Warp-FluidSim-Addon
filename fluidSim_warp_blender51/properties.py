@@ -1751,6 +1751,26 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_surface_refresh,
         description=("Pull each particle toward the centre of its neighbours before drawing it; "
                      "higher values flatten bumpy calm water more but can slightly shrink thin features, while zero leaves particles in place"))
+    surface_waves_enabled: BoolProperty(
+        name="Surface Waves", default=False,
+        update=_request_surface_refresh,
+        description=("Add ripples finer than the surface voxels, started where the liquid bends more sharply than its grid can show and carried along by its motion; "
+                     "costs a small wave simulation on the surface each frame and changes only the render surface, never the simulation"))
+    surface_waves_detail: FloatProperty(
+        name="Wave Detail", default=0.5, min=0.1, max=1.0,
+        update=_request_surface_refresh,
+        description=("Set the spacing of the wave points as a fraction of the surface voxel size; "
+                     "lower values give finer ripples at more GPU cost, while 1 keeps waves at the surface resolution"))
+    surface_waves_strength: FloatProperty(
+        name="Wave Strength", default=1.0, min=0.0, max=10.0,
+        update=_request_surface_refresh,
+        description=("Scale how strongly sharp bends start new waves; "
+                     "higher values give choppier water, while zero adds no new waves"))
+    surface_waves_damping: FloatProperty(
+        name="Wave Damping", default=1.5, min=0.0, max=20.0,
+        update=_request_surface_refresh,
+        description=("Set how fast waves fade, per second; "
+                     "higher values keep ripples near where they start, while lower values let them travel and linger"))
 
     # Whitewater
     whitewater_enabled: BoolProperty(

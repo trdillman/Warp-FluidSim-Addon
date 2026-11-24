@@ -86,6 +86,11 @@ _IDENTITY_OMITTED_AT_DEFAULT = {
     "surface_detail_max_stretch": 4.0,
     "surface_detail_flatten": 0.5,
     "surface_smooth_preserve_splashes": 0.0,
+    # Surface waves (render surface only): off they leave every mesh unchanged.
+    "surface_waves_enabled": False,
+    "surface_waves_detail": 0.5,
+    "surface_waves_strength": 1.0,
+    "surface_waves_damping": 1.5,
 }
 
 

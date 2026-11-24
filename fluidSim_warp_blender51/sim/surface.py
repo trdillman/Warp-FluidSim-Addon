@@ -269,6 +269,7 @@ class SurfacePipeline:
         self.built_key = None
         self.solver_sdf_key = None
         self.solver_sdf_error = ""
+        self.waves = None
 
     def mode(self):
         from .enums import SurfaceResolutionMode
@@ -777,6 +778,62 @@ class SurfacePipeline:
             with self.solver._phase("surface"):
                 self.build(build_render=True, build_lowres=bool(
                     getattr(s, "surface_build_lowres_sdf", False)))
+        if s.surface_enabled and bool(getattr(s, "surface_waves_enabled", False)):
+            with self.solver._phase("surface_waves"):
+                self.step_waves()
+
+    # Surface waves (sim/surface_waves.py): per-frame wave detail on the
+    # render mesh. They carry state from frame to frame, so they step once
+    # per solver frame here, never on a lazy mesh() read.
+
+    def _wave_settings(self):
+        from .surface_waves import SurfaceWaveSettings
+
+        s = self.solver.settings
+        h = float(self.voxel_size())
+        return SurfaceWaveSettings(
+            spacing=max(1e-4, h * float(getattr(s, "surface_waves_detail", 0.5))),
+            strength=float(getattr(s, "surface_waves_strength", 1.0)),
+            damping=float(getattr(s, "surface_waves_damping", 1.5)),
+            coarse_voxel=h)
+
+    def _vertex_velocity(self, verts):
+        from .frame_output import k_sample_surface_velocity
+
+        solver = self.solver
+        n = len(verts)
+        if not n:
+            return np.zeros((0, 3), dtype=np.float32)
+        grid, vel, dev = solver.grid, solver.vel, solver.device
+        targets = wp.array(np.asarray(verts, dtype=np.float32).reshape(-1, 3),
+                           dtype=wp.vec3, device=dev)
+        out = wp.empty(n, dtype=wp.vec3, device=dev)
+        wp.launch(k_sample_surface_velocity, dim=n,
+                  inputs=[targets, n, grid.origin, float(solver.settings.voxel_size),
+                          vel.u, vel.v, vel.w, vel.wu, vel.wv, vel.ww,
+                          grid.leaf_table, grid.voxels_dim, grid.leaves_dim],
+                  outputs=[out], device=dev)
+        return out.numpy()
+
+    def step_waves(self):
+        """Advance the surface waves one frame and cache the displaced mesh."""
+        from .surface_waves import SurfaceWaves
+
+        s = self.solver.settings
+        settings = self._wave_settings()
+        if self.waves is None:
+            self.waves = SurfaceWaves(settings, device=self.solver.device)
+        else:
+            self.waves.settings = settings
+        verts, tris = self.render_extractor.extract(self.render_sdf)
+        dt = float(s.time_scale) / max(float(s.frame_rate), 1e-6)
+        displaced = self.waves.step(verts, tris, self._vertex_velocity(verts), dt)
+        self.mesh_cache = (np.ascontiguousarray(displaced, dtype=np.float32), tris)
+        self.mesh_key = self.build_key()
+        host = getattr(self.solver, "_host_frame_cache", None)
+        if host is not None:
+            host.invalidate_surface()
+        return self.mesh_cache
 
     def rebuild(self):
         self.built_key = None
@@ -789,6 +846,8 @@ class SurfacePipeline:
         self.solver_sdf_error = ""
         self.invalidate()
         self.extractor.reset_buffers()
+        if self.waves is not None:
+            self.waves.reset()
         self.grid_key = None
         self.ensure_resources(force=True)
 
