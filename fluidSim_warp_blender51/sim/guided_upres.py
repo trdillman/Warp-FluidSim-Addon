@@ -268,13 +268,16 @@ def k_guide_phi(
 ):
     """Keep the fine level set within the coarse liquid's shell.
 
-    Fine solid and sink cells stay air, as the narrow band's own union
+    Fine solid (collision SDF or collision bit) and sink cells stay air, as
+    the narrow band's own union
     leaves them: the coarse level set does not resolve the finer walls.
     """
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
         return
-    if collision_sdf[tid] < 0.0 or (voxel_type[tid] & C.VOXEL_SINK) != 0:
+    # Native collision regions stamp only the voxel bit, not the SDF.
+    if collision_sdf[tid] < 0.0 or (
+            voxel_type[tid] & (C.VOXEL_COLLISION | C.VOXEL_SINK)) != 0:
         phi[tid] = limit
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
@@ -485,7 +488,9 @@ def k_guide_seed_demand(
         return
     if cls[tid] == 2 or collision_sdf[tid] < 0.0:
         return
-    if (voxel_type[tid] & C.VOXEL_SINK) != 0:
+    # Same blocked cells as the band's own reseed: native collision regions
+    # stamp only the voxel bit, so the SDF test above misses them.
+    if (voxel_type[tid] & (C.VOXEL_COLLISION | C.VOXEL_SINK)) != 0:
         return
     if voxel_counts[tid] > 0:
         return

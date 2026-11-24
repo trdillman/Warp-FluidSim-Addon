@@ -331,6 +331,10 @@ def test_seed_after_the_first_frame_only_fills_new_coarse_liquid(cuda_device):
     inp = _seed_inputs(dev, fine)
     inp["vtype"] = wp.full(fine.voxel_capacity, 2, dtype=wp.int32, device=dev)  # VOXEL_SINK
     assert _demand(guide, fine, inp, dev).sum() == 0
+    # Nor cells a native collision region marked by voxel bit only.
+    inp = _seed_inputs(dev, fine)
+    inp["vtype"] = wp.full(fine.voxel_capacity, 1, dtype=wp.int32, device=dev)  # VOXEL_COLLISION
+    assert _demand(guide, fine, inp, dev).sum() == 0
 
 
 def _empty_frame(device, time):
@@ -442,6 +446,8 @@ def test_guide_phi_leaves_fine_solid_and_sink_cells_as_air(cuda_device):
     solid[:m][x[:, 0] < CENTRE[0]] = -1.0
     sink = np.zeros(n, dtype=np.int32)
     sink[:m][(x[:, 0] >= CENTRE[0]) & (x[:, 1] < CENTRE[1])] = 2  # VOXEL_SINK
+    # A native collision region: the voxel bit only, the SDF stays open.
+    sink[:m][(x[:, 0] >= CENTRE[0]) & (x[:, 1] >= CENTRE[1]) & (x[:, 2] < CENTRE[2])] = 1
     phi = wp.full(n, -limit, dtype=float, device=dev)
     guide.apply_phi(fine, phi, m, limit, dev,
                     wp.array(solid, dtype=float, device=dev),
