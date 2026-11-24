@@ -618,3 +618,52 @@ def test_fine_frame_counter_follows_the_coarse_frame_it_replays():
     coarse.frame, coarse.sim_time = 11, 4.1      # the coarse frame then runs
     upres.step_frame()
     assert seen == [(10, 4.0)]
+
+
+def test_guide_max_speed_bounds_the_valid_coarse_faces(cuda_device):
+    dev = cuda_device
+    a = _coarse_frame(dev, 0.0)
+    fast = _coarse_frame(dev, 1.0 / 24.0, velocity=(30.0, 0.0, 0.0))
+    # A fast value on faces with no weight is not a guide velocity.
+    fast.wu = wp.zeros_like(fast.wu)
+    np.testing.assert_allclose(a.max_speed(), np.linalg.norm(VEL), rtol=1e-6)
+    assert fast.max_speed() == pytest.approx(0.0, abs=1e-6)
+
+    b = _coarse_frame(dev, 1.0 / 24.0, velocity=(6.0, 0.0, 0.0))
+    guide = GU.ShellGuide(4.0)
+    assert guide.max_speed() == 0.0
+    guide.set_frames(a, b)
+    assert guide.max_speed() == pytest.approx(6.0, rel=1e-6)
+
+
+def test_fine_substeps_count_the_guide_velocity_before_any_fine_liquid():
+    from fluidSim_warp_blender51.sim.solver import FluidSolver
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+
+    settings = SolverSettings(min_substeps=1, max_substeps=32, cfl=1.0,
+                              voxel_size=0.01, gravity=(0.0, 0.0, 0.0))
+
+    def substeps(speed, ready=True):
+        guide = SimpleNamespace(ready=ready, max_speed=lambda: speed)
+        stand_in = SimpleNamespace(
+            settings=settings, particles=SimpleNamespace(host_count=0),
+            narrow_band=SimpleNamespace(guide=guide))
+        return FluidSolver._compute_substeps(stand_in, 1.0 / 24.0)[0]
+
+    # 4.8 m/s at 1 cm voxels and CFL 1 needs 20 substeps over a 1/24 s frame.
+    assert substeps(4.8) == 20
+    assert substeps(0.0) == 1
+    assert substeps(4.8, ready=False) == 1
+
+
+def test_snapshot_records_the_coarse_one_shot_sources_already_fired(monkeypatch):
+    coarse = SimpleNamespace(frame=7, sim_time=1.0,
+                             sourcing=SimpleNamespace(_initial_fired={"sink", "edit"}))
+    monkeypatch.setattr(GU.GuideFrame, "from_solver",
+                        classmethod(lambda cls, solver, time, depth=None: SimpleNamespace()))
+    upres = GU.GuidedUpres.__new__(GU.GuidedUpres)
+    upres.coarse, upres.guide_depth = coarse, 0.1
+    frame = upres._snapshot()
+    coarse.sourcing._initial_fired.add("later")
+    assert frame.fired == frozenset({"sink", "edit"})
+    assert frame.frame == 7

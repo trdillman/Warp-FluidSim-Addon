@@ -107,6 +107,23 @@ register_fn(k_guide_deepen_init, "fluidSimGuideUpresDeepenInit",
             notes="Guided upres: seed the coarse interior for depth reconstruction.")
 
 
+@wp.kernel
+def k_guide_face_max(
+    vel: wp.array(dtype=float),
+    weight: wp.array(dtype=float),
+    slot: int,
+    out: wp.array(dtype=float),
+):
+    """Largest |face velocity| over the valid (weighted) MAC faces."""
+    tid = wp.tid()
+    if weight[tid] > 0.0:
+        wp.atomic_max(out, slot, wp.abs(vel[tid]))
+
+
+register_fn(k_guide_face_max, "fluidSimGuideUpresFaceMax",
+            notes="Guided upres: guide speed bound for the fine CFL schedule.")
+
+
 class GuideFrame:
     """One coarse frame, copied so it outlives the coarse solver's buffers.
 
@@ -132,8 +149,29 @@ class GuideFrame:
         self.wu = wp.clone(vel.wu)
         self.wv = wp.clone(vel.wv)
         self.ww = wp.clone(vel.ww)
+        self._max_speed = None
+        # Coarse one-shot sources this frame had already consumed.
+        self.fired = frozenset()
         if depth is not None:
             self.reconstruct_depth(float(depth), collision)
+
+    def max_speed(self):
+        """Upper bound on the guide speed this frame imposes (cached).
+
+        The guide samples only weighted faces, so the per-axis maxima over
+        them bound every guided velocity, blended or not.
+        """
+        if self._max_speed is None:
+            out = wp.zeros(3, dtype=float, device=self.u.device)
+            for axis, (vel, weight) in enumerate(
+                    ((self.u, self.wu), (self.v, self.wv), (self.w, self.ww))):
+                n = min(int(vel.shape[0]), int(weight.shape[0]))
+                if n > 0:
+                    fast_launch(k_guide_face_max, dim=n, inputs=[vel, weight, axis],
+                                outputs=[out], device=vel.device)
+            comps = out.numpy()
+            self._max_speed = float(math.sqrt(float((comps * comps).sum())))
+        return self._max_speed
 
     def reconstruct_depth(self, depth, collision=None):
         """Rebuild the inward distance down to ``-depth`` (eikonal sweeps).
@@ -582,6 +620,16 @@ class ShellGuide:
     def ready(self):
         return self.a is not None
 
+    def max_speed(self):
+        """Fastest velocity the guide imposes over the current frame pair.
+
+        The fine solver schedules its substeps before the guide writes any
+        velocity, so it asks for this the way it asks armed liquid sources.
+        """
+        if self.a is None:
+            return 0.0
+        return max(self.a.max_speed(), self.b.max_speed())
+
     def _guide_inputs(self):
         a, b = self.a, self.b
         return a, b, [a.voxels_dim, a.leaves_dim, a.origin, a.voxel_size]
@@ -856,6 +904,9 @@ class GuidedUpres:
         self.guide_depth = (3.0 * float(shell_voxels) * float(fine_settings.voxel_size)
                             + 2.0 * float(cs.voxel_size))
         self._last = self._snapshot()
+        # One-shot sources the coarse solve already consumed must not fire
+        # again in the fine one (it replays from this frame, not frame 0).
+        self.fine.sourcing._initial_fired = set(self._last.fired)
         self.guide.set_frames(self._last, None)
 
     def _sync_scene(self):
@@ -877,6 +928,8 @@ class GuidedUpres:
         # The coarse frame counter at this snapshot: frame-windowed sources
         # (sinks, forces) must see the same frame in the fine solve.
         frame.frame = int(getattr(self.coarse, "frame", 0))
+        frame.fired = frozenset(
+            getattr(getattr(self.coarse, "sourcing", None), "_initial_fired", ()))
         return frame
 
     def step_frame(self):

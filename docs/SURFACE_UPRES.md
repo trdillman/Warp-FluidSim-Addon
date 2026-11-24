@@ -87,7 +87,11 @@ colliders are copied, so the fine solve never writes into the coarse ones, and
 fine solid and sink cells stay air under the guide. The fine solve gets every
 coarse source except liquid emission (sinks, forces, collision and activation
 regions) and the coarse proxy force fields; the guide seeds its liquid, never
-into fine solid or sink cells. Moving colliders get a private fine mesh. The
+into fine solid or sink cells. One-shot sources the coarse solve already
+fired when the upres starts stay fired in the fine solve. With adaptive
+substeps the fine schedule counts the fastest guide velocity, so an empty fine
+solve still takes enough substeps for fast coarse liquid. Moving colliders get
+a private fine mesh. The
 fine solve exports no per-particle attributes, anything narrow-band reseeding
 cannot carry (species, particle-derived viscosity, scalar field sources) is refused,
 and factors run from 2 to 8.
