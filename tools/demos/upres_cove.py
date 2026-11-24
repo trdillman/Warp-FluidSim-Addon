@@ -2,13 +2,13 @@
 
 The guided upres review scene. It is the shipped dam_break cove (same reservoir,
 dam walls, beach, headlands, sea stack and jetty from
-``tools/demos/dam_break_cove.py``) run at twice the resolution, with a guided
-fine solve at twice that again:
+``tools/demos/dam_break_cove.py``) run at a smaller voxel size, with a guided
+fine solve at double the coarse resolution:
 
     dam_break demo   0.03 m voxels,   ~256k particles
-    upres_cove       0.015 m voxels,  ~2.0M particles   (the coarse sim)
-    guided upres     0.0075 m voxels, fine surface shell only
-    full fine        0.0075 m voxels, ~16M particles    (the comparison)
+    upres_cove       0.018 m voxels,  ~1.2M particles   (the coarse sim)
+    guided upres     0.009 m voxels, fine surface shell only
+    full fine        0.009 m voxels,  ~9.5M particles   (the comparison)
 
 The builder (``build_demo_scenes.py -- upres_cove``) and the review run
 (``tools/profiling/compare_guided_upres.py --demo upres_cove``) both read these
@@ -27,7 +27,7 @@ import numpy as np
 from tools.demos import dam_break_cove as cove
 
 NAME = "upres_cove"
-VOXEL = 0.015
+VOXEL = 0.018
 PARTICLES_PER_VOXEL = 8.0
 FRAMES = 72
 # Frames the review run turns into meshes by default (start, mid-surge, wash).
@@ -38,15 +38,14 @@ UPRES_FACTOR = 2
 SHELL_VOXELS = 4.0
 CORE_SHELLS = 2.0
 
-# Budgets. The coarse reserve sits above the ~2.05M Initial Fill. Leaves are
+# The coarse particle reserve covers the ~1.2M Initial Fill. Leaves are
 # fixed (the review run steps the solvers directly, without the add-on's leaf
-# growth, which would swap the coarse solver out from under the upres): the
-# default scene needs 6205 leaves at admission, including collider topology.
-# A reserve of 8192 leaves also gives the moving surge room to spread.
-# The fine solves get a fixed 32768 (the coarse liquid volume at
-# factor 2 is 8 fine leaves per coarse leaf), which keeps either fine solve
-# near 10 GB by the add-on's conservative estimate.
-MAX_PARTICLES = 2_500_000
+# growth, which would swap the coarse solver out from under the upres). The
+# reserve covers the terrain collider bounds and their padding.
+# Both fine passes use the same 32768-leaf reserve for that topology and the
+# spreading liquid. At 0.015 m the fine grid needed over 44000 leaves at startup,
+# exceeding the allocation this preset uses to fit a 16 GB class GPU.
+MAX_PARTICLES = 1_500_000
 LEAF_CAPACITY = 8192
 FINE_LEAF_CAPACITY = 32768
 

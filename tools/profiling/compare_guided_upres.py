@@ -343,15 +343,17 @@ def automatic_seed_objects(objects):
 
 
 def _full_fine_settings(coarse_settings, factor, mod):
-    if mod is not None and hasattr(mod, "fine_settings"):
-        return mod.fine_settings(coarse_settings, factor)
     import dataclasses
 
+    if mod is not None and hasattr(mod, "fine_settings"):
+        fine_settings = mod.fine_settings(coarse_settings, factor)
+        return dataclasses.replace(fine_settings, narrow_band_enabled=False)
     return dataclasses.replace(
         coarse_settings,
         voxel_size=float(coarse_settings.voxel_size) / factor,
         max_particles=int(coarse_settings.max_particles * factor ** 3),
         leaf_capacity=int(coarse_settings.leaf_capacity * factor ** 3),
+        narrow_band_enabled=False,
         whitewater_enabled=False)
 
 
