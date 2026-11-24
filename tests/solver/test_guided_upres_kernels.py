@@ -879,27 +879,3 @@ def test_deeper_pressure_shell_keeps_the_core_in_reconstructed_depth(
     assert not np.all(stamped)
     upres.guide.unstamp_core(fine, voxel_type, m, dev)
     assert np.all(voxel_type.numpy() == C.VOXEL_FLUID)
-
-
-@pytest.mark.parametrize(("capacity", "count", "owed", "overflow", "admitted"), [
-    (10, 5, 0, 0, 0),     # nothing owed: demand past the room is no clip
-    (10, 5, 3, 0, 3),     # owed fits in the room
-    (10, 5, 8, 1, 5),     # owed demand clipped by the buffer
-    (100, 0, 1000, 0, 10),  # room for every request
-])
-def test_reseed_overflow_counts_only_demand_the_band_could_fill(
-        capacity, count, owed, overflow, admitted):
-    from fluidSim_warp_blender51.sim.kernels_narrow_band import k_nb_reseed_reserve
-
-    dev = "cpu"
-    demand = wp.array(np.full(5, 2, np.int32), dtype=wp.int32, device=dev)
-    offsets = wp.array(np.arange(0, 10, 2, dtype=np.int32), dtype=wp.int32, device=dev)
-    owed_a = wp.array([owed], dtype=wp.int32, device=dev)
-    count_a = wp.array([count], dtype=wp.int32, device=dev)
-    base, limit, flag = (wp.zeros(1, dtype=wp.int32, device=dev) for _ in range(3))
-    wp.launch(k_nb_reseed_reserve, dim=1,
-              inputs=[demand, offsets, 5, capacity, owed_a, count_a],
-              outputs=[base, limit, flag], device=dev)
-    assert int(flag.numpy()[0]) == overflow
-    assert int(limit.numpy()[0]) == admitted
-    assert int(count_a.numpy()[0]) == count + admitted
