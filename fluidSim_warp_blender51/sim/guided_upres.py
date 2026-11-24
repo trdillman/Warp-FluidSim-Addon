@@ -631,7 +631,7 @@ class ShellGuide:
             return 0.0
         a = self.a.face_speed_limits()
         b = self.b.face_speed_limits()
-        return math.hypot(*(max(before, after) for before, after in zip(a, b)))
+        return math.hypot(*(max(before, after) for before, after in zip(a, b, strict=True)))
 
     def _guide_inputs(self):
         a, b = self.a, self.b
