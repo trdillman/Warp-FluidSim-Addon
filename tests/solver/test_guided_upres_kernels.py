@@ -579,3 +579,17 @@ def test_interior_velocity_ignores_a_frame_with_leaves_but_no_valid_faces(cuda_d
     assert deep.sum() > 50
     for arr, expected in zip(nb, (1.0, -2.0, 4.0)):
         np.testing.assert_allclose(arr.numpy()[:m][deep], expected, atol=1e-5)
+
+
+@pytest.mark.parametrize("overrides", [
+    {"species_enabled": True},
+    {"viscosity_enabled": True, "viscosity_from_particles": True},
+])
+def test_settings_narrow_band_reseeding_cannot_carry_are_refused(overrides):
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+    from fluidSim_warp_blender51.sim.sourcing import SourceBatch
+
+    coarse = SimpleNamespace(settings=SolverSettings(**overrides), colliders=(),
+                             sourcing=SimpleNamespace(batch=SourceBatch()))
+    with pytest.raises(NotImplementedError):
+        GU.GuidedUpres(coarse, factor=2)

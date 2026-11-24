@@ -88,7 +88,8 @@ fine solid and sink cells stay air under the guide. The fine solve gets every
 coarse source except liquid emission (sinks, forces, collision and activation
 regions) and the coarse proxy force fields; the guide seeds its liquid, never
 into fine solid or sink cells. Moving colliders get a private fine mesh. The
-fine solve exports no per-particle attributes, species are refused for now,
+fine solve exports no per-particle attributes, anything narrow-band reseeding
+cannot carry (species, particle-derived viscosity, scalar field sources) is refused,
 and factors run from 2 to 8.
 `GuidedUpres(coarse, factor=2, shell_voxels=4)` builds the fine solver from
 the coarse settings. Not wired to Blender yet.

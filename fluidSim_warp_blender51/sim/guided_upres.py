@@ -826,10 +826,21 @@ class GuidedUpres:
             # channels (colour, source id, uid); the fine solve exports none.
             export_attributes=False,
         )
-        if bool(getattr(cs, "species_enabled", False)):
+        # The fine solve is a narrow-band solve: refuse what narrow-band
+        # reseeding cannot carry (species colour, particle-derived viscosity,
+        # scalar field sources) before allocating it, instead of running a
+        # fine shell that silently lacks it.
+        from .enums import SourceOperation
+        from .narrow_band import blocking_reasons
+
+        plans = getattr(getattr(getattr(coarse, "sourcing", None), "batch", None),
+                        "native_plans", ())
+        reasons = blocking_reasons(fine_settings, scalar_field_source=any(
+            SourceOperation(p.operation) == SourceOperation.SCALAR_FIELD for p in plans))
+        if reasons:
             raise NotImplementedError(
-                "guided upres does not support species yet; narrow-band "
-                "reseeding cannot carry particle colour")
+                "Guided upres cannot run with this setup: " + "; ".join(reasons)
+                + ". Turn the conflicting feature off for the upres.")
         self._meshes = {}
         colliders = fine_colliders(getattr(coarse, "colliders", ()),
                                    self._meshes)  # refuses Dynamic early
