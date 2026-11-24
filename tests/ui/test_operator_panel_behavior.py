@@ -2646,7 +2646,7 @@ def _collider_settings(body_type):
     return SimpleNamespace(
         role="COLLIDER", collider_friction=0.2, collider_restitution=0.0,
         collider_body_type=body_type, collider_dynamic=body_type == "DYNAMIC", transfer_velocity=True, collider_density=500.0,
-        collider_drag=0.1, collider_initial_velocity=(0.0, 0.0, 0.0),
+        collider_drag=0.1, collider_initial_velocity=(0.0, 0.0, 0.0), allow_height_fill=False,
         collider_lock_axes=(False,) * 6)
 
 
