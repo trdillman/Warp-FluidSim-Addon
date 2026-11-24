@@ -28,6 +28,8 @@ EXEMPT = {
     "deck_shown", "deck_stage", "show_surface", "show_particles",
     "liquid_preview_enabled",  # compatibility adapter for liquid_display_mode
     "capacity_show_alternatives",
+    # Bookkeeping for the viewport eyes: whether an eye was set apart from its render icon.
+    "view_surface_overridden", "view_particles_overridden",
     # Domain: readouts; the whitewater type attribute is always published.
     "height_error", "whitewater_attribute_type",
     # Object: migration marker, readouts and legacy fields replaced by

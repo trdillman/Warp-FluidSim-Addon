@@ -439,6 +439,39 @@ def test_liquid_view_hidden_state_round_trips_both_visibility_toggles(monkeypatc
     assert len(refreshes) == 2
 
 
+def test_render_icons_move_their_own_eye_and_leave_the_other_alone(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    properties = _reload_module("fluidSim_warp_blender51.properties")
+    monkeypatch.setattr(properties, "_request_output_refresh", lambda _self, _context: None)
+    state = SimpleNamespace(
+        liquid_view_mode="SURFACE", show_surface=True, show_particles=False,
+        view_surface=True, view_particles=False,
+        view_surface_overridden=False, view_particles_overridden=False)
+
+    # Split the particles eye from the render flag: render on, eye still off.
+    state.show_particles = True
+    properties._sync_liquid_view_mode(state, None)
+    assert state.view_particles is True            # the changed flag drags its eye
+    state.view_particles = False                    # the artist closes the eye
+    properties._view_particles_changed(state, None)
+    assert state.view_particles_overridden is True
+    # Turning the surface render flag off moves only the surface eye.
+    state.show_surface = False
+    properties._sync_liquid_view_mode(state, None)
+    assert (state.view_surface, state.view_particles) == (False, False)
+    # Picking a Render Outputs menu value moves the eyes of the flags it changes
+    # only: particles were already rendered, so their closed eye stays closed.
+    state.liquid_view_mode = "SURFACE_PARTICLES"
+    properties._apply_liquid_view_mode(state, None)
+    assert (state.view_surface, state.view_particles) == (True, False)
+    # Future edits of the same render flag also preserve the eye override.
+    state.show_particles = False
+    properties._sync_liquid_view_mode(state, None)
+    state.show_particles = True
+    properties._sync_liquid_view_mode(state, None)
+    assert state.view_particles is False
+
+
 class _PermissiveSettings:
     """Settings stand-in that answers any property read.
 
@@ -2485,6 +2518,8 @@ def _stage_context(
         "show_surface", mode in {"SURFACE", "SURFACE_PARTICLES"})
     scene_settings.show_particles = overrides.get(
         "show_particles", mode in {"PARTICLES", "SURFACE_PARTICLES"})
+    scene_settings.view_surface = overrides.get("view_surface", scene_settings.show_surface)
+    scene_settings.view_particles = overrides.get("view_particles", scene_settings.show_particles)
     domain_obj = SimpleNamespace(
         fluidsim=SimpleNamespace(role="NONE"),
         fluidsim_domain=domain_settings,
@@ -2669,6 +2704,8 @@ def test_workflow_stage_advanced_shelf_is_gated_by_ui_mode(monkeypatch):
 
 
 _LOOK_SCENE_OWNED = {
+    "view_surface",
+    "view_particles",
     "show_surface",
     "show_particles",
     "particle_display_fraction",
@@ -2720,6 +2757,8 @@ def test_workflow_stage_look_hides_inactive_controls(monkeypatch):
     assert set(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look, context).props) == {
         "show_surface",
         "show_particles",
+        "view_surface",
+        "view_particles",
         "surface_enabled",
         "whitewater_enabled",
         "show_overlay",
@@ -2772,6 +2811,17 @@ def test_workflow_stage_look_has_one_whitewater_row(monkeypatch):
     eye = next(call for call in look.prop_calls if call["name"] == "show_whitewater")
     assert eye["text"] == "" and eye["icon"] == "HIDE_OFF"
     assert [c for c in look.prop_calls if c["name"] == "whitewater_enabled"][0].get("text") is None
+
+
+def test_look_materials_follow_the_eyes_as_well_as_the_render_flags(monkeypatch):
+    _install_bpy_stub(monkeypatch)
+    ui_stages = _reload_module("fluidSim_warp_blender51.blender.ui_stages")
+    context, _scene, _domain = _stage_context(
+        scene_overrides={"liquid_view_mode": "HIDDEN", "view_particles": True}
+    )
+    drawn = set(_draw_stage(ui_stages.FLUIDSIM_STAGE_PT_look_materials, context).props)
+    assert "particle_material" in drawn      # shown in the 3D view, though not rendered
+    assert "surface_material" not in drawn
 
 
 def _patch_bake_runtime(
@@ -3792,6 +3842,10 @@ def test_display_panel_exposes_hud_overlay_toggle(monkeypatch):
     fs = SimpleNamespace(
         liquid_view_mode="PARTICLES",
         surface_enabled=False,
+        show_surface=False,
+        view_surface=False,
+        show_particles=False,
+        view_particles=True,
         whitewater_enabled=False,
         show_overlay=True,
         particle_display_fraction=1.0,
@@ -3807,8 +3861,17 @@ def test_display_panel_exposes_hud_overlay_toggle(monkeypatch):
     )
     panel = ui_scene.FLUIDSIM_PT_output_display()
     panel.layout = _Layout()
+    active = []
+    gated = ui_scene._gated
+
+    def capture_gate(layout, enabled):
+        active.append(enabled)
+        return gated(layout, enabled)
+
+    monkeypatch.setattr(ui_scene, "_gated", capture_gate)
     panel.draw(SimpleNamespace(scene=SimpleNamespace(fluidsim=fs)))
     assert "show_overlay" in panel.layout.props
+    assert active[:2] == [False, True]
 
 
 def test_attribute_toggles_are_drawn_on_the_domain_group(monkeypatch):

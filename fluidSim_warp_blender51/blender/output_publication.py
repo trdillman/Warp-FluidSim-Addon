@@ -1872,22 +1872,25 @@ def _effective_voxel_size(scene, ds):
 def refresh_existing_output_settings(scene):
     """Apply display/material settings to existing output objects only."""
     _require_bpy()
-    from . import materials
+    from . import liquid_display, materials
 
     # Metadata only: no solver readback or attribute/geometry reconstruction.
     ds = _domain_settings(scene)
+    show_surface, show_particles = liquid_display._viewport_geometry(
+        scene, getattr(ds, "surface_enabled", False),
+        output_object(scene, SURFACE_NAME, ensure=False))
+    viewport_visible = {SURFACE_NAME: show_surface, PARTICLES_NAME: show_particles}
     for policy in output_family_policy(scene, voxel_size=_effective_voxel_size(scene, ds)):
         obj = output_object(scene, policy.name)
         if obj is None:
             continue
         visible = policy.visible_with_legacy(obj.get(LEGACY_UNCLASSIFIED_COUNT_TAG, 0))
         _set_hidden(obj, not visible)
-        if visible:
+        if visible or viewport_visible.get(policy.name, False):
             if policy.radius is not None:
                 _set_point_radius(obj, policy.radius)
             _ensure_material(getattr(materials, policy.material), scene, obj)
-    from .liquid_display import apply_viewport
-    apply_viewport(scene)
+    liquid_display.apply_viewport(scene)
     return _sync_render_inputs(scene)
 
 

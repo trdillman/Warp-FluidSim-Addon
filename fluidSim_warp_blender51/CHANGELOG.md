@@ -14,12 +14,19 @@
   Growth keeps the running solver's own settings, effects, frozen inputs and
   collider motion, and a bake that grew can still be resumed: the solver is
   sized from the checkpoint's leaf count.
-- The Look panel no longer repeats itself. Each output is one row: Generate
-  Surface with a render icon beside it, Render Particles, and Whitewater with an
-  eye beside it. The old "Liquid Display" menu is now "Viewport" (Liquid Preview,
-  As Rendered, Off; the saved values are unchanged). Liquid Preview draws
-  whitewater only while the eye is on; "Preview Whitewater" is now "Draw
-  Whitewater" and lives in the full Properties.
+- The Look panel no longer repeats itself. Each output is one row: the surface
+  (Generate Surface), the particles and the whitewater. Surface and particles
+  each have an eye (shows it in the 3D view) and a camera (includes it in the
+  render); whitewater has one eye for both. The eyes start linked to the render
+  icons and follow them until you click an eye, which splits that output only;
+  files saved before the eyes open with the eyes where the 3D view already was.
+  The old "Liquid Display" menu is now "Viewport" (Liquid Preview, Outputs, Off;
+  the saved values are unchanged). Liquid Preview draws whitewater only while
+  the whitewater eye is on; "Preview Whitewater" is now "Draw Whitewater" and
+  lives in the full Properties.
+- The surface clean-up passes are numbered in the order the solver runs them
+  (Filter, Dilate, Erode, Smooth), and the Filter says it exists to change that
+  order.
 - Removed two unused settings, Advanced Playback and Advanced Surface (never
   shown or read). Saved files open as before.
 - Fixed: particles chosen under Render Outputs were hidden in the viewport

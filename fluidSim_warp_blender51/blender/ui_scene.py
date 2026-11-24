@@ -785,28 +785,30 @@ class FLUIDSIM_PT_surface_filters(_SurfaceChild, FluidSimScenePanel, bpy.types.P
         # D9: the four post-process passes are chunked into their own labeled
         # boxes so the filter chain reads as four sequential sections rather than
         # a flat ten-prop wall.  Each strength knob greys out while its pass has
-        # zero iterations.
+        # zero iterations.  The solver runs them top to bottom; the numbered
+        # labels say so, and the first pass can be any operation, which is how
+        # the order of the others is changed (Erode here, then Dilate below).
         layout = _gated(_layout(self), _surface_enabled(context))
         fs = _domain_owner(context)
 
         flt = layout.box()
-        flt.label(text="Filter", icon="FILTER")
+        flt.label(text="1 · Filter (first pass, any operation)", icon="FILTER")
         flt.prop(fs, "surface_filter_type")
         flt.prop(fs, "surface_filter_iterations")
         _gated(flt, fs.surface_filter_iterations > 0).prop(fs, "surface_filter_strength")
 
         dilate = layout.box()
-        dilate.label(text="Dilate", icon="FULLSCREEN_ENTER")
+        dilate.label(text="2 · Dilate", icon="FULLSCREEN_ENTER")
         dilate.prop(fs, "surface_dilate_iterations")
         _gated(dilate, fs.surface_dilate_iterations > 0).prop(fs, "surface_dilate_strength")
 
         erode = layout.box()
-        erode.label(text="Erode", icon="FULLSCREEN_EXIT")
+        erode.label(text="3 · Erode", icon="FULLSCREEN_EXIT")
         erode.prop(fs, "surface_erode_iterations")
         _gated(erode, fs.surface_erode_iterations > 0).prop(fs, "surface_erode_strength")
 
         smooth = layout.box()
-        smooth.label(text="Smooth", icon="MOD_SMOOTH")
+        smooth.label(text="4 · Smooth", icon="MOD_SMOOTH")
         smooth.prop(fs, "surface_smooth_type")
         smooth.prop(fs, "surface_smooth_iterations")
         _gated(smooth, fs.surface_smooth_iterations > 0).prop(fs, "surface_smooth_strength")
@@ -937,10 +939,13 @@ class FLUIDSIM_PT_output_display(FluidSimScenePanel, bpy.types.Panel):
         # Display choices are scene-scoped; the two *_enabled gates are
         # domain-owned, so read them from the owner the solver uses.
         layout.prop(fs, "liquid_view_mode")
+        eyes = layout.row(align=True)
+        eyes.prop(fs, "view_surface")
+        eyes.prop(fs, "view_particles")
         layout.prop(fs, "show_overlay", text="Viewport HUD")
-        surface = _gated(layout, fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"} and _surface_enabled(context))
+        surface = _gated(layout, (fs.show_surface or fs.view_surface) and _surface_enabled(context))
         surface.prop(fs, "surface_attribute_mode")
-        particles = _gated(layout, fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"})
+        particles = _gated(layout, fs.show_particles or fs.view_particles)
         particles.prop(fs, "gpu_particle_preview")
         particles.prop(fs, "particle_display_fraction")
         particles.prop(fs, "particle_display_scale")
@@ -972,8 +977,8 @@ class FLUIDSIM_PT_output_materials(FluidSimScenePanel, bpy.types.Panel):
         fs = context.scene.fluidsim
         # Material pickers are scene-scoped; whitewater_enabled is not.
         layout.prop(fs, "output_collection_name")
-        _gated(layout, fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"}).prop(fs, "surface_material")
-        _gated(layout, fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"}).prop(fs, "particle_material")
+        _gated(layout, fs.liquid_view_mode in {"SURFACE", "SURFACE_PARTICLES"} or fs.view_surface).prop(fs, "surface_material")
+        _gated(layout, fs.liquid_view_mode in {"PARTICLES", "SURFACE_PARTICLES"} or fs.view_particles).prop(fs, "particle_material")
         whitewater = _gated(layout, _whitewater_enabled(context))
         whitewater.prop(fs, "whitewater_material")
         streams = _gated(whitewater, fs.whitewater_output_mode in {"SEPARATE", "BOTH"})

@@ -482,7 +482,7 @@ def _paint(context, layout, palette, hover):
                 _draw_icon(control.icon, x0 + PAD * s + r, (y0 + y1) / 2.0, r, colour,
                            tokens.rgba(palette.accent), fraction)
                 label = (f"{round(fraction * 100)}% Cancel" if fraction is not None
-                         else ({"PREVIEW": "Preview", "SURFACE": "As Rendered", "OFF": "Off"}.get(
+                         else ({"PREVIEW": "Preview", "SURFACE": "Outputs", "OFF": "Off"}.get(
                              getattr(scene.fluidsim, "liquid_display_mode", ""), control.label)
                                if control is controls.LIQUID_PREVIEW else control.label))
                 _draw.text(x0 + (PAD + ICON + GAP) * s, mid_y, label, size, colour)
