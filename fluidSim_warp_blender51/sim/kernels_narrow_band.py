@@ -509,10 +509,13 @@ def k_nb_reseed_reserve(
     base = count[0]
     total = offsets[n - 1] + demand[n - 1]
     room = wp.max(0, capacity - base)
-    admitted = wp.min(wp.min(total, room), wp.max(0, owed[0]))
+    eligible = wp.min(total, wp.max(0, owed[0]))
+    admitted = wp.min(eligible, room)
     slot_base[0] = base
     slot_limit[0] = admitted
-    if total > room:
+    # Only demand the band could actually fill counts: a request ``owed``
+    # already caps is not clipped by the buffer.
+    if eligible > room:
         nb_overflow[0] = 1
     count[0] = base + admitted
     owed[0] = owed[0] - admitted
