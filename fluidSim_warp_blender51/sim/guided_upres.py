@@ -872,15 +872,21 @@ class GuidedUpres:
             self.fine.set_force_fields(fields)
 
     def _snapshot(self):
-        return GuideFrame.from_solver(self.coarse, float(self.coarse.sim_time),
-                                      depth=self.guide_depth)
+        frame = GuideFrame.from_solver(self.coarse, float(self.coarse.sim_time),
+                                       depth=self.guide_depth)
+        # The coarse frame counter at this snapshot: frame-windowed sources
+        # (sinks, forces) must see the same frame in the fine solve.
+        frame.frame = int(getattr(self.coarse, "frame", 0))
+        return frame
 
     def step_frame(self):
         """Advance the fine solve over the coarse frame that just ran."""
         current = self._snapshot()
         self.guide.set_frames(self._last, current)
-        # The fine clock starts where the coarse one did for this frame.
+        # The fine clock and frame counter start where the coarse ones did
+        # for this frame.
         self.fine.sim_time = float(self._last.time)
+        self.fine.frame = int(getattr(self._last, "frame", 0))
         self.fine.set_colliders(fine_colliders(getattr(self.coarse, "colliders", ()),
                                                self._meshes))
         self._sync_scene()

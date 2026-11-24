@@ -593,3 +593,28 @@ def test_settings_narrow_band_reseeding_cannot_carry_are_refused(overrides):
                              sourcing=SimpleNamespace(batch=SourceBatch()))
     with pytest.raises(NotImplementedError):
         GU.GuidedUpres(coarse, factor=2)
+
+
+def test_fine_frame_counter_follows_the_coarse_frame_it_replays():
+    from fluidSim_warp_blender51.sim.sourcing import SourceBatch
+
+    seen = []
+
+    def fine_step():
+        seen.append((upres.fine.frame, upres.fine.sim_time))
+
+    coarse = SimpleNamespace(frame=10, sim_time=4.0, colliders=(), force_fields=None,
+                             sourcing=SimpleNamespace(batch=SourceBatch()))
+    upres = GU.GuidedUpres.__new__(GU.GuidedUpres)
+    upres.coarse = coarse
+    upres.fine = SimpleNamespace(
+        frame=0, sim_time=0.0, step_frame=fine_step,
+        set_colliders=lambda c: None, set_source_batch=lambda d, p: None,
+        particles=SimpleNamespace(refresh_host_count=lambda: 0))
+    upres.guide = SimpleNamespace(set_frames=lambda a, b: None, bootstrap=True)
+    upres._meshes, upres._sources, upres._force_fields = {}, None, None
+    upres._snapshot = lambda: SimpleNamespace(time=coarse.sim_time, frame=coarse.frame)
+    upres._last = upres._snapshot()            # built around an advanced coarse solve
+    coarse.frame, coarse.sim_time = 11, 4.1      # the coarse frame then runs
+    upres.step_frame()
+    assert seen == [(10, 4.0)]
