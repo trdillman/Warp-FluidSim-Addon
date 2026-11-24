@@ -81,11 +81,12 @@ def test_default_leaf_budgets_cover_the_entire_domain(fine):
 
 
 @pytest.mark.parametrize("demo_factory", [None, uc])
-def test_full_fine_reference_disables_narrow_band(demo_factory):
-    coarse = dataclasses.replace(_coarse_settings(), narrow_band_enabled=True)
+@pytest.mark.parametrize("narrow_band", [False, True])
+def test_unguided_fine_reference_preserves_authored_particle_mode(demo_factory, narrow_band):
+    coarse = dataclasses.replace(_coarse_settings(), narrow_band_enabled=narrow_band)
     full = CMP._full_fine_settings(coarse, uc.UPRES_FACTOR, demo_factory)
-    assert not full.narrow_band_enabled
-    assert coarse.narrow_band_enabled
+    assert full.narrow_band_enabled is narrow_band
+    assert coarse.narrow_band_enabled is narrow_band
 
 
 def test_fine_budgets_match_what_guided_upres_allocates():
