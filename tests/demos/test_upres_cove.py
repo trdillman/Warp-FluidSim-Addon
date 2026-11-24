@@ -175,3 +175,26 @@ def test_demo_mode_names_animated_inputs_it_cannot_replay():
         rig,
     ]
     assert CMP.animated_inputs(objects) == ["Paddle", "Blade", "Driven Source"]
+
+
+def test_demo_mode_rejects_nla_and_animated_mesh_data():
+    stacked = _Obj("NLA source", "SOURCE", anim=_Anim())
+    stacked.animation_data.nla_tracks = ["track"]
+    deforming = _Obj("Animated mesh", "COLLIDER")
+    deforming.data = _Obj("Mesh data", "NONE", anim=_Anim(action="deform"))
+    disabled = _Obj("Disabled input", "SOURCE", anim=_Anim(action="move"))
+    disabled.fluidsim.enabled = False
+    assert CMP.animated_inputs([stacked, deforming, disabled]) == [
+        "NLA source", "Animated mesh",
+    ]
+
+
+def test_demo_mode_identifies_enabled_automatic_seeds_from_scene_inputs():
+    seed = _Obj("Water seed", "SOURCE")
+    seed.fluidsim.enabled = seed.fluidsim.auto_inject_seed = True
+    disabled = _Obj("Disabled seed", "SOURCE")
+    disabled.fluidsim.enabled = False
+    disabled.fluidsim.auto_inject_seed = True
+    initial_fill = _Obj("Initial fill", "SOURCE")
+    initial_fill.fluidsim.enabled = True
+    assert CMP.automatic_seed_objects([seed, disabled, initial_fill]) == ["Water seed"]

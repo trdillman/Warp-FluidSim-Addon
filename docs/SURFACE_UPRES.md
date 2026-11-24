@@ -145,8 +145,8 @@ full fine ms over coarse plus guided fine ms, after one warm-up frame; above
 the coarse, guided and full fine surfaces of frames 24, 48 and 72, one
 collection each, every mesh visible only on its own frame. `--voxel-size`,
 `--factor`, `--core-shells` and `--frames` override the scene's defaults.
-Demo mode refuses animated colliders or sources for now, and `--full-fine`
-refuses scenes seeded from particle objects.
+Demo mode requires static collider, source and force inputs. `--full-fine`
+also requires a scene without automatic particle-object seeds.
 
 ## How to check it (Windows GPU host)
 

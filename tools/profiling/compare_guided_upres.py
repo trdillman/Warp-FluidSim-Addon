@@ -18,9 +18,9 @@ on its own timeline frame). ``upres_cove`` is the scene made for this; when
 ``demos/NAME.blend`` has not been built yet, the scene is authored on the fly
 from ``tools/demos/build_demo_scenes.py``. The full fine sim runs after the
 guided one, so the two fine solves never hold VRAM at the same time. Demo
-mode refuses scenes with animated colliders or sources (it steps the solvers
-without advancing the timeline), and ``--full-fine`` refuses scenes seeded
-from particle objects (the full fine solver gets the sources, not the seeds).
+mode requires static collider, source and force inputs because it steps the
+solvers without advancing the timeline. ``--full-fine`` requires a scene
+without automatic particle-object seeds.
 
 From PowerShell, with a private extension folder: ``--factory-startup``
 otherwise lets Blender's wheel sync delete the installed extension wheels
@@ -28,9 +28,7 @@ otherwise lets Blender's wheel sync delete the installed extension wheels
 
     $env:BLENDER_USER_RESOURCES = Join-Path $env:TEMP ("fluidsim-upres-" + [guid]::NewGuid())
     $env:BLENDER_USER_EXTENSIONS = Join-Path $env:BLENDER_USER_RESOURCES 'extensions'
-    blender --background --factory-startup --python-use-system-env \\
-        --python tools/profiling/compare_guided_upres.py -- --demo upres_cove \\
-        --full-fine --phases --json-out artifacts/guided_upres/upres_cove.json
+    blender --background --factory-startup --python-use-system-env --python tools/profiling/compare_guided_upres.py -- --demo upres_cove --full-fine --phases --json-out artifacts/guided_upres/upres_cove.json
 """
 
 from __future__ import annotations
@@ -305,23 +303,40 @@ class ReviewFile:
 
 
 def animated_inputs(objects):
-    """Names of colliders and sources that animation moves (directly or by a parent).
+    """Names of simulation inputs driven by animation or constraints.
 
     Demo mode steps the solvers without advancing the timeline, so such an
     input would sit frozen at its first pose.
     """
+    def animated(data):
+        anim = getattr(data, "animation_data", None)
+        return anim is not None and (anim.action is not None or anim.drivers
+                                     or getattr(anim, "nla_tracks", ()))
+
     out = []
     for obj in objects:
-        role = getattr(getattr(obj, "fluidsim", None), "role", "")
-        if role not in ("COLLIDER", "SOURCE"):
+        settings = getattr(obj, "fluidsim", None)
+        if (getattr(settings, "role", "") not in ("COLLIDER", "SOURCE", "FORCE")
+                or not getattr(settings, "enabled", True)):
             continue
         node = obj
         while node is not None:
-            anim = getattr(node, "animation_data", None)
-            if anim is not None and (anim.action is not None or len(anim.drivers)):
+            data = getattr(node, "data", None)
+            if (animated(node) or animated(data) or animated(getattr(data, "shape_keys", None))
+                    or getattr(node, "constraints", ())):
                 out.append(obj.name)
                 break
             node = getattr(node, "parent", None)
+    return out
+
+
+def automatic_seed_objects(objects):
+    """Identify automatic particle seed inputs before Blender admission."""
+    out = []
+    for obj in objects:
+        settings = getattr(obj, "fluidsim", None)
+        if getattr(settings, "enabled", False) and getattr(settings, "auto_inject_seed", False):
+            out.append(obj.name)
     return out
 
 
@@ -341,14 +356,17 @@ def _full_fine_settings(coarse_settings, factor, mod):
 def run_demo(args):
     import bpy
 
-    from fluidSim_warp_blender51.blender.scene_bridge import session
-    from fluidSim_warp_blender51.sim.guided_upres import GuidedUpres, fine_colliders
-    from fluidSim_warp_blender51.sim.solver import FluidSolver
     from tools.demos.metadata import assign_input_identities
 
     mod = demo_defaults(args.demo)
     resolve_demo_args(args, mod)
     scene, path = open_demo(args.demo)
+    # Opening the demo reloads the repository add-on. Use the same module
+    # instances as its registered Blender operators.
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+    from fluidSim_warp_blender51.sim.guided_upres import GuidedUpres, fine_colliders
+    from fluidSim_warp_blender51.sim.solver import FluidSolver
+
     wanted = sorted(set(args.frames))
     last = max(wanted)
     fs = scene.fluidsim
@@ -365,6 +383,10 @@ def run_demo(args):
         raise NotImplementedError(
             f"{args.demo}: --demo does not replay animated inputs yet "
             f"({', '.join(sorted(moving))})")
+    if args.full_fine and (seeded := automatic_seed_objects(scene.objects)):
+        raise NotImplementedError(
+            f"{args.demo}: --full-fine cannot reproduce particle-object seeds "
+            f"({', '.join(sorted(seeded))}). Run without it")
     assign_input_identities(scene)
     if bpy.ops.fluidsim.initialize() != {"FINISHED"}:
         raise RuntimeError(f"{args.demo}: the add-on refused to initialize the scene")
@@ -373,14 +395,6 @@ def run_demo(args):
     if coarse is None:
         raise RuntimeError(f"{args.demo}: no solver after initialize")
     cs = coarse.settings
-    # Liquid before any source has fired came from particle-object seeds,
-    # which admission injects outside the source batch.
-    seeded = (coarse.particles.refresh_host_count() > 0
-              and not getattr(coarse.sourcing, "_initial_fired", ()))
-    if args.full_fine and seeded:
-        raise NotImplementedError(
-            f"{args.demo}: --full-fine cannot reproduce particle-object seeds yet; "
-            "run without it")
     print(f"{args.demo}: coarse {cs.voxel_size:.4f} m, fine "
           f"{cs.voxel_size / args.factor:.4f} m, frames {wanted}")
 
