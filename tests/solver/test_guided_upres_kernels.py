@@ -683,3 +683,52 @@ def test_snapshot_records_the_coarse_one_shot_sources_already_fired(monkeypatch)
     coarse.sourcing._initial_fired.add("later")
     assert frame.fired == frozenset({"sink", "edit"})
     assert frame.frame == 7
+
+
+def test_deep_core_is_a_coarse_driven_solid_only_during_the_pressure_solve(cuda_device):
+    dev = cuda_device
+    fine = _grid(dev, FINE_H)
+    n, m = fine.voxel_capacity, int(fine.active_voxel_count)
+    x = _centres(fine, dev)
+    r = np.linalg.norm(x - np.array(CENTRE), axis=1)
+    vtype = np.zeros(n, dtype=np.int32)
+    vtype[:m] = 4                                       # VOXEL_FLUID
+    collider = (x[:, 2] < 0.20) & (r < RADIUS)          # a real collider at the bottom
+    vtype[:m][collider] = 1                              # VOXEL_COLLISION
+    before_vel = np.full((n, 3), 7.0, dtype=np.float32)
+    voxel_type = wp.array(vtype, dtype=wp.int32, device=dev)
+    collision_vel = wp.array(before_vel, dtype=wp.vec3, device=dev)
+
+    guide = GU.ShellGuide(1.0, core_shells=2.0)          # core below 2 fine voxels
+    guide.set_frames(_coarse_frame(dev, 0.0), _coarse_frame(dev, 1.0))
+    guide.set_time(0.5)
+    guide.stamp_core(fine, voxel_type, collision_vel, m, dev)
+
+    vt = voxel_type.numpy()[:m]
+    cv = collision_vel.numpy()[:m]
+    depth = 2.0 * 1.0 * FINE_H
+    deep = (r < RADIUS - depth - COARSE_H) & ~collider
+    shallow = r > RADIUS - depth + COARSE_H
+    assert deep.sum() > 100
+    assert np.all(vt[deep] == 4 | 1)
+    np.testing.assert_allclose(cv[deep], np.tile(VEL, (int(deep.sum()), 1)), atol=1e-5)
+    assert np.all(vt[shallow & ~collider] == 4)
+    assert np.all(cv[shallow | collider] == 7.0)
+    assert np.all(vt[collider] == 1)
+
+    guide.unstamp_core(fine, voxel_type, collision_vel, m, dev)
+    np.testing.assert_array_equal(voxel_type.numpy(), vtype)
+    np.testing.assert_array_equal(collision_vel.numpy(), before_vel)
+
+
+def test_core_stamp_can_be_turned_off(cuda_device):
+    dev = cuda_device
+    fine = _grid(dev, FINE_H)
+    n, m = fine.voxel_capacity, int(fine.active_voxel_count)
+    voxel_type = wp.full(n, 4, dtype=wp.int32, device=dev)
+    collision_vel = wp.zeros(n, dtype=wp.vec3, device=dev)
+    guide = GU.ShellGuide(2.0, core_shells=0.0)
+    guide.set_frames(_coarse_frame(dev, 0.0), None)
+    guide.stamp_core(fine, voxel_type, collision_vel, m, dev)
+    guide.unstamp_core(fine, voxel_type, collision_vel, m, dev)
+    assert np.all(voxel_type.numpy() == 4)

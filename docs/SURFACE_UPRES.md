@@ -95,12 +95,19 @@ a private fine mesh. The
 fine solve exports no per-particle attributes, anything narrow-band reseeding
 cannot carry (species, particle-derived viscosity, scalar field sources) is refused,
 and factors run from 2 to 8.
+Only the shell gets a fine pressure solve. Fine liquid deeper than
+`core_shells` shells (default 2) below the coarse surface is a solid that
+moves with the coarse velocity for the pressure solve only, which is the
+boundary condition Nielsen and Bridson use. Without it the fine pressure solve
+spans the whole liquid volume and costs as much as a full fine sim. The core
+leaves stay allocated so the fine level set and mesh stay whole; only the
+pressure unknowns shrink. `core_shells=0` solves the whole depth.
 `GuidedUpres(coarse, factor=2, shell_voxels=4)` builds the fine solver from
 the coarse settings. Not wired to Blender yet.
 
 ```
 python -m pytest -q tests/solver/test_guided_upres_kernels.py
-python tools/profiling/compare_guided_upres.py --device cuda:0 --voxel-size 0.06 --factor 2 --shell 4 --frames 20 40 --full-fine --obj-dir artifacts/guided_upres --json-out artifacts/guided_upres/report.json
+python tools/profiling/compare_guided_upres.py --device cuda:0 --voxel-size 0.06 --factor 2 --shell 4 --frames 20 40 --full-fine --phases --obj-dir artifacts/guided_upres --json-out artifacts/guided_upres/report.json
 ```
 
 The second command steps the coarse dam break, the guided fine solve and

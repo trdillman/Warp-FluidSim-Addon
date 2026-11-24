@@ -45,6 +45,18 @@ def _timed(device, fn):
     return out, (time.perf_counter() - t0) * 1000.0
 
 
+def _solver_stats(stats, profiler):
+    """Where a fine frame went: substeps, pressure work, grid size, phases."""
+    if stats is None:
+        return None
+    out = {name: getattr(stats, name, None) for name in (
+        "substeps", "pressure_iterations", "active_voxels", "liquid_voxels")}
+    if profiler is not None:
+        out["phase_ms"] = {key: round(float(value), 3)
+                           for key, value in sorted(profiler.frame.timers.items())}
+    return out
+
+
 def _write_obj(path, verts, tris):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
@@ -62,13 +74,20 @@ def run(args):
     settings, sources = _settings(args, args.voxel_size)
     coarse = FluidSolver(settings)
     coarse.set_source_batch(sources)
-    upres = GuidedUpres(coarse, factor=args.factor, shell_voxels=args.shell)
+    fine_prof = full_prof = None
+    if args.phases:
+        from fluidSim_warp_blender51.diagnostics.profiler import Profiler
+
+        fine_prof = Profiler(device=args.device)
+        full_prof = Profiler(device=args.device)
+    upres = GuidedUpres(coarse, factor=args.factor, shell_voxels=args.shell,
+                        core_shells=args.core_shells, profiler=fine_prof)
     upres.fine.settings.surface_detail_enabled = bool(args.sharp)
     full = None
     if args.full_fine:
         fs, fsrc = _settings(args, args.voxel_size / args.factor)
         fs.max_particles = int(settings.max_particles * args.factor ** 3)
-        full = FluidSolver(fs)
+        full = FluidSolver(fs, profiler=full_prof)
         full.set_source_batch(fsrc)
     wanted = set(args.frames)
     frames = []
@@ -79,15 +98,19 @@ def run(args):
                 if full is not None:
                     full.set_source_batch()
             _, coarse_ms = _timed(coarse.device, coarse.step_frame)
-            _, fine_ms = _timed(coarse.device, upres.step_frame)
-            full_ms = None
+            fine_stats, fine_ms = _timed(coarse.device, upres.step_frame)
+            full_ms = full_stats = None
             if full is not None:
-                _, full_ms = _timed(coarse.device, full.step_frame)
+                full_stats, full_ms = _timed(coarse.device, full.step_frame)
             rec = {
                 "frame": frame,
                 "coarse_ms": coarse_ms,
                 "guided_fine_ms": fine_ms,
+                # What the upres really costs: the coarse solve it follows too.
+                "guided_total_ms": coarse_ms + fine_ms,
                 "full_fine_ms": full_ms,
+                "guided_fine": _solver_stats(fine_stats, fine_prof),
+                "full_fine": _solver_stats(full_stats, full_prof),
                 "coarse_particles": int(coarse.particles.count.numpy()[0]),
                 "fine_particles": int(upres.fine.particles.count.numpy()[0]),
             }
@@ -111,7 +134,7 @@ def run(args):
         if full is not None:
             full.release()
     report = {"voxel_size": args.voxel_size, "factor": args.factor,
-              "shell": args.shell, "frames": frames}
+              "shell": args.shell, "core_shells": args.core_shells, "frames": frames}
     if args.json_out:
         os.makedirs(os.path.dirname(os.path.abspath(args.json_out)), exist_ok=True)
         with open(args.json_out, "w", encoding="utf-8") as fh:
@@ -128,6 +151,11 @@ def parse(argv):
     p.add_argument("--max-particles", type=int, default=None)
     p.add_argument("--factor", type=int, default=2)
     p.add_argument("--shell", type=float, default=4.0)
+    p.add_argument("--core-shells", type=float, default=2.0,
+                   help="fine liquid deeper than this many shells is a coarse-driven "
+                        "solid in the fine pressure solve (0 solves the whole depth)")
+    p.add_argument("--phases", action="store_true",
+                   help="record per-phase ms for the guided and full fine solvers")
     p.add_argument("--frames", type=int, nargs="+", default=[20, 40])
     p.add_argument("--emit-frames", type=int, default=6)
     p.add_argument("--sharp", action="store_true",

@@ -414,6 +414,93 @@ register_fn(k_guide_interior_velocity, "fluidSimGuideUpresVelocity",
 
 
 @wp.kernel
+def k_guide_stamp_core(
+    voxel_type: wp.array(dtype=wp.int32),
+    collision_vel: wp.array(dtype=wp.vec3),
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    h: float,
+    depth: float,
+    a_sdf: wp.array(dtype=float),
+    a_u: wp.array(dtype=float), a_v: wp.array(dtype=float), a_w: wp.array(dtype=float),
+    a_wu: wp.array(dtype=float), a_wv: wp.array(dtype=float), a_ww: wp.array(dtype=float),
+    a_table: wp.array(dtype=wp.int32),
+    b_sdf: wp.array(dtype=float),
+    b_u: wp.array(dtype=float), b_v: wp.array(dtype=float), b_w: wp.array(dtype=float),
+    b_wu: wp.array(dtype=float), b_wv: wp.array(dtype=float), b_ww: wp.array(dtype=float),
+    b_table: wp.array(dtype=wp.int32),
+    g_voxels_dim: wp.vec3i,
+    g_leaves_dim: wp.vec3i,
+    g_origin: wp.vec3,
+    g_h: float,
+    alpha: float,
+    saved_vel: wp.array(dtype=wp.vec3),
+    stamped: wp.array(dtype=wp.int32),
+):
+    """Make fine liquid deeper than ``depth`` below the coarse surface a
+    solid that moves with the coarse velocity, for the pressure solve only.
+
+    This is the guided-shell boundary of Nielsen & Bridson 2011: the fine
+    pressure solve covers the shell, and the deep core's flux comes from the
+    coarse solve instead of a fine solve of the whole volume. The previous
+    ``collision_vel`` is saved so ``k_guide_unstamp_core`` can restore it.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    stamped[tid] = 0
+    vt = voxel_type[tid]
+    if (vt & C.VOXEL_FLUID) == 0 or (vt & (C.VOXEL_COLLISION | C.VOXEL_SINK)) != 0:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    x = origin + h * wp.vec3(float(ijk[0]) + 0.5, float(ijk[1]) + 0.5,
+                             float(ijk[2]) + 0.5)
+    ga = _guide_phi_at(a_sdf, a_table, g_voxels_dim, g_leaves_dim, g_origin, g_h, x)
+    gb = _guide_phi_at(b_sdf, b_table, g_voxels_dim, g_leaves_dim, g_origin, g_h, x)
+    g = _guide_blend(ga, gb, alpha)
+    if g >= -depth:
+        return
+    stamped[tid] = 1
+    saved_vel[tid] = collision_vel[tid]
+    collision_vel[tid] = wp.vec3(
+        _guide_face(a_u, a_wu, a_table, b_u, b_wu, b_table,
+                    g_voxels_dim, g_leaves_dim, g_origin, g_h, x, 0, alpha),
+        _guide_face(a_v, a_wv, a_table, b_v, b_wv, b_table,
+                    g_voxels_dim, g_leaves_dim, g_origin, g_h, x, 1, alpha),
+        _guide_face(a_w, a_ww, a_table, b_w, b_ww, b_table,
+                    g_voxels_dim, g_leaves_dim, g_origin, g_h, x, 2, alpha))
+    voxel_type[tid] = vt | C.VOXEL_COLLISION
+
+
+register_fn(k_guide_stamp_core, "fluidSimGuideUpresStampCore",
+            notes="Guided upres: deep core is a coarse-driven solid for pressure.")
+
+
+@wp.kernel
+def k_guide_unstamp_core(
+    voxel_type: wp.array(dtype=wp.int32),
+    collision_vel: wp.array(dtype=wp.vec3),
+    num_leaves: wp.array(dtype=wp.int32),
+    saved_vel: wp.array(dtype=wp.vec3),
+    stamped: wp.array(dtype=wp.int32),
+):
+    """Undo ``k_guide_stamp_core`` after the pressure solve."""
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    if stamped[tid] == 0:
+        return
+    voxel_type[tid] = voxel_type[tid] & (~C.VOXEL_COLLISION)
+    collision_vel[tid] = saved_vel[tid]
+    stamped[tid] = 0
+
+
+register_fn(k_guide_unstamp_core, "fluidSimGuideUpresUnstampCore",
+            notes="Guided upres: restore the core after the pressure solve.")
+
+
+@wp.kernel
 def k_guide_mark_leaves(
     g_sdf: wp.array(dtype=float),
     g_leaf_coords: wp.array(dtype=wp.vec3i),
@@ -598,8 +685,11 @@ class ShellGuide:
     the current fine substep between the two frames (0 at ``a``, 1 at ``b``).
     """
 
-    def __init__(self, shell_voxels):
+    def __init__(self, shell_voxels, core_shells=2.0):
         self.shell_voxels = max(1.0, float(shell_voxels))
+        # Fine liquid deeper than this many shells below the coarse surface
+        # is a coarse-driven solid in the pressure solve (0 turns it off).
+        self.core_shells = max(0.0, float(core_shells or 0.0))
         self.a = None
         self.b = None
         self.alpha = 0.0
@@ -607,6 +697,9 @@ class ShellGuide:
         self.bootstrap = True
         self._demand = None
         self._budget = None
+        self._saved_vel = None
+        self._stamped = None
+        self._stamp_live = False
 
     def set_frames(self, a, b):
         self.a, self.b = a, (b if b is not None else a)
@@ -724,6 +817,40 @@ class ShellGuide:
                     particles.alive],
             device=device)
         # The caller (NarrowBand.reseed) refreshes the host particle count.
+
+    def stamp_core(self, grid, voxel_type, collision_vel, nvox, device):
+        """Before the fine pressure solve: the deep core becomes a solid that
+        moves with the coarse velocity, so the solve only covers the shell."""
+        self._stamp_live = False
+        if not self.ready or self.core_shells <= 0.0:
+            return
+        a, b, common = self._guide_inputs()
+        h = float(grid.voxel_size)
+        nv = max(1, int(nvox))
+        size = max(nv, int(collision_vel.shape[0]))
+        if self._stamped is None or self._stamped.shape[0] < size:
+            self._stamped = wp.zeros(size, dtype=wp.int32, device=device)
+            self._saved_vel = wp.zeros(size, dtype=wp.vec3, device=device)
+        fast_launch(
+            k_guide_stamp_core, dim=nv,
+            inputs=[voxel_type, collision_vel, grid.leaf_coords, grid.num_leaves,
+                    grid.origin, h, self.core_shells * self.shell_voxels * h,
+                    a.sdf, a.u, a.v, a.w, a.wu, a.wv, a.ww, a.leaf_table,
+                    b.sdf, b.u, b.v, b.w, b.wu, b.wv, b.ww, b.leaf_table,
+                    *common, float(self.alpha)],
+            outputs=[self._saved_vel, self._stamped], device=device)
+        self._stamp_live = True
+
+    def unstamp_core(self, grid, voxel_type, collision_vel, nvox, device):
+        """After the pressure solve: the core is fine liquid again."""
+        if not self._stamp_live:
+            return
+        self._stamp_live = False
+        fast_launch(
+            k_guide_unstamp_core, dim=max(1, int(nvox)),
+            inputs=[voxel_type, collision_vel, grid.num_leaves,
+                    self._saved_vel, self._stamped],
+            device=device)
 
     def mark_leaves(self, grid, device):
         if not self.ready:
@@ -843,7 +970,8 @@ class GuidedUpres:
     """
 
     def __init__(self, coarse, factor=2, shell_voxels=4.0, *,
-                 particle_budget_scale=None, leaf_budget_scale=None):
+                 particle_budget_scale=None, leaf_budget_scale=None,
+                 core_shells=2.0, profiler=None):
         import dataclasses
 
         from .enums import SurfaceResolutionMode
@@ -895,9 +1023,9 @@ class GuidedUpres:
         self._meshes = {}
         colliders = fine_colliders(getattr(coarse, "colliders", ()),
                                    self._meshes)  # refuses Dynamic early
-        self.fine = FluidSolver(fine_settings)
+        self.fine = FluidSolver(fine_settings, profiler=profiler)
         self.fine.set_colliders(colliders)
-        self.guide = ShellGuide(shell_voxels)
+        self.guide = ShellGuide(shell_voxels, core_shells)
         self.fine.narrow_band.guide = self.guide
         self._sources = None
         self._force_fields = None

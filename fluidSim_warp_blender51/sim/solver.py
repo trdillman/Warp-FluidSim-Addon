@@ -2475,7 +2475,13 @@ class FluidSolver:
             self.features.run(
                 FrameFeaturePhase.BEFORE_PRESSURE, self, time_ctx)
             with self._phase("pressure"):
-                projected = self._pressure(dt)
+                if self.narrow_band is not None:
+                    self.narrow_band.before_pressure()
+                try:
+                    projected = self._pressure(dt)
+                finally:
+                    if self.narrow_band is not None:
+                        self.narrow_band.after_pressure()
                 self._collider_material_response(dt)
             self._sanitize(dt)
             if self.rigid.active:
