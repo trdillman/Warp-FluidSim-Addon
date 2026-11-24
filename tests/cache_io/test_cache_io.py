@@ -164,7 +164,9 @@ def _pre_d1_signature(settings):
               and f.name != "pressure_learned_guess"
               # sharp surfacing, added after D1 and omitted at its defaults
               and not f.name.startswith("surface_detail_")
-              and f.name != "surface_smooth_preserve_splashes"}
+              and f.name != "surface_smooth_preserve_splashes"
+              # surface waves, added after D1 and omitted at its defaults
+              and not f.name.startswith("surface_waves_")}
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"),
                          allow_nan=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

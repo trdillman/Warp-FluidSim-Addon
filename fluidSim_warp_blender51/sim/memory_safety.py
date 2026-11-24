@@ -44,6 +44,14 @@ SURFACE_DENSE_BYTES_PER_VOXEL = 40
 # workspace (two double-buffered int32 arrays reserved at 1.5x capacity).
 SHARP_SURFACE_BYTES_PER_PARTICLE = 52 + 24
 SHARP_SURFACE_HASH_BYTES = 8 * SHARP_SURFACE_HASH_GRID_DIM ** 3
+# Surface waves: each wave point holds position, velocity, normal (3 vec3),
+# height, height velocity, phase, curvature and two step buffers (6 floats),
+# plus up to two scan/flag ints and candidates of the same size in the frame
+# it is born. A 128^3 hash grid of int32 cells. The point budget is the
+# module default (sim/surface_waves.py SurfaceWaveSettings.max_points).
+SURFACE_WAVE_BYTES_PER_POINT = 2 * (3 * 12 + 6 * 4 + 2 * 4)
+SURFACE_WAVE_MAX_POINTS = 4_000_000
+SURFACE_WAVE_HASH_BYTES = 2 * 128 ** 3 * 4
 SURFACE_SPLASH_FIELD_BYTES_PER_VOXEL = 4  # simulation density or render weight
 SURFACE_DETAIL_FIELDS_BYTES_PER_VOXEL = 8  # render SDF and filter scratch
 PARTICLE_BYTES = 128
@@ -327,4 +335,7 @@ def estimate_solver_bytes(settings) -> int:
         estimate += particles * SHARP_SURFACE_BYTES_PER_PARTICLE + SHARP_SURFACE_HASH_BYTES
     if preserve and int(_value(settings, "surface_smooth_iterations", 1)) > 0:
         estimate += (leaves + render_leaves) * LEAF_VOLUME * SURFACE_SPLASH_FIELD_BYTES_PER_VOXEL
+    if bool(_value(settings, "surface_waves_enabled", False)):
+        estimate += (SURFACE_WAVE_MAX_POINTS * SURFACE_WAVE_BYTES_PER_POINT
+                     + SURFACE_WAVE_HASH_BYTES)
     return int(estimate)

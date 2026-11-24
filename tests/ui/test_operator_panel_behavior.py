@@ -1622,6 +1622,10 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
         surface_detail_max_stretch=3.0,
         surface_detail_flatten=0.25,
         surface_smooth_preserve_splashes=0.8,
+        surface_waves_enabled=True,
+        surface_waves_detail=0.4,
+        surface_waves_strength=2.0,
+        surface_waves_damping=3.0,
         status="",
     )
     scene = SimpleNamespace(fluidsim=split_settings(fs))
@@ -1641,6 +1645,10 @@ def test_surface_refresh_updates_active_solver_and_output(monkeypatch):
     assert solver.settings.surface_detail_enabled is True
     assert solver.settings.surface_detail_max_stretch == 3.0
     assert solver.settings.surface_smooth_preserve_splashes == 0.8
+    assert solver.settings.surface_waves_enabled is True
+    assert solver.settings.surface_waves_detail == 0.4
+    assert solver.settings.surface_waves_strength == 2.0
+    assert solver.settings.surface_waves_damping == 3.0
     assert surface_calls == ["rebuilt"]
     assert output_calls == [(scene, sess, {"force_surface": True})]
 
@@ -4652,6 +4660,10 @@ def test_surface_filters_chunked_into_labeled_boxes(monkeypatch):
         surface_detail_neighbor_radius=2.0,
         surface_detail_max_stretch=4.0,
         surface_detail_flatten=0.5,
+        surface_waves_enabled=True,
+        surface_waves_detail=0.5,
+        surface_waves_strength=1.0,
+        surface_waves_damping=1.5,
     )
     context = SimpleNamespace(scene=SimpleNamespace(fluidsim=split_settings(fs)))
     root = _Layout()
@@ -4679,6 +4691,12 @@ def test_surface_filters_chunked_into_labeled_boxes(monkeypatch):
             "surface_detail_max_stretch",
             "surface_detail_flatten",
         },
+        "waves": {
+            "surface_waves_enabled",
+            "surface_waves_detail",
+            "surface_waves_strength",
+            "surface_waves_damping",
+        },
     }
     scope_of = {}
     for entry in root.prop_scopes:
@@ -4693,12 +4711,13 @@ def test_surface_filters_chunked_into_labeled_boxes(monkeypatch):
         assert scope, f"{name} pass not wrapped in a box()"
         pass_scopes[name] = scope
 
-    # The four passes and Sharp Surfacing occupy five distinct boxes.
-    assert len(set(pass_scopes.values())) == 5, "passes must occupy distinct boxes"
+    # The four passes, Sharp Surfacing and Surface Waves occupy six boxes.
+    assert len(set(pass_scopes.values())) == 6, "passes must occupy distinct boxes"
 
     # Every box carries a header label naming its pass.
     texts = [item["text"].lower() for item in root.labels]
-    for header in ("filter", "dilate", "erode", "smooth", "sharp surfacing"):
+    for header in ("filter", "dilate", "erode", "smooth", "sharp surfacing",
+                   "surface waves"):
         assert any(header in t for t in texts), f"missing '{header}' box header"
 
 

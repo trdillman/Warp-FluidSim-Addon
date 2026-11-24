@@ -822,6 +822,14 @@ class FLUIDSIM_PT_surface_filters(_SurfaceChild, FluidSimScenePanel, bpy.types.P
         sub.prop(fs, "surface_detail_max_stretch")
         sub.prop(fs, "surface_detail_flatten")
 
+        waves = layout.box()
+        waves.label(text="Surface Waves", icon="MOD_OCEAN")
+        waves.prop(fs, "surface_waves_enabled")
+        sub = _gated(waves, fs.surface_waves_enabled)
+        sub.prop(fs, "surface_waves_detail")
+        sub.prop(fs, "surface_waves_strength")
+        sub.prop(fs, "surface_waves_damping")
+
 
 class FLUIDSIM_PT_scene_whitewater(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Whitewater"

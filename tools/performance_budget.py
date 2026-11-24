@@ -51,6 +51,7 @@ NEUTRAL_ABSENT_EFFECTIVE_SETTINGS = {
 	# 4.1: these render options leave the reference surface recipe unchanged.
 	"surface_detail_enabled": False,
 	"surface_smooth_preserve_splashes": 0.0,
+	"surface_waves_enabled": False,
 	# 4.0 learned initial guess: ships hidden and off (no weights).
 	"pressure_learned_guess": False,
 	"pressure_preconditioner": "JACOBI",
@@ -87,6 +88,9 @@ INERT_WHEN_SWITCHED_OFF = {
 	"surface_detail_neighbor_radius": ("surface_detail_enabled", False),
 	"surface_detail_max_stretch": ("surface_detail_enabled", False),
 	"surface_detail_flatten": ("surface_detail_enabled", False),
+	"surface_waves_detail": ("surface_waves_enabled", False),
+	"surface_waves_strength": ("surface_waves_enabled", False),
+	"surface_waves_damping": ("surface_waves_enabled", False),
 	**{f"spacetime_{name}": ("spacetime_enabled", False) for name in (
 		"adaptive_jitter", "gas_density", "jitter_strength", "liquid_density",
 		"local_cfl", "max_local_substeps", "min_density", "phase_eta",

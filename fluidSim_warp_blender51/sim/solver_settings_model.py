@@ -137,6 +137,12 @@ class SolverSettings:
     surface_detail_max_stretch: float = 4.0
     surface_detail_flatten: float = 0.5
     surface_smooth_preserve_splashes: float = 0.0
+    # Surface waves (render surface only): wave detail finer than the
+    # surface voxel, carried by the liquid's motion (sim/surface_waves.py).
+    surface_waves_enabled: bool = False
+    surface_waves_detail: float = 0.5      # wave point spacing / surface voxel
+    surface_waves_strength: float = 1.0
+    surface_waves_damping: float = 1.5     # 1/s
 
     # Artist-ready output inventory.  These fields are signature-bound and
     # selected before initialization so optional particle channels stay opt-in.
