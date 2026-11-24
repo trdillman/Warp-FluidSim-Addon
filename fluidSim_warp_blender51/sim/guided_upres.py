@@ -1031,8 +1031,10 @@ class GuidedUpres:
         self._force_fields = None
         self._sync_scene()
         # The guide must reach below the deepest test it makes (2 shells,
-        # plus the velocity band and a coarse voxel of slack).
-        self.guide_depth = (3.0 * float(shell_voxels) * float(fine_settings.voxel_size)
+        # plus the velocity band, or the pressure core cutoff) with a coarse
+        # voxel of slack; a shallower snapshot never passes the core test.
+        shells = max(3.0, self.guide.core_shells + 1.0)
+        self.guide_depth = (shells * float(shell_voxels) * float(fine_settings.voxel_size)
                             + 2.0 * float(cs.voxel_size))
         self._last = self._snapshot()
         # One-shot sources the coarse solve already consumed must not fire
