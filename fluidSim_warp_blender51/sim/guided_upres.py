@@ -689,7 +689,10 @@ class ShellGuide:
         self.shell_voxels = max(1.0, float(shell_voxels))
         # Fine liquid deeper than this many shells below the coarse surface
         # is a coarse-driven solid in the pressure solve (0 turns it off).
-        self.core_shells = max(0.0, float(core_shells or 0.0))
+        core_shells = float(core_shells or 0.0)
+        if not math.isfinite(core_shells):
+            raise ValueError("core_shells must be finite")
+        self.core_shells = max(0.0, core_shells)
         self.a = None
         self.b = None
         self.alpha = 0.0
@@ -1023,18 +1026,17 @@ class GuidedUpres:
         self._meshes = {}
         colliders = fine_colliders(getattr(coarse, "colliders", ()),
                                    self._meshes)  # refuses Dynamic early
+        self.guide = ShellGuide(shell_voxels, core_shells)
         self.fine = FluidSolver(fine_settings, profiler=profiler)
         self.fine.set_colliders(colliders)
-        self.guide = ShellGuide(shell_voxels, core_shells)
         self.fine.narrow_band.guide = self.guide
         self._sources = None
         self._force_fields = None
         self._sync_scene()
-        # The guide must reach below the deepest test it makes (2 shells,
-        # plus the velocity band, or the pressure core cutoff) with a coarse
-        # voxel of slack; a shallower snapshot never passes the core test.
-        shells = max(3.0, self.guide.core_shells + 1.0)
-        self.guide_depth = (shells * float(shell_voxels) * float(fine_settings.voxel_size)
+        # Keep the original velocity band and reconstruct past the configured
+        # pressure boundary so even its interpolated samples can be deeper.
+        shell_depth = self.guide.shell_voxels * float(fine_settings.voxel_size)
+        self.guide_depth = (max(3.0, self.guide.core_shells) * shell_depth
                             + 2.0 * float(cs.voxel_size))
         self._last = self._snapshot()
         # One-shot sources the coarse solve already consumed must not fire

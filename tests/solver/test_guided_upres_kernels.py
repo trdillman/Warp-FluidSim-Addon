@@ -732,3 +732,48 @@ def test_core_stamp_can_be_turned_off(cuda_device):
     guide.stamp_core(fine, voxel_type, collision_vel, m, dev)
     guide.unstamp_core(fine, voxel_type, collision_vel, m, dev)
     assert np.all(voxel_type.numpy() == 4)
+
+
+@pytest.mark.parametrize("core_shells", [float("inf"), float("nan")])
+def test_core_shell_count_must_be_finite(core_shells):
+    with pytest.raises(ValueError, match="core_shells must be finite"):
+        GU.ShellGuide(1.0, core_shells)
+
+
+def test_deeper_pressure_shell_keeps_the_core_in_reconstructed_depth(
+        cuda_device, monkeypatch):
+    from fluidSim_warp_blender51.sim import constants as C, solver
+    from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
+    from fluidSim_warp_blender51.sim.sourcing import SourceBatch
+
+    dev = cuda_device
+    coarse = SimpleNamespace(
+        settings=SolverSettings(domain_min=(0.0, 0.0, 0.0), domain_max=SIZE,
+                                device=dev, voxel_size=COARSE_H,
+                                leaf_capacity=32, max_particles=1024),
+        colliders=(), sourcing=SimpleNamespace(batch=SourceBatch()))
+
+    def snapshot(upres):
+        frame = _coarse_frame(dev, 0.0, radius=0.24)
+        frame.reconstruct_depth(upres.guide_depth)
+        return frame
+
+    # The constructor's distance policy and the guide kernels also run on CPU.
+    # Stub the CUDA-only fine solver allocation for this kernel-level test.
+    monkeypatch.setattr(solver, "FluidSolver", lambda *a, **kw: SimpleNamespace(
+        narrow_band=SimpleNamespace(), sourcing=SimpleNamespace(),
+        set_colliders=lambda _: None, set_source_batch=lambda *_: None))
+    monkeypatch.setattr(GU.GuidedUpres, "_snapshot", snapshot)
+    upres = GU.GuidedUpres(coarse, shell_voxels=1.0, core_shells=8.0)
+    fine = _grid(dev, FINE_H)
+    n, m = fine.voxel_capacity, int(fine.active_voxel_count)
+    voxel_type = wp.full(n, C.VOXEL_FLUID, dtype=wp.int32, device=dev)
+    collision_vel = wp.zeros(n, dtype=wp.vec3, device=dev)
+    upres.guide.stamp_core(fine, voxel_type, collision_vel, m, dev)
+    stamped = (voxel_type.numpy()[:m] & C.VOXEL_COLLISION) != 0
+    near_centre = np.linalg.norm(_centres(fine, dev) - CENTRE, axis=1) < FINE_H
+    assert near_centre.any()
+    assert np.all(stamped[near_centre])
+    assert not np.all(stamped)
+    upres.guide.unstamp_core(fine, voxel_type, collision_vel, m, dev)
+    assert np.all(voxel_type.numpy() == C.VOXEL_FLUID)
