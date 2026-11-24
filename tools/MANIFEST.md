@@ -55,6 +55,7 @@ checkpoints stay outside git. Tests: `tests/solver/test_learned_guess_tooling.py
 | `compare_guided_upres.py` | Guided shell upres trial: coarse vs guided-fine (vs optional full fine) per-frame ms, particle counts, surface size, OBJ export (needs CUDA) | manual |
 | `compare_sharp_surfacing.py` | Sharp Surfacing before/after on the same particles: render-surface build+extract ms, triangles, quality, OBJ export (needs CUDA) | manual |
 | `check_launch_identity.py` | Proves a solver change leaves a bake bitwise identical (plain vs cached-launch SHA-256) | manual |
+| `compare_surface_backends.py` | Sparse vs dense vs Surface Nets on the same liquid SDF: extraction ms, triangle quality, repeatability (`--demo` needs Blender; `--solver-preset` needs CUDA) | `tests/surface/test_compare_surface_backends.py`, manual |
 | `profile_source_pipeline.py` | Source-compiler profile (`SOURCE-PIPELINE-PROFILE-PASS`), cited in AGENTS.md | manual |
 
 ### `benchmarks/` (paired CUDA campaigns; each has its own test)

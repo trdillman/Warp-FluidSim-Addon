@@ -70,13 +70,26 @@ Catches:
 - The trial is a synthetic shape on CPU. Speed and look on a real dam break
   need a GPU run.
 
-## Suggested next steps (not done)
+## Surface Nets backend (added, opt-in, GPU comparison pending)
 
-1. Add `nets` as a third surface backend that reuses the existing dense
-   sub-box path, then compare it with `sparse` on `dam_break` and
-   `crown_splash`: frame time, triangle quality, and whether the mesh bytes
-   stay repeatable run to run (the marching-cubes repeatability claim in
-   `AGENTS.md` is not known for Surface Nets).
+`SurfaceExtractor` now has a third backend, `nets`, built on Warp 1.19's
+`IsoSurfaceNets` over the same padded dense sub-box as `dense`. It is never
+picked by `auto`: the default stays `sparse`. To try it, set the environment
+variable `FLUIDSIM_SURFACE_BACKEND=nets` before starting Blender (or pass
+`backend="nets"` in code). Nothing is stored in the saved file, and with
+Warp older than 1.19 the variable is ignored.
+
+Checked on CPU with a synthetic sphere (`tests/surface`): closed mesh, outward
+winding, volume within 2 % of marching cubes, repeatable bytes, and more even
+triangles. **Not yet known:** speed and look on a real scene, and repeatability
+on the GPU. `tools/profiling/compare_surface_backends.py` measures all three
+backends on the same liquid SDF (`--demo dam_break` / `--demo crown_splash`
+under Blender).
+
+## Suggested next steps
+
+1. Run `compare_surface_backends.py` on `dam_break` and `crown_splash` on the
+   Windows GPU host and decide whether `nets` earns a UI option.
 2. If the dense cost is too high, keep `sparse` and add a cheap vertex
    relaxation pass on its output instead.
 3. Separately, the sparse path copies vertices back to the CPU every frame
