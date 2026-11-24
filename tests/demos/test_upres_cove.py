@@ -151,3 +151,27 @@ def test_summary_reports_the_speedup_over_full_fine_after_warm_up():
     assert out["speedup_vs_full_fine"] == 2.0
     no_full = [dict(r, full_fine_ms=None) for r in records]
     assert "speedup_vs_full_fine" not in CMP.summarize(no_full)
+
+
+class _Anim:
+    def __init__(self, action=None, drivers=()):
+        self.action, self.drivers = action, list(drivers)
+
+
+class _Obj:
+    def __init__(self, name, role, anim=None, parent=None):
+        self.name, self.animation_data, self.parent = name, anim, parent
+        self.fluidsim = type("FS", (), {"role": role})()
+
+
+def test_demo_mode_names_animated_inputs_it_cannot_replay():
+    rig = _Obj("Rig", "NONE", anim=_Anim(action="spin"))
+    objects = [
+        _Obj("Paddle", "COLLIDER", anim=_Anim(action="turn")),
+        _Obj("Blade", "COLLIDER", parent=rig),
+        _Obj("Driven Source", "SOURCE", anim=_Anim(drivers=["d"])),
+        _Obj("Rock", "COLLIDER", anim=_Anim()),
+        _Obj("Camera", "NONE", anim=_Anim(action="fly")),
+        rig,
+    ]
+    assert CMP.animated_inputs(objects) == ["Paddle", "Blade", "Driven Source"]

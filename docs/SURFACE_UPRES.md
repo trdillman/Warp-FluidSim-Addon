@@ -125,7 +125,12 @@ voxels, half the shipped demo's 3 cm, so the coarse sim alone emits about
 out of the Demo Gallery and the demo gate, like `tsunami_parthenon`. Its
 numbers live in `tools/demos/upres_cove.py`.
 
+From PowerShell (the private extension folder keeps `--factory-startup` from
+deleting your installed extension wheels, Warp included; see AGENTS.md):
+
 ```
+$env:BLENDER_USER_RESOURCES = Join-Path $env:TEMP ("fluidsim-upres-" + [guid]::NewGuid())
+$env:BLENDER_USER_EXTENSIONS = Join-Path $env:BLENDER_USER_RESOURCES 'extensions'
 blender --background --factory-startup --python-use-system-env --python tools/profiling/compare_guided_upres.py -- --demo upres_cove --full-fine --phases --json-out artifacts/guided_upres/upres_cove.json
 ```
 
@@ -140,6 +145,8 @@ full fine ms over coarse plus guided fine ms, after one warm-up frame; above
 the coarse, guided and full fine surfaces of frames 24, 48 and 72, one
 collection each, every mesh visible only on its own frame. `--voxel-size`,
 `--factor`, `--core-shells` and `--frames` override the scene's defaults.
+Demo mode refuses animated colliders or sources for now, and `--full-fine`
+refuses scenes seeded from particle objects.
 
 ## How to check it (Windows GPU host)
 

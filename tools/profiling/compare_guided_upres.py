@@ -17,8 +17,17 @@ collection each (only the guided one is shown at first; each mesh is visible
 on its own timeline frame). ``upres_cove`` is the scene made for this; when
 ``demos/NAME.blend`` has not been built yet, the scene is authored on the fly
 from ``tools/demos/build_demo_scenes.py``. The full fine sim runs after the
-guided one, so the two fine solves never hold VRAM at the same time.
+guided one, so the two fine solves never hold VRAM at the same time. Demo
+mode refuses scenes with animated colliders or sources (it steps the solvers
+without advancing the timeline), and ``--full-fine`` refuses scenes seeded
+from particle objects (the full fine solver gets the sources, not the seeds).
 
+From PowerShell, with a private extension folder: ``--factory-startup``
+otherwise lets Blender's wheel sync delete the installed extension wheels
+(Warp included) from your regular profile (see AGENTS.md):
+
+    $env:BLENDER_USER_RESOURCES = Join-Path $env:TEMP ("fluidsim-upres-" + [guid]::NewGuid())
+    $env:BLENDER_USER_EXTENSIONS = Join-Path $env:BLENDER_USER_RESOURCES 'extensions'
     blender --background --factory-startup --python-use-system-env \\
         --python tools/profiling/compare_guided_upres.py -- --demo upres_cove \\
         --full-fine --phases --json-out artifacts/guided_upres/upres_cove.json
@@ -27,6 +36,7 @@ guided one, so the two fine solves never hold VRAM at the same time.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import sys
@@ -294,6 +304,27 @@ class ReviewFile:
         print(f"review file: {path}")
 
 
+def animated_inputs(objects):
+    """Names of colliders and sources that animation moves (directly or by a parent).
+
+    Demo mode steps the solvers without advancing the timeline, so such an
+    input would sit frozen at its first pose.
+    """
+    out = []
+    for obj in objects:
+        role = getattr(getattr(obj, "fluidsim", None), "role", "")
+        if role not in ("COLLIDER", "SOURCE"):
+            continue
+        node = obj
+        while node is not None:
+            anim = getattr(node, "animation_data", None)
+            if anim is not None and (anim.action is not None or len(anim.drivers)):
+                out.append(obj.name)
+                break
+            node = getattr(node, "parent", None)
+    return out
+
+
 def _full_fine_settings(coarse_settings, factor, mod):
     if mod is not None and hasattr(mod, "fine_settings"):
         return mod.fine_settings(coarse_settings, factor)
@@ -329,6 +360,11 @@ def run_demo(args):
         ds.voxel_size = float(args.voxel_size)
     if args.max_particles is not None:
         ds.max_particles = int(args.max_particles)
+    moving = animated_inputs(scene.objects)
+    if moving:
+        raise NotImplementedError(
+            f"{args.demo}: --demo does not replay animated inputs yet "
+            f"({', '.join(sorted(moving))})")
     assign_input_identities(scene)
     if bpy.ops.fluidsim.initialize() != {"FINISHED"}:
         raise RuntimeError(f"{args.demo}: the add-on refused to initialize the scene")
@@ -337,6 +373,14 @@ def run_demo(args):
     if coarse is None:
         raise RuntimeError(f"{args.demo}: no solver after initialize")
     cs = coarse.settings
+    # Liquid before any source has fired came from particle-object seeds,
+    # which admission injects outside the source batch.
+    seeded = (coarse.particles.refresh_host_count() > 0
+              and not getattr(coarse.sourcing, "_initial_fired", ()))
+    if args.full_fine and seeded:
+        raise NotImplementedError(
+            f"{args.demo}: --full-fine cannot reproduce particle-object seeds yet; "
+            "run without it")
     print(f"{args.demo}: coarse {cs.voxel_size:.4f} m, fine "
           f"{cs.voxel_size / args.factor:.4f} m, frames {wanted}")
 
@@ -385,7 +429,11 @@ def run_demo(args):
             print(json.dumps(rec))
             records.append(rec)
     finally:
+        # Drop every reference too: release() keeps the fine solver object,
+        # and pass 2 must not allocate while it still holds VRAM.
         upres.release()
+        upres = None
+        gc.collect()
 
     # Pass 2: the unguided full sim at the fine size, from the same inputs.
     if args.full_fine:
