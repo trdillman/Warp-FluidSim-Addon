@@ -316,7 +316,9 @@ def animated_inputs(objects):
     out = []
     for obj in objects:
         settings = getattr(obj, "fluidsim", None)
-        if (getattr(settings, "role", "") not in ("COLLIDER", "SOURCE", "FORCE")
+        # Every simulation role counts: colliders, emitters, sinks, force
+        # regions and advanced field sources.
+        if (getattr(settings, "role", "NONE") in ("NONE", "")
                 or not getattr(settings, "enabled", True)):
             continue
         node = obj
@@ -364,7 +366,9 @@ def run_demo(args):
     # Opening the demo reloads the repository add-on. Use the same module
     # instances as its registered Blender operators.
     from fluidSim_warp_blender51.blender.scene_bridge import session
-    from fluidSim_warp_blender51.blender.simulation_admission import capacity_blocking_message
+    from fluidSim_warp_blender51.blender.simulation_admission import (
+        capacity_blocking_message,
+    )
     from fluidSim_warp_blender51.sim.guided_upres import GuidedUpres, fine_colliders
     from fluidSim_warp_blender51.sim.solver import FluidSolver
 

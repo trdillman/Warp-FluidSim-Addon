@@ -177,9 +177,12 @@ def test_demo_mode_names_animated_inputs_it_cannot_replay():
         _Obj("Driven Source", "SOURCE", anim=_Anim(drivers=["d"])),
         _Obj("Rock", "COLLIDER", anim=_Anim()),
         _Obj("Camera", "NONE", anim=_Anim(action="fly")),
+        _Obj("Moving Drain", "SINK", anim=_Anim(action="slide")),
+        _Obj("Swept Field", "FIELD", parent=rig),
         rig,
     ]
-    assert CMP.animated_inputs(objects) == ["Paddle", "Blade", "Driven Source"]
+    assert CMP.animated_inputs(objects) == [
+        "Paddle", "Blade", "Driven Source", "Moving Drain", "Swept Field"]
 
 
 def test_demo_mode_rejects_nla_and_animated_mesh_data():
