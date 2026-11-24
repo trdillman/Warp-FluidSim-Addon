@@ -1115,10 +1115,14 @@ class GuidedUpres:
                                                self._meshes))
         self._sync_scene()
         stats = self.fine.step_frame()
-        # A full particle budget means the shell could not be filled: the
-        # fine surface has holes. Say so instead of meshing them silently.
+        # The shared reseed reservation (band and guide seeding) clips any
+        # request past the particle budget and records it; a clipped request
+        # is an unfilled shell cell, so the fine surface has holes. Say so
+        # instead of meshing them silently. (Final occupancy is no signal: a
+        # shell can fill 99% of the budget cleanly, or overflow mid-frame and
+        # then lose particles to sinks.)
         count = self.fine.particles.refresh_host_count()
-        if count >= int(self.fine.settings.max_particles) * 0.99:
+        if bool(getattr(self.fine.narrow_band, "reseed_overflow", False)):
             self.particle_budget_hit = True
             if not self._warned_budget:
                 self._warned_budget = True

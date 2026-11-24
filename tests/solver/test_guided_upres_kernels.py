@@ -618,6 +618,7 @@ def test_fine_frame_counter_follows_the_coarse_frame_it_replays():
         frame=0, sim_time=0.0, step_frame=fine_step,
         set_colliders=lambda c: None, set_source_batch=lambda d, p: None,
         particles=SimpleNamespace(refresh_host_count=lambda: 0),
+        narrow_band=SimpleNamespace(reseed_overflow=False),
         settings=SimpleNamespace(max_particles=100))
     upres.guide = SimpleNamespace(set_frames=lambda a, b: None, bootstrap=True)
     upres._meshes, upres._sources, upres._force_fields = {}, None, None
@@ -630,7 +631,12 @@ def test_fine_frame_counter_follows_the_coarse_frame_it_replays():
     assert not upres.particle_budget_hit
 
 
-def test_a_full_fine_particle_budget_is_reported_once(capsys):
+@pytest.mark.parametrize(("count", "overflow", "hit"), [
+    (100, False, False),   # a full budget filled cleanly is no overflow
+    (50, True, True),      # clipped mid-frame, then thinned by sinks
+])
+def test_only_a_clipped_reseed_reports_a_full_fine_particle_budget(
+        capsys, count, overflow, hit):
     from fluidSim_warp_blender51.sim.sourcing import SourceBatch
 
     coarse = SimpleNamespace(frame=0, sim_time=0.0, colliders=(), force_fields=None,
@@ -640,7 +646,8 @@ def test_a_full_fine_particle_budget_is_reported_once(capsys):
     upres.fine = SimpleNamespace(
         frame=0, sim_time=0.0, step_frame=lambda: None,
         set_colliders=lambda c: None, set_source_batch=lambda d, p: None,
-        particles=SimpleNamespace(refresh_host_count=lambda: 100),
+        particles=SimpleNamespace(refresh_host_count=lambda: count),
+        narrow_band=SimpleNamespace(reseed_overflow=overflow),
         settings=SimpleNamespace(max_particles=100))
     upres.guide = SimpleNamespace(set_frames=lambda a, b: None, bootstrap=True)
     upres._meshes, upres._sources, upres._force_fields = {}, None, None
@@ -649,8 +656,8 @@ def test_a_full_fine_particle_budget_is_reported_once(capsys):
     upres._last = upres._snapshot()
     upres.step_frame()
     upres.step_frame()
-    assert upres.particle_budget_hit
-    assert capsys.readouterr().out.count("ran out of fine particles") == 1
+    assert upres.particle_budget_hit is hit
+    assert capsys.readouterr().out.count("ran out of fine particles") == int(hit)
 
 
 def test_guide_max_speed_bounds_the_valid_coarse_faces(cuda_device):
