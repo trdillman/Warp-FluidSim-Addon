@@ -338,6 +338,12 @@ class NarrowBand:
                     p.attr("temperature"), p.attr("viscosity"),
                     p.attr("density"), p.attr("time_offset"), p.alive],
             device=dev)
+        if self.guide is not None:
+            self.guide.seed(
+                g, nv, self.phi, self.cls, sv.collision_sdf.data,
+                sv.voxel_counts.data, self.demand, self.offsets,
+                self.slot_base, self.slot_limit, self.overflow_flag, p,
+                target, seed, dev)
         self.reseed_epoch += 1
         p.refresh_host_count()
 

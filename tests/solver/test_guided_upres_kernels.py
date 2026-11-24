@@ -162,3 +162,178 @@ def test_mark_leaves_covers_the_coarse_liquid(cuda_device):
     hi = x.max(axis=0)
     assert np.all(lo <= np.asarray(CENTRE) - RADIUS)
     assert np.all(hi >= np.asarray(CENTRE) + RADIUS)
+
+
+@wp.kernel
+def _k_ball_union(sdf: wp.array(dtype=float), leaf_coords: wp.array(dtype=wp.vec3i),
+                  origin: wp.vec3, h: float, c: wp.vec3, r: float, floor: float):
+    """A sphere as a particle splat sees it: never deeper than ``floor``."""
+    tid = wp.tid()
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    x = origin + h * wp.vec3(float(ijk[0]) + 0.5, float(ijk[1]) + 0.5,
+                             float(ijk[2]) + 0.5)
+    sdf[tid] = wp.max(wp.length(x - c) - r, floor)
+
+
+def _splat_like_frame(device, time=0.0, radius=RADIUS, velocity=VEL):
+    frame = _coarse_frame(device, time, velocity=velocity, radius=radius)
+    g = frame
+    wp.launch(_k_ball_union, dim=int(g.sdf.shape[0]), device=device,
+              inputs=[g.sdf, g.leaf_coords, g.origin, COARSE_H,
+                      wp.vec3(*CENTRE), radius, -0.6 * COARSE_H])
+    return frame
+
+
+def _coarse_centres(frame, device):
+    n = frame.active_voxels
+    out = wp.zeros(n, dtype=wp.vec3, device=device)
+    wp.launch(_k_centres, dim=n, device=device,
+              inputs=[frame.leaf_coords, frame.origin, COARSE_H], outputs=[out])
+    return out.numpy()
+
+
+def test_reconstruct_depth_turns_a_splat_sdf_into_interior_distance(cuda_device):
+    dev = cuda_device
+    frame = _splat_like_frame(dev)
+    n = frame.active_voxels
+    before = frame.sdf.numpy()[:n].copy()
+    assert before.min() >= -0.6 * COARSE_H - 1e-6
+    depth = 4.0 * COARSE_H
+    frame.reconstruct_depth(depth)
+    after = frame.sdf.numpy()[:n]
+    d = np.linalg.norm(_coarse_centres(frame, dev) - np.asarray(CENTRE), axis=1) - RADIUS
+    inside = d < -COARSE_H
+    # Down to the requested depth it tracks the true distance within a voxel.
+    np.testing.assert_allclose(np.maximum(after[inside], -depth),
+                               np.maximum(d[inside], -depth), atol=COARSE_H)
+    assert after.min() < -2.5 * COARSE_H
+    # Air and the surface layer are untouched.
+    np.testing.assert_array_equal(after[before >= 0.0], before[before >= 0.0])
+
+
+def test_shell_guidance_works_from_a_splat_sdf_once_deepened(cuda_device):
+    dev = cuda_device
+    fine = _grid(dev, FINE_H)
+    limit = 8.0 * FINE_H
+
+    def deep_cells(frame):
+        guide = GU.ShellGuide(shell_voxels=3)
+        guide.set_frames(frame, None)
+        phi = wp.full(fine.voxel_capacity, limit, dtype=float, device=dev)
+        guide.apply_phi(fine, phi, fine.active_voxel_count, limit, dev)
+        return int((phi.numpy()[:int(fine.active_voxel_count)] < 0.0).sum())
+
+    # A union of balls is never deeper than the shell: no guided interior.
+    assert deep_cells(_splat_like_frame(dev)) == 0
+    frame = _splat_like_frame(dev)
+    frame.reconstruct_depth(3 * 3 * FINE_H + 2 * COARSE_H)
+    assert deep_cells(frame) > 100
+
+
+def _seed_inputs(dev, fine, phi_value=None):
+    n = fine.voxel_capacity
+    limit = 8.0 * FINE_H
+    phi = wp.full(n, limit if phi_value is None else phi_value, dtype=float, device=dev)
+    zeros = wp.zeros(n, dtype=wp.int32, device=dev)
+    return {"phi": phi, "cls": wp.zeros(n, dtype=wp.int32, device=dev),
+            "collision": wp.full(n, 1.0, dtype=float, device=dev),
+            "counts": zeros, "band": wp.zeros(n, dtype=wp.int32, device=dev),
+            "demand": wp.zeros(n, dtype=wp.int32, device=dev)}
+
+
+def _demand(guide, fine, inp, dev, fill=4):
+    a, b, common = guide._guide_inputs()
+    h = FINE_H
+    wp.launch(GU.k_guide_seed_demand, dim=fine.voxel_capacity, device=dev,
+              inputs=[inp["phi"], inp["cls"], inp["collision"], inp["counts"],
+                      inp["band"], fine.leaf_coords, fine.num_leaves, fine.origin,
+                      h, guide.shell_voxels * h, a.sdf, a.leaf_table, b.sdf,
+                      b.leaf_table, *common, float(guide.alpha),
+                      1 if guide.bootstrap else 0, fill],
+              outputs=[inp["demand"]])
+    return inp["demand"].numpy()[:int(fine.active_voxel_count)]
+
+
+def test_seed_fills_the_whole_coarse_shell_on_the_first_frame(cuda_device):
+    dev = cuda_device
+    guide = GU.ShellGuide(shell_voxels=3)
+    guide.set_frames(_coarse_frame(dev, 0.0), None)
+    fine = _grid(dev, FINE_H)
+    dem = _demand(guide, fine, _seed_inputs(dev, fine), dev)
+    d = np.linalg.norm(_centres(fine, dev) - np.asarray(CENTRE), axis=1) - RADIUS
+    shell = 3 * FINE_H
+    assert np.all(dem[(d < -0.5 * FINE_H - COARSE_H) & (d > -shell + COARSE_H)] == 4)
+    assert np.all(dem[d > COARSE_H] == 0)            # air
+    assert np.all(dem[d < -shell - FINE_H - COARSE_H] == 0)   # deep interior
+
+
+def test_seed_after_the_first_frame_only_fills_new_coarse_liquid(cuda_device):
+    dev = cuda_device
+    guide = GU.ShellGuide(shell_voxels=3)
+    small, big = 0.10, RADIUS
+    guide.set_frames(_coarse_frame(dev, 0.0, radius=small),
+                     _coarse_frame(dev, 1.0, radius=big))
+    guide.set_time(1.0)
+    guide.bootstrap = False
+    fine = _grid(dev, FINE_H)
+    dem = _demand(guide, fine, _seed_inputs(dev, fine), dev)
+    r = np.linalg.norm(_centres(fine, dev) - np.asarray(CENTRE), axis=1)
+    assert dem.sum() > 0
+    # Nothing where frame a already had liquid.
+    assert np.all(dem[r < small - COARSE_H] == 0)
+    # Occupied cells are never topped up.
+    guide.set_frames(_coarse_frame(dev, 0.0), None)
+    guide.bootstrap = True
+    inp = _seed_inputs(dev, fine)
+    inp["counts"] = wp.full(fine.voxel_capacity, 1, dtype=wp.int32, device=dev)
+    assert _demand(guide, fine, inp, dev).sum() == 0
+
+
+def test_seeded_particles_carry_the_coarse_velocity(cuda_device):
+    from types import SimpleNamespace
+
+    dev = cuda_device
+    guide = GU.ShellGuide(shell_voxels=3)
+    guide.set_frames(_coarse_frame(dev, 0.0), None)
+    fine = _grid(dev, FINE_H)
+    inp = _seed_inputs(dev, fine)
+    cap = 200000
+    attrs = {k: wp.zeros(cap, dtype=float, device=dev)
+             for k in ("age", "life", "temperature", "viscosity", "density",
+                       "time_offset")}
+    particles = SimpleNamespace(
+        capacity=cap, count=wp.zeros(1, dtype=wp.int32, device=dev),
+        position=wp.zeros(cap, dtype=wp.vec3, device=dev),
+        velocity=wp.zeros(cap, dtype=wp.vec3, device=dev),
+        alive=wp.zeros(cap, dtype=wp.int32, device=dev),
+        attr=lambda name: attrs[name], refresh_host_count=lambda: None)
+    n = fine.voxel_capacity
+    scratch = [wp.zeros(n, dtype=wp.int32, device=dev)] + [
+        wp.zeros(1, dtype=wp.int32, device=dev) for _ in range(3)]
+    guide.seed(fine, fine.active_voxel_count, inp["phi"], inp["cls"],
+               inp["collision"], inp["counts"], inp["band"], *scratch,
+               particles, 4, 123, dev)
+    count = int(particles.count.numpy()[0])
+    assert count > 1000
+    v = particles.velocity.numpy()[:count]
+    np.testing.assert_allclose(v, np.tile(VEL, (count, 1)), atol=1e-5)
+    x = particles.position.numpy()[:count]
+    d = np.linalg.norm(x - np.asarray(CENTRE), axis=1) - RADIUS
+    assert d.max() < FINE_H and d.min() > -(3 + 2) * FINE_H - COARSE_H
+
+
+def test_fine_budgets_scale_leaves_with_volume_and_particles_with_area():
+    assert GU.fine_budget_scales(2) == (4.0, 8.0)
+    assert GU.fine_budget_scales(3) == (9.0, 27.0)
+
+
+def test_fine_colliders_are_private_copies_and_dynamic_ones_are_refused():
+    from types import SimpleNamespace
+
+    static = SimpleNamespace(mesh=object(), dynamic=False, base_points=None)
+    copies = GU.fine_colliders([static])
+    assert copies[0] is not static and copies[0].mesh is static.mesh
+    copies[0].base_points = "fine"
+    assert static.base_points is None
+    with pytest.raises(NotImplementedError):
+        GU.fine_colliders([SimpleNamespace(mesh=object(), dynamic=True)])
