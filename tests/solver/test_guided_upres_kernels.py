@@ -367,12 +367,22 @@ def test_seed_fills_liquid_missing_from_an_empty_previous_frame(cuda_device):
     assert int((phi.numpy()[:int(fine.active_voxel_count)] < 0.0).sum()) > 0
 
 
-def test_seeded_particles_carry_the_coarse_velocity(cuda_device):
+@pytest.mark.parametrize("a_faces_valid", [True, False])
+def test_seeded_particles_carry_the_coarse_velocity(cuda_device, a_faces_valid):
     from types import SimpleNamespace
 
     dev = cuda_device
     guide = GU.ShellGuide(shell_voxels=3)
-    guide.set_frames(_coarse_frame(dev, 0.0), None)
+    if a_faces_valid:
+        guide.set_frames(_coarse_frame(dev, 0.0), None)
+    else:
+        # Frame a is allocated but has no valid face: seeds take frame b's
+        # velocity whole, not a blend toward 0.
+        a = _coarse_frame(dev, 0.0, velocity=(0.0, 0.0, 0.0))
+        for weight in (a.wu, a.wv, a.ww):
+            weight.zero_()
+        guide.set_frames(a, _coarse_frame(dev, 1.0))
+        guide.set_time(0.25)
     fine = _grid(dev, FINE_H)
     inp = _seed_inputs(dev, fine)
     cap = 200000
