@@ -262,6 +262,45 @@ register_fn(k_guide_phi, "fluidSimGuideUpresPhi",
 
 
 @wp.func
+def _mac_sample(
+    data: wp.array(dtype=float),
+    weight: wp.array(dtype=float),
+    leaf_table: wp.array(dtype=wp.int32),
+    voxels_dim: wp.vec3i,
+    leaves_dim: wp.vec3i,
+    vp: wp.vec3,
+    axis: wp.int32,
+) -> wp.vec2:
+    """``sample_mac_component`` that also says whether any face was valid:
+    returns (value, 1) or (0, 0)."""
+    v = sample_mac_component(data, weight, leaf_table, voxels_dim, leaves_dim, vp, axis)
+    off = wp.vec3(0.5, 0.5, 0.5)
+    if axis == 0:
+        off = wp.vec3(0.0, 0.5, 0.5)
+    elif axis == 1:
+        off = wp.vec3(0.5, 0.0, 0.5)
+    else:
+        off = wp.vec3(0.5, 0.5, 0.0)
+    q = vp - off
+    base = voxel_floor(q)
+    f = q - wp.vec3(float(base[0]), float(base[1]), float(base[2]))
+    wsum = wp.float32(0.0)
+    for dz in range(2):
+        for dy in range(2):
+            for dx in range(2):
+                ijk = wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz)
+                flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim, ijk)
+                w = (wp.where(dx == 1, f[0], 1.0 - f[0])
+                     * wp.where(dy == 1, f[1], 1.0 - f[1])
+                     * wp.where(dz == 1, f[2], 1.0 - f[2]))
+                if flat >= 0 and weight[flat] > 0.0:
+                    wsum += w
+    if wsum > 1.0e-8:
+        return wp.vec2(v, 1.0)
+    return wp.vec2(0.0, 0.0)
+
+
+@wp.func
 def _guide_face(
     a_u: wp.array(dtype=float), a_wu: wp.array(dtype=float),
     a_table: wp.array(dtype=wp.int32),
@@ -276,18 +315,15 @@ def _guide_face(
     alpha: float,
 ) -> float:
     vp = world_to_voxel(x, g_origin, g_h)
-    ua = sample_mac_component(a_u, a_wu, a_table, g_voxels_dim, g_leaves_dim, vp, axis)
-    ub = sample_mac_component(b_u, b_wu, b_table, g_voxels_dim, g_leaves_dim, vp, axis)
-    # A frame with no leaf here has no velocity (the sampler's 0 is not one):
+    sa = _mac_sample(a_u, a_wu, a_table, g_voxels_dim, g_leaves_dim, vp, axis)
+    sb = _mac_sample(b_u, b_wu, b_table, g_voxels_dim, g_leaves_dim, vp, axis)
+    # A frame with no valid face here has no velocity (not a velocity of 0):
     # use the other frame alone, as ``_guide_blend`` does for phi.
-    ijk = voxel_floor(vp)
-    has_a = voxel_flat_index(a_table, g_voxels_dim, g_leaves_dim, ijk) >= 0
-    has_b = voxel_flat_index(b_table, g_voxels_dim, g_leaves_dim, ijk) >= 0
-    if has_a and not has_b:
-        return ua
-    if has_b and not has_a:
-        return ub
-    return ua + (ub - ua) * alpha
+    if sa[1] > 0.0 and sb[1] <= 0.0:
+        return sa[0]
+    if sb[1] > 0.0 and sa[1] <= 0.0:
+        return sb[0]
+    return sa[0] + (sb[0] - sa[0]) * alpha
 
 
 @wp.kernel

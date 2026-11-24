@@ -538,3 +538,25 @@ def test_moving_colliders_get_a_private_mesh_kept_in_step(cuda_device):
 def test_factors_beyond_one_leaf_per_coarse_voxel_are_refused():
     with pytest.raises(ValueError):
         GU.GuidedUpres(None, factor=16)
+
+
+def test_interior_velocity_ignores_a_frame_with_leaves_but_no_valid_faces(cuda_device):
+    dev = cuda_device
+    guide = GU.ShellGuide(shell_voxels=2)
+    a = _coarse_frame(dev, 0.0, velocity=(0.0, 0.0, 0.0))
+    for weight in (a.wu, a.wv, a.ww):
+        weight.zero_()                     # allocated, but no valid face
+    guide.set_frames(a, _coarse_frame(dev, 1.0, velocity=(1.0, -2.0, 4.0)))
+    guide.set_time(0.25)
+    fine = _grid(dev, FINE_H)
+    n = fine.voxel_capacity
+    limit = 8.0 * FINE_H
+    phi = wp.full(n, limit, dtype=float, device=dev)
+    guide.apply_phi(fine, phi, fine.active_voxel_count, limit, dev)
+    nb = [wp.full(n, 9.0, dtype=float, device=dev) for _ in range(3)]
+    guide.apply_velocity(fine, phi, *nb, fine.active_voxel_count, dev)
+    m = int(fine.active_voxel_count)
+    deep = phi.numpy()[:m] < -2 * FINE_H
+    assert deep.sum() > 50
+    for arr, expected in zip(nb, (1.0, -2.0, 4.0)):
+        np.testing.assert_allclose(arr.numpy()[:m][deep], expected, atol=1e-5)
