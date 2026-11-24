@@ -777,3 +777,95 @@ def test_deeper_pressure_shell_keeps_the_core_in_reconstructed_depth(
     assert not np.all(stamped)
     upres.guide.unstamp_core(fine, voxel_type, collision_vel, m, dev)
     assert np.all(voxel_type.numpy() == C.VOXEL_FLUID)
+
+
+def _fine_coords(grid, device):
+    m = int(grid.active_voxel_count)
+    x = _centres(grid, device)
+    ijk = np.floor(x / FINE_H).astype(np.int64)
+    return {tuple(c): i for i, c in enumerate(ijk)}, ijk, m
+
+
+def test_core_velocity_is_the_coarse_velocity_at_the_shared_shell_face(cuda_device):
+    dev = cuda_device
+    slope = 3.0
+    a = _coarse_frame(dev, 0.0)
+    # w varies along z, sampled at the coarse w faces (z = k * h).
+    n = a.w.shape[0]
+    zc = np.zeros(n, dtype=np.float32)
+    coords = a.leaf_coords.numpy()
+    for flat in range(n):
+        leaf, local = divmod(flat, 512)
+        if leaf < coords.shape[0]:
+            zc[flat] = (coords[leaf][2] * 8 + local // 64) * COARSE_H
+    a.w = wp.array(slope * zc, dtype=float, device=dev)
+
+    fine = _grid(dev, FINE_H)
+    index, ijk, m = _fine_coords(fine, dev)
+    vtype = np.zeros(fine.voxel_capacity, dtype=np.int32)
+    vtype[:m] = 4
+    voxel_type = wp.array(vtype, dtype=wp.int32, device=dev)
+    collision_vel = wp.zeros(fine.voxel_capacity, dtype=wp.vec3, device=dev)
+    guide = GU.ShellGuide(1.0, core_shells=2.0)
+    guide.set_frames(a, None)
+    guide.stamp_core(fine, voxel_type, collision_vel, m, dev)
+    core = (voxel_type.numpy()[:m] & 1) != 0
+    cv = collision_vel.numpy()[:m]
+    assert core.sum() > 100
+    checked = {"top": 0, "bottom": 0, "inside": 0}
+    for i in np.nonzero(core)[0]:
+        up = index.get(tuple(ijk[i] + (0, 0, 1)))
+        down = index.get(tuple(ijk[i] - (0, 0, 1)))
+        up_core = up is not None and core[up]
+        down_core = down is not None and core[down]
+        z = (ijk[i][2] + 0.5) * FINE_H
+        if down_core and not up_core:
+            want, key = slope * (z + 0.5 * FINE_H), "top"
+        elif up_core and not down_core:
+            want, key = slope * (z - 0.5 * FINE_H), "bottom"
+        elif up_core and down_core:
+            want, key = slope * z, "inside"
+        else:
+            continue
+        assert cv[i][2] == pytest.approx(want, abs=1e-4), key
+        checked[key] += 1
+    assert min(checked.values()) > 0
+
+
+def test_unstamp_gives_core_faces_their_weights_back_but_not_collider_faces(cuda_device):
+    dev = cuda_device
+    fine = _grid(dev, FINE_H)
+    index, ijk, m = _fine_coords(fine, dev)
+    n = fine.voxel_capacity
+    x = _centres(fine, dev)
+    r = np.linalg.norm(x - np.array(CENTRE), axis=1)
+    vtype = np.zeros(n, dtype=np.int32)
+    vtype[:m] = 4
+    collider = (r < 0.03)                                  # a real collider inside the core
+    vtype[:m][collider] = 1
+    voxel_type = wp.array(vtype, dtype=wp.int32, device=dev)
+    collision_vel = wp.zeros(n, dtype=wp.vec3, device=dev)
+    weights = tuple(wp.full(n, 0.7, dtype=float, device=dev) for _ in range(3))
+    guide = GU.ShellGuide(1.0, core_shells=2.0)
+    guide.set_frames(_coarse_frame(dev, 0.0), None)
+    guide.stamp_core(fine, voxel_type, collision_vel, m, dev, weights=weights)
+    solid = (voxel_type.numpy()[:m] & 1) != 0
+    core = solid & ~collider
+    assert core.sum() > 100
+    # What the projection does: faces with solid on both sides are invalid.
+    for w in weights:
+        w.fill_(0.0)
+    guide.unstamp_core(fine, voxel_type, collision_vel, m, dev)
+    np.testing.assert_array_equal(voxel_type.numpy(), vtype)
+    for axis, w in enumerate(weights):
+        got = w.numpy()[:m]
+        for i in range(m):
+            lower = index.get(tuple(ijk[i] - np.eye(3, dtype=np.int64)[axis]))
+            if lower is None:
+                continue
+            touches_core = core[i] or core[lower]
+            touches_collider = collider[i] or collider[lower]
+            if touches_core and not touches_collider:
+                assert got[i] == pytest.approx(0.7), (axis, i)
+            else:
+                assert got[i] == 0.0, (axis, i)

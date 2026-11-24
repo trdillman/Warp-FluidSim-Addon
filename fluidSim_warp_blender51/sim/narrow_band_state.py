@@ -214,7 +214,8 @@ class NarrowBand:
         if self.guide is not None:
             sv = self.solver
             self.guide.stamp_core(sv.grid, sv.voxel_type.data, sv.collision_vel,
-                                  sv._nvox, sv.device)
+                                  sv._nvox, sv.device,
+                                  weights=(sv.vel.wu, sv.vel.wv, sv.vel.ww))
 
     def after_pressure(self):
         if self.guide is not None:
