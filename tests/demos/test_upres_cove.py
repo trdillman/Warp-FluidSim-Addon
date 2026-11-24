@@ -46,12 +46,11 @@ def test_scene_is_the_dam_break_cove_with_finer_voxels():
     assert uc.fine_voxel() == pytest.approx(uc.VOXEL / 2)
 
 
-def test_particle_count_exceeds_other_demo_reserves():
+def test_coarse_initial_fill_keeps_the_showcase_particle_count():
     emitted = uc.expected_particles()
-    # The largest shipped reserve is 900k (paddle_stir, deep_plunge); dam_break
-    # emits ~256k from the same reservoir at 3 cm.
-    assert emitted > 900_000
-    assert emitted == pytest.approx(1.2e6, rel=0.05)
+    # Dam Break emits ~256k from the same reservoir at 3 cm.
+    assert emitted > 3 * uc.expected_particles(cove.VOXEL)
+    assert emitted == pytest.approx(864_000)
     assert emitted * 1.15 < uc.MAX_PARTICLES  # Initial Fill fits the reserve
 
 
@@ -66,26 +65,19 @@ def test_coarse_leaves_hold_the_reservoir_with_room_for_the_surge():
 
 
 @pytest.mark.parametrize("fine", [False, True])
-def test_default_leaf_budgets_cover_the_cove_and_initial_fill(fine):
-    from types import SimpleNamespace
-
-    from fluidSim_warp_blender51.sim.capacity_planner import (
-        leaf_coords_for_world_bounds,
-        plan_initialization,
+def test_default_leaf_budgets_cover_the_entire_domain(fine):
+    from fluidSim_warp_blender51.sim.quality_contract import (
+        AuthoredQualitySettings,
+        resolve_quality,
     )
 
     coarse = _coarse_settings()
     longest = max(hi - lo for lo, hi in zip(uc.DOMAIN_LO, uc.DOMAIN_HI, strict=True))
     coarse.voxel_size = longest / round(longest / uc.VOXEL)
     settings = uc.fine_settings(coarse) if fine else coarse
-    bounds = [(mesh.verts.min(axis=0), mesh.verts.max(axis=0))
-              for mesh in cove.collider_meshes()]
-    bounds.append((uc.RESERVOIR_LO, uc.RESERVOIR_HI))
-    footprints = [SimpleNamespace(leaf_coords=leaf_coords_for_world_bounds(settings, lo, hi))
-                  for lo, hi in bounds]
-    resources = {"gpu_total_bytes": 16 * GIB, "gpu_free_bytes": 16 * GIB}
-    plan = plan_initialization(settings, (), (), footprints, resources)
-    assert plan.leaf_demand.value <= settings.leaf_capacity
+    quality = resolve_quality(AuthoredQualitySettings(voxel_size=settings.voxel_size),
+                              (uc.DOMAIN_LO, uc.DOMAIN_HI))
+    assert quality.total_domain_leaf_cells <= settings.leaf_capacity
 
 
 @pytest.mark.parametrize("demo_factory", [None, uc])

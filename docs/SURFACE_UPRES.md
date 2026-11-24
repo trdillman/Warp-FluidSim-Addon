@@ -119,9 +119,9 @@ per-frame ms, particle counts and triangle counts, plus OBJ meshes.
 
 ### Review scene: `upres_cove`
 
-`upres_cove` is the dam_break cove (same reservoir and colliders) at 1.8 cm
+`upres_cove` is the dam_break cove (same reservoir and colliders) at 2 cm
 voxels, compared with the shipped demo's 3 cm. The coarse sim emits about
-1.2 million particles and the guided fine solve runs at 9 mm. It is opt-in
+864,000 particles and the guided fine solve runs at 1 cm. It is opt-in
 and stays out of the Demo Gallery and the demo gate, like `tsunami_parthenon`.
 Its numbers live in `tools/demos/upres_cove.py`.
 
@@ -138,8 +138,9 @@ This needs no built `.blend`: without `demos/upres_cove.blend` the scene is
 authored on the fly (`build_demo_scenes.py -- upres_cove` builds and saves
 it). The demo's own add-on solver is the coarse sim. The guided fine solve
 follows it, then the full fine sim runs from the same inputs in a second
-pass, so the two fine solves never share VRAM. The preset leaves headroom
-for the collider topology and both passes on a 16 GB class card. The report's
+pass, so the two fine solves never share VRAM. At the preset resolutions,
+both grids have room for every leaf in the domain, including the collider
+bounds and the spreading liquid. The report's
 `summary.speedup_vs_full_fine` is full fine ms over coarse plus guided fine ms,
 after one warm-up frame; above
 1 the upres is faster. `artifacts/guided_upres/upres_cove_review.blend` holds

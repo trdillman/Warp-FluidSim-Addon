@@ -19,7 +19,7 @@ not become source-control assets.
 4. tsunami_parthenon - a tsunami-sized wave drives through a procedural
                      Parthenon-style temple (build explicitly with
                      `-- tsunami_parthenon`).
-5. upres_cove      - the dam_break cove at 2x resolution (~2M particles), the
+5. upres_cove      - the dam_break cove at 2 cm (~864k particles), the
                      guided upres review scene (build explicitly with
                      `-- upres_cove`; tools/profiling/compare_guided_upres.py
                      --demo upres_cove runs the upres on it).
@@ -1889,8 +1889,8 @@ def build_tsunami_parthenon():
 
 
 
-# Upres Cove: the dam_break cove at twice its resolution and eight times its
-# particles, for reviewing guided upres (tools/profiling/compare_guided_upres.py
+# Upres Cove: the dam_break cove at finer resolution, for reviewing guided
+# upres (tools/profiling/compare_guided_upres.py
 # --demo upres_cove). Opt-in and outside the gallery and the demo gate, like
 # tsunami_parthenon. Numbers live in tools/demos/upres_cove.py.
 UPRES_COVE_PREVIEW_FRAME = 24

@@ -32,7 +32,7 @@ launched by path from outside the repo (`wt_gate.ps1`, README/AGENTS/CI notes).
 | `analyze_demos.py` | Offline physics checks on the demo caches -> `artifacts/demo_analysis/` (plain Python) | gate, `tests/demos/test_demo_analysis_contract.py` |
 | `check_demo_blends.py` | Executable all-demo gate: every tracked `demos/*.blend` reopens, resets, simulates (Blender) | gate |
 | `dam_break_cove.py` | Shared rocky-cove geometry for the dam_break builder/analyzer/checker | the three above, `tests/demos/test_dam_break_cove.py` |
-| `upres_cove.py` | Numbers for the opt-in `upres_cove` guided upres review scene (the dam_break cove at 2x resolution, ~2M particles); not in the gallery or the demo gate | `build_demo_scenes.py`, `profiling/compare_guided_upres.py`, `tests/demos/test_upres_cove.py` |
+| `upres_cove.py` | Preset for the opt-in `upres_cove` guided upres review scene (the dam_break cove at 2 cm, ~864k particles), outside the gallery and demo gate | `build_demo_scenes.py`, `profiling/compare_guided_upres.py`, `tests/demos/test_upres_cove.py` |
 
 ### `learned_guess/` (4.0 learned pressure guess; developer machine only)
 Pure-Warp scenes plus a PyTorch trainer; torch never ships. Datasets and

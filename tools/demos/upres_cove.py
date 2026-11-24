@@ -6,9 +6,9 @@ dam walls, beach, headlands, sea stack and jetty from
 fine solve at double the coarse resolution:
 
     dam_break demo   0.03 m voxels,   ~256k particles
-    upres_cove       0.018 m voxels,  ~1.2M particles   (the coarse sim)
-    guided upres     0.009 m voxels, fine surface shell only
-    full fine        0.009 m voxels,  ~9.5M particles   (the comparison)
+    upres_cove       0.020 m voxels,  ~864k particles  (the coarse sim)
+    guided upres     0.010 m voxels, fine surface shell only
+    full fine        0.010 m voxels,  ~6.9M particles  (the comparison)
 
 The builder (``build_demo_scenes.py -- upres_cove``) and the review run
 (``tools/profiling/compare_guided_upres.py --demo upres_cove``) both read these
@@ -27,7 +27,7 @@ import numpy as np
 from tools.demos import dam_break_cove as cove
 
 NAME = "upres_cove"
-VOXEL = 0.018
+VOXEL = 0.020
 PARTICLES_PER_VOXEL = 8.0
 FRAMES = 72
 # Frames the review run turns into meshes by default (start, mid-surge, wash).
@@ -38,16 +38,15 @@ UPRES_FACTOR = 2
 SHELL_VOXELS = 4.0
 CORE_SHELLS = 2.0
 
-# The coarse particle reserve covers the ~1.2M Initial Fill. Leaves are
+# The coarse particle reserve covers the ~864k Initial Fill. Leaves are
 # fixed (the review run steps the solvers directly, without the add-on's leaf
 # growth, which would swap the coarse solver out from under the upres). The
-# reserve covers the terrain collider bounds and their padding.
-# Both fine passes use the same 32768-leaf reserve for that topology and the
-# spreading liquid. At 0.015 m the fine grid needed over 44000 leaves at startup,
-# exceeding the allocation this preset uses to fit a 16 GB class GPU.
-MAX_PARTICLES = 1_500_000
+# reserves cover the entire domain at each default resolution, including
+# the terrain collider bounds and the liquid as it spreads. SparseGrid
+# clamps the reservation to the number of addressable leaves.
+MAX_PARTICLES = 1_000_000
 LEAF_CAPACITY = 8192
-FINE_LEAF_CAPACITY = 32768
+FINE_LEAF_CAPACITY = 36864
 
 DOMAIN_LO = cove.DOMAIN_LO
 DOMAIN_HI = cove.DOMAIN_HI
