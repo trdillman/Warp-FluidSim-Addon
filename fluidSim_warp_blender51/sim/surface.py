@@ -280,11 +280,13 @@ class SurfacePipeline:
 
     @staticmethod
     def voxel_size_for(settings):
-        resolved = getattr(settings, "resolved_quality", None)
-        if resolved is None:
-            resolved = resolve_quality(
-                settings, (settings.domain_min, settings.domain_max))
-        return resolved.surface_voxel_size
+        # Resolve from the live settings every time. The solver's cached
+        # ``resolved_quality`` is a snapshot from creation, so reading it here
+        # froze the surface size and ignored Resolution Mode, Resolution
+        # Multiplier and Surface Voxel Size edits on a running or paused solver.
+        return resolve_quality(
+            settings, (settings.domain_min, settings.domain_max)
+        ).surface_voxel_size
 
     def voxel_size(self):
         return self.voxel_size_for(self.solver.settings)
@@ -861,6 +863,10 @@ class SurfacePipeline:
             {k[len(prefix):]: v for k, v in scalars.items() if k.startswith(prefix)})
 
     def rebuild(self):
+        if self.waves is not None:
+            # A paused edit to Wave Detail changes the wave spacing; the layer
+            # shown on the rebuilt mesh must use it, not the last stepped value.
+            self.waves.settings = self._wave_settings()
         self.built_key = None
         self.invalidate()
         self.build()
