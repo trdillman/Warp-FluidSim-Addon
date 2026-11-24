@@ -295,7 +295,7 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 | `view_surface_overridden` | UNOBSERVED | (never written either) |
 | `view_particles_overridden` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
-| `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:886` |
+| `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:888` |
 | `stat_liquid_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:549`, `fluidSim_warp_blender51/blender/scene_bridge.py:514` |
 | `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:557`, `fluidSim_warp_blender51/blender/scene_bridge.py:543` |
 | `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:558`, `fluidSim_warp_blender51/blender/scene_bridge.py:545` |

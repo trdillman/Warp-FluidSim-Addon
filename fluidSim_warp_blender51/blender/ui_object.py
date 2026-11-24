@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import bpy
 
+from .scene_access import active_domain_settings
 from .scene_inputs import uses_native_source_plan
 from .ui_common import (
     FluidSimObjectPanel,
@@ -24,6 +25,13 @@ def _layout(panel):
 def _settings(context):
     obj = getattr(context, "object", None)
     return getattr(obj, "fluidsim", None) if obj is not None else None
+
+
+def height_fill_active(context) -> bool:
+    """True when the scene's domain has Height Fill switched on."""
+    scene = getattr(context, "scene", None)
+    domain = active_domain_settings(scene) if scene is not None else None
+    return bool(getattr(domain, "height_enabled", False))
 
 
 def role_poll(context, *roles: str) -> bool:
@@ -236,13 +244,17 @@ class FLUIDSIM_PT_object_collider(FluidSimObjectPanel, bpy.types.Panel):
         return role_poll(context, "COLLIDER")
 
     def draw(self, context):
-        draw_collider_settings(_layout(self), _settings(context))
+        draw_collider_settings(
+            _layout(self), _settings(context),
+            height_fill_enabled=height_fill_active(context))
 
 
-def draw_collider_settings(layout, settings, *, columns: int = 2):
+def draw_collider_settings(layout, settings, *, columns: int = 2,
+                           height_fill_enabled: bool = False):
     """Collider surface and rigid-body controls; shared with the 3D View Setup stage.
 
-    The narrow sidebar passes ``columns=1`` so labels are not cut off.
+    The narrow sidebar passes ``columns=1`` so labels are not cut off. The
+    height-fill override is only offered while the domain's Height Fill is on.
     """
     dynamic = bool(getattr(settings, "collider_dynamic", False))
     static = getattr(settings, "collider_body_type", None) == "STATIC"
@@ -253,6 +265,8 @@ def draw_collider_settings(layout, settings, *, columns: int = 2):
         + (() if dynamic or static else ("transfer_velocity",)),
         columns=columns,
     )
+    if height_fill_enabled:
+        layout.prop(settings, "allow_height_fill")
     if dynamic:
         # Two-way rigid coupling: the liquid moves this collider.
         draw_property_grid(

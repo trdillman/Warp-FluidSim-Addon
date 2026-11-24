@@ -30,6 +30,7 @@ from .source_contracts import (
     SourceShape,
     SourceShapeDesc,
 )
+from .height_fill_solids import eligible_solids
 from .source_kernels import (
     k_add_emission_demand,
     k_admit_emission_batch,
@@ -618,6 +619,8 @@ class CompiledSourceExecution:
             and self._legacy_source_armed(source, self._initial_fired)
         )
         self._transaction_height_armed = height_armed
+        nofill = self._build_height_nofill() if height_armed else None
+        self._transaction_nofill = nofill
         self._transaction_emit_seed = (self._emit_seed * 1664525 + 1013904223) & 0x7FFFFFFF
         self._transaction_mesh_sources = emit_meshes
         self._transaction_shapes = None
@@ -662,6 +665,7 @@ class CompiledSourceExecution:
                         source_id=getattr(height, "source_id", ""),
                         color=normalize_color(getattr(height, "color", (0.1, 0.45, 1.0, 1.0))),
                         source_numeric_id=int(getattr(height, "source_numeric_id", 0)),
+                        solid_exclusion=nofill is not None,
                     )
                 )
             key = tuple(repr(source) for source in emit_sources)
@@ -738,6 +742,7 @@ class CompiledSourceExecution:
             self._transaction_shape_count = 0
             self._transaction_mesh_sources = ()
             self._transaction_height_armed = False
+            self._transaction_nofill = None
         return NormalizedEmissionPlan(
             compiled_sources=tuple(compiled_candidates),
             legacy_attempted=legacy_attempted,
@@ -818,6 +823,7 @@ class CompiledSourceExecution:
                     grid.origin,
                     owner.settings.voxel_size,
                     *self._height_emission_inputs(),
+                    self._nofill_argument(),
                     self._emission_scratch_counts,
                     self._emission_state,
                 ],
@@ -849,6 +855,36 @@ class CompiledSourceExecution:
             device=self.device,
         )
         return True
+
+    def _build_height_nofill(self):
+        """Flag voxels the height fill must keep out of, or ``None`` if none apply.
+
+        One launch per collider mesh whose "fill inside" override is off. The
+        result feeds the height field marking and all three emission passes, so
+        admission counting, slot reservation and emission agree exactly.
+        """
+        solids = eligible_solids(self._collider_provider())
+        if not solids:
+            return None
+        owner, settings, height = self.runtime, self.runtime.settings, self.height_source
+        return self._height_solids.build(
+            owner.grid,
+            owner._nvox,
+            settings.voxel_size,
+            solids,
+            base_height=float(height.base_height),
+            back_mode=int(height.back_mode),
+            profile=self._height_profile,
+            profile_res=wp.vec2i(
+                int(self._height_profile_res[0]), int(self._height_profile_res[1])),
+            domain_min=wp.vec3(*settings.domain_min),
+            domain_max=wp.vec3(*settings.domain_max),
+        )
+
+    def _nofill_argument(self):
+        """Mask array for the emission kernels; a never-read stand-in when unused."""
+        nofill = getattr(self, "_transaction_nofill", None)
+        return nofill if nofill is not None else self._height_solids.unused_mask
 
     def _height_emission_inputs(self):
         """Profile inputs the shape-emission kernels need for the height emitter."""
@@ -1076,6 +1112,8 @@ class CompiledSourceExecution:
                     wp.vec3(*height.velocity),
                     1 if (height.emit_particles and self._legacy_liquid_target(height) > 0) else 0,
                     self._emission_state,
+                    1 if self._transaction_nofill is not None else 0,
+                    self._nofill_argument(),
                 ],
                 outputs=[owner.voxel_type.data, owner.vel.u, owner.vel.v, owner.vel.w],
                 device=self.device,
@@ -1105,6 +1143,7 @@ class CompiledSourceExecution:
                     owner.voxel_counts.data,
                     self._emission_state,
                     *self._height_emission_inputs(),
+                    self._nofill_argument(),
                 ],
                 outputs=[demand],
                 device=self.device,

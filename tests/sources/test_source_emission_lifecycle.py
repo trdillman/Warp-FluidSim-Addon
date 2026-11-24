@@ -790,3 +790,46 @@ def test_re_enabled_initial_fill_does_not_rearm_without_reset():
     # Only reset re-arms.
     pipeline.reset()
     assert armed_value(rebuilt) == 1
+
+
+def _container_collider(*, allow_height_fill):
+    """An open-topped tank (five faces) standing on the domain floor."""
+    from fluidSim_warp_blender51.sim.solver import ColliderDesc
+
+    lo, hi = np.array((-0.2, -0.2, 0.0), np.float32), np.array((0.2, 0.2, 0.3), np.float32)
+    corners = np.array([[x, y, z] for z in (0, 1) for y in (0, 1) for x in (0, 1)],
+                       np.float32)
+    points = lo + corners * (hi - lo)
+    quads = ((0, 2, 3, 1), (0, 1, 5, 4), (2, 6, 7, 3), (0, 4, 6, 2), (1, 3, 7, 5))
+    tris = [t for a, b, c, d in quads for t in ((a, b, c), (a, c, d))]
+    device = _device()
+    mesh = sourcing.wp.Mesh(
+        points=sourcing.wp.array(points, dtype=sourcing.wp.vec3, device=device),
+        indices=sourcing.wp.array(
+            np.array(tris, np.int32).reshape(-1), dtype=sourcing.wp.int32, device=device),
+    )
+    return ColliderDesc(
+        mesh=mesh, aabb_min=tuple(lo), aabb_max=tuple(hi),
+        allow_height_fill=allow_height_fill)
+
+
+@pytest.mark.parametrize("allow_height_fill", [False, True])
+def test_height_fill_keeps_out_of_an_open_collider_unless_overridden(allow_height_fill):
+    from fluidSim_warp_blender51.sim.sourcing import HeightSourceDesc
+
+    solver = FluidSolver(_settings(max_substeps=1))
+    solver.set_colliders([_container_collider(allow_height_fill=allow_height_fill)])
+    solver.set_height_source(HeightSourceDesc(
+        enabled=True, base_height=0.5, back_mode=1, emit_particles=True,
+        emission_mode=SourceEmissionMode.INITIAL_FILL))
+
+    _step(solver)
+
+    assert solver.particles.refresh_host_count() > 0
+    inside = _count_in_box(
+        solver, x=(-0.15, 0.15), y=(-0.15, 0.15), z=(0.0, 0.25))
+    if allow_height_fill:
+        assert inside > 0, "override on: the container should fill"
+    else:
+        assert inside == 0, "override off: nothing may spawn inside the mesh"
+    solver.release()

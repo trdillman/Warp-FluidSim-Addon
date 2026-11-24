@@ -4,6 +4,13 @@
 
 ### Changes
 
+- Height Fill no longer spawns liquid inside collider meshes. It keeps out of
+  every collider, plus a margin of about 1.5 cells around it, and it treats a
+  mesh with holes or a missing face as solid. Each collider has a new
+  **Fill Inside** switch (shown only while Height Fill is on, off by default)
+  for colliders used as containers; Quick Container turns it on. Files saved
+  before this keep working, but a height fill that relied on filling inside a
+  collider needs Fill Inside on that collider.
 - The sparse-leaf allocation now grows by itself during Live playback, Step and
   bake, like the particle pool. When a frame needs more leaves than the Leaf
   Capacity holds, the solver is rebuilt with a larger allocation (about 1.5x,

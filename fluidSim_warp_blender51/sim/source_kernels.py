@@ -540,6 +540,7 @@ def k_source_shapes_particle_demand(
     height_profile_res: wp.vec2i,
     domain_min: wp.vec3,
     domain_max: wp.vec3,
+    nofill: wp.array(dtype=wp.int32),
     demand: wp.array(dtype=wp.int32),
 ):
     """Per-voxel particle count :func:`k_source_shapes_particles` will emit.
@@ -562,6 +563,8 @@ def k_source_shapes_particle_demand(
         if s.enabled == 0 or s.stype != 0 or s.mode != 1:
             continue
         if s.emission_mode == 0 and s.armed == 0:
+            continue
+        if s.solid_exclusion != 0 and nofill[tid] != 0:
             continue
         if emission_shape_sdf(
                 s, pw, height_profile, height_profile_res, domain_min, domain_max) > 0.0:
@@ -614,6 +617,7 @@ def k_source_shapes_particles(
     height_profile_res: wp.vec2i,
     domain_min: wp.vec3,
     domain_max: wp.vec3,
+    nofill: wp.array(dtype=wp.int32),
     positions: wp.array(dtype=wp.vec3),
     velocities: wp.array(dtype=wp.vec3),
     age: wp.array(dtype=float),
@@ -650,6 +654,8 @@ def k_source_shapes_particles(
         # Initial-fill sources emit only while armed; the host disarms them
         # after the firing substep so the region fills exactly once per run.
         if s.emission_mode == 0 and s.armed == 0:
+            continue
+        if s.solid_exclusion != 0 and nofill[tid] != 0:
             continue
         d = emission_shape_sdf(
             s, pw, height_profile, height_profile_res, domain_min, domain_max)
@@ -882,6 +888,8 @@ def k_source_height(
     velocity: wp.vec3,
     require_admission: int,
     emission_state: wp.array(dtype=wp.int32),
+    use_nofill: int,
+    nofill: wp.array(dtype=wp.int32),
     voxel_type: wp.array(dtype=wp.int32),
     u: wp.array(dtype=float),
     v: wp.array(dtype=float),
@@ -892,6 +900,8 @@ def k_source_height(
         return
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    if use_nofill != 0 and nofill[tid] != 0:
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     pw = voxel_center_world(ijk, origin, voxel_size)
@@ -912,6 +922,69 @@ def k_source_height(
 
 register_fn(
     k_source_height, "fluidSimSourceHeight", notes="Flat / profile-grid height sourcing along +z."
+)
+
+
+@wp.kernel
+def k_height_nofill_mask(
+    mesh_id: wp.uint64,
+    box_min: wp.vec3,
+    box_max: wp.vec3,
+    pad: float,
+    band: float,
+    winding_threshold: float,
+    leaf_coords: wp.array(dtype=wp.vec3i),
+    num_leaves: wp.array(dtype=wp.int32),
+    origin: wp.vec3,
+    voxel_size: float,
+    base_height: float,
+    back_mode: int,
+    profile: wp.array2d(dtype=float),
+    profile_res: wp.vec2i,
+    domain_min: wp.vec3,
+    domain_max: wp.vec3,
+    mask: wp.array(dtype=wp.int32),
+):
+    """Flag height-fill voxels that sit inside, or within ``pad`` of, a mesh.
+
+    Only voxels the height fill could reach are tested: below the fill level
+    and inside the mesh's padded bounding box. Everything else costs a few
+    comparisons. The inside test is the mesh's winding number, which still
+    reads solid for a mesh with holes (a closest-face sign vote does not),
+    so an open mesh is kept clear rather than filled. The padding test is
+    the unsigned distance, which is valid for any mesh.
+    """
+    tid = wp.tid()
+    if tid >= num_leaves[0] * C.LEAF_VOLUME:
+        return
+    if mask[tid] != 0:
+        return
+    ijk = voxel_coord_of_flat(leaf_coords, tid)
+    pw = voxel_center_world(ijk, origin, voxel_size)
+    if (pw[0] < box_min[0] or pw[0] > box_max[0]
+            or pw[1] < box_min[1] or pw[1] > box_max[1]
+            or pw[2] < box_min[2] or pw[2] > box_max[2]):
+        return
+    level = wp.max(
+        base_height,
+        height_surface_level(
+            pw, base_height, back_mode, profile, profile_res, domain_min, domain_max),
+    )
+    if pw[2] > level:
+        return
+    q = wp.mesh_query_point_sign_winding_number(mesh_id, pw, band, 2.0, winding_threshold)
+    solid = q.sign < 0.0
+    if q.result and not solid:
+        closest = wp.mesh_eval_position(mesh_id, q.face, q.u, q.v)
+        solid = wp.length(pw - closest) < pad
+    if solid:
+        mask[tid] = 1
+
+
+register_fn(
+    k_height_nofill_mask,
+    "fluidSimHeightNoFillMask",
+    notes="Per-voxel keep-out flag for height fill: inside, open or near a collider mesh.",
 )
 
 
@@ -2033,6 +2106,7 @@ def k_count_source_shapes_particles(
     height_profile_res: wp.vec2i,
     domain_min: wp.vec3,
     domain_max: wp.vec3,
+    nofill: wp.array(dtype=wp.int32),
     scratch_counts: wp.array(dtype=wp.int32),
     emission_state: wp.array(dtype=wp.int32),
 ):
@@ -2046,6 +2120,8 @@ def k_count_source_shapes_particles(
     for si in range(num_shapes):
         s = shapes[si]
         if s.enabled == 0 or s.stype != 0 or s.mode != 1 or (s.emission_mode == 0 and s.armed == 0):
+            continue
+        if s.solid_exclusion != 0 and nofill[tid] != 0:
             continue
         if emission_shape_sdf(
                 s, pw, height_profile, height_profile_res, domain_min, domain_max) > 0.0:
