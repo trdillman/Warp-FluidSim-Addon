@@ -117,6 +117,30 @@ The second command steps the coarse dam break, the guided fine solve and
 (with `--full-fine`) an unguided full solve at the fine size, and prints
 per-frame ms, particle counts and triangle counts, plus OBJ meshes.
 
+### Review scene: `upres_cove`
+
+`upres_cove` is the dam_break cove (same reservoir and colliders) at 1.5 cm
+voxels, half the shipped demo's 3 cm, so the coarse sim alone emits about
+2M particles; the guided fine solve runs at 7.5 mm. It is opt-in and stays
+out of the Demo Gallery and the demo gate, like `tsunami_parthenon`. Its
+numbers live in `tools/demos/upres_cove.py`.
+
+```
+blender --background --factory-startup --python-use-system-env --python tools/profiling/compare_guided_upres.py -- --demo upres_cove --full-fine --phases --json-out artifacts/guided_upres/upres_cove.json
+```
+
+This needs no built `.blend`: without `demos/upres_cove.blend` the scene is
+authored on the fly (`build_demo_scenes.py -- upres_cove` builds and saves
+it). The demo's own add-on solver is the coarse sim. The guided fine solve
+follows it, then the full fine sim runs from the same inputs in a second
+pass, so the two fine solves never share VRAM (each pass is under 14 GB by
+the add-on's estimate). The report's `summary.speedup_vs_full_fine` is the
+full fine ms over coarse plus guided fine ms, after one warm-up frame; above
+1 the upres is faster. `artifacts/guided_upres/upres_cove_review.blend` holds
+the coarse, guided and full fine surfaces of frames 24, 48 and 72, one
+collection each, every mesh visible only on its own frame. `--voxel-size`,
+`--factor`, `--core-shells` and `--frames` override the scene's defaults.
+
 ## How to check it (Windows GPU host)
 
 ```

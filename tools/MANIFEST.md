@@ -32,6 +32,7 @@ launched by path from outside the repo (`wt_gate.ps1`, README/AGENTS/CI notes).
 | `analyze_demos.py` | Offline physics checks on the demo caches -> `artifacts/demo_analysis/` (plain Python) | gate, `tests/demos/test_demo_analysis_contract.py` |
 | `check_demo_blends.py` | Executable all-demo gate: every tracked `demos/*.blend` reopens, resets, simulates (Blender) | gate |
 | `dam_break_cove.py` | Shared rocky-cove geometry for the dam_break builder/analyzer/checker | the three above, `tests/demos/test_dam_break_cove.py` |
+| `upres_cove.py` | Numbers for the opt-in `upres_cove` guided upres review scene (the dam_break cove at 2x resolution, ~2M particles); not in the gallery or the demo gate | `build_demo_scenes.py`, `profiling/compare_guided_upres.py`, `tests/demos/test_upres_cove.py` |
 
 ### `learned_guess/` (4.0 learned pressure guess; developer machine only)
 Pure-Warp scenes plus a PyTorch trainer; torch never ships. Datasets and
@@ -52,7 +53,7 @@ checkpoints stay outside git. Tests: `tests/solver/test_learned_guess_tooling.py
 | `profile_user_path.py` | Blender user-path (viewport playback) profiler | gate, `tests/perf/test_profile_user_path_contract.py`, `tests/perf/test_performance_hotpath_contracts.py` |
 | `profile_kernel_breakdown.py` | Per-kernel GPU vs wall time | manual |
 | `profile_host_breakdown.py` | cProfile of host side of `step_frame` | manual |
-| `compare_guided_upres.py` | Guided shell upres trial: coarse vs guided-fine (vs optional full fine) per-frame ms, particle counts, surface size, OBJ export (needs CUDA) | manual |
+| `compare_guided_upres.py` | Guided shell upres trial: coarse vs guided-fine (vs optional full fine) per-frame ms, particle counts, surface size, OBJ export (needs CUDA); `--demo NAME` runs in Blender on a demo (`upres_cove`) and saves a review .blend | `tests/demos/test_upres_cove.py`, manual |
 | `compare_sharp_surfacing.py` | Sharp Surfacing before/after on the same particles: render-surface build+extract ms, triangles, quality, OBJ export (needs CUDA) | manual |
 | `check_launch_identity.py` | Proves a solver change leaves a bake bitwise identical (plain vs cached-launch SHA-256) | manual |
 | `compare_surface_backends.py` | Sparse vs dense vs Surface Nets on the same liquid SDF: extraction ms, triangle quality, repeatability (`--demo` needs Blender; `--solver-preset` needs CUDA) | `tests/surface/test_compare_surface_backends.py`, manual |

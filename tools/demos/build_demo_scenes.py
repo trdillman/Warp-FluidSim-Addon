@@ -19,6 +19,10 @@ not become source-control assets.
 4. tsunami_parthenon - a tsunami-sized wave drives through a procedural
                      Parthenon-style temple (build explicitly with
                      `-- tsunami_parthenon`).
+5. upres_cove      - the dam_break cove at 2x resolution (~2M particles), the
+                     guided upres review scene (build explicitly with
+                     `-- upres_cove`; tools/profiling/compare_guided_upres.py
+                     --demo upres_cove runs the upres on it).
 
 The exported data is analyzed offline by tools/demos/analyze_demos.py.
 """
@@ -1884,6 +1888,119 @@ def build_tsunami_parthenon():
     save_playable("tsunami_parthenon", scene, tp.FRAMES, seed_particles=first)
 
 
+
+# Upres Cove: the dam_break cove at twice its resolution and eight times its
+# particles, for reviewing guided upres (tools/profiling/compare_guided_upres.py
+# --demo upres_cove). Opt-in and outside the gallery and the demo gate, like
+# tsunami_parthenon. Numbers live in tools/demos/upres_cove.py.
+UPRES_COVE_PREVIEW_FRAME = 24
+
+
+def author_upres_cove():
+    scene = fresh_scene()
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+    from tools.demos import dam_break_cove as cove
+    from tools.demos import upres_cove as uc
+
+    fs = scene.fluidsim
+    lo, hi = uc.DOMAIN_LO, uc.DOMAIN_HI
+    make_domain(scene, lo, hi, "UpresCove Domain")
+    ds = domain_settings(scene)
+    set_resolution(ds, lo, hi, uc.VOXEL)
+    ds.max_particles = uc.MAX_PARTICLES
+    ds.leaf_capacity = uc.LEAF_CAPACITY
+    ds.min_substeps = 1
+    ds.max_substeps = 16
+    ds.whitewater_enabled = False
+    ds.narrow_band_enabled = False
+    ds.profiling_enabled = False
+    show_liquid(scene, "UpresCove", uc.WATER_COLOR, view="SURFACE")
+    fs.live = True
+    scene.frame_start = 1
+    scene.frame_end = uc.FRAMES
+    scene.frame_set(1)
+    src = make_source_box(scene, uc.RESERVOIR_LO, uc.RESERVOIR_HI,
+                          "UpresCove Source Column",
+                          emit_rate=uc.PARTICLES_PER_VOXEL,
+                          emission_mode="INITIAL_FILL")
+    src.display_type = "WIRE"
+    src.hide_render = True
+    materials = {name: demo_material(name, color, roughness=0.85)
+                 for name, color in DAM_BREAK_MATERIAL_COLORS.items()}
+    for data in cove.collider_meshes():
+        obj = make_mesh_object(scene, data, materials)
+        _colliders.tag_collider(obj, friction=data.friction, restitution=0.0)
+        if data.name in ("DamBreak Cove", "DamBreak Sea Stack"):
+            obj.data.shade_smooth()
+            obj.data.set_sharp_from_angle(angle=math.radians(40.0))
+    make_mesh_object(scene, cove.apron_mesh(), materials)
+    make_mesh_object(scene, cove.wall_mesh(), materials)
+    cam_loc, cam_target, cam_lens = uc.CAMERA
+    add_camera_light(scene, cam_loc, (0.0, 0.0, 0.0))
+    look_at(scene.camera, cam_target)
+    scene.camera.data.lens = cam_lens
+    use_material_shading(scene)
+    add_text_block("README_Upres_Cove", (
+        "Upres Cove (guided upres review scene)\n"
+        "======================================\n\n"
+        f"The Dam Break cove at {uc.VOXEL * 1000:.0f} mm voxels (Dam Break uses\n"
+        f"{cove.VOXEL * 1000:.0f} mm) with about {uc.expected_particles() / 1e6:.1f}M particles. Press Play\n"
+        "to run it live at this resolution.\n\n"
+        "Guided upres is not in the add-on panels yet. To see it, run\n"
+        "tools/profiling/compare_guided_upres.py --demo upres_cove: it runs\n"
+        f"this sim, a guided fine solve at {uc.fine_voxel() * 1000:.1f} mm on top, and\n"
+        "(with --full-fine) a plain full sim at that size, then saves\n"
+        "artifacts/guided_upres/upres_cove_review.blend with one collection\n"
+        "per method. Toggle the collections to compare at the same camera.\n"))
+    return scene
+
+
+def build_upres_cove():
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+    from tools.demos import upres_cove as uc
+
+    scene = author_upres_cove()
+    initialize_demo()
+    sess = session()
+
+    def preview(frame):
+        if frame == UPRES_COVE_PREVIEW_FRAME:
+            render_preview("upres_cove", min_water_fraction=DAM_BREAK_PREVIEW_MIN_WATER)
+
+    series = run_scene("upres_cove", uc.FRAMES, dump_velocities=False,
+                       on_frame=preview)
+    first = int(series["particle_count"][0])
+    expected = uc.expected_particles()
+    log(f"upres_cove: {first:,} particles at frame 1 (expected about {expected:,.0f}), "
+        f"peak {max(series['particle_count']):,}, "
+        f"mean step {np.mean(series['step_ms']):.0f} ms")
+    if not 0.8 * expected <= first <= uc.MAX_PARTICLES:
+        raise RuntimeError(
+            f"upres_cove emitted {first:,} particles, expected about {expected:,.0f}")
+    if sess.solver is None:
+        raise RuntimeError("upres_cove: solver released during the build")
+    save_scene("upres_cove", preview=False)
+    write_meta("upres_cove", {
+        "scene": "upres_cove",
+        "domain": [list(uc.DOMAIN_LO), list(uc.DOMAIN_HI)],
+        "voxel_size": uc.VOXEL,
+        "fps": FPS,
+        "reservoir": [list(uc.RESERVOIR_LO), list(uc.RESERVOIR_HI)],
+        "source_emission_mode": "INITIAL_FILL",
+        "source_emitted_particles": first,
+        "max_particles": uc.MAX_PARTICLES,
+        "leaf_capacity": uc.LEAF_CAPACITY,
+        "upres_factor": uc.UPRES_FACTOR,
+        "upres_shell_voxels": uc.SHELL_VOXELS,
+        "upres_core_shells": uc.CORE_SHELLS,
+        "fine_leaf_capacity": uc.FINE_LEAF_CAPACITY,
+        "whitewater_enabled": False,
+        "build_frames": uc.FRAMES,
+        "build_peak_particles": int(max(series["particle_count"])),
+        "build_mean_step_ms": float(np.mean(series["step_ms"])),
+    })
+    save_playable("upres_cove", scene, uc.FRAMES, seed_particles=first)
+
 # ---------------------------------------------------------------------------
 
 def main():
@@ -1899,6 +2016,7 @@ def main():
         "capillary_droplet": build_capillary_droplet,
         "deep_plunge": build_deep_plunge,
         "tsunami_parthenon": build_tsunami_parthenon,
+        "upres_cove": build_upres_cove,
     }
     targets = list(DEFAULT_SCENES)
     if "--" in sys.argv:
