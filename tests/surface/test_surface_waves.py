@@ -330,3 +330,33 @@ def test_waves_build_the_surface_first_when_the_cadence_did_not(
     pipe.step_waves()
     assert events == ["build", "extract", "extract"]
     assert pipe.mesh_key == pipe.built_key == ("k",)
+
+
+def test_a_rebuilt_surface_keeps_the_current_waves(cuda_device, monkeypatch):
+    from fluidSim_warp_blender51.sim import surface as SURF
+
+    verts, tris = _plane(bump=0.03, width=0.02)
+    settings = SimpleNamespace(
+        surface_enabled=True, surface_waves_enabled=True, surface_waves_detail=0.5,
+        surface_waves_strength=4.0, surface_waves_damping=1.5,
+        surface_update_cadence=1, time_scale=1.0, frame_rate=24.0)
+    solver = SimpleNamespace(settings=settings, device=cuda_device,
+                             _phase=lambda name: _Null())
+    pipe = SURF.SurfacePipeline.__new__(SURF.SurfacePipeline)
+    pipe.solver = solver
+    pipe.waves = None
+    pipe.render_sdf = object()
+    pipe.built_key = ("k",)
+    pipe.render_extractor = SimpleNamespace(extract=lambda sdf: (verts, tris))
+    monkeypatch.setattr(pipe, "voxel_size", lambda: 0.02, raising=False)
+    monkeypatch.setattr(pipe, "build_key", lambda: ("k",), raising=False)
+    monkeypatch.setattr(pipe, "_vertex_velocity", lambda v: np.zeros_like(v),
+                        raising=False)
+    for _ in range(3):
+        stepped, _ = pipe.step_waves()
+    frame, heights = pipe.waves.frame, pipe.waves.heights().copy()
+    pipe.mesh_cache = None  # what a paused rebuild does
+    again, again_tris = pipe.mesh()
+    assert again_tris is tris and pipe.waves.frame == frame
+    np.testing.assert_array_equal(pipe.waves.heights(), heights)
+    np.testing.assert_allclose(again, stepped, atol=1e-6)

@@ -676,6 +676,32 @@ class SurfaceWaves:
     def heights(self):
         return self.h.numpy()[: self.count]
 
+    def displace(self, verts, tris):
+        """Apply the current waves to a mesh without advancing them.
+
+        For a surface re-extracted between frames (a render setting changed
+        while paused): the waves stay where they are and the new mesh shows
+        them.
+        """
+        dev = self.device
+        verts = np.ascontiguousarray(verts, dtype=np.float32).reshape(-1, 3)
+        tris = np.ascontiguousarray(tris, dtype=np.int32).reshape(-1)
+        nv, nt = len(verts), len(tris) // 3
+        if nv == 0 or nt == 0 or self.count == 0:
+            return verts.copy()
+        v_dev = wp.array(verts, dtype=wp.vec3, device=dev)
+        t_dev = wp.array(tris, dtype=wp.int32, device=dev)
+        normals = wp.zeros(nv, dtype=wp.vec3, device=dev)
+        wp.launch(k_wave_vertex_normals, dim=nt, inputs=[v_dev, t_dev, normals],
+                  device=dev)
+        wp.launch(k_wave_normalize, dim=nv, inputs=[normals], device=dev)
+        grid = self._grid(self.pos, self.count)
+        out = wp.empty_like(v_dev)
+        wp.launch(k_wave_displace, dim=nv,
+                  inputs=[grid.id, self.pos, self.nrm, self.h, v_dev, normals,
+                          self.radius, out], device=dev)
+        return out.numpy()
+
     # Checkpoints: the layer is state, not scratch, so a resumed bake must
     # carry it on rather than start new waves.
 

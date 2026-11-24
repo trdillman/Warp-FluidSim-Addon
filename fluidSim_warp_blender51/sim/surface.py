@@ -881,7 +881,15 @@ class SurfacePipeline:
             self.build(build_render=True, build_lowres=False)
         key = self.build_key()
         if self.mesh_cache is None or self.mesh_key != key:
-            self.mesh_cache = self.render_extractor.extract(self.render_sdf)
+            verts, tris = self.render_extractor.extract(self.render_sdf)
+            waves = self.waves
+            if (waves is not None and waves.count
+                    and bool(getattr(self.solver.settings, "surface_waves_enabled", False))):
+                # A rebuild between frames (paused setting change): show the
+                # current waves on the new surface without advancing them.
+                verts = np.ascontiguousarray(waves.displace(verts, tris),
+                                             dtype=np.float32)
+            self.mesh_cache = (verts, tris)
             self.mesh_key = key
         return self.mesh_cache
 
