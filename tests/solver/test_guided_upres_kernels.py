@@ -632,14 +632,24 @@ def test_guide_max_speed_bounds_the_valid_coarse_faces(cuda_device):
     fast = _coarse_frame(dev, 1.0 / 24.0, velocity=(30.0, 0.0, 0.0))
     # A fast value on faces with no weight is not a guide velocity.
     fast.wu = wp.zeros_like(fast.wu)
-    np.testing.assert_allclose(a.max_speed(), np.linalg.norm(VEL), rtol=1e-6)
-    assert fast.max_speed() == pytest.approx(0.0, abs=1e-6)
+    np.testing.assert_allclose(a.face_speed_limits(), np.abs(VEL), rtol=1e-6)
+    assert fast.face_speed_limits() == (0.0, 0.0, 0.0)
 
     b = _coarse_frame(dev, 1.0 / 24.0, velocity=(6.0, 0.0, 0.0))
     guide = GU.ShellGuide(4.0)
     assert guide.max_speed() == 0.0
     guide.set_frames(a, b)
-    assert guide.max_speed() == pytest.approx(6.0, rel=1e-6)
+    assert guide.max_speed() == pytest.approx(np.linalg.norm((6.0, *VEL[1:])), rel=1e-6)
+
+
+def test_guide_cfl_bounds_faces_that_fall_back_to_different_frames(cuda_device):
+    a = _coarse_frame(cuda_device, 0.0, velocity=(3.0, 0.0, 0.0))
+    b = _coarse_frame(cuda_device, 1.0 / 24.0, velocity=(0.0, -4.0, 0.0))
+    a.wv.zero_()  # Y can only be sampled from frame B.
+    b.wu.zero_()  # X can only be sampled from frame A.
+    guide = GU.ShellGuide(4.0)
+    guide.set_frames(a, b)
+    assert guide.max_speed() == pytest.approx(5.0, rel=1e-6)
 
 
 def test_fine_substeps_count_the_guide_velocity_before_any_fine_liquid():

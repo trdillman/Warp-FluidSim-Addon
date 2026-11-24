@@ -111,12 +111,13 @@ register_fn(k_guide_deepen_init, "fluidSimGuideUpresDeepenInit",
 def k_guide_face_max(
     vel: wp.array(dtype=float),
     weight: wp.array(dtype=float),
+    num_leaves: wp.array(dtype=wp.int32),
     slot: int,
     out: wp.array(dtype=float),
 ):
     """Largest |face velocity| over the valid (weighted) MAC faces."""
     tid = wp.tid()
-    if weight[tid] > 0.0:
+    if tid < num_leaves[0] * C.LEAF_VOLUME and weight[tid] > 0.0 and wp.isfinite(vel[tid]):
         wp.atomic_max(out, slot, wp.abs(vel[tid]))
 
 
@@ -149,29 +150,25 @@ class GuideFrame:
         self.wu = wp.clone(vel.wu)
         self.wv = wp.clone(vel.wv)
         self.ww = wp.clone(vel.ww)
-        self._max_speed = None
+        self._face_speed_limits = None
         # Coarse one-shot sources this frame had already consumed.
         self.fired = frozenset()
         if depth is not None:
             self.reconstruct_depth(float(depth), collision)
 
-    def max_speed(self):
-        """Upper bound on the guide speed this frame imposes (cached).
-
-        The guide samples only weighted faces, so the per-axis maxima over
-        them bound every guided velocity, blended or not.
-        """
-        if self._max_speed is None:
+    def face_speed_limits(self):
+        """Maximum absolute valid face velocity along each axis (cached)."""
+        if self._face_speed_limits is None:
             out = wp.zeros(3, dtype=float, device=self.u.device)
             for axis, (vel, weight) in enumerate(
                     ((self.u, self.wu), (self.v, self.wv), (self.w, self.ww))):
-                n = min(int(vel.shape[0]), int(weight.shape[0]))
+                n = min(self.active_voxels, int(vel.shape[0]), int(weight.shape[0]))
                 if n > 0:
-                    fast_launch(k_guide_face_max, dim=n, inputs=[vel, weight, axis],
+                    fast_launch(k_guide_face_max, dim=n,
+                                inputs=[vel, weight, self.num_leaves, axis],
                                 outputs=[out], device=vel.device)
-            comps = out.numpy()
-            self._max_speed = float(math.sqrt(float((comps * comps).sum())))
-        return self._max_speed
+            self._face_speed_limits = tuple(float(component) for component in out.numpy())
+        return self._face_speed_limits
 
     def reconstruct_depth(self, depth, collision=None):
         """Rebuild the inward distance down to ``-depth`` (eikonal sweeps).
@@ -626,14 +623,15 @@ class ShellGuide:
         return self.a is not None
 
     def max_speed(self):
-        """Fastest velocity the guide imposes over the current frame pair.
+        """Conservative speed limit over the current frame pair.
 
-        The fine solver schedules its substeps before the guide writes any
-        velocity, so it asks for this the way it asks armed liquid sources.
+        Each component can fall back to a different frame when a face is missing.
         """
         if self.a is None:
             return 0.0
-        return max(self.a.max_speed(), self.b.max_speed())
+        a = self.a.face_speed_limits()
+        b = self.b.face_speed_limits()
+        return math.hypot(*(max(before, after) for before, after in zip(a, b)))
 
     def _guide_inputs(self):
         a, b = self.a, self.b
