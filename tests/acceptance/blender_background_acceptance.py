@@ -282,13 +282,14 @@ def main():
           str(sess.solver.settings.surface_waves_damping))
     rebuilt = surface_verts()
     check("paused rebuild keeps the displaced mesh",
-          rebuilt.shape == waved.shape and np.allclose(rebuilt, waved, atol=1.0e-5),
+          len(waved) > 0 and rebuilt.shape == waved.shape
+          and np.allclose(rebuilt, waved, atol=1.0e-5),
           f"{rebuilt.shape} vs {waved.shape}, max diff "
-          f"{float(np.abs(rebuilt - waved).max()) if rebuilt.shape == waved.shape else 'n/a'}")
+          f"{float(np.abs(rebuilt - waved).max(initial=0.0)) if rebuilt.shape == waved.shape else 'n/a'}")
     domain_fs.surface_waves_enabled = False
     unwaved = surface_verts()
     check("realtime waves off removes displacement",
-          unwaved.shape == waved.shape
+          len(waved) > 0 and unwaved.shape == waved.shape
           and float(np.abs(unwaved - waved).max(initial=0.0)) > 0.0,
           f"{unwaved.shape} vs {waved.shape}")
 
