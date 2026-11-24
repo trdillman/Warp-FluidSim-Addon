@@ -187,7 +187,7 @@ class _FakeObject:
             enabled=True,
             transfer_velocity=False,
             collider_friction=0.25,
-            collider_restitution=0.75,
+            collider_restitution=0.75, allow_height_fill=False,
         )
         self.mesh = mesh
         self.data = object()
@@ -319,7 +319,7 @@ def _mesh_source_settings(role="SOURCE", **overrides):
         force_direction=(0.0, 0.0, 1.0),
         transfer_velocity=False,
         collider_friction=0.0,
-        collider_restitution=0.0,
+        collider_restitution=0.0, allow_height_fill=False,
     )
     values.update(overrides)
     return SimpleNamespace(**values)
