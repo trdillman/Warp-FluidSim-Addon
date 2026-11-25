@@ -97,6 +97,23 @@ def test_surface_voxel_size_is_shared_by_surface_and_memory_paths():
     assert estimate_solver_bytes(settings) >= base
 
 
+def test_surface_voxel_size_follows_live_edits_after_solver_creation():
+    """A running solver snapshots ``resolved_quality``; surface edits must not be frozen by it."""
+    settings = SimpleNamespace(
+        domain_min=BOUNDS[0], domain_max=BOUNDS[1], voxel_size=0.1,
+        particles_per_voxel=8, surface_resolution_mode=0,
+        surface_resolution_multiplier=2.0, surface_voxel_size=0.0)
+    settings.resolved_quality = resolve_quality(settings, BOUNDS)
+    assert SurfacePipeline.voxel_size_for(settings) == pytest.approx(0.1)
+    settings.surface_resolution_mode = 1
+    assert SurfacePipeline.voxel_size_for(settings) == pytest.approx(0.05)
+    settings.surface_resolution_multiplier = 4.0
+    assert SurfacePipeline.voxel_size_for(settings) == pytest.approx(0.025)
+    settings.surface_resolution_mode = 2
+    settings.surface_voxel_size = 0.04
+    assert SurfacePipeline.voxel_size_for(settings) == pytest.approx(0.04)
+
+
 def test_source_sampling_modes_share_one_zero_to_64_contract():
     quality = resolve_quality(
         AuthoredQualitySettings(voxel_size=0.1, liquid_sampling=12), BOUNDS)
