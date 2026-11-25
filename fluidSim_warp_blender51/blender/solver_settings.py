@@ -55,6 +55,8 @@ DIRECT_SETTING_FIELDS = (
     "surface_detail_flatten", "surface_smooth_preserve_splashes",
     "surface_waves_enabled", "surface_waves_detail",
     "surface_waves_strength", "surface_waves_damping",
+    "surface_sheet_detail_enabled", "surface_sheet_detail_split",
+    "surface_sheet_detail_thin", "surface_sheet_detail_max_age",
     "whitewater_enabled", "ww_churn_decay",
     "ww_churn_gain", "ww_churn_threshold", "ww_emission_rate",
     "ww_surface_band", "ww_min_speed", "ww_life_min", "ww_life_max",

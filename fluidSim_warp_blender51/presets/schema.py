@@ -106,6 +106,10 @@ SETTING_SPECS: dict[str, SettingSpec] = {
     "surface_waves_detail": SettingSpec(float, 0.1, 1.0),
     "surface_waves_strength": SettingSpec(float, 0.0, 10.0),
     "surface_waves_damping": SettingSpec(float, 0.0, 20.0),
+    "surface_sheet_detail_enabled": SettingSpec(bool),
+    "surface_sheet_detail_split": SettingSpec(int, 2, 27),
+    "surface_sheet_detail_thin": SettingSpec(float, 0.05, 0.9),
+    "surface_sheet_detail_max_age": SettingSpec(float, 0.1, 10.0),
     "surface_update_cadence": SettingSpec(
         str, choices=("SUBSTEP", "FRAME", "MANUAL")
     ),

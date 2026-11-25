@@ -830,6 +830,14 @@ class FLUIDSIM_PT_surface_filters(_SurfaceChild, FluidSimScenePanel, bpy.types.P
         sub.prop(fs, "surface_waves_strength")
         sub.prop(fs, "surface_waves_damping")
 
+        sheet = layout.box()
+        sheet.label(text="Sheet Detail", icon="PARTICLES")
+        sheet.prop(fs, "surface_sheet_detail_enabled")
+        sub = _gated(sheet, fs.surface_sheet_detail_enabled)
+        sub.prop(fs, "surface_sheet_detail_split")
+        sub.prop(fs, "surface_sheet_detail_thin")
+        sub.prop(fs, "surface_sheet_detail_max_age")
+
 
 class FLUIDSIM_PT_scene_whitewater(FluidSimScenePanel, bpy.types.Panel):
     bl_label = "Whitewater"

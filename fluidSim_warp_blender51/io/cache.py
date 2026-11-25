@@ -91,6 +91,11 @@ _IDENTITY_OMITTED_AT_DEFAULT = {
     "surface_waves_detail": 0.5,
     "surface_waves_strength": 1.0,
     "surface_waves_damping": 1.5,
+    # Sheet Detail (render surface only): off it leaves every mesh unchanged.
+    "surface_sheet_detail_enabled": False,
+    "surface_sheet_detail_split": 8,
+    "surface_sheet_detail_thin": 0.35,
+    "surface_sheet_detail_max_age": 2.0,
 }
 
 
