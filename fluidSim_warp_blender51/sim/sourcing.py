@@ -9,6 +9,7 @@ import warp as wp
 
 from . import constants as C
 from .fastlaunch import launch as fast_launch
+from .height_fill_solids import HeightFillSolids
 from .enums import (
     BlendMode,
     MeshSinkRegionMode,
@@ -59,6 +60,7 @@ from .source_kernels import (
     k_mesh_source_particles,
     k_reserve_owned_point_slots,
     k_reserve_scanned_slots,
+    k_height_nofill_mask,
     k_source_height,
     k_source_owned_points,
     k_source_particle_integer_constant,
@@ -130,6 +132,7 @@ __all__ = [
     "_watertight_mesh_contains",
     "k_mesh_source_field",
     "k_mesh_source_particles",
+    "k_height_nofill_mask",
     "k_source_height",
     "k_source_resolve_type",
     "k_source_particles",
@@ -190,6 +193,8 @@ class SourcePipeline(CompiledSourceExecution):
         density=None,
         voxel_counts=None,
         pressure_solver=None,
+        colliders=None,
+        pose_binding=None,
     ):
         self.runtime = SourceRuntime(
             device=device,
@@ -212,6 +217,12 @@ class SourcePipeline(CompiledSourceExecution):
             invalidate_particle_surface=invalidate_particle_surface,
         )
         self.device = device
+        # Live collider list the height fill keeps out of (see height_fill_solids).
+        self._collider_provider = colliders if callable(colliders) else (lambda: ())
+        # Maps a Dynamic collider to its device-resident rigid pose, or None.
+        self._pose_binding = pose_binding if callable(pose_binding) else (lambda col: None)
+        self._height_solids = HeightFillSolids(device)
+        self._transaction_nofill = None
         self.sources: list[SourceShapeDesc | MeshSourceDesc] = []
         self.analytic_sources: list[SourceShapeDesc] = []
         self.mesh_sources: list[MeshSourceDesc] = []

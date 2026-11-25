@@ -817,6 +817,10 @@ class FLUIDSIM_PG_object(bpy.types.PropertyGroup):
         name="Restitution", default=0.0, min=0.0, max=1.0,
         description="Set bounce at this collider; higher values return more normal velocity after impact, while zero produces no bounce",
         update=_request_sync)
+    allow_height_fill: BoolProperty(
+        name="Fill Inside", default=False,
+        update=_request_reset,
+        description="Let Height Fill spawn liquid inside this mesh. Off (default) keeps the fill out of the mesh and a small margin around it, even if the mesh has holes; turn it on when this collider is a container the liquid should fill")
     transfer_velocity: BoolProperty(
         name="Transfer Velocity", default=True,
         update=_request_sync,

@@ -86,7 +86,8 @@ def test_particle_emission_saturates_device_and_host_counts(cuda_device):
     slot_limit = wp.zeros(1, dtype=wp.int32, device=device)
     # Height-profile emitter inputs (unused by this analytic box).
     height_inputs = [wp.zeros((2, 2), dtype=float, device=device), wp.vec2i(2, 2),
-                     wp.vec3(0.0), wp.vec3(0.8)]
+                     wp.vec3(0.0), wp.vec3(0.8),
+                     wp.zeros(1, dtype=wp.int32, device=device)]  # no-fill mask, unused
 
     wp.launch(
         k_source_shapes_particle_demand, dim=512,

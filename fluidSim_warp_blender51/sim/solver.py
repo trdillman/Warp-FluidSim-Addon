@@ -527,6 +527,9 @@ class ColliderDesc:
     drag: float = 0.0
     initial_velocity: tuple = (0.0, 0.0, 0.0)
     lock_axes: tuple = (False, False, False, False, False, False)
+    # Height fill spawns liquid only in free space, so it keeps out of this
+    # mesh unless the owner turns this on (e.g. a collider used as a container).
+    allow_height_fill: bool = False
 
 
 @dataclass
@@ -722,6 +725,8 @@ class FluidSolver:
             density=self.density,
             voxel_counts=self.voxel_counts,
             pressure_solver=self.pressure_solver,
+            colliders=lambda: self.colliders,
+            pose_binding=lambda col: self.rigid.pose_binding(self, col),
             active_voxel_count=lambda: getattr(self, "_nvox", 1),
             current_frame=lambda: getattr(self, "frame", 0),
             ensure_particle_capacity=self.ensure_particle_capacity,

@@ -226,6 +226,13 @@ Owns only height-fill enablement, base height, flat/profile back face, profile
 image and scale, lifecycle, velocity, and particle emission. Liquid Sampling is
 not repeated here; it is inherited from Domain & Particles.
 
+Height Fill spawns liquid only in free space. It skips the inside of every
+collider mesh and a small margin around it (a bit over one cell), even when the
+mesh has holes or a missing face, so thin gaps between meshes stay empty. A
+collider used as a container should fill instead: with Height Fill on, each
+collider shows **Fill Inside** in its Collider panel; turn it on for the
+containers. Quick Container turns it on for you.
+
 #### Simulation Physics
 
 The root summarizes active solver features. Children are:

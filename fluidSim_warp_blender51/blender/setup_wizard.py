@@ -592,7 +592,7 @@ def _record_selected_state(journal, selected) -> None:
         "source_sampling_mode", "source_sampling_multiplier", "source_region_kind",
         "sink_region_kind", "emission_mode", "use_mesh_shape", "geometry_mode",
         "mesh_object", "mesh_evaluation_mode", "collider_friction",
-        "collider_restitution", "transfer_velocity",
+        "collider_restitution", "transfer_velocity", "allow_height_fill",
     )
     for obj in selected:
         _record_object_links(journal, obj)
@@ -812,6 +812,8 @@ def _setup_selected_transaction(context, mode: str, preset_id: str = "") -> Setu
         elif mode == "QUICK_CONTAINER":
             for obj in selected:
                 colliders.tag_collider(obj)
+                # The container is what the height fill is meant to fill.
+                obj.fluidsim.allow_height_fill = True
             warnings.extend(
                 warning for obj in selected
                 if (warning := _mesh_watertight_warning(obj))

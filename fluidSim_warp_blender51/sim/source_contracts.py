@@ -92,6 +92,7 @@ class SourceShape:
     use_lifespan: wp.int32
     emission_mode: wp.int32  # SourceEmissionMode: 0 Initial Fill, 1 Continuous Inflow
     armed: wp.int32  # 1 = may emit initial fill; host disarms after first fire
+    solid_exclusion: wp.int32  # 1 = the height fill's no-fill mask applies to this shape
 
 
 @wp.struct
@@ -161,6 +162,9 @@ class SourceShapeDesc:
     emission_mode: int = SourceEmissionMode.CONTINUOUS_INFLOW
     source_id: str = ""
     runtime_source_key: str = ""
+    # Height fill only: skip voxels the no-fill mask flags as inside, or right
+    # next to, a collider mesh. See SourcePipeline._height_nofill_mask.
+    solid_exclusion: bool = False
 
     def aabb(self):
         """Return a conservative world AABB for topology marking."""
@@ -202,6 +206,7 @@ class SourceShapeDesc:
         shape.use_lifespan = 1 if self.use_lifespan else 0
         shape.emission_mode = int(self.emission_mode)
         shape.armed = 1
+        shape.solid_exclusion = 1 if self.solid_exclusion else 0
         return shape
 
 
@@ -287,6 +292,18 @@ class MeshSourceDesc:
         source.emission_mode = int(self.emission_mode)
         source.armed = 1
         return source
+
+
+# Height fill keeps out of collider meshes. A voxel is skipped when it is within
+# this many voxels of a collider surface (jittered particles reach 0.87 voxel
+# from a voxel centre, and gaps under twice this width close up) ...
+HEIGHT_FILL_SOLID_PADDING_VOXELS = 1.5
+# ... or when the mesh's winding number there reaches this value. A closed mesh
+# reads 1.0 inside and 0.0 outside; 0.5 is the default cut, so 0.3 also counts
+# meshes with holes or a missing face (an open tank reads about 0.8 inside) as
+# solid, while a single open sheet such as a floor plane never reads above 0.5
+# on its front side and so does not block the space above it.
+HEIGHT_FILL_WINDING_THRESHOLD = 0.3
 
 
 @dataclass

@@ -368,6 +368,7 @@ def test_height_field_sourcing(device):
     # Validation stamps the height field without particle emission, so the
     # transaction admission guard is explicitly disabled.
     emission_state = wp.zeros(4, dtype=wp.int32, device=device)
+    no_mask = wp.zeros(1, dtype=wp.int32, device=device)
 
     flat_type = ScalarField(grid, dtype=wp.int32, name="height_flat_type")
     flat_u = ScalarField(grid, name="height_flat_u")
@@ -388,7 +389,7 @@ def test_height_field_sourcing(device):
                 grid.origin[1] + 0.8,
                 grid.origin[2] + 0.8,
             ),
-            wp.vec3(1.0, 2.0, 3.0), 0, emission_state,
+            wp.vec3(1.0, 2.0, 3.0), 0, emission_state, 0, no_mask,
             flat_type.data, flat_u.data, flat_v.data, flat_w.data,
         ],
         device=device,
@@ -424,7 +425,7 @@ def test_height_field_sourcing(device):
                 grid.origin[1] + 0.8,
                 grid.origin[2] + 0.8,
             ),
-            wp.vec3(-1.0, 0.5, 4.0), 0, emission_state,
+            wp.vec3(-1.0, 0.5, 4.0), 0, emission_state, 0, no_mask,
             prof_type.data, prof_u.data, prof_v.data, prof_w.data,
         ],
         device=device,

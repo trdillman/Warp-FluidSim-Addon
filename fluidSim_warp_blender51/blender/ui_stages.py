@@ -41,7 +41,7 @@ from .ui_scene import (
     draw_cache_playback,
     draw_resolution_readout,
 )
-from .ui_object import draw_collider_settings
+from .ui_object import draw_collider_settings, height_fill_active
 
 # Stage controls, kept as data so the Blender validator can pin them without
 # re-deriving them from draw code.
@@ -280,7 +280,9 @@ class FLUIDSIM_STAGE_PT_setup_collider(FluidSimStagePanel, bpy.types.Panel):
         layout = _layout(self)
         obj = context.object
         layout.label(text=obj.name, icon="OBJECT_DATA")
-        draw_collider_settings(layout, obj.fluidsim, columns=1)
+        draw_collider_settings(
+            layout, obj.fluidsim, columns=1,
+            height_fill_enabled=height_fill_active(context))
 
 
 def draw_simulate_controls(layout, scene, domain):

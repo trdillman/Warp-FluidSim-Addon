@@ -1716,6 +1716,7 @@ class SceneInputs:
                 desc.center = (center.x, center.y, center.z)
             desc.friction = float(obj.fluidsim.collider_friction)
             desc.restitution = float(obj.fluidsim.collider_restitution)
+            desc.allow_height_fill = bool(obj.fluidsim.allow_height_fill)
             if dynamic:
                 # The solver owns this body's motion; it starts from the
                 # authored pose with the authored initial velocity.

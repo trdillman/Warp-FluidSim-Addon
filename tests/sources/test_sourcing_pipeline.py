@@ -385,6 +385,10 @@ def _record_warp(monkeypatch):
         launches.append((kernel, kwargs))
         inputs = kwargs.get("inputs", ())
         outputs = kwargs.get("outputs", ())
+        # A real launch rejects a call whose argument count differs from the
+        # kernel's signature; keep that failure visible without a GPU.
+        if hasattr(kernel, "adj"):
+            assert len(inputs) + len(outputs) == len(kernel.adj.args), kernel.key
         if kernel in {
             sourcing.k_count_source_shapes_particles,
             sourcing.k_count_mesh_source_particles,
