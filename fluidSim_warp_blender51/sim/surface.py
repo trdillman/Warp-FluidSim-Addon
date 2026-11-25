@@ -205,8 +205,8 @@ def band_propagation_passes(band_splat: int, seed_splat: int) -> int:
     return max(0, int(band_splat) - int(seed_splat))
 
 
-#: Sheet Detail film: the fine-particle radius floor in render voxels and the
-#: ellipsoid stretch cap (thickness ~ r * stretch^(-2/3)).
+#: Sheet Detail film: the floor on a fine ellipsoid's thinnest semi-axis, in
+#: render voxels, and the ellipsoid stretch cap (thinnest ~ r * stretch^(-2/3)).
 SHEET_FILM_MIN_VOXELS = 0.75
 SHEET_FILM_MAX_STRETCH = 2.5
 
@@ -518,7 +518,11 @@ class SurfacePipeline:
             fine_pos, fine_count, fine_n = sheet_inputs["fine"]
             # Never thinner than the render grid can hold: a film below about
             # one render voxel thick breaks into specks when meshed.
-            fine_r = max(float(sheet_inputs["radius"]), SHEET_FILM_MIN_VOXELS * h)
+            # The floor is on the flattened (normal) semi-axis, which the
+            # ellipsoid shrinks to r * stretch^(-2/3) in a planar neighbourhood.
+            fine_r = max(float(sheet_inputs["radius"]),
+                         SHEET_FILM_MIN_VOXELS * h
+                         * SHEET_FILM_MAX_STRETCH ** (2.0 / 3.0))
             if fine_n > 0:
                 # Flat ellipsoids along the local spread of the fine
                 # particles, so neighbouring children join into one film.

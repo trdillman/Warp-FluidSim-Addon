@@ -357,4 +357,7 @@ def estimate_solver_bytes(settings) -> int:
         # sheet_surfacer): shape buffers and hash grid, kept between frames.
         estimate += (SHEET_DETAIL_MAX_FINE * SHARP_SURFACE_BYTES_PER_PARTICLE
                      + SHARP_SURFACE_HASH_BYTES)
+        # Each of the two Sheet Detail hash grids keeps a sort workspace of
+        # 24 bytes per indexed particle (coarse grid, fine grid).
+        estimate += 24 * (particles + SHEET_DETAIL_MAX_FINE)
     return int(estimate)

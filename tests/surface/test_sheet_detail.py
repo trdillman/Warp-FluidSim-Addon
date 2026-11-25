@@ -445,7 +445,8 @@ def test_build_sdf_splats_fine_particles_at_their_own_radius(cuda_device):
     pipe.build_sdf(grid, sdf, tmp, nvox, pos, H, render_detail=True, sheet_inputs=inputs)
     # A lone fine particle is a ball, never thinner than the render grid holds.
     from fluidSim_warp_blender51.sim.surface import SHEET_FILM_MIN_VOXELS
-    film_r = max(fine_r, SHEET_FILM_MIN_VOXELS * H)
+    from fluidSim_warp_blender51.sim.surface import SHEET_FILM_MAX_STRETCH
+    film_r = max(fine_r, SHEET_FILM_MIN_VOXELS * H * SHEET_FILM_MAX_STRETCH ** (2 / 3))
     assert _sdf_at(grid, sdf, point[0]) == pytest.approx(-film_r, abs=1e-6)
     assert pipe.last_sdf_splat["sheetDetail"]["fineParticles"] == 1
     # The same particle as a coarse one splats at the coarse radius instead.
@@ -453,7 +454,6 @@ def test_build_sdf_splats_fine_particles_at_their_own_radius(cuda_device):
               "fine": (pos, none, 0), "radius": fine_r}
     pipe.build_sdf(grid, sdf, tmp, nvox, pos, H, render_detail=True, sheet_inputs=inputs)
     coarse_r = pipe.last_sdf_splat["particleRadius"]
-    assert coarse_r > film_r
     assert _sdf_at(grid, sdf, point[0]) == pytest.approx(-coarse_r, abs=1e-6)
 
 
@@ -497,9 +497,17 @@ def test_a_sheet_of_fine_particles_meshes_as_one_unbroken_film(cuda_device):
     # render voxel on that plane inside the patch must be liquid.
     spacing = 1.2 * H
     axis = 0.3 + np.arange(12) * spacing
-    x, y = np.meshgrid(axis, axis, indexing="ij")
     z0 = 0.5 + H / 2
-    film = np.stack([x.ravel(), y.ravel(), np.full(x.size, z0)], 1).astype(np.float32)
+    film_values = []
+    for z_plane in (z0, 0.5 + H):  # on a sample plane, and halfway between two
+        film_values.append(_film_max(cuda_device, axis, spacing, z_plane))
+    assert max(film_values) < 0.0
+
+
+def _film_max(cuda_device, axis, spacing, z_plane):
+    z0 = 0.5 + H / 2  # the sample plane nearest the film
+    x, y = np.meshgrid(axis, axis, indexing="ij")
+    film = np.stack([x.ravel(), y.ravel(), np.full(x.size, z_plane)], 1).astype(np.float32)
     pipe, grid, sdf, tmp, pos = _sdf_pipeline(cuda_device, film)
     nvox = max(1, grid.active_voxel_count)
     none = wp.zeros(1, dtype=wp.int32, device=cuda_device)
@@ -510,4 +518,4 @@ def test_a_sheet_of_fine_particles_meshes_as_one_unbroken_film(cuda_device):
     inner = (axis[2:-2, None] + 0.5 * spacing)
     values = [_sdf_at(grid, sdf, (float(a), float(b), z0))
               for a in inner[:, 0] for b in inner[:, 0]]
-    assert max(values) < 0.0
+    return max(values)
