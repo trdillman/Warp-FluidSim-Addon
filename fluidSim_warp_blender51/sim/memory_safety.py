@@ -52,6 +52,15 @@ SHARP_SURFACE_HASH_BYTES = 8 * SHARP_SURFACE_HASH_GRID_DIM ** 3
 SURFACE_WAVE_BYTES_PER_POINT = 2 * (3 * 12 + 6 * 4 + 2 * 4)
 SURFACE_WAVE_MAX_POINTS = 4_000_000
 SURFACE_WAVE_HASH_BYTES = 2 * 128 ** 3 * 4
+# Sheet Detail: each fine particle holds position, velocity (2 vec3) and age,
+# twice while a frame compacts or grows the set, plus keep/offset ints. Each
+# coarse particle gets density, thin, demand, offset and render flags (5 x 4).
+# Two 128^3 hash grids. The budget is the module default
+# (sim/sheet_detail.py SheetDetailSettings.max_particles).
+SHEET_DETAIL_BYTES_PER_FINE = 2 * (2 * 12 + 4) + 2 * 4
+SHEET_DETAIL_BYTES_PER_COARSE = 5 * 4
+SHEET_DETAIL_MAX_FINE = 4_000_000
+SHEET_DETAIL_HASH_BYTES = 2 * 2 * 128 ** 3 * 4
 SURFACE_SPLASH_FIELD_BYTES_PER_VOXEL = 4  # simulation density or render weight
 SURFACE_DETAIL_FIELDS_BYTES_PER_VOXEL = 8  # render SDF and filter scratch
 PARTICLE_BYTES = 128
@@ -338,4 +347,17 @@ def estimate_solver_bytes(settings) -> int:
     if bool(_value(settings, "surface_waves_enabled", False)):
         estimate += (SURFACE_WAVE_MAX_POINTS * SURFACE_WAVE_BYTES_PER_POINT
                      + SURFACE_WAVE_HASH_BYTES)
+    if bool(_value(settings, "surface_sheet_detail_enabled", False)):
+        if not (sharp or preserve) and not separate_grid:
+            estimate += leaves * LEAF_VOLUME * SURFACE_DETAIL_FIELDS_BYTES_PER_VOXEL
+        estimate += (SHEET_DETAIL_MAX_FINE * SHEET_DETAIL_BYTES_PER_FINE
+                     + particles * SHEET_DETAIL_BYTES_PER_COARSE
+                     + SHEET_DETAIL_HASH_BYTES)
+        # The fine particles' own ellipsoid surfacer (sim/surface.py
+        # sheet_surfacer): shape buffers and hash grid, kept between frames.
+        estimate += (SHEET_DETAIL_MAX_FINE * SHARP_SURFACE_BYTES_PER_PARTICLE
+                     + SHARP_SURFACE_HASH_BYTES)
+        # Each of the two Sheet Detail hash grids keeps a sort workspace of
+        # 24 bytes per indexed particle (coarse grid, fine grid).
+        estimate += 24 * (particles + SHEET_DETAIL_MAX_FINE)
     return int(estimate)

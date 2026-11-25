@@ -134,6 +134,8 @@ _SURFACE_REGISTRY_FIELDS = frozenset({
     "surface_smooth_preserve_splashes",
     "surface_waves_enabled", "surface_waves_detail",
     "surface_waves_strength", "surface_waves_damping",
+    "surface_sheet_detail_enabled", "surface_sheet_detail_split",
+    "surface_sheet_detail_thin", "surface_sheet_detail_max_age",
 })
 _RESET_REGISTRY_FIELDS = frozenset({
     "particles_per_voxel", "topology_expand", "open_boundaries", "domain_sdf_walls",
@@ -323,6 +325,8 @@ _SURFACE_SETTING_FIELDS = frozenset({
     "surface_smooth_preserve_splashes",
     "surface_waves_enabled", "surface_waves_detail",
     "surface_waves_strength", "surface_waves_damping",
+    "surface_sheet_detail_enabled", "surface_sheet_detail_split",
+    "surface_sheet_detail_thin", "surface_sheet_detail_max_age",
 })
 
 

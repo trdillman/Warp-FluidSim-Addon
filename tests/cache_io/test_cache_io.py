@@ -166,7 +166,9 @@ def _pre_d1_signature(settings):
               and not f.name.startswith("surface_detail_")
               and f.name != "surface_smooth_preserve_splashes"
               # surface waves, added after D1 and omitted at its defaults
-              and not f.name.startswith("surface_waves_")}
+              and not f.name.startswith("surface_waves_")
+              # sheet detail, added after D1 and omitted at its defaults
+              and not f.name.startswith("surface_sheet_detail_")}
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"),
                          allow_nan=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -227,3 +229,20 @@ def test_source_signature_ignores_mesh_error_but_follows_real_input():
               for col, value in enumerate(values))
         for row, values in enumerate(source.matrix_world))
     assert source_signature(scene) != before
+
+
+def test_a_binary32_default_is_still_omitted_from_the_cache_identity():
+    # Blender stores FloatProperty values as binary32: 0.35 reads back as
+    # 0.3499999940395355. Off and at its default, Sheet Detail must not
+    # change any cache identity.
+    import struct
+
+    from fluidSim_warp_blender51.io.cache import _omitted_at_default
+
+    as_blender = struct.unpack("<f", struct.pack("<f", 0.35))[0]
+    assert as_blender != 0.35
+    assert _omitted_at_default("surface_sheet_detail_thin", as_blender)
+    assert _omitted_at_default("surface_sheet_detail_thin", 0.35)
+    assert not _omitted_at_default("surface_sheet_detail_thin", 0.4)
+    assert not _omitted_at_default("surface_sheet_detail_split", 9)
+    assert not _omitted_at_default("voxel_size", 0.35)

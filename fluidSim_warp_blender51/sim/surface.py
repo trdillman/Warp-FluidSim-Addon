@@ -205,6 +205,12 @@ def band_propagation_passes(band_splat: int, seed_splat: int) -> int:
     return max(0, int(band_splat) - int(seed_splat))
 
 
+#: Sheet Detail film: the floor on a fine ellipsoid's thinnest semi-axis, in
+#: render voxels, and the ellipsoid stretch cap (thinnest ~ r * stretch^(-2/3)).
+SHEET_FILM_MIN_VOXELS = 0.75
+SHEET_FILM_MAX_STRETCH = 2.5
+
+
 class SurfacePipeline:
     """Owns liquid-surface fields, cadence, extraction and mesh caching."""
 
@@ -212,6 +218,9 @@ class SurfacePipeline:
     #: Declared at class scope because tests build pipelines with
     #: ``object.__new__`` and never run ``__init__``.
     sdf_splat_mode: str | None = None
+    #: Sheet Detail state (sim/sheet_detail.py); class scope for the same
+    #: object.__new__ reason.
+    sheet = None
 
     def splat_mode(self) -> str:
         return getattr(self, "sdf_splat_mode", None) or default_sdf_splat_mode()
@@ -270,6 +279,7 @@ class SurfacePipeline:
         self.solver_sdf_key = None
         self.solver_sdf_error = ""
         self.waves = None
+        self.sheet = None
 
     def mode(self):
         from .enums import SurfaceResolutionMode
@@ -387,14 +397,22 @@ class SurfacePipeline:
                 int(SdfFilterType.MEAN_CURVATURE_FLOW): k_smooth_surface_sdf_mean_curvature}[int(filter_type)]
 
     def build_sdf(self, grid, sdf, tmp, nvox, positions, voxel_size,
-                  render_detail=False):
+                  render_detail=False, sheet_inputs=None):
         """Build a liquid SDF from particles.
 
         ``render_detail`` is set only for the render surface: it switches on
         the ellipsoid splat and the splash-preserving smooth when the domain
         asks for them. Solver SDF builds never pass it.
+
+        ``sheet_inputs`` (render surface only, from ``_sheet_inputs``) swaps
+        the coarse particles for the non-thin ones and adds the Sheet Detail
+        fine particles at their smaller radius, before the filters.
         """
         solver, s = self.solver, self.solver.settings
+        count_arr, np_dim = solver.particles.count, solver._np_dim()
+        all_positions = positions  # every coarse particle, for the smoothing weight
+        if sheet_inputs is not None:
+            positions, count_arr, np_dim = sheet_inputs["coarse"]
         detail_splat = bool(render_detail) and self.detail_enabled()
         preserve = (self.preserve_splashes()
                     if render_detail and self.render_detail_active() else 0.0)
@@ -476,7 +494,7 @@ class SurfacePipeline:
                 device=solver.device)
             surfacer = self.anisotropic_surfacer()
             surfacer.splat(
-                grid, sdf, positions, solver.particles.count, solver._np_dim(),
+                grid, sdf, positions, count_arr, np_dim,
                 voxel_size=h, sim_voxel_size=float(s.voxel_size),
                 particle_radius=radius,
                 neighbor_radius_voxels=float(getattr(
@@ -485,7 +503,7 @@ class SurfacePipeline:
                 flatten=float(getattr(s, "surface_detail_flatten", 0.5)),
                 max_distance=far_distance)
             self.last_sdf_splat["anisotropic"] = dict(surfacer.last_stats)
-        elif passes > 0:
+        elif passes > 0 and sheet_inputs is None:
             sdf.data, tmp.data = self._build_sdf_by_propagation(
                 grid, sdf, tmp, nvox, positions, h, radius,
                 seed_splat, passes, far_distance)
@@ -494,8 +512,29 @@ class SurfacePipeline:
                 k_surface_sdf_reset, dim=nvox,
                 inputs=[sdf.data, grid.num_leaves, far_distance],
                 device=solver.device)
-            fast_launch(k_build_surface_sdf, dim=solver._np_dim(), inputs=[positions, solver.particles.count, grid.leaf_table,
+            fast_launch(k_build_surface_sdf, dim=np_dim, inputs=[positions, count_arr, grid.leaf_table,
                       grid.voxels_dim, grid.leaves_dim, grid.origin, h, radius, splat, max_distance], outputs=[sdf.data], device=solver.device)
+        if sheet_inputs is not None:
+            fine_pos, fine_count, fine_n = sheet_inputs["fine"]
+            # Never thinner than the render grid can hold: a film below about
+            # one render voxel thick breaks into specks when meshed.
+            # The floor is on the flattened (normal) semi-axis, which the
+            # ellipsoid shrinks to r * stretch^(-2/3) in a planar neighbourhood.
+            fine_r = max(float(sheet_inputs["radius"]),
+                         SHEET_FILM_MIN_VOXELS * h
+                         * SHEET_FILM_MAX_STRETCH ** (2.0 / 3.0))
+            if fine_n > 0:
+                # Flat ellipsoids along the local spread of the fine
+                # particles, so neighbouring children join into one film.
+                self.sheet_surfacer().splat(
+                    grid, sdf, fine_pos, fine_count, int(fine_n),
+                    voxel_size=h, sim_voxel_size=float(s.voxel_size),
+                    particle_radius=fine_r, neighbor_radius_voxels=1.0,
+                    max_stretch=SHEET_FILM_MAX_STRETCH, flatten=0.5,
+                    max_distance=far_distance)
+            self.last_sdf_splat["sheetDetail"] = {
+                "coarseParticles": int(getattr(self.sheet, "coarse_count", 0)),
+                "fineParticles": int(fine_n), "fineRadius": fine_r}
         def apply(kernel, iterations, strength):
             for _ in range(max(0, int(iterations))):
                 fast_launch(kernel, dim=nvox, inputs=[sdf.data, grid.leaf_table, grid.leaf_coords, grid.voxels_dim,
@@ -515,7 +554,7 @@ class SurfacePipeline:
         smooth_iterations = max(0, int(s.surface_smooth_iterations))
         if preserve > 0.0 and smooth_iterations > 0:
             weight = self.anisotropic_surfacer().smoothing_weight(
-                grid, solver.grid, nvox, positions, solver.particles.count,
+                grid, solver.grid, nvox, all_positions, solver.particles.count,
                 solver._np_dim(),
                 particles_per_voxel=float(getattr(s, "particles_per_voxel", 8.0)),
                 preserve=preserve)
@@ -561,7 +600,96 @@ class SurfacePipeline:
 
     def render_detail_active(self):
         """True when the render surface differs from the solver SDF recipe."""
-        return self.detail_enabled() or self.preserve_splashes() > 0.0
+        return (self.detail_enabled() or self.preserve_splashes() > 0.0
+                or self.sheet_detail_enabled())
+
+    # --- Sheet Detail (sim/sheet_detail.py) ------------------------------------
+    # Fine particles in the thin parts of the liquid, render surface only.
+    # They carry state from frame to frame, so they step once per solver
+    # frame in after_frame, never on a lazy mesh() read.
+
+    def sheet_detail_enabled(self):
+        return bool(getattr(self.solver.settings, "surface_sheet_detail_enabled", False))
+
+    def _sheet_settings(self):
+        from .sheet_detail import SheetDetailSettings
+
+        s = self.solver.settings
+        return SheetDetailSettings(
+            split=max(2, int(getattr(s, "surface_sheet_detail_split", 8))),
+            thin_fraction=float(getattr(s, "surface_sheet_detail_thin", 0.35)),
+            max_age=float(getattr(s, "surface_sheet_detail_max_age", 2.0)))
+
+    def _ensure_sheet(self):
+        from .sheet_detail import SheetDetail
+
+        settings = self._sheet_settings()
+        if self.sheet is None:
+            self.sheet = SheetDetail(settings, device=self.solver.device)
+        else:
+            self.sheet.settings = settings
+        return self.sheet
+
+    def sheet_surfacer(self):
+        surfacer = getattr(self, "_sheet_surfacer", None)
+        if surfacer is None:
+            from .surface_anisotropy import AnisotropicSurfacer
+
+            surfacer = self._sheet_surfacer = AnisotropicSurfacer(self.solver.device)
+        return surfacer
+
+    def release_sheet(self):
+        self.sheet = None
+        self._sheet_surfacer = None
+
+    def step_sheet(self):
+        """Advance the fine sheet particles one frame."""
+        solver, s = self.solver, self.solver.settings
+        sheet = self._ensure_sheet()
+        sheet.step(solver.particles.position, solver.particles.velocity,
+                   solver.particles.count, solver._np_dim(),
+                   grid=solver.grid, vel=solver.vel,
+                   voxel_size=float(s.voxel_size),
+                   particles_per_voxel=float(getattr(s, "particles_per_voxel", 8.0)),
+                   gravity=tuple(float(g) for g in s.gravity),
+                   dt=float(s.time_scale) / max(float(s.frame_rate), 1e-6))
+        # The render surface must be rebuilt with the moved fine particles.
+        self.built_key = None
+        return sheet.stats
+
+    def _sheet_inputs(self, positions):
+        """Coarse and fine splat inputs for the render SDF, or None when off."""
+        if not self.sheet_detail_enabled():
+            return None
+        from .sheet_detail import fine_radius
+
+        solver, s = self.solver, self.solver.settings
+        sheet = self._ensure_sheet()
+        # Classify again here: particle order can change between the frame
+        # step and a later rebuild (sorting, a paused setting edit).
+        sheet.classify(positions, solver.particles.count, solver._np_dim(),
+                       voxel_size=float(s.voxel_size),
+                       particles_per_voxel=float(getattr(s, "particles_per_voxel", 8.0)))
+        radius = 0.5 * float(s.voxel_size) * float(s.particle_radius_scale)
+        return {"coarse": sheet.render_inputs(positions, solver.particles.count,
+                                              solver._np_dim()),
+                "fine": sheet.fine_inputs(),
+                "radius": fine_radius(radius, sheet.settings.split)}
+
+    def export_sheet_state(self):
+        if self.sheet is None or not self.sheet_detail_enabled():
+            return {}, {}
+        arrays, scalars = self.sheet.export_state()
+        return ({f"sheet_detail_{k}": v for k, v in arrays.items()},
+                {f"sheet_detail_{k}": v for k, v in scalars.items()})
+
+    def import_sheet_state(self, arrays, scalars):
+        if "sheet_detail_pos" not in arrays or not self.sheet_detail_enabled():
+            return
+        prefix = "sheet_detail_"
+        self._ensure_sheet().import_state(
+            {k[len(prefix):]: v for k, v in arrays.items() if k.startswith(prefix)},
+            {k[len(prefix):]: v for k, v in scalars.items() if k.startswith(prefix)})
 
     def _render_detail_signature(self):
         s = self.solver.settings
@@ -569,7 +697,11 @@ class SurfacePipeline:
                 round(float(getattr(s, "surface_detail_neighbor_radius", 2.0)), 6),
                 round(float(getattr(s, "surface_detail_max_stretch", 4.0)), 6),
                 round(float(getattr(s, "surface_detail_flatten", 0.5)), 6),
-                round(self.preserve_splashes(), 6))
+                round(self.preserve_splashes(), 6),
+                self.sheet_detail_enabled(),
+                int(getattr(s, "surface_sheet_detail_split", 8)),
+                round(float(getattr(s, "surface_sheet_detail_thin", 0.35)), 6),
+                round(float(getattr(s, "surface_sheet_detail_max_age", 2.0)), 6))
 
     def anisotropic_surfacer(self):
         surfacer = getattr(self, "_anisotropic", None)
@@ -641,6 +773,10 @@ class SurfacePipeline:
             self.nvox = solver._nvox
         else:
             grid.begin_topology(); grid.mark_points(positions, solver.particles.count, solver._np_dim())
+            sheet = self.sheet if self.sheet_detail_enabled() else None
+            if sheet is not None and sheet.count:
+                fine_pos, fine_count, fine_n = sheet.fine_inputs()
+                grid.mark_points(fine_pos, fine_count, fine_n)
             narrow_band = getattr(solver, "narrow_band", None)
             if narrow_band is not None:
                 narrow_band.mark_render_leaves(grid)
@@ -734,13 +870,16 @@ class SurfacePipeline:
             self.nvox = solver._nvox
             self.build_sdf(solver.grid, self.render_sdf, self.render_tmp,
                            self.nvox, positions, float(s.voxel_size),
-                           render_detail=True)
+                           render_detail=True,
+                           sheet_inputs=self._sheet_inputs(positions))
             narrow_band = getattr(solver, "narrow_band", None)
             if narrow_band is not None:
                 narrow_band.union_into_solver_sdf(self.render_sdf)
         else:
-            self.build_sdf(self.grid, self.render_sdf, self.render_tmp, self.rebuild_topology(positions), positions, float(self.grid.voxel_size),
-                           render_detail=True)
+            nvox = self.rebuild_topology(positions)
+            self.build_sdf(self.grid, self.render_sdf, self.render_tmp, nvox, positions, float(self.grid.voxel_size),
+                           render_detail=True,
+                           sheet_inputs=self._sheet_inputs(positions))
             narrow_band = getattr(solver, "narrow_band", None)
             if narrow_band is not None:
                 narrow_band.union_into_render_sdf(self.grid, self.render_sdf)
@@ -773,13 +912,18 @@ class SurfacePipeline:
         from .enums import SurfaceUpdateCadence
 
         s = self.solver.settings
+        if s.surface_enabled and self.sheet_detail_enabled():
+            with self.solver._phase("surface"):  # sheet detail is surface work
+                self.step_sheet()
+        elif self.sheet is not None:
+            self.release_sheet()
         cadence = int(getattr(s, "surface_update_cadence", int(SurfaceUpdateCadence.FRAME)))
         if s.surface_enabled and cadence == int(SurfaceUpdateCadence.FRAME):
             with self.solver._phase("surface"):
                 self.build(build_render=True, build_lowres=bool(
                     getattr(s, "surface_build_lowres_sdf", False)))
         if s.surface_enabled and bool(getattr(s, "surface_waves_enabled", False)):
-            with self.solver._phase("surface_waves"):
+            with self.solver._phase("surface"):  # waves are surface work
                 self.step_waves()
 
     # Surface waves (sim/surface_waves.py): per-frame wave detail on the
@@ -873,6 +1017,8 @@ class SurfacePipeline:
         self.extractor.reset_buffers()
         if self.waves is not None:
             self.waves.reset()
+        if self.sheet is not None:
+            self.sheet.reset()
         self.grid_key = None
         self.ensure_resources(force=True)
 

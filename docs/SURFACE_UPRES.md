@@ -21,6 +21,12 @@ the cost of a full high-resolution simulation. Two stages, both opt-in:
    Owner decision, 24 November 2026: after guided upres came out slower than
    full fine and broke into specks on Upres Cove, upres moves to this
    surface-only method.
+4. **Sheet Detail** (see below). Fine particles only where the liquid is a
+   thin sheet or drop, pulled apart by the coarse flow. Owner decision,
+   25 November 2026: on Dam Break frame 22 the full-fine run differed from
+   the coarse one mostly in torn, lace-like sheets (150 islands against 18,
+   31% more area) with 92-96% the same motion, and Surface Waves and Sharp
+   Surfacing could not make that structure.
 
 ## Sharp Surfacing
 
@@ -210,6 +216,52 @@ The review file then holds Coarse, Surface waves and Full fine collections,
 Surface waves shown first. `summary.waves_speedup_vs_full_fine` is full fine
 ms over coarse plus waves ms (waves ms include extracting the coarse mesh and
 sampling its velocity).
+
+## Sheet Detail
+
+`sim/sheet_detail.py`, after Roy, Paquette and Poulin, "Particle upsampling
+as a flexible post-processing approach to increase details in animations of
+splashing liquids" (Computers & Graphics 88, 2020), with thin-sheet
+detection by neighbour count as in Extended Narrow Band FLIP (Sato et al.
+2018). Render surface only; the simulation and the solver SDF never see it.
+Each frame, in `SurfacePipeline.after_frame` before the surface build:
+
+1. A coarse particle is **thin** when it has fewer neighbours within two
+   simulation voxels than **Thin Below** times full liquid
+   (`particles_per_voxel` x ball volume).
+2. Fine particles move with the coarse MAC velocity (PIC, two substeps)
+   where the simulation grid has a leaf, and fall under gravity where it has
+   none, so a sheet the flow stretches pulls them apart.
+3. A fine particle dies when it is older than **Max Age**, when no coarse
+   particle is within two voxels, or when it is back in full liquid
+   (1.5 x Thin Below, for hysteresis).
+4. A thin coarse particle with no fine particle within 0.75 voxel spawns
+   **Split** fine particles with its velocity: in a sheet (six or more
+   neighbours), in a thin disk in the sheet's plane (half a voxel wide, a
+   tenth thick, from the neighbours' smallest principal axis); otherwise in
+   a half-voxel ball. The
+   total is capped at 4 million (`memory_safety` counts it when on).
+5. The render SDF splats the coarse particles except the thin ones that fine
+   particles stand in for, then the fine particles at radius
+   `r * Split^(-1/3)` (same volume, but never under 0.75 render voxel) as
+   flat ellipsoids along their neighbours (stretch up to 2.5), so the
+   children of one sheet join into a film, before the surface filters. A separate
+   render grid is marked from both sets.
+
+The fine particles are finer than the simulation grid, so they only show
+with a Surface Resolution finer than the simulation (Multiplier 2 or more).
+On the simulation grid the render surface gets its own SDF (like Sharp
+Surfacing) and the effect is small. Settings: **Sheet Detail**, **Split**,
+**Thin Below**, **Max Age** (Surface Filters panel, under Surface Waves).
+Solver checkpoints carry the fine particles (`sheet_detail_*` arrays and
+scalars). Propagated band SDF builds are not used for the render surface
+while it is on (it splats directly).
+
+First GPU result (25 November 2026, ball splat, ball spawn): Dam Break
+frame 22 at about 5 ms per frame over the 2x surface, but the sheets broke
+into specks (193 pieces, less area) instead of the full-fine curtain with
+holes (150 pieces, more area). The film splat and in-plane spawn above are
+the response; they need the same check again.
 
 ## How to check it (Windows GPU host)
 

@@ -235,6 +235,64 @@ def main():
           str(sess.solver.settings.whitewater_enabled))
     domain_fs.whitewater_enabled = True
 
+    # -- surface waves: realtime edits while paused and while stepping -------
+    import numpy as np
+
+    def surface_verts():
+        obj = bpy.data.objects.get("FluidSim Surface")
+        if obj is None or not len(obj.data.vertices):
+            return np.zeros((0, 3), np.float32)
+        co = np.empty(len(obj.data.vertices) * 3, np.float32)
+        obj.data.vertices.foreach_get("co", co)
+        return co.reshape(-1, 3)
+
+    paused_frame = sess.solver.frame
+    domain_fs.surface_waves_enabled = True
+    domain_fs.surface_waves_strength = 6.0
+    check("realtime waves toggle keeps frame",
+          sess.solver.frame == paused_frame,
+          f"{paused_frame} -> {sess.solver.frame}")
+    check("realtime waves settings applied",
+          sess.solver.settings.surface_waves_enabled is True
+          and abs(sess.solver.settings.surface_waves_strength - 6.0) < 1.0e-6,
+          str((sess.solver.settings.surface_waves_enabled,
+               sess.solver.settings.surface_waves_strength)))
+    result = bpy.ops.fluidsim.step(frames=4)
+    waves = sess.solver.surface.waves
+    check("waves step with the solver",
+          result == {"FINISHED"} and waves is not None and waves.frame == 4
+          and waves.count > 0,
+          f"{result} frame={getattr(waves, 'frame', None)} "
+          f"points={getattr(waves, 'count', None)}")
+    waved = surface_verts()
+    check("surface mesh shows waves",
+          len(waved) > 100 and waves is not None
+          and float(np.abs(waves.heights()).max(initial=0.0)) > 0.0,
+          f"{len(waved)} verts, max h "
+          f"{float(np.abs(waves.heights()).max(initial=0.0)) if waves else 0.0}")
+    paused_frame = sess.solver.frame
+    heights = waves.heights().copy() if waves is not None else None
+    domain_fs.surface_waves_damping = 4.0
+    check("realtime waves edit keeps frame and waves",
+          sess.solver.frame == paused_frame and waves is not None
+          and waves.frame == 4 and np.array_equal(waves.heights(), heights),
+          f"{paused_frame} -> {sess.solver.frame}")
+    check("realtime waves damping applied",
+          abs(sess.solver.settings.surface_waves_damping - 4.0) < 1.0e-6,
+          str(sess.solver.settings.surface_waves_damping))
+    rebuilt = surface_verts()
+    check("paused rebuild keeps the displaced mesh",
+          len(waved) > 0 and rebuilt.shape == waved.shape
+          and np.allclose(rebuilt, waved, atol=1.0e-5),
+          f"{rebuilt.shape} vs {waved.shape}, max diff "
+          f"{float(np.abs(rebuilt - waved).max(initial=0.0)) if rebuilt.shape == waved.shape else 'n/a'}")
+    domain_fs.surface_waves_enabled = False
+    unwaved = surface_verts()
+    check("realtime waves off removes displacement",
+          len(waved) > 0 and unwaved.shape == waved.shape
+          and float(np.abs(unwaved - waved).max(initial=0.0)) > 0.0,
+          f"{unwaved.shape} vs {waved.shape}")
+
     parts = bpy.data.objects.get("FluidSim Particles")
     check("particles object exists", parts is not None,
           parts.type if parts else "")

@@ -1078,6 +1078,9 @@ class FluidSolver:
             rigid_scalars["rigid_body_uids"] = json.dumps(uids)
         wave_arrays, wave_scalars = self.surface.export_wave_state()
         arrays.update(wave_arrays)
+        sheet_arrays, sheet_scalars = self.surface.export_sheet_state()
+        arrays.update(sheet_arrays)
+        wave_scalars = {**wave_scalars, **sheet_scalars}
         return {
             "arrays": arrays,
             "scalars": {
@@ -1184,6 +1187,7 @@ class FluidSolver:
         # Surface waves are state, not scratch: restore them after the
         # surface reset above so a resumed bake keeps its wave detail.
         self.surface.import_wave_state(arrays, scalars)
+        self.surface.import_sheet_state(arrays, scalars)
         self.assert_checkpoint_invariants()
 
     def _rebuild_transient_state_after_restore(self):

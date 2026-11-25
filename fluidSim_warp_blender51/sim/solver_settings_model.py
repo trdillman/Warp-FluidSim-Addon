@@ -143,6 +143,12 @@ class SolverSettings:
     surface_waves_detail: float = 0.5      # wave point spacing / surface voxel
     surface_waves_strength: float = 1.0
     surface_waves_damping: float = 1.5     # 1/s
+    # Sheet Detail (render surface only): fine particles in thin sheets that
+    # the coarse flow pulls apart (sim/sheet_detail.py).
+    surface_sheet_detail_enabled: bool = False
+    surface_sheet_detail_split: int = 8        # fine particles per thin particle
+    surface_sheet_detail_thin: float = 0.35    # share of full-liquid neighbours
+    surface_sheet_detail_max_age: float = 2.0  # seconds
 
     # Artist-ready output inventory.  These fields are signature-bound and
     # selected before initialization so optional particle channels stay opt-in.

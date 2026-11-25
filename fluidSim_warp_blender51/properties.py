@@ -1775,6 +1775,26 @@ class FLUIDSIM_PG_domain(bpy.types.PropertyGroup):
         update=_request_surface_refresh,
         description=("Set how fast waves fade, per second; "
                      "higher values keep ripples near where they start, while lower values let them travel and linger"))
+    surface_sheet_detail_enabled: BoolProperty(
+        name="Sheet Detail", default=False,
+        update=_request_surface_refresh,
+        description=("Split the particles in thin sheets and drops into smaller ones that the flow can pull apart, so sheets tear into lace and fragments like a finer simulation; "
+                     "costs extra particles only where the liquid is thin and changes only the render surface, never the simulation. Needs a Surface Resolution finer than the simulation to show"))
+    surface_sheet_detail_split: IntProperty(
+        name="Split", default=8, min=2, max=27,
+        update=_request_surface_refresh,
+        description=("Set how many small particles replace each particle in a thin sheet; "
+                     "higher values give finer tears and fragments at more GPU cost, while 2 adds the least"))
+    surface_sheet_detail_thin: FloatProperty(
+        name="Thin Below", default=0.35, min=0.05, max=0.9,
+        update=_request_surface_refresh,
+        description=("Treat liquid as a thin sheet where it has fewer neighbours than this share of full liquid; "
+                     "higher values add detail to thicker sheets and edges, while lower values keep it to the thinnest sheets and drops"))
+    surface_sheet_detail_max_age: FloatProperty(
+        name="Max Age", default=2.0, min=0.1, max=10.0,
+        update=_request_surface_refresh,
+        description=("Remove a small particle after this many seconds; "
+                     "higher values keep long-lived spray and tears, while lower values keep the particle count down"))
 
     # Whitewater
     whitewater_enabled: BoolProperty(

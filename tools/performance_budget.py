@@ -52,6 +52,7 @@ NEUTRAL_ABSENT_EFFECTIVE_SETTINGS = {
 	"surface_detail_enabled": False,
 	"surface_smooth_preserve_splashes": 0.0,
 	"surface_waves_enabled": False,
+	"surface_sheet_detail_enabled": False,
 	# 4.0 learned initial guess: ships hidden and off (no weights).
 	"pressure_learned_guess": False,
 	"pressure_preconditioner": "JACOBI",
@@ -91,6 +92,9 @@ INERT_WHEN_SWITCHED_OFF = {
 	"surface_waves_detail": ("surface_waves_enabled", False),
 	"surface_waves_strength": ("surface_waves_enabled", False),
 	"surface_waves_damping": ("surface_waves_enabled", False),
+	"surface_sheet_detail_split": ("surface_sheet_detail_enabled", False),
+	"surface_sheet_detail_thin": ("surface_sheet_detail_enabled", False),
+	"surface_sheet_detail_max_age": ("surface_sheet_detail_enabled", False),
 	**{f"spacetime_{name}": ("spacetime_enabled", False) for name in (
 		"adaptive_jitter", "gas_density", "jitter_strength", "liquid_density",
 		"local_cfl", "max_local_substeps", "min_density", "phase_eta",
