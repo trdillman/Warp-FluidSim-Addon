@@ -258,14 +258,14 @@ def k_sd_gather_children(
 
 @wp.kernel
 def k_sd_gather_coarse(
-    thin: wp.array(dtype=wp.int32),
+    keep: wp.array(dtype=wp.int32),
     count: wp.array(dtype=wp.int32),
     offsets: wp.array(dtype=wp.int32),
     pos: wp.array(dtype=wp.vec3),
     out: wp.array(dtype=wp.vec3),
 ):
     i = wp.tid()
-    if i < count[0] and thin[i] == 0:
+    if i < count[0] and keep[i] != 0:
         out[offsets[i]] = pos[i]
 
 
@@ -437,7 +437,7 @@ class SheetDetail:
         out = wp.empty(max(1, total), dtype=wp.vec3, device=dev)
         if total:
             wp.launch(k_sd_gather_coarse, dim=n,
-                      inputs=[self.thin, pcount, offsets, ppos, out], device=dev)
+                      inputs=[flags, pcount, offsets, ppos, out], device=dev)
         count = wp.array(np.array([total], np.int32), dtype=wp.int32, device=dev)
         self.coarse_count = total
         return out, count, max(1, total)

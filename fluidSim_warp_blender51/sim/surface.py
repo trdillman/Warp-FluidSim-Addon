@@ -404,6 +404,7 @@ class SurfacePipeline:
         """
         solver, s = self.solver, self.solver.settings
         count_arr, np_dim = solver.particles.count, solver._np_dim()
+        all_positions = positions  # every coarse particle, for the smoothing weight
         if sheet_inputs is not None:
             positions, count_arr, np_dim = sheet_inputs["coarse"]
         detail_splat = bool(render_detail) and self.detail_enabled()
@@ -538,7 +539,7 @@ class SurfacePipeline:
         smooth_iterations = max(0, int(s.surface_smooth_iterations))
         if preserve > 0.0 and smooth_iterations > 0:
             weight = self.anisotropic_surfacer().smoothing_weight(
-                grid, solver.grid, nvox, positions, solver.particles.count,
+                grid, solver.grid, nvox, all_positions, solver.particles.count,
                 solver._np_dim(),
                 particles_per_voxel=float(getattr(s, "particles_per_voxel", 8.0)),
                 preserve=preserve)

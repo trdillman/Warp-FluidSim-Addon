@@ -250,8 +250,12 @@ def test_render_drops_only_the_thin_particles_children_stand_in_for(cuda_device)
     # No budget: no children, so every coarse particle still renders.
     bare = SD.SheetDetail(SD.SheetDetailSettings(max_particles=0), device=cuda_device)
     _step(bare, cuda_device, sheet)
-    _pos, count, _dim = bare.render_inputs(ppos, pcount, n)
+    pos, count, _dim = bare.render_inputs(ppos, pcount, n)
     assert int(count.numpy()[0]) == n
+    # ... at their own positions, not uninitialised slots.
+    got = np.sort(pos.numpy()[:n].view([("", np.float32)] * 3), axis=0)
+    want = np.sort(sheet.view([("", np.float32)] * 3), axis=0)
+    np.testing.assert_array_equal(got, want)
 
 
 def test_render_before_any_step_passes_the_coarse_particles_through(cuda_device):
