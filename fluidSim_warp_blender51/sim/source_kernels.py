@@ -37,6 +37,7 @@ from .fields import (
     voxel_flat_index,
     world_to_voxel,
 )
+from .kernels_rigid import _body_rot, _body_vec
 from .registry import register_fn
 
 # Blend helper (BlendMode: 0 Add, 1 Replace, 2 Maximum, 3 Pull, 4 Blend)
@@ -926,10 +927,26 @@ register_fn(
 
 
 @wp.kernel
+def k_points_bounds(
+    points: wp.array(dtype=wp.vec3),
+    pad: float,
+    bounds: wp.array(dtype=float),
+):
+    """Grow ``bounds`` (min xyz, max xyz) to cover ``points`` plus ``pad``."""
+    p = points[wp.tid()]
+    for axis in range(3):
+        wp.atomic_min(bounds, axis, p[axis] - pad)
+        wp.atomic_max(bounds, 3 + axis, p[axis] + pad)
+
+
+@wp.kernel
 def k_height_nofill_mask(
     mesh_id: wp.uint64,
-    box_min: wp.vec3,
-    box_max: wp.vec3,
+    bounds: wp.array(dtype=float),
+    body_state: wp.array2d(dtype=wp.float64),
+    body: int,
+    body_radius: float,
+    use_pose: int,
     pad: float,
     band: float,
     winding_threshold: float,
@@ -948,11 +965,17 @@ def k_height_nofill_mask(
     """Flag height-fill voxels that sit inside, or within ``pad`` of, a mesh.
 
     Only voxels the height fill could reach are tested: below the fill level
-    and inside the mesh's padded bounding box. Everything else costs a few
+    and inside the mesh's padded bounds. Everything else costs a few
     comparisons. The inside test is the mesh's winding number, which still
     reads solid for a mesh with holes (a closest-face sign vote does not),
     so an open mesh is kept clear rather than filled. The padding test is
     the unsigned distance, which is valid for any mesh.
+
+    ``use_pose`` selects a Dynamic collider: its mesh stays in the body frame
+    and each voxel is mapped into that frame with the device-resident pose,
+    exactly as ``k_rasterize_rigid_ranked`` does, so nothing leaves the device.
+    Otherwise ``mesh_id`` is already in world space and ``bounds`` holds its
+    padded world box.
     """
     tid = wp.tid()
     if tid >= num_leaves[0] * C.LEAF_VOLUME:
@@ -961,10 +984,6 @@ def k_height_nofill_mask(
         return
     ijk = voxel_coord_of_flat(leaf_coords, tid)
     pw = voxel_center_world(ijk, origin, voxel_size)
-    if (pw[0] < box_min[0] or pw[0] > box_max[0]
-            or pw[1] < box_min[1] or pw[1] > box_max[1]
-            or pw[2] < box_min[2] or pw[2] > box_max[2]):
-        return
     level = wp.max(
         base_height,
         height_surface_level(
@@ -972,11 +991,24 @@ def k_height_nofill_mask(
     )
     if pw[2] > level:
         return
-    q = wp.mesh_query_point_sign_winding_number(mesh_id, pw, band, 2.0, winding_threshold)
+    pq = pw
+    if use_pose != 0:
+        arm = wp.vec3d(wp.float64(pw[0]), wp.float64(pw[1]), wp.float64(pw[2])) - _body_vec(
+            body_state, body, 1)
+        if float(wp.length(arm)) > body_radius + pad:
+            return
+        pl = wp.transpose(_body_rot(body_state, body)) * arm
+        pq = wp.vec3(float(pl[0]), float(pl[1]), float(pl[2]))
+    else:
+        if (pw[0] < bounds[0] or pw[0] > bounds[3]
+                or pw[1] < bounds[1] or pw[1] > bounds[4]
+                or pw[2] < bounds[2] or pw[2] > bounds[5]):
+            return
+    q = wp.mesh_query_point_sign_winding_number(mesh_id, pq, band, 2.0, winding_threshold)
     solid = q.sign < 0.0
     if q.result and not solid:
         closest = wp.mesh_eval_position(mesh_id, q.face, q.u, q.v)
-        solid = wp.length(pw - closest) < pad
+        solid = wp.length(pq - closest) < pad
     if solid:
         mask[tid] = 1
 

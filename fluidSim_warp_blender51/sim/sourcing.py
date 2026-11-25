@@ -194,6 +194,7 @@ class SourcePipeline(CompiledSourceExecution):
         voxel_counts=None,
         pressure_solver=None,
         colliders=None,
+        pose_binding=None,
     ):
         self.runtime = SourceRuntime(
             device=device,
@@ -218,6 +219,8 @@ class SourcePipeline(CompiledSourceExecution):
         self.device = device
         # Live collider list the height fill keeps out of (see height_fill_solids).
         self._collider_provider = colliders if callable(colliders) else (lambda: ())
+        # Maps a Dynamic collider to its device-resident rigid pose, or None.
+        self._pose_binding = pose_binding if callable(pose_binding) else (lambda col: None)
         self._height_solids = HeightFillSolids(device)
         self._transaction_nofill = None
         self.sources: list[SourceShapeDesc | MeshSourceDesc] = []

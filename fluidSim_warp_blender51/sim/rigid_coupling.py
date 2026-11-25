@@ -579,6 +579,17 @@ class RigidCoupling:
             body.ang_vel = state[index, BODY_OMEGA:BODY_OMEGA + 3].copy()
             self._describe(desc, body)
 
+    def pose_binding(self, solver, desc):
+        """``(state, index, body)`` for a Dynamic collider's current pose, else ``None``.
+
+        ``state`` stays on the device; the body's mesh is in its own frame.
+        """
+        for index, (_, attached_desc, body) in enumerate(self.attached):
+            if attached_desc is desc:
+                self.prepare(solver)
+                return self._gather_buffers["state"], index, body
+        return None
+
     def rasterize(self, solver, index, desc, rank, band):
         """Rasterize attached body ``index`` at its device-resident pose."""
         self.prepare(solver)

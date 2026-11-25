@@ -286,3 +286,49 @@ def test_pipeline_applies_the_mask_to_the_height_shape_only_when_a_mesh_is_in_pl
     pipeline, _ = _pipeline([])
     pipeline._prepare_legacy_emission()
     assert pipeline._transaction_nofill is None
+
+
+def test_dynamic_body_is_queried_at_its_current_pose():
+    """A Dynamic collider's mesh stays in its body frame; the pose moves the keep-out."""
+    from fluidSim_warp_blender51.sim import rigid_coupling  # noqa: F401
+    from fluidSim_warp_blender51.sim.kernels_rigid import BODY_COM, BODY_ROT, BODY_WIDTH
+
+    points, indices = _box((-0.4, -0.4, -0.4), (0.4, 0.4, 0.4))
+    col = _collider(points, indices)
+    col.dynamic = True
+    body = SimpleNamespace(local_mesh=col.mesh, radius=0.7)
+    state = np.zeros((1, BODY_WIDTH), np.float64)
+    state[0, BODY_ROT:BODY_ROT + 9] = np.eye(3).ravel()
+    state[0, BODY_COM:BODY_COM + 3] = (1.2, 1.2, 1.2)
+    device_state = wp.array(state, dtype=wp.float64, device=DEVICE)
+
+    grid = _grid()
+    builder = HeightFillSolids(DEVICE)
+    n = len(grid.coords) * C.LEAF_VOLUME
+    centers = _centers(grid)
+
+    def run():
+        return builder.build(
+            grid, n, H, [col], base_height=2.4, back_mode=1,
+            profile=wp.zeros((2, 2), dtype=float, device=DEVICE),
+            profile_res=wp.vec2i(2, 2), domain_min=wp.vec3(*DOMAIN_MIN),
+            domain_max=wp.vec3(*DOMAIN_MAX),
+            pose_binding=lambda _col: (device_state, 0, body)).numpy().astype(bool)
+
+    mask = run()
+    assert mask[_inside(centers, np.array((0.9, 0.9, 0.9)), np.array((1.5, 1.5, 1.5)))].all()
+    assert not mask[_inside(centers, np.zeros(3), np.array((0.6, 0.6, 0.6)))].any()
+    # The body moves on the device; the same query mesh follows without a rebuild.
+    state[0, BODY_COM:BODY_COM + 3] = (0.5, 0.5, 0.5)
+    device_state.assign(state)
+    moved = run()
+    assert moved[_inside(centers, np.array((0.2, 0.2, 0.2)), np.array((0.8, 0.8, 0.8)))].all()
+    assert not moved[_inside(centers, np.array((1.5, 1.5, 1.5)), np.array((2.2, 2.2, 2.2)))].any()
+    assert len(builder._queries) == 1
+
+
+def test_disabled_height_fill_builds_no_mask():
+    pipeline, _ = _pipeline([_collider(*_box(CUBE_LO, CUBE_HI))])
+    pipeline.height_source.enabled = False
+    pipeline._prepare_legacy_emission()
+    assert pipeline._transaction_nofill is None

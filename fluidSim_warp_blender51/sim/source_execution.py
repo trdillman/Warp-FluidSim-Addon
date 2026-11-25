@@ -619,7 +619,8 @@ class CompiledSourceExecution:
             and self._legacy_source_armed(source, self._initial_fired)
         )
         self._transaction_height_armed = height_armed
-        nofill = self._build_height_nofill() if height_armed else None
+        nofill = (
+            self._build_height_nofill() if height.enabled and height_armed else None)
         self._transaction_nofill = nofill
         self._transaction_emit_seed = (self._emit_seed * 1664525 + 1013904223) & 0x7FFFFFFF
         self._transaction_mesh_sources = emit_meshes
@@ -879,6 +880,7 @@ class CompiledSourceExecution:
                 int(self._height_profile_res[0]), int(self._height_profile_res[1])),
             domain_min=wp.vec3(*settings.domain_min),
             domain_max=wp.vec3(*settings.domain_max),
+            pose_binding=self._pose_binding,
         )
 
     def _nofill_argument(self):
@@ -1184,6 +1186,7 @@ class CompiledSourceExecution:
                     self._point_slot_base,
                     self._point_slot_limit,
                     *self._height_emission_inputs(),
+                    self._nofill_argument(),
                 ],
                 outputs=[
                     particles.position,
