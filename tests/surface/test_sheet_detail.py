@@ -145,6 +145,16 @@ def test_every_thin_particle_spawns_split_children_close_by(cuda_device):
     assert np.all(sd.age.numpy() == 0.0)
 
 
+def test_children_of_a_sheet_stay_in_its_plane(cuda_device):
+    sd = SD.SheetDetail(SD.SheetDetailSettings(split=8), device=cuda_device)
+    sheet = _sheet(n=6, z=0.5)
+    _step(sd, cuda_device, sheet)
+    fine = sd.pos.numpy()
+    # A thin disk: in-plane spread up to the jitter, out of plane a tenth.
+    assert np.abs(fine[:, 2] - 0.5).max() <= 0.1 * H + 1e-6
+    assert np.abs(fine[:, :2] - sheet[:, :2].mean(0)).max() > 0.5 * H
+
+
 def test_full_liquid_spawns_nothing(cuda_device):
     sd = SD.SheetDetail(device=cuda_device)
     block = _block()
@@ -408,14 +418,17 @@ def test_build_sdf_splats_fine_particles_at_their_own_radius(cuda_device):
     fine_r = SD.fine_radius(0.5 * 2 * H * float(pipe.solver.settings.particle_radius_scale), 8)
     inputs = {"coarse": (pos, none, 1), "fine": (pos, fine_count, 1), "radius": fine_r}
     pipe.build_sdf(grid, sdf, tmp, nvox, pos, H, render_detail=True, sheet_inputs=inputs)
-    assert _sdf_at(grid, sdf, point[0]) == pytest.approx(-fine_r, abs=1e-6)
+    # A lone fine particle is a ball, never thinner than the render grid holds.
+    from fluidSim_warp_blender51.sim.surface import SHEET_FILM_MIN_VOXELS
+    film_r = max(fine_r, SHEET_FILM_MIN_VOXELS * H)
+    assert _sdf_at(grid, sdf, point[0]) == pytest.approx(-film_r, abs=1e-6)
     assert pipe.last_sdf_splat["sheetDetail"]["fineParticles"] == 1
     # The same particle as a coarse one splats at the coarse radius instead.
     inputs = {"coarse": (pos, fine_count, 1),
               "fine": (pos, none, 0), "radius": fine_r}
     pipe.build_sdf(grid, sdf, tmp, nvox, pos, H, render_detail=True, sheet_inputs=inputs)
     coarse_r = pipe.last_sdf_splat["particleRadius"]
-    assert coarse_r > fine_r
+    assert coarse_r > film_r
     assert _sdf_at(grid, sdf, point[0]) == pytest.approx(-coarse_r, abs=1e-6)
 
 
@@ -452,3 +465,24 @@ class _Null:
 
     def __exit__(self, *a):
         return False
+
+
+def test_a_sheet_of_fine_particles_meshes_as_one_unbroken_film(cuda_device):
+    # Fine particles a little over a render voxel apart, in one plane: every
+    # render voxel on that plane inside the patch must be liquid.
+    spacing = 1.2 * H
+    axis = 0.3 + np.arange(12) * spacing
+    x, y = np.meshgrid(axis, axis, indexing="ij")
+    z0 = 0.5 + H / 2
+    film = np.stack([x.ravel(), y.ravel(), np.full(x.size, z0)], 1).astype(np.float32)
+    pipe, grid, sdf, tmp, pos = _sdf_pipeline(cuda_device, film)
+    nvox = max(1, grid.active_voxel_count)
+    none = wp.zeros(1, dtype=wp.int32, device=cuda_device)
+    count = wp.array(np.array([len(film)], np.int32), dtype=wp.int32, device=cuda_device)
+    inputs = {"coarse": (pos, none, 1), "fine": (pos, count, len(film)),
+              "radius": SD.fine_radius(0.5 * 2 * H, 8)}
+    pipe.build_sdf(grid, sdf, tmp, nvox, pos, H, render_detail=True, sheet_inputs=inputs)
+    inner = (axis[2:-2, None] + 0.5 * spacing)
+    values = [_sdf_at(grid, sdf, (float(a), float(b), z0))
+              for a in inner[:, 0] for b in inner[:, 0]]
+    assert max(values) < 0.0

@@ -236,11 +236,16 @@ Each frame, in `SurfacePipeline.after_frame` before the surface build:
    particle is within two voxels, or when it is back in full liquid
    (1.5 x Thin Below, for hysteresis).
 4. A thin coarse particle with no fine particle within 0.75 voxel spawns
-   **Split** fine particles in a half-voxel ball, with its velocity. The
+   **Split** fine particles with its velocity: in a sheet (six or more
+   neighbours), in a thin disk in the sheet's plane (half a voxel wide, a
+   tenth thick, from the neighbours' smallest principal axis); otherwise in
+   a half-voxel ball. The
    total is capped at 4 million (`memory_safety` counts it when on).
 5. The render SDF splats the coarse particles except the thin ones that fine
    particles stand in for, then the fine particles at radius
-   `r * Split^(-1/3)` (same volume), before the surface filters. A separate
+   `r * Split^(-1/3)` (same volume, but never under 0.75 render voxel) as
+   flat ellipsoids along their neighbours (stretch up to 2.5), so the
+   children of one sheet join into a film, before the surface filters. A separate
    render grid is marked from both sets.
 
 The fine particles are finer than the simulation grid, so they only show
@@ -251,6 +256,12 @@ Surfacing) and the effect is small. Settings: **Sheet Detail**, **Split**,
 Solver checkpoints carry the fine particles (`sheet_detail_*` arrays and
 scalars). Propagated band SDF builds are not used for the render surface
 while it is on (it splats directly).
+
+First GPU result (25 November 2026, ball splat, ball spawn): Dam Break
+frame 22 at about 5 ms per frame over the 2x surface, but the sheets broke
+into specks (193 pieces, less area) instead of the full-fine curtain with
+holes (150 pieces, more area). The film splat and in-plane spawn above are
+the response; they need the same check again.
 
 ## How to check it (Windows GPU host)
 

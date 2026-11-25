@@ -205,6 +205,12 @@ def band_propagation_passes(band_splat: int, seed_splat: int) -> int:
     return max(0, int(band_splat) - int(seed_splat))
 
 
+#: Sheet Detail film: the fine-particle radius floor in render voxels and the
+#: ellipsoid stretch cap (thickness ~ r * stretch^(-2/3)).
+SHEET_FILM_MIN_VOXELS = 0.75
+SHEET_FILM_MAX_STRETCH = 2.5
+
+
 class SurfacePipeline:
     """Owns liquid-surface fields, cadence, extraction and mesh caching."""
 
@@ -510,13 +516,18 @@ class SurfacePipeline:
                       grid.voxels_dim, grid.leaves_dim, grid.origin, h, radius, splat, max_distance], outputs=[sdf.data], device=solver.device)
         if sheet_inputs is not None:
             fine_pos, fine_count, fine_n = sheet_inputs["fine"]
-            fine_r = float(sheet_inputs["radius"])
+            # Never thinner than the render grid can hold: a film below about
+            # one render voxel thick breaks into specks when meshed.
+            fine_r = max(float(sheet_inputs["radius"]), SHEET_FILM_MIN_VOXELS * h)
             if fine_n > 0:
-                fine_splat = max(1, int(math.ceil(fine_r / h + 1.0)))
-                fast_launch(k_build_surface_sdf, dim=int(fine_n), inputs=[
-                    fine_pos, fine_count, grid.leaf_table, grid.voxels_dim,
-                    grid.leaves_dim, grid.origin, h, fine_r, fine_splat,
-                    max_distance], outputs=[sdf.data], device=solver.device)
+                # Flat ellipsoids along the local spread of the fine
+                # particles, so neighbouring children join into one film.
+                self.sheet_surfacer().splat(
+                    grid, sdf, fine_pos, fine_count, int(fine_n),
+                    voxel_size=h, sim_voxel_size=float(s.voxel_size),
+                    particle_radius=fine_r, neighbor_radius_voxels=1.0,
+                    max_stretch=SHEET_FILM_MAX_STRETCH, flatten=0.5,
+                    max_distance=far_distance)
             self.last_sdf_splat["sheetDetail"] = {
                 "coarseParticles": int(getattr(self.sheet, "coarse_count", 0)),
                 "fineParticles": int(fine_n), "fineRadius": fine_r}
@@ -615,8 +626,17 @@ class SurfacePipeline:
             self.sheet.settings = settings
         return self.sheet
 
+    def sheet_surfacer(self):
+        surfacer = getattr(self, "_sheet_surfacer", None)
+        if surfacer is None:
+            from .surface_anisotropy import AnisotropicSurfacer
+
+            surfacer = self._sheet_surfacer = AnisotropicSurfacer(self.solver.device)
+        return surfacer
+
     def release_sheet(self):
         self.sheet = None
+        self._sheet_surfacer = None
 
     def step_sheet(self):
         """Advance the fine sheet particles one frame."""

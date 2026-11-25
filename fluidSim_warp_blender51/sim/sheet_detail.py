@@ -203,15 +203,59 @@ def k_sd_spawn_demand(
     demand[i] = split
 
 
+@wp.func
+def sheet_frame(grid: wp.uint64, pos: wp.array(dtype=wp.vec3), count: int,
+                x: wp.vec3, radius: float) -> wp.mat33:
+    """Principal axes of the neighbours (columns, smallest spread first).
+
+    The first column is the sheet normal. Fewer than six neighbours give the
+    identity with a zero first column, which the caller reads as "no sheet".
+    """
+    mean = wp.vec3(0.0, 0.0, 0.0)
+    n = float(0.0)  # noqa: UP018 - Warp needs a dynamic variable here
+    query = wp.hash_grid_query(grid, x, radius)
+    j = int(0)  # noqa: UP018 - Warp needs a dynamic variable here
+    while wp.hash_grid_query_next(query, j):
+        if j < count and wp.length(pos[j] - x) < radius:
+            mean += pos[j]
+            n += 1.0
+    if n < 6.0:
+        return wp.mat33(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+    mean = mean / n
+    cov = wp.mat33(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    query = wp.hash_grid_query(grid, x, radius)
+    while wp.hash_grid_query_next(query, j):
+        if j < count and wp.length(pos[j] - x) < radius:
+            e = pos[j] - mean
+            cov += wp.outer(e, e)
+    Q, ev = wp.eig3(cov / n)
+    # Sort so the smallest eigenvalue's axis comes first.
+    a = 0
+    if ev[1] < ev[a]:
+        a = 1
+    if ev[2] < ev[a]:
+        a = 2
+    b = (a + 1) % 3
+    c = (a + 2) % 3
+    na = wp.vec3(Q[0, a], Q[1, a], Q[2, a])
+    nb = wp.vec3(Q[0, b], Q[1, b], Q[2, b])
+    nc = wp.vec3(Q[0, c], Q[1, c], Q[2, c])
+    return wp.mat33(na[0], nb[0], nc[0], na[1], nb[1], nc[1], na[2], nb[2], nc[2])
+
+
 @wp.kernel
 def k_sd_spawn(
+    pgrid: wp.uint64,
     ppos: wp.array(dtype=wp.vec3),
     pvel: wp.array(dtype=wp.vec3),
+    pcount: wp.array(dtype=wp.int32),
     demand: wp.array(dtype=wp.int32),
     offsets: wp.array(dtype=wp.int32),
     base: int,
     limit: int,
     jitter: float,
+    thickness: float,
+    frame_radius: float,
     seed: int,
     cpos: wp.array(dtype=wp.vec3),
     cvel: wp.array(dtype=wp.vec3),
@@ -222,17 +266,26 @@ def k_sd_spawn(
     if n == 0:
         return
     state = wp.rand_init(seed, i)
+    F = sheet_frame(pgrid, ppos, pcount[0], ppos[i], frame_radius)
+    normal = wp.vec3(F[0, 0], F[1, 0], F[2, 0])
+    in_sheet = wp.length(normal) > 0.5
     for k in range(n):
         slot = base + offsets[i] + k
         if slot >= limit:
             return
-        # Uniform in a ball of radius ``jitter`` around the parent.
         d = wp.vec3(wp.randf(state) * 2.0 - 1.0, wp.randf(state) * 2.0 - 1.0,
                     wp.randf(state) * 2.0 - 1.0)
         while wp.dot(d, d) > 1.0:
             d = wp.vec3(wp.randf(state) * 2.0 - 1.0, wp.randf(state) * 2.0 - 1.0,
                         wp.randf(state) * 2.0 - 1.0)
-        cpos[slot] = ppos[i] + jitter * d
+        off = jitter * d
+        if in_sheet:
+            # In a sheet: a thin disk in its plane, so the children keep
+            # the sheet a film instead of a cloud.
+            off = (jitter * d[1]) * wp.vec3(F[0, 1], F[1, 1], F[2, 1]) \
+                + (jitter * d[2]) * wp.vec3(F[0, 2], F[1, 2], F[2, 2]) \
+                + (thickness * d[0]) * normal
+        cpos[slot] = ppos[i] + off
         cvel[slot] = pvel[i]
         age[slot] = 0.0
 
@@ -405,7 +458,8 @@ class SheetDetail:
                 wp.copy(vel_out, self.vel, count=self.count)
                 wp.copy(age, self.age, count=self.count)
             wp.launch(k_sd_spawn, dim=n,
-                      inputs=[ppos, pvel, demand, offsets, self.count, total, 0.5 * h,
+                      inputs=[self._pgrid.id, ppos, pvel, pcount, demand, offsets,
+                              self.count, total, 0.5 * h, 0.1 * h, radius,
                               seed, pos, vel_out, age], device=dev)
             self.pos, self.vel, self.age, self.count = pos, vel_out, age, total
         self.frame += 1
