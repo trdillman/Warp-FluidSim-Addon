@@ -37,7 +37,7 @@ class _SolidQuery:
     rigid body for a Dynamic collider, whose mesh stays in the body frame.
     """
 
-    __slots__ = ("source", "mesh", "points", "bounds", "band", "body")
+    __slots__ = ("source", "mesh", "points", "bounds", "band", "body", "followed")
 
     def __init__(self, source, mesh, points, bounds, band, body=None):
         self.source = source
@@ -46,6 +46,8 @@ class _SolidQuery:
         self.bounds = bounds
         self.band = band
         self.body = body
+        # True once the copy has been re-posed to follow a moving collider.
+        self.followed = False
 
 
 def _is_moving(collider) -> bool:
@@ -135,10 +137,14 @@ class HeightFillSolids:
         key = id(source)
         query = self._queries.get(key)
         if query is not None and query.source is source:
-            if pose is None and _is_moving(collider):
+            moving = pose is None and _is_moving(collider)
+            # A collider that has just stopped is restored to its authored mesh
+            # by the solver, so the copy must be refreshed once more.
+            if moving or (pose is None and query.followed):
                 wp.copy(query.points, source.points)
                 query.mesh.refit()
                 self._update_bounds(query, pad)
+                query.followed = moving
             return query
         query = self._winding_copy(source, pad, pose[2] if pose is not None else None)
         if query is not None:

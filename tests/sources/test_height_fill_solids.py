@@ -200,6 +200,19 @@ def test_static_query_mesh_is_reused_and_moving_one_is_rebuilt():
     assert mask2[_inside(centers, np.array((0.3, 0.9, 0.9)), np.array((0.9, 1.5, 1.5)))].all()
     assert not mask2[_inside(centers, np.array((1.2, 0.9, 0.9)), np.array((1.5, 1.5, 1.5)))].any()
 
+    # The collider stops and the solver restores its authored mesh: the next
+    # (now non-moving) build must follow it back, once, and not before.
+    moving.mesh.points.assign(shifted + np.array([0.6, 0.0, 0.0], np.float32))
+    moving.mesh.refit()
+    moving.base_points = None
+    mask3 = builder.build(
+        grid, len(grid.coords) * C.LEAF_VOLUME, H, [moving], base_height=2.0,
+        back_mode=1, profile=wp.zeros((2, 2), dtype=float, device=DEVICE),
+        profile_res=wp.vec2i(2, 2), domain_min=wp.vec3(*DOMAIN_MIN),
+        domain_max=wp.vec3(*DOMAIN_MAX)).numpy().astype(bool)
+    assert mask3[_inside(centers, np.array(CUBE_LO), np.array(CUBE_HI))].all()
+    assert not mask3[_inside(centers, np.array((0.3, 0.9, 0.9)), np.array((0.6, 1.5, 1.5)))].any()
+
 
 def _emission_demand(grid, mask, *, exclusion):
     """Run the real per-voxel demand kernel for a flat height-fill shape."""
