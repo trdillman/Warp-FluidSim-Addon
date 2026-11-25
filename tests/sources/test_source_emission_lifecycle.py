@@ -819,8 +819,11 @@ def test_height_fill_keeps_out_of_an_open_collider_unless_overridden(allow_heigh
 
     solver = FluidSolver(_settings(max_substeps=1))
     solver.set_colliders([_container_collider(allow_height_fill=allow_height_fill)])
+    # The fill stops below the tank's 0.3 m rim, so none of it can fall in over
+    # the top during the frame the solver then steps; only spawning can put
+    # liquid inside.
     solver.set_height_source(HeightSourceDesc(
-        enabled=True, base_height=0.5, back_mode=1, emit_particles=True,
+        enabled=True, base_height=0.25, back_mode=1, emit_particles=True,
         emission_mode=SourceEmissionMode.INITIAL_FILL))
 
     _step(solver)
