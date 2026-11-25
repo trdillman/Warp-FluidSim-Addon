@@ -231,6 +231,17 @@ def test_leaves_with_no_valid_faces_do_not_stop_the_children(cuda_device):
     assert sd.vel.numpy()[old, 2].mean() == pytest.approx(-9.81 * 0.02, rel=1e-3)
 
 
+def test_valid_zero_flow_faces_hold_the_children_still(cuda_device):
+    # Weighted faces with zero velocity are a real sample: no fall.
+    sd = SD.SheetDetail(device=cuda_device)
+    sheet = _sheet(n=4)
+    grid, vel = _stretch_grid(cuda_device, sheet, centre=0.45, rate=0.0)
+    _step(sd, cuda_device, sheet, grid=grid, vel=vel)
+    _step(sd, cuda_device, sheet, grid=grid, vel=vel, dt=0.02)
+    old = sd.age.numpy() > 0.0
+    assert np.abs(sd.vel.numpy()[old]).max() < 1e-6
+
+
 # --- removal ----------------------------------------------------------------------
 
 def test_children_older_than_max_age_die(cuda_device):

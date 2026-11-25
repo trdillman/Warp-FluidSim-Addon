@@ -107,7 +107,7 @@ def k_sd_thin(
 def mac_has_sample(weight: wp.array(dtype=float), leaf_table: wp.array(dtype=wp.int32),
                    voxels_dim: wp.vec3i, leaves_dim: wp.vec3i, vp: wp.vec3,
                    axis: int) -> bool:
-    """True when sample_mac_component would find a face with weight > 0."""
+    """True when sample_mac_component would return a real sample, not 0."""
     off = wp.vec3(0.5, 0.5, 0.5)
     if axis == 0:
         off = wp.vec3(0.0, 0.5, 0.5)
@@ -117,15 +117,20 @@ def mac_has_sample(weight: wp.array(dtype=float), leaf_table: wp.array(dtype=wp.
         off = wp.vec3(0.5, 0.5, 0.0)
     q = vp - off
     base = wp.vec3i(int(wp.floor(q[0])), int(wp.floor(q[1])), int(wp.floor(q[2])))
-    found = bool(False)  # noqa: UP018 - Warp needs a dynamic variable here
+    f = q - wp.vec3(float(base[0]), float(base[1]), float(base[2]))
+    # Same weight sum and threshold as sample_mac_component.
+    wsum = float(0.0)  # noqa: UP018 - Warp needs a dynamic variable here
     for dz in range(2):
         for dy in range(2):
             for dx in range(2):
                 flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim,
                                         wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz))
+                wx = wp.where(dx == 1, f[0], 1.0 - f[0])
+                wy = wp.where(dy == 1, f[1], 1.0 - f[1])
+                wz = wp.where(dz == 1, f[2], 1.0 - f[2])
                 if flat >= 0 and weight[flat] > 0.0:
-                    found = True
-    return found
+                    wsum += wx * wy * wz
+    return wsum > 1.0e-8
 
 
 @wp.kernel
