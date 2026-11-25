@@ -353,4 +353,8 @@ def estimate_solver_bytes(settings) -> int:
         estimate += (SHEET_DETAIL_MAX_FINE * SHEET_DETAIL_BYTES_PER_FINE
                      + particles * SHEET_DETAIL_BYTES_PER_COARSE
                      + SHEET_DETAIL_HASH_BYTES)
+        # The fine particles' own ellipsoid surfacer (sim/surface.py
+        # sheet_surfacer): shape buffers and hash grid, kept between frames.
+        estimate += (SHEET_DETAIL_MAX_FINE * SHARP_SURFACE_BYTES_PER_PARTICLE
+                     + SHARP_SURFACE_HASH_BYTES)
     return int(estimate)
