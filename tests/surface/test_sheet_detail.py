@@ -444,8 +444,10 @@ def test_build_sdf_splats_fine_particles_at_their_own_radius(cuda_device):
     inputs = {"coarse": (pos, none, 1), "fine": (pos, fine_count, 1), "radius": fine_r}
     pipe.build_sdf(grid, sdf, tmp, nvox, pos, H, render_detail=True, sheet_inputs=inputs)
     # A lone fine particle is a ball, never thinner than the render grid holds.
-    from fluidSim_warp_blender51.sim.surface import SHEET_FILM_MIN_VOXELS
-    from fluidSim_warp_blender51.sim.surface import SHEET_FILM_MAX_STRETCH
+    from fluidSim_warp_blender51.sim.surface import (
+        SHEET_FILM_MAX_STRETCH,
+        SHEET_FILM_MIN_VOXELS,
+    )
     film_r = max(fine_r, SHEET_FILM_MIN_VOXELS * H * SHEET_FILM_MAX_STRETCH ** (2 / 3))
     assert _sdf_at(grid, sdf, point[0]) == pytest.approx(-film_r, abs=1e-6)
     assert pipe.last_sdf_splat["sheetDetail"]["fineParticles"] == 1
