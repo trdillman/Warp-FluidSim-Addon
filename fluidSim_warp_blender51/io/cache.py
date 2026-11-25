@@ -20,6 +20,7 @@ import io
 import math
 import os
 import pickle
+import struct
 from pathlib import Path
 import tempfile
 import zipfile
@@ -101,7 +102,20 @@ _IDENTITY_OMITTED_AT_DEFAULT = {
 
 def _omitted_at_default(name, value) -> bool:
     default = _IDENTITY_OMITTED_AT_DEFAULT.get(name, _IDENTITY_OMITTED_AT_DEFAULT)
-    return default is not _IDENTITY_OMITTED_AT_DEFAULT and value == default
+    if default is _IDENTITY_OMITTED_AT_DEFAULT:
+        return False
+    if value == default:
+        return True
+    # Blender FloatProperty values are binary32: 0.35 reads back as
+    # 0.3499999940395355. Compare floats at that precision.
+    if (isinstance(default, float) and isinstance(value, float)
+            and not isinstance(value, bool)):
+        return _binary32(value) == _binary32(default)
+    return False
+
+
+def _binary32(value: float) -> float:
+    return struct.unpack("<f", struct.pack("<f", value))[0]
 
 
 # Caches written before D1 hashed ``device`` into the settings signature.

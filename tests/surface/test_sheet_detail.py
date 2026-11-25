@@ -217,6 +217,20 @@ def test_children_with_no_liquid_grid_fall_under_gravity(cuda_device):
     assert sd.vel.numpy()[old, 2].mean() == pytest.approx(-9.81 * 0.02, rel=1e-3)
 
 
+def test_leaves_with_no_valid_faces_do_not_stop_the_children(cuda_device):
+    # A leaf whose faces carry no weight gives no velocity sample; the
+    # children must fall, not freeze in place.
+    sd = SD.SheetDetail(device=cuda_device)
+    sheet = _sheet(n=4)
+    grid, vel = _stretch_grid(cuda_device, sheet, centre=0.45, rate=0.0)
+    for a in (vel.wu, vel.wv, vel.ww):
+        a.zero_()
+    _step(sd, cuda_device, sheet, grid=grid, vel=vel)
+    _step(sd, cuda_device, sheet, grid=grid, vel=vel, dt=0.02)
+    old = sd.age.numpy() > 0.0
+    assert sd.vel.numpy()[old, 2].mean() == pytest.approx(-9.81 * 0.02, rel=1e-3)
+
+
 # --- removal ----------------------------------------------------------------------
 
 def test_children_older_than_max_age_die(cuda_device):

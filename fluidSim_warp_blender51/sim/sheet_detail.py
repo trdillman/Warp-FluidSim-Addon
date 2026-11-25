@@ -103,6 +103,31 @@ def k_sd_thin(
         thin[i] = 0
 
 
+@wp.func
+def mac_has_sample(weight: wp.array(dtype=float), leaf_table: wp.array(dtype=wp.int32),
+                   voxels_dim: wp.vec3i, leaves_dim: wp.vec3i, vp: wp.vec3,
+                   axis: int) -> bool:
+    """True when sample_mac_component would find a face with weight > 0."""
+    off = wp.vec3(0.5, 0.5, 0.5)
+    if axis == 0:
+        off = wp.vec3(0.0, 0.5, 0.5)
+    elif axis == 1:
+        off = wp.vec3(0.5, 0.0, 0.5)
+    else:
+        off = wp.vec3(0.5, 0.5, 0.0)
+    q = vp - off
+    base = wp.vec3i(int(wp.floor(q[0])), int(wp.floor(q[1])), int(wp.floor(q[2])))
+    found = bool(False)  # noqa: UP018 - Warp needs a dynamic variable here
+    for dz in range(2):
+        for dy in range(2):
+            for dx in range(2):
+                flat = voxel_flat_index(leaf_table, voxels_dim, leaves_dim,
+                                        wp.vec3i(base[0] + dx, base[1] + dy, base[2] + dz))
+                if flat >= 0 and weight[flat] > 0.0:
+                    found = True
+    return found
+
+
 @wp.kernel
 def k_sd_advect(
     pos: wp.array(dtype=wp.vec3),
@@ -130,11 +155,15 @@ def k_sd_advect(
     for _s in range(substeps):
         vp = world_to_voxel(x, origin, voxel_size)
         cell = wp.vec3i(int(wp.floor(vp[0])), int(wp.floor(vp[1])), int(wp.floor(vp[2])))
-        if voxel_flat_index(leaf_table, voxels_dim, leaves_dim, cell) >= 0:
+        if (voxel_flat_index(leaf_table, voxels_dim, leaves_dim, cell) >= 0
+                and mac_has_sample(wu, leaf_table, voxels_dim, leaves_dim, vp, 0)
+                and mac_has_sample(wv, leaf_table, voxels_dim, leaves_dim, vp, 1)
+                and mac_has_sample(ww, leaf_table, voxels_dim, leaves_dim, vp, 2)):
             # Inside the coarse liquid's grid: follow its flow (PIC).
             vi = sample_mac_velocity(u, v, w, wu, wv, ww, leaf_table,
                                      voxels_dim, leaves_dim, vp)
         else:
+            # No valid face to sample (no leaf, or faces with no weight).
             vi = vi + h * gravity
         x = x + h * vi
     pos[i] = x
