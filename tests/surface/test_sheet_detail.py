@@ -367,7 +367,14 @@ def test_the_render_surface_splats_the_fine_particles_and_the_solver_sdf_does_no
         assert surface.sheet is not None and surface.sheet.count > 0
         stats = surface.last_sdf_splat["sheetDetail"]
         assert stats["fineParticles"] == surface.sheet.count
-        assert stats["fineRadius"] < 0.5 * float(solver.settings.voxel_size)
+        # The film floor: the flattened semi-axis is at least 0.75 render voxel.
+        from fluidSim_warp_blender51.sim.surface import (
+            SHEET_FILM_MAX_STRETCH, SHEET_FILM_MIN_VOXELS)
+        h_render = float(surface.grid.voxel_size)
+        assert stats["fineRadius"] == pytest.approx(max(
+            SD.fine_radius(0.5 * float(solver.settings.voxel_size)
+                           * float(solver.settings.particle_radius_scale), 8),
+            SHEET_FILM_MIN_VOXELS * h_render * SHEET_FILM_MAX_STRETCH ** (2 / 3)))
         verts, tris = surface.mesh()
         assert len(verts) and len(tris)
         # Render-only: the shared solver SDF never sees the fine particles.
