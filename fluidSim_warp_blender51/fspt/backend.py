@@ -1,0 +1,91 @@
+"""Lazy CUDA-only reference backend; owns every array and completed image."""
+from __future__ import annotations
+
+import numpy as np
+
+from . import BACKEND_ID, TRANSPORT_ID
+from .contracts import AccumulationState, RenderFrame, frame_key
+
+
+class CudaBackend:
+    def __init__(self, device="cuda:0"):
+        if not str(device).startswith("cuda:"):
+            raise ValueError("FSPT requires an explicit CUDA device; CPU fallback is forbidden")
+        from ..runtime.warp_runtime import _import_warp, probe_runtime, runtime_status_for_device
+
+        state = probe_runtime()
+        ready, diagnostic = runtime_status_for_device(str(device), probe=state)
+        if not ready:
+            raise RuntimeError(diagnostic)
+        self.wp = _import_warp()
+        self.device = self.wp.get_device(str(device))
+        if not self.device.is_cuda:
+            raise RuntimeError("FSPT workload must execute on CUDA")
+        from .kernels import trace_paths
+
+        self.kernel = trace_paths
+        self.history = AccumulationState()
+        self.scene_digest = None
+        self.mesh = None
+        self.arrays = None
+        self.accumulation = None
+        self.output = None
+        self.closed = False
+
+    def _set_scene(self, scene):
+        wp = self.wp
+        arrays = dict(
+            points=wp.array(scene.vertices, dtype=wp.vec3, device=self.device),
+            indices=wp.array(scene.triangles.ravel(), dtype=int, device=self.device),
+            materials=wp.array(scene.material_indices, dtype=int, device=self.device),
+            kinds=wp.array([{"diffuse": 0, "glass": 1, "emission": 2}[m.kind]
+                            for m in scene.materials], dtype=int, device=self.device),
+            colors=wp.array([m.color for m in scene.materials], dtype=wp.vec3, device=self.device),
+            emissions=wp.array([m.emission for m in scene.materials], dtype=wp.vec3, device=self.device),
+            iors=wp.array([m.ior for m in scene.materials], dtype=float, device=self.device),
+        )
+        mesh = None
+        if len(scene.triangles):
+            mesh = wp.Mesh(points=arrays["points"], indices=arrays["indices"])
+        # Replace only after all allocations/builds have succeeded.
+        self.arrays, self.mesh, self.scene_digest = arrays, mesh, scene.digest
+
+    def render(self, scene, camera, width, height, *, samples=1, max_bounces=6, seed=0):
+        if self.closed:
+            raise RuntimeError("FSPT backend is closed")
+        if not 1 <= int(samples) <= 4096:
+            raise ValueError("samples per dispatch must be between 1 and 4096")
+        key = frame_key(scene, camera, width, height, max_bounces, seed)
+        if width * height > 16_777_216:
+            raise ValueError("FSPT P1 image exceeds its explicit 16M-pixel allocation limit")
+        wp = self.wp
+        if self.scene_digest != scene.digest:
+            self._set_scene(scene)
+        if self.history.key != key:
+            accumulation = wp.zeros(width * height, dtype=wp.vec3, device=self.device)
+            output = wp.empty(width * height, dtype=wp.vec4, device=self.device)
+            self.accumulation, self.output = accumulation, output
+            self.history.begin(key)
+        arrays = self.arrays
+        inverse = wp.mat44(*camera.inverse_view_projection.ravel().tolist())
+        wp.launch(self.kernel, dim=width * height, inputs=[
+            self.mesh.id if self.mesh else wp.uint64(0), len(scene.triangles),
+            arrays["materials"], arrays["kinds"], arrays["colors"], arrays["emissions"], arrays["iors"],
+            wp.vec3(*scene.world), inverse, width, height, self.history.samples,
+            int(samples), int(max_bounces), int(seed), self.accumulation, self.output,
+        ], device=self.device)
+        wp.synchronize_device(self.device)
+        pixels = self.output.numpy().reshape(height, width, 4)
+        if not np.isfinite(pixels).all():
+            self.history = AccumulationState()
+            raise RuntimeError("FSPT CUDA output contains nonfinite values")
+        self.history.advance(int(samples))
+        return RenderFrame(pixels, key, self.history.samples, str(self.output.device),
+                           BACKEND_ID, TRANSPORT_ID)
+
+    def close(self):
+        if self.closed:
+            return
+        self.wp.synchronize_device(self.device)
+        self.mesh = self.arrays = self.accumulation = self.output = None
+        self.closed = True
