@@ -6,15 +6,15 @@ Blender-specific scene/session work is confined to ``ProductionBakeBackend``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from enum import Enum
 import hashlib
 import os
-from pathlib import Path
 import platform as _platform
 import re
 import shutil
 import signal
+from dataclasses import dataclass, replace
+from enum import Enum
+from pathlib import Path
 from typing import Callable
 
 from ..io.cache_schema import (
@@ -26,9 +26,9 @@ from ..io.cache_schema import (
     first_changed_source_frame,
     load_manifest,
     manifest_path,
+    utc_now,
     verified_contiguous_frames,
     write_manifest_atomic,
-    utc_now,
 )
 from ..io.checkpoint import (
     capture_solver,
@@ -528,6 +528,7 @@ class ProductionBakeBackend:
         self.effect_inventory: tuple[dict[str, object], ...] = ()
         self.sess = None
         self._original_frame = None
+        self._original_solved_timeline_frame = None
         self._original_live = False
         self._original_session_payload = None
         self._original_frozen_state = None
@@ -817,6 +818,7 @@ class ProductionBakeBackend:
         self._original_session_active = bool(self.sess.owns_scene(scene))
         self._snapshot_open = True
         if self._original_session_active:
+            self._original_solved_timeline_frame = getattr(self.sess, "solved_timeline_frame", None)
             self._original_frozen_state = self.sess.scene_inputs.export_frozen_state()
             signatures = cache_identity.signature_bundle(
                 scene, self._bpy().context.evaluated_depsgraph_get()
@@ -963,6 +965,9 @@ class ProductionBakeBackend:
                 # Restart is destructive: preserve the previous bake until the
                 # replacement solver is admitted, synchronized and has a valid manifest.
                 if restart:
+                    # A partial clear or failed manifest write can leave the
+                    # previous cache unavailable as soon as mutation starts.
+                    playback.clear_cache_cursors(self.base_dir)
                     self._clear_for_restart(self.base_dir)
                 write_manifest_atomic(manifest_path(self.base_dir), self.manifest)
             if resume:
@@ -1046,7 +1051,10 @@ class ProductionBakeBackend:
         The manifest goes first: a crash in between leaves unreferenced files,
         which every reader ignores, never a manifest naming deleted files.
         """
+        from . import playback
+
         write_manifest_atomic(manifest_path(self.base_dir), self.manifest)
+        playback.clear_cache_cursors(self.base_dir, first_frame=first_stale)
         for directory in ("frames", "checkpoints"):
             folder = self.base_dir / directory
             if not folder.is_dir():
@@ -1057,9 +1065,9 @@ class ProductionBakeBackend:
                     path.unlink()
 
     def step_and_commit(self, scene, frame: int) -> FrameEntry:
-        from . import playback, scene_bridge
         from ..io import cache
         from ..sim.frame_output import CacheFramePayload
+        from . import playback, scene_bridge
 
         if not self._initialized or self.manifest is None or self.sess is None:
             raise RuntimeError("production bake backend is not initialized")
@@ -1195,6 +1203,7 @@ class ProductionBakeBackend:
                     self.sess.sync_scene(
                         scene, self._bpy().context.evaluated_depsgraph_get())
                     restore_solver(self.sess.solver, self._original_session_payload)
+                    self.sess.solved_timeline_frame = self._original_solved_timeline_frame
             else:
                 self.sess.release(scene)
         except Exception as exc:  # restoration is part of the contract

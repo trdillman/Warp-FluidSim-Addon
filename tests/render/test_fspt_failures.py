@@ -1,4 +1,5 @@
 """CUDA boundary faults must not leave owned resources or reusable partial images."""
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -43,6 +44,7 @@ class _FaultingWarp:
             raise self.error
 
     def array(self, values, *, dtype, device):
+        self.raise_at("array")
         return _HostArray(np.array(values, copy=True), self, device)
 
     def zeros(self, count, *, dtype, device):
@@ -82,6 +84,10 @@ def rendered_backend():
     backend.kernel = object()
     backend.history = AccumulationState()
     backend.scene_digest = None
+    backend.geometry_digest = backend.shading_digest = None
+    backend.statistics = {"geometry_uploads": 0, "mesh_builds": 0,
+                          "shading_uploads": 0, "image_allocations": 0,
+                          "dispatches": 0, "readbacks": 0}
     backend.mesh = backend.arrays = backend.accumulation = backend.output = None
     backend.closed = False
     frame = backend.render(scene, camera, 2, 1, samples=5, max_bounces=4, seed=17)
@@ -135,3 +141,50 @@ def test_failed_render_discards_partial_image_before_retry(rendered_backend, bou
     retry = backend.render(scene, camera, 2, 1, samples=2, max_bounces=4, seed=17)
     assert retry.samples == 2, "a failed image must not contribute prior or partial samples"
     assert retry.pixels.shape == (1, 2, 4)
+
+
+def test_shading_world_and_timeline_changes_reuse_geometry(rendered_backend):
+    backend, scene, camera = rendered_backend
+    mesh = backend.mesh
+    points = backend.arrays["points"]
+    indices = backend.arrays["indices"]
+    variants = [replace(scene, materials=(Material(color=(1, 0, 0)),)),
+                replace(scene, world=(1, 1, 1)), replace(scene, frame=7)]
+    for changed in variants:
+        backend.render(changed, camera, 2, 1)
+        assert backend.mesh is mesh, "radiance-only edits must not rebuild the BVH"
+        assert backend.arrays["points"] is points
+        assert backend.arrays["indices"] is indices
+
+
+def test_equal_count_changed_connectivity_replaces_geometry(rendered_backend):
+    backend, scene, camera = rendered_backend
+    mesh = backend.mesh
+    changed = replace(scene, triangles=[[0, 2, 1]])
+    backend.render(changed, camera, 2, 1)
+    assert backend.mesh is not mesh
+    np.testing.assert_array_equal(backend.arrays["indices"].values, [0, 2, 1])
+
+
+def test_empty_surface_removes_previous_mesh(rendered_backend):
+    backend, scene, camera = rendered_backend
+    empty = replace(scene, vertices=[], triangles=[], material_indices=[])
+    backend.render(empty, camera, 2, 1)
+    assert backend.mesh is None
+
+
+def test_failed_shading_replacement_preserves_previous_scene(rendered_backend):
+    backend, scene, camera = rendered_backend
+    mesh, arrays, digest = backend.mesh, backend.arrays, backend.scene_digest
+    backend.wp.failure = "array"
+    with pytest.raises(RuntimeError, match="injected"):
+        backend.render(replace(scene, materials=(Material(color=(1, 0, 0)),)), camera, 2, 1)
+    assert backend.mesh is mesh
+    assert backend.arrays is arrays
+    assert backend.scene_digest == digest
+
+
+def test_completed_frame_uses_submitted_timeline(rendered_backend):
+    backend, scene, camera = rendered_backend
+    frame = backend.render(replace(scene, frame=17), camera, 2, 1)
+    assert getattr(frame, "scene_frame", None) == 17

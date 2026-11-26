@@ -9,11 +9,11 @@ a failure after the authority swap leaves a clean, inactive Solver Session.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import gc
 import math
-from types import SimpleNamespace
 import traceback
+from dataclasses import dataclass, replace
+from types import SimpleNamespace
 
 from ..sim import constants as C
 from ..sim import narrow_band
@@ -556,8 +556,8 @@ class SimulationAdmission:
                     "then retry. This estimate is not an OOM guarantee.")
 
             resources = vram_snapshot(settings.device)
-            from ..sim.capacity_service import refresh_resources
             from ..sim.capacity_planner import CapacityPlan
+            from ..sim.capacity_service import refresh_resources
             if isinstance(snapshot.capacity_plan, CapacityPlan):
                 snapshot.resources = resources
                 snapshot.capacity_plan = refresh_resources(
@@ -673,15 +673,15 @@ class SimulationAdmission:
             raise
 
     def _commit_solver_replacement(
-            self, candidate, snapshot, *, profiler, settings):
+            self, candidate, snapshot, *, profiler, settings, solved_timeline_frame):
         transfer = getattr(snapshot, "transfer_scene_inputs", None)
         new_inputs = (
             transfer() if callable(transfer)
             else getattr(snapshot, "scene_inputs", self.session.scene_inputs))
         self.session.install_solver(
             candidate, profiler=profiler, device=settings.device,
-            scene_inputs=new_inputs,
-            admitted_effects=getattr(snapshot, "effects", ()))
+            scene_inputs=new_inputs, admitted_effects=getattr(snapshot, "effects", ()),
+            solved_timeline_frame=solved_timeline_frame)
 
     def _prepare_outputs(self, scene):
         from . import output_publication
@@ -758,7 +758,8 @@ class SimulationAdmission:
             # the single authority swap; all candidate failures above preserve
             # the previously authoritative solver.
             self._commit_solver_replacement(
-                candidate, snapshot, profiler=profiler, settings=settings)
+                candidate, snapshot, profiler=profiler, settings=settings,
+                solved_timeline_frame=getattr(snapshot, "frame", getattr(scene, "frame_current", None)))
             replacement_committed = True
             candidate = None
             identity = getattr(snapshot, "scene_identity", None)
@@ -912,8 +913,8 @@ class SimulationAdmission:
                 # are part of the checkpoint.
                 resume()
             self._commit_solver_replacement(
-                candidate, snapshot, profiler=self.session.profiler,
-                settings=settings)
+                candidate, snapshot, profiler=self.session.profiler, settings=settings,
+                solved_timeline_frame=self.session.solved_timeline_frame)
             committed = True
             candidate = None
         except ReplacementRetirementError as exc:
@@ -954,8 +955,8 @@ class SimulationAdmission:
                 scene, settings, snapshot, self.session.profiler)
             self._validate_effect_snapshot(scene, snapshot)
             self._commit_solver_replacement(
-                candidate, snapshot, profiler=self.session.profiler,
-                settings=settings)
+                candidate, snapshot, profiler=self.session.profiler, settings=settings,
+                solved_timeline_frame=getattr(snapshot, "frame", getattr(scene, "frame_current", None)))
             replacement_committed = True
             candidate = None
             self.session.begin_run(

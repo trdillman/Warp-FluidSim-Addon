@@ -17,7 +17,6 @@ if REPO_ROOT not in sys.path:
 
 from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
-
 ADDON_PREFIX = "fluidSim_warp_blender51"
 
 # Every app-handler list the add-on registers into. Checked as a whole, because
@@ -30,7 +29,9 @@ HANDLER_LISTS = (
     "render_pre",
     "render_post",
     "depsgraph_update_post",
+    "undo_pre",
     "undo_post",
+    "redo_pre",
     "save_pre",
     "save_post",
     "save_post_fail",
@@ -54,7 +55,9 @@ EXPECTED_HANDLERS = {
     "blend_import_post": {"_on_blend_import_post"},
     "animation_playback_pre": {"_on_playback_pre"},
     "depsgraph_update_post": {"_on_interaction_state_update", "_on_imported_domain_update"},
+    "undo_pre": {"_on_surface_history_pre"},
     "undo_post": {"_on_interaction_state_update"},
+    "redo_pre": {"_on_surface_history_pre"},
     "save_pre": {"_on_gpu_preview_save_pre", "_on_preview_save_pre"},
     "save_post": {"_on_gpu_preview_save_post"},
     "render_init": {"_on_render_init"},

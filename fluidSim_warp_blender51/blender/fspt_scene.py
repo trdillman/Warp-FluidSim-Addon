@@ -109,19 +109,27 @@ def _validate_evaluated_geometry(obj):
 
 
 def extract_scene(depsgraph, for_viewport=False):
+    from .fspt_bridge import SurfaceNotReadyError, capture_publications, validate_publications
+    from .surface_publication import id_token
+
     scene = depsgraph.scene
+    publications = capture_publications(scene, for_viewport=for_viewport,
+                                        exact_frame=not for_viewport,
+                                        view_layer=depsgraph.view_layer)
     layer = depsgraph.view_layer
     if layer.material_override is not None or getattr(layer, "world_override", None) is not None:
         _fail(layer, "view-layer material/world overrides are not supported by P1")
     world = world_color(scene.world)
     vertices, triangles, assignments, materials = [], [], [], [Material()]
     material_cache = {}
+    captured_outputs = set()
+    expected_outputs = {p.object_token for p in publications}
     vertex_offset = 0
     for instance in depsgraph.object_instances:
         obj = instance.object
         if not for_viewport and obj.hide_render:
             continue
-        if for_viewport and not instance.is_instance and not obj.original.visible_get():
+        if for_viewport and not instance.is_instance and not obj.original.visible_get(view_layer=layer):
             continue
         role = getattr(getattr(obj.original, "fluidsim", None), "role", "NONE")
         if role in {"DOMAIN", "SOURCE", "SINK", "FORCE"}:
@@ -130,12 +138,17 @@ def extract_scene(depsgraph, for_viewport=False):
             continue
         if obj.type != "MESH":
             _fail(obj, f"unsupported {obj.type} object; P1 accepts evaluated triangle meshes and mesh emitters")
+        if (obj.original.get("fluidsim_output_kind") == "FluidSim Surface"
+                and id_token(obj.original) not in expected_outputs):
+            _fail(obj, "fluid output has no eligible publication from this scene owner")
         _validate_evaluated_geometry(obj)
         if not getattr(instance, "show_self", True):
             continue
         mesh = obj.to_mesh(preserve_all_data_layers=False, depsgraph=depsgraph)
         try:
             mesh.calc_loop_triangles()
+            if id_token(obj.original) in expected_outputs:
+                captured_outputs.add(id_token(obj.original))
             if not len(mesh.loop_triangles):
                 continue
             points = np.empty((len(mesh.vertices), 3), dtype=np.float32)
@@ -168,10 +181,14 @@ def extract_scene(depsgraph, for_viewport=False):
             vertex_offset += len(points)
         finally:
             obj.to_mesh_clear()
+    validate_publications(scene, publications, for_viewport=for_viewport,
+                          exact_frame=not for_viewport, view_layer=layer)
+    if any(p.triangle_count and p.object_token not in captured_outputs for p in publications):
+        raise SurfaceNotReadyError("Committed fluid surface was not captured from the evaluated scene")
     return SceneSnapshot(np.concatenate(vertices) if vertices else [],
                          np.concatenate(triangles) if triangles else [],
                          np.concatenate(assignments) if assignments else [],
-                         tuple(materials), world, int(scene.frame_current))
+                         tuple(materials), world, int(scene.frame_current), publications)
 
 
 def camera_snapshot(depsgraph, width, height):

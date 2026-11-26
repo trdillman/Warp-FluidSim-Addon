@@ -19,7 +19,6 @@ from fluidSim_warp_blender51.sim.leaf_capacity import (
 )
 from fluidSim_warp_blender51.sim.solver_settings_model import SolverSettings
 
-
 # --- planning --------------------------------------------------------------
 
 def test_target_is_geometric_rounded_and_contains_the_demand():
@@ -92,13 +91,15 @@ class _Session:
             export_collider_history=lambda frame: {"frame": frame})
         self.errors = []
         self.begin_run_calls = 0
+        self.solved_timeline_frame = 17
         self.release_calls = []
 
     def owns_scene(self, _scene):
         return self.solver is not None
 
     def install_solver(self, candidate, *, profiler, device, scene_inputs,
-                       admitted_effects=()):
+                       admitted_effects=(), solved_timeline_frame=None):
+        self.solved_timeline_frame = solved_timeline_frame
         old, self.solver = self.solver, candidate
         old.release()
 
@@ -199,6 +200,7 @@ def test_growth_replaces_the_solver_with_the_same_state(rig):
     assert rig.seen["prepared_settings"].max_particles == 800_000
     assert rig.seen["preflight"]["operation"] == "RESET"
     assert rig.session.begin_run_calls == 0
+    assert rig.session.solved_timeline_frame == 17
 
 
 def test_growth_changes_allocation_only(rig):
@@ -308,7 +310,7 @@ def test_allocation_failure_keeps_the_solver(rig, monkeypatch):
 
 
 def test_retirement_failure_after_the_swap_clears_the_session(rig, monkeypatch):
-    def retire_badly(candidate, snapshot, *, profiler, settings):
+    def retire_badly(candidate, snapshot, *, profiler, settings, **_kwargs):
         rig.session.solver = candidate
         raise admission.ReplacementRetirementError("old runtime would not release")
 

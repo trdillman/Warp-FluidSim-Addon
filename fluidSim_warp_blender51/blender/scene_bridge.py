@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import bpy
 
 from ..sim.effects.runtime import EffectExecutionError
+from . import surface_publication
 from .scene_access import (
     active_domain_settings,
     scene_get,
@@ -39,6 +40,8 @@ class Session:
 
     def __init__(self):
         self.solver = None
+        self.surface_epoch = None
+        self.solved_timeline_frame = None
         self.profiler = None
         self.last_frame = -1
         self.start_frame = 1
@@ -187,7 +190,8 @@ class Session:
         self.scene_key = key
 
     def install_solver(
-            self, candidate, *, profiler, device, scene_inputs, admitted_effects=()):
+            self, candidate, *, profiler, device, scene_inputs, admitted_effects=(),
+            solved_timeline_frame=None):
         """Replacement Cutover: the single swap of the authoritative solver.
 
         ``candidate`` has already passed admission. The retired solver, its
@@ -200,6 +204,9 @@ class Session:
         gpu_particle_owner.reset_runtime()
         old_solver = self.solver
         old_inputs = self.scene_inputs
+        surface_publication.invalidate_surfaces(source=surface_publication.SurfaceSource.LIVE)
+        self.surface_epoch = surface_publication.new_surface_epoch()
+        self.solved_timeline_frame = solved_timeline_frame
         self.solver = candidate
         self.profiler = profiler
         self.device = device
@@ -228,6 +235,9 @@ class Session:
                 + "; ".join(str(exc) for exc in failures)) from failures[0]
 
     def _clear_runtime(self):
+        surface_publication.invalidate_surfaces(source=surface_publication.SurfaceSource.LIVE)
+        self.surface_epoch = None
+        self.solved_timeline_frame = None
         failures = []
         try:
             from . import gpu_particle_owner
@@ -451,8 +461,8 @@ class Session:
         # Custom Effect frame windows are authored in timeline frames; tell the
         # solver which one this step produces so preview and bake (whose solver
         # frame counters start from different origins) agree (decision D6).
-        self.solver.effect_frame = int(
-            scene.frame_current if timeline_frame is None else timeline_frame)
+        target_frame = int(scene.frame_current if timeline_frame is None else timeline_frame)
+        self.solver.effect_frame = target_frame
         effects = None
         if hasattr(bpy, "props") and getattr(scene, "fluidsim_effects", None) is not None:
             from . import effects  # animated effect values (B66, lane E)
@@ -465,6 +475,12 @@ class Session:
                 # Before any caller releases the solver and its runtime error.
                 effects.publish_runtime_error(scene, exc)
             raise
+        # Playback can move its cursor without a solve. Only a same-frame
+        # manual step or a consecutive solve preserves exact timeline mapping.
+        # Admission/reset establishes a new mapping after a discontinuity.
+        previous = self.solved_timeline_frame
+        contiguous = previous is not None and previous <= target_frame <= previous + 1
+        self.solved_timeline_frame = target_frame if contiguous else None
         if effects is not None:
             effects.publish_runtime_telemetry(
                 scene, getattr(stats, "custom_effects", None) or ())
@@ -579,7 +595,11 @@ class Session:
         if publish_outputs:
             from . import output_publication
 
-            publication = output_publication.update_outputs(scene, self)
+            if timeline_frame is None:
+                publication = output_publication.update_outputs(scene, self)
+            else:
+                publication = output_publication.update_outputs(
+                    scene, self, timeline_frame=timeline_frame)
             warning = str(getattr(publication, "warning", "") or "")
             if warning:
                 self.set_error(scene, warning)

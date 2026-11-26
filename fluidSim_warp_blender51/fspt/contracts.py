@@ -1,10 +1,10 @@
 """Owned scene snapshots and image identity, independent of bpy and Warp."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import hashlib
 import json
 import math
+from dataclasses import asdict, dataclass, field, is_dataclass
 
 import numpy as np
 
@@ -64,7 +64,10 @@ class SceneSnapshot:
     materials: tuple[Material, ...]
     world: tuple[float, float, float]
     frame: int
+    publications: tuple = ()
     digest: str = field(init=False)
+    geometry_digest: str = field(init=False)
+    shading_digest: str = field(init=False)
 
     def __post_init__(self):
         vertices = _owned(self.vertices, np.float32, (0, 3), "vertices")
@@ -82,12 +85,22 @@ class SceneSnapshot:
         for name, value in (("vertices", vertices), ("triangles", triangles),
                             ("material_indices", indices), ("materials", materials), ("world", world)):
             object.__setattr__(self, name, value)
-        digest = hashlib.sha256()
-        for array in (vertices, triangles, indices):
-            digest.update(str(array.shape).encode())
-            digest.update(array.tobytes())
-        digest.update(json.dumps([[(m.kind, m.color, m.emission, m.ior) for m in materials],
-                                  world, int(self.frame)], allow_nan=False).encode())
+        publications = tuple(self.publications)
+        if any(not is_dataclass(p) or not p.__dataclass_params__.frozen for p in publications):
+            raise ValueError("surface publications must be immutable records")
+        object.__setattr__(self, "publications", publications)
+        geometry = hashlib.sha256()
+        for array in (vertices, triangles):
+            geometry.update(str(array.shape).encode())
+            geometry.update(array.tobytes())
+        shading = hashlib.sha256(indices.tobytes())
+        shading.update(json.dumps([(m.kind, m.color, m.emission, m.ior) for m in materials],
+                                  allow_nan=False).encode())
+        object.__setattr__(self, "geometry_digest", geometry.hexdigest())
+        object.__setattr__(self, "shading_digest", shading.hexdigest())
+        digest = hashlib.sha256(geometry.digest() + shading.digest())
+        digest.update(json.dumps([world, int(self.frame), [asdict(p) for p in publications]],
+                                 allow_nan=False).encode())
         object.__setattr__(self, "digest", digest.hexdigest())
 
 
@@ -152,3 +165,7 @@ class RenderFrame:
     device: str
     backend: str
     transport: str
+    scene_frame: int | None = None
+    publications: tuple = ()
+    geometry_digest: str = ""
+    statistics: tuple = ()

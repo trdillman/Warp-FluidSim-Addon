@@ -37,13 +37,16 @@ class _Session:
         self.scene_identity = 101
         self.scene_key = "old-key"
         self.start_frame = 1
+        self.solved_timeline_frame = None
         self.run_begins = []
         self.bound = []
 
     # The Session interface Admission may use. The real behaviour of the
     # three runtime methods is pinned in test_session_runtime.py.
     def install_solver(
-            self, candidate, *, profiler, device, scene_inputs, admitted_effects=()):
+            self, candidate, *, profiler, device, scene_inputs, admitted_effects=(),
+            solved_timeline_frame=None):
+        self.solved_timeline_frame = solved_timeline_frame
         old = self.solver
         self.admitted_effects = admitted_effects
         self.solver, self.profiler, self.device = candidate, profiler, device
@@ -86,6 +89,7 @@ class _Snapshot:
     scene_identity = 101
     scene_key = "key"
     frame_start = 1
+    frame = 27
 
     def __init__(self):
         self.released = 0
@@ -227,6 +231,7 @@ def test_successful_admission_uses_one_snapshot_and_orders_cutover(monkeypatch):
     ]
     assert old_solver.released is True
     assert session.solver.name == "replacement"
+    assert session.solved_timeline_frame == snapshot.frame == 27
     assert snapshot.released == 1
 
 

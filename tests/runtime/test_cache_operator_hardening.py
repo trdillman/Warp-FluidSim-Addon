@@ -57,6 +57,27 @@ def _context(cache_path):
     return SimpleNamespace(scene=scene)
 
 
+def test_cache_free_invalidates_the_removed_root(monkeypatch, tmp_path):
+    cache_ops, _ = _load(monkeypatch)
+    from fluidSim_warp_blender51 import blender
+
+    root = (tmp_path / "cache").resolve()
+    (root / "frames").mkdir(parents=True)
+    (root / "frames" / "frame_000001.npz").write_bytes(b"disposable cache data")
+    retired = []
+
+    def invalidate(path):
+        assert not path.exists()
+        retired.append(path)
+
+    monkeypatch.setattr(blender, "playback", SimpleNamespace(clear_cache_cursors=invalidate),
+                        raising=False)
+    operator = _operator(cache_ops.FLUIDSIM_OT_cache_free, expected_cache_path=str(root))
+
+    assert operator.execute(_context(root)) == {"FINISHED"}
+    assert retired == [root]
+
+
 def test_a_move_whose_source_cleanup_failed_still_repoints_the_scene(monkeypatch, tmp_path):
     cache_ops, _ = _load(monkeypatch)
     from fluidSim_warp_blender51.blender import cache_manager

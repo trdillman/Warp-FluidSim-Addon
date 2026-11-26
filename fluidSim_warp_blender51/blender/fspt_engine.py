@@ -26,9 +26,9 @@ class FSPTSettings(bpy.types.PropertyGroup):
 
 
 def _frame_info(frame, scene, width, height):
-    return {"status": "COMPLETE", "key": list(frame.key), "samples": frame.samples,
-                "device": frame.device, "backend": frame.backend, "transport": frame.transport,
-                "width": width, "height": height, "scene_frame": int(scene.frame_current)}
+    from .fspt_bridge import frame_info
+
+    return frame_info(frame, width, height)
 
 
 class FSPTRenderEngine(bpy.types.RenderEngine):
@@ -76,6 +76,7 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
         return self._backend
 
     def render(self, depsgraph):
+        from .fspt_bridge import prepare_final_publication, validate_publications
         from .fspt_scene import camera_snapshot, extract_scene
 
         global LAST_RENDER_INFO
@@ -95,6 +96,7 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
                 raise RuntimeError("FSPT P1 does not support multiview/stereo rendering")
             if sum(layer.use for layer in scene.view_layers) != 1:
                 raise RuntimeError("FSPT P1 requires exactly one enabled view layer")
+            prepare_final_publication(depsgraph)
             snapshot = extract_scene(depsgraph, for_viewport=False)
             camera = camera_snapshot(depsgraph, width, height)
             # A final job starts at sample zero even if this instance is reused.
@@ -109,6 +111,8 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
                                        max_bounces=settings.max_bounces, seed=settings.seed)
                 require_current(frame_key(snapshot, camera, width, height,
                                           settings.max_bounces, settings.seed), frame.key)
+                validate_publications(scene, frame.publications, for_viewport=False,
+                                      exact_frame=True, view_layer=depsgraph.view_layer)
                 result.layers[0].passes["Combined"].rect = frame.pixels.reshape(-1, 4).tolist()
                 self.update_result(result)
                 self.update_progress(frame.samples / settings.samples)
@@ -165,6 +169,8 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
         import gpu
         from gpu_extras.presets import draw_texture_2d
 
+        from .fspt_bridge import validate_publications
+
         global LAST_VIEWPORT_INFO, _DRAW_COUNT
         scene = depsgraph.scene
         settings = scene.fspt
@@ -177,6 +183,8 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
             if self._snapshot is None:
                 raise RuntimeError(self._snapshot_error or "No scene snapshot")
             snapshot = self._snapshot
+            validate_publications(scene, snapshot.publications, for_viewport=True,
+                                  view_layer=depsgraph.view_layer)
             width = max(1, region.width * settings.resolution_percentage // 100)
             height = max(1, region.height * settings.resolution_percentage // 100)
             matrix = np.array(context.region_data.perspective_matrix.inverted(), dtype=np.float32)
@@ -193,6 +201,8 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
                 self._last_frame = frame
             frame = self._last_frame
             require_current(key, frame.key)
+            validate_publications(scene, frame.publications, for_viewport=True,
+                                  view_layer=depsgraph.view_layer)
             previous_blend = gpu.state.blend_get()
             gpu.state.blend_set("ALPHA_PREMULT")
             self.bind_display_space_shader(scene)
@@ -204,7 +214,10 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
             _DRAW_COUNT += 1
             LAST_VIEWPORT_INFO = _frame_info(frame, scene, width, height)
             LAST_VIEWPORT_INFO["draw_count"] = _DRAW_COUNT
-            self.update_stats("FSPT Experimental", f"CUDA · {frame.samples} samples · host-staged image")
+            source = frame.publications[0] if frame.publications else None
+            label = (f"{source.source} · surface {source.solver_frame if source.source == 'LIVE' else source.cache_frame}"
+                     f" · timeline {scene.frame_current} · " if source is not None else "CUDA · ")
+            self.update_stats("FSPT Experimental", f"{label}{frame.samples} samples · host-staged image")
             if frame.samples < settings.viewport_samples:
                 self.tag_redraw()
         except Exception as exc:
@@ -230,7 +243,7 @@ class FSPTRenderPanel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="P1 CUDA reference path tracer", icon="EXPERIMENTAL")
+        layout.label(text="CUDA reference · evaluated fluid bridge", icon="EXPERIMENTAL")
         layout.label(text="Diffuse, smooth Glass, Emission; constant World")
         layout.label(text="Unsupported graphs produce a diagnostic.")
         for prop in ("device", "viewport_samples", "resolution_percentage", "samples", "max_bounces", "seed"):

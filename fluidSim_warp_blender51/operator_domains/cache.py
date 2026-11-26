@@ -61,7 +61,6 @@ class _FLUIDSIM_OT_production_bake_modal:
     @classmethod
     def poll(cls, context):
         from ..blender import production_bake
-
         from ..blender.scene_access import active_domain_object
 
         if production_bake.active_bakes():
@@ -499,6 +498,7 @@ class FLUIDSIM_OT_cache_free(bpy.types.Operator):
         layout.label(text="The directory is transactionally renamed before deletion.")
 
     def execute(self, context):
+        from ..blender import playback
         from ..blender.cache_manager import free_cache
 
         path = _resolved_cache_path_or_report(self, context.scene)
@@ -512,6 +512,7 @@ class FLUIDSIM_OT_cache_free(bpy.types.Operator):
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Cache could not be freed: {exc}")
             return {"CANCELLED"}
+        playback.clear_cache_cursors(path)
         if retained is not None:
             self.report({"ERROR"}, f"Cache deletion failed; data remains at {retained}")
             return {"CANCELLED"}
@@ -549,6 +550,7 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
         layout.label(text="The copy is verified before the source is removed.", icon="INFO")
 
     def execute(self, context):
+        from ..blender import playback
         from ..blender.cache_manager import MoveCleanupIncomplete, move_cache
 
         fs = context.scene.fluidsim
@@ -565,12 +567,17 @@ class FLUIDSIM_OT_cache_move(bpy.types.Operator):
             # move_cache says the verified copy is published and only the old
             # source's cleanup failed, so the scene must follow the new copy
             # instead of pointing at a folder that may already be gone.
+            playback.clear_cache_cursors(destination)
+            if not source.exists():
+                playback.clear_cache_cursors(source)
             fs.cache_path = str(destination)
             self.report({"WARNING"}, f"Cache moved to {destination}, but cleanup is incomplete: {exc}")
             return {"FINISHED"}
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Cache move failed: {exc}")
             return {"CANCELLED"}
+        playback.clear_cache_cursors(source)
+        playback.clear_cache_cursors(moved)
         fs.cache_path = str(moved)
         self.report({"INFO"}, f"Cache moved to {moved}")
         return {"FINISHED"}
@@ -604,6 +611,7 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
         layout.prop(self, "name")
 
     def execute(self, context):
+        from ..blender import playback
         from ..blender.cache_manager import rename_cache
 
         fs = context.scene.fluidsim
@@ -618,6 +626,8 @@ class FLUIDSIM_OT_cache_rename(bpy.types.Operator):
         except Exception as exc:  # noqa: BLE001
             self.report({"ERROR"}, f"Cache rename failed: {exc}")
             return {"CANCELLED"}
+        playback.clear_cache_cursors(source)
+        playback.clear_cache_cursors(renamed)
         fs.cache_path = str(renamed)
         self.report({"INFO"}, f"Cache renamed to {renamed.name}")
         return {"FINISHED"}

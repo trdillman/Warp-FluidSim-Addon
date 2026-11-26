@@ -5,10 +5,10 @@ from __future__ import annotations
 import importlib
 import inspect
 import os
-from pathlib import Path
 import sys
 import types
 import weakref
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -331,6 +331,91 @@ def test_frame_change_cache_playback_uses_cached_snapshot_without_solver_step(mo
     assert scene.fluidsim.stat_whitewater_policy == "CLAMP"
     assert scene.fluidsim.stat_whitewater_status == "DROPPED"
     assert scene.fluidsim.status == "Cache frame 7: 2 particles"
+
+
+def test_same_frame_cache_root_change_revalidates_and_retries_without_solver(monkeypatch):
+    bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene()
+    session = bridge.session()
+    reads, published = [], []
+    blocked = {"B"}
+
+    def read(base, frame):
+        reads.append((base, frame))
+        return None if base in blocked else {"frame": frame, "source": base}
+
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+    fake_cache.read_frame = read
+    fake_output = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
+    fake_output.update_outputs_from_cache_frame = (
+        lambda _scene, data: published.append(data["source"]))
+    _install_cache_playback_modules(monkeypatch, fake_cache, fake_output)
+    session.solver = SimpleNamespace(step_frame=lambda: pytest.fail("cache stepped the solver"))
+
+    scene.fluidsim.cache_path = "A"
+    bridge.playback._on_frame_change(scene, depsgraph=None)
+    bridge.playback._on_frame_change(scene, depsgraph=None)
+    assert reads == [("A", 7)] and published == ["A"]
+
+    scene.fluidsim.cache_path = "B"
+    bridge.playback._on_frame_change(scene, depsgraph=None)
+    assert reads[-1] == ("B", 7)
+    assert published == ["A"]
+    assert "Cache playback error" in scene.fluidsim.status
+
+    blocked.clear()
+    bridge.playback._on_frame_change(scene, depsgraph=None)
+    bridge.playback._on_frame_change(scene, depsgraph=None)
+    assert reads == [("A", 7), ("B", 7), ("B", 7)]
+    assert published == ["A", "B"]
+    assert session.current_error(scene) == ""
+
+    scene.fluidsim.particle_display_fraction = 0.25
+    bridge.playback._on_frame_change(scene, depsgraph=None)
+    assert reads == [("A", 7), ("B", 7), ("B", 7), ("B", 7)]
+    assert published == ["A", "B", "B"]
+
+
+def test_owner_cache_revision_retires_only_affected_root_and_frames(monkeypatch, tmp_path):
+    bridge = _install_scene_bridge_stubs(monkeypatch)
+    from fluidSim_warp_blender51.blender import surface_publication as publication
+
+    roots = (tmp_path / "A", tmp_path / "A", tmp_path / "B")
+    scenes = [_scene(frame=f) for f in (7, 8, 8)]
+    reads = []
+    fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
+
+    def read(root, frame):
+        reads.append((root, frame))
+        return {"root": root, "frame": frame}
+
+    def publish(scene, data):
+        with publication.surface_attempt(
+            scene, source=publication.SurfaceSource.CACHE, cache_frame=data["frame"],
+            cache_identity=(data["root"], "verified"),
+        ) as attempt:
+            attempt.record(vertex_count=3, triangle_count=1, visible=True)
+            attempt.succeed(synchronized=True)
+
+    fake_cache.read_frame = read
+    fake_output = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
+    fake_output.update_outputs_from_cache_frame = publish
+    _install_cache_playback_modules(monkeypatch, fake_cache, fake_output)
+
+    for scene, root in zip(scenes, roots, strict=True):
+        scene.fluidsim.cache_path = str(root)
+        bridge.playback._on_frame_change(scene, depsgraph=None)
+    stamps = [publication.current_surface_publication(scene) for scene in scenes]
+
+    bridge.playback.clear_cache_cursors(roots[0], first_frame=8)
+    assert [publication.current_surface_publication(scene) for scene in scenes] == [
+        stamps[0], None, stamps[2],
+    ]
+
+    for scene in scenes:
+        bridge.playback._on_frame_change(scene, depsgraph=None)
+    assert len(reads) == 4 and reads[-1] == (str(roots[0]), 8)
+    assert publication.current_surface_publication(scenes[1]).epoch != stamps[1].epoch
 
 
 def test_failed_cache_publication_does_not_consume_timeline_frame(monkeypatch):
@@ -1571,6 +1656,107 @@ def test_render_frame_restore_does_not_touch_the_solver(monkeypatch):
 
     assert calls == []
     assert sess.last_frame == 5
+
+
+
+def test_solved_timeline_updates_before_fallible_bookkeeping_and_survives_restore(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=20, playback=False)
+    sess = scene_bridge.session()
+    sess.solver = SimpleNamespace(frame=3)
+    sess.scene_identity = id(scene)
+
+    sess.solved_timeline_frame = 18
+
+    def fail_bookkeeping():
+        raise RuntimeError("telemetry failed after solver completed")
+
+    stats = SimpleNamespace(as_dict=fail_bookkeeping)
+    monkeypatch.setattr(sess, "_step_growing_leaves", lambda _scene: stats)
+
+    with pytest.raises(RuntimeError, match="telemetry failed"):
+        sess.step(scene, timeline_frame=19, publish_outputs=False)
+    assert getattr(sess, "solved_timeline_frame", None) == 19
+
+    scene_bridge.playback.arm_render_frame_restore(20)
+    scene_bridge.playback._on_frame_change(scene, depsgraph=object())
+    assert sess.last_frame == 20
+    assert sess.solved_timeline_frame == 19
+
+    scene.frame_current = 90
+    scene_bridge.playback.handle_frame_change(sess, scene, depsgraph=object())
+    assert sess.last_frame == 90
+    assert sess.solved_timeline_frame == 19
+
+
+@pytest.fixture
+def timeline_provenance_playback(monkeypatch):
+    scene_bridge = _install_scene_bridge_stubs(monkeypatch)
+    scene = _scene(frame=7, playback=False)
+    sess = scene_bridge.session()
+    sess.scene_identity = id(scene)
+    sess.last_frame = sess.solved_timeline_frame = 7
+    completed, published = [], []
+    stats = SimpleNamespace(
+        active_particles=3, active_voxels=4, whitewater_particles=0,
+        step_time=0.01, substeps=1, cfl_substeps_clamped=False,
+        as_dict=lambda: {"frame": sess.solver.frame},
+    )
+
+    def step():
+        sess.solver.frame += 1
+        completed.append(sess.solver.effect_frame)
+        return stats
+
+    sess.solver = SimpleNamespace(frame=6, step_frame=step)
+    monkeypatch.setattr(sess, "sync_scene", lambda *_args: None)
+    monkeypatch.setattr(sess, "prepare_step", lambda *_args, **_kwargs: True)
+    fake_output = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
+
+    def record_publication(output_scene, session, *, timeline_frame=None):
+        requested = output_scene.frame_current if timeline_frame is None else timeline_frame
+        published.append((requested, session.solved_timeline_frame))
+
+    fake_output.update_outputs = record_publication
+    from fluidSim_warp_blender51 import blender
+    monkeypatch.setitem(sys.modules, fake_output.__name__, fake_output)
+    monkeypatch.setattr(blender, "output_publication", fake_output, raising=False)
+    return scene_bridge, scene, sess, completed, published
+
+
+def test_playback_after_an_unserved_jump_cannot_claim_exact_solved_frame(
+        timeline_provenance_playback):
+    bridge, scene, session, completed, published = timeline_provenance_playback
+
+    scene.frame_current = 100
+    bridge.playback.handle_frame_change(session, scene, depsgraph=None)
+    assert (session.last_frame, session.solved_timeline_frame) == (100, 7)
+    assert completed == [] and published == []
+    assert "desync" in scene.fluidsim.status
+
+    for frame in (101, 102):
+        scene.frame_current = frame
+        bridge.playback.handle_frame_change(session, scene, depsgraph=None)
+
+    assert scene.fluidsim.live and session.last_frame == 102
+    assert completed == [101, 102]
+    assert published == [(101, None), (102, None)]
+    assert session.solved_timeline_frame is None
+
+
+def test_contiguous_catchup_and_explicit_same_frame_step_keep_exact_mapping(
+        timeline_provenance_playback):
+    bridge, scene, session, completed, published = timeline_provenance_playback
+
+    scene.frame_current = 10
+    bridge.playback.handle_frame_change(session, scene, depsgraph=None)
+    assert completed == [8, 9, 10]
+    assert published == [(10, 10)]
+
+    bridge.step_frame(scene, session)
+    assert completed == [8, 9, 10, 10]
+    assert published == [(10, 10), (10, 10)]
+    assert session.solved_timeline_frame == 10
 
 
 def test_render_frame_restore_is_one_shot(monkeypatch):

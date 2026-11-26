@@ -7,13 +7,13 @@ from an owned payload and cannot reacquire solver or Warp state.
 
 from __future__ import annotations
 
+import itertools
+import sys
 from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
-import itertools
-import sys
 
 import numpy as np
 
@@ -31,6 +31,7 @@ from ..sim.whitewater_types import (
     partition_type_indices,
     validate_type_values,
 )
+from . import surface_publication
 from .scene_access import active_domain_object, active_domain_settings
 
 SURFACE_NAME = "FluidSim Surface"
@@ -1758,11 +1759,15 @@ def publish_payload(scene, payload, *, preserve_preview_points=False):
             or payload.whitewater_visible):
         from . import materials
 
-    if policies[SURFACE_NAME].visible or payload.viewport_surface or payload.retain_cache_geometry:
+    surface_attempt = surface_publication.active_surface_attempt(scene)
+    surface_visible = policies[SURFACE_NAME].visible or payload.viewport_surface
+    if surface_visible or payload.retain_cache_geometry:
         if payload.publish_surface:
             values = _selected_attribute_values(
                 payload.surface_attributes, payload.surface_attribute_mode)
             colors = _values_to_colors(values) if values is not None else None
+            if surface_attempt is not None:
+                surface_attempt.mark_mutation()
             obj = _ensure_object(
                 scene, SURFACE_NAME,
                 lambda: _new_blender_id(
@@ -1771,14 +1776,24 @@ def publish_payload(scene, payload, *, preserve_preview_points=False):
                 obj, payload.surface_verts, payload.surface_tris, colors,
                 payload.surface_attributes)
             _ensure_material(getattr(materials, policies[SURFACE_NAME].material), scene, obj)
+            if surface_attempt is not None:
+                surface_attempt.record(
+                    obj=obj, vertex_count=len(payload.surface_verts),
+                    triangle_count=len(payload.surface_tris), visible=surface_visible,
+                )
     else:
         obj = output_object(scene, SURFACE_NAME)
-        if obj is not None and obj.type == "MESH" and len(obj.data.vertices):
+        cleared = obj is not None and obj.type == "MESH" and len(obj.data.vertices)
+        if cleared:
+            if surface_attempt is not None:
+                surface_attempt.mark_mutation()
             _swap_mesh(
                 obj,
                 np.zeros((0, 3), dtype=np.float32),
                 np.zeros((0, 3), dtype=np.int32),
             )
+        if surface_attempt is not None and (cleared or payload.publish_surface):
+            surface_attempt.record(obj=obj, vertex_count=0, triangle_count=0, visible=False)
 
     particle_output = None
     if policies[PARTICLES_NAME].visible or payload.viewport_particles or payload.retain_cache_geometry:
@@ -1891,7 +1906,12 @@ def refresh_existing_output_settings(scene):
                 _set_point_radius(obj, policy.radius)
             _ensure_material(getattr(materials, policy.material), scene, obj)
     liquid_display.apply_viewport(scene)
-    return _sync_render_inputs(scene)
+    publication = _sync_render_inputs(scene)
+    if (getattr(publication, "synchronized", False)
+            and surface_publication.get_surface_state(scene).pending is not None):
+        surface_publication.acknowledge_surface_sync(
+            scene, output_object(scene, SURFACE_NAME, ensure=False))
+    return publication
 
 
 def ensure_render_visibility(scene):
@@ -1912,46 +1932,67 @@ def configure_cycles_points(scene):
         # Cycles renders point clouds natively; no additional mutation needed.
 
 
-def update_outputs(scene, sess, *, force_surface=False):
+def update_outputs(scene, sess, *, force_surface=False, timeline_frame=None):
     """Write current solver outputs into Blender datablocks."""
     _require_bpy()
     if not sess.active:
         return
-    fs = scene.fluidsim
-    ds = _domain_settings(scene)
-    surface = output_object(scene, SURFACE_NAME)
-    has_surface = (surface is not None and surface.type == "MESH" and
-                   len(surface.data.vertices) > 0)
     solver = sess.solver
-    _record_cost("host_frame_acquisitions", phase="live_adaptation")
-    if hasattr(solver, "host_frame"):
-        host = solver.host_frame()
-    else:
-        from ..sim.frame_output import HostFrame
-        host = HostFrame(solver)
-    publish_surface = (
-        force_surface or not has_surface or
-        host.should_publish_surface(
-            getattr(ds, "live_surface_publish_cadence", 1))
-    )
-    payload = prepare_live_payload(
-        scene, host, publish_surface=publish_surface)
-    publication = publish_payload(scene, payload)
-    from . import rigid_publication
+    with surface_publication.surface_attempt(
+        scene, source=surface_publication.SurfaceSource.LIVE,
+        epoch=getattr(sess, "surface_epoch", None), timeline_frame=timeline_frame,
+        source_timeline_frame=getattr(sess, "solved_timeline_frame", None),
+        solver_frame=getattr(solver, "frame", None),
+        state_revision=getattr(solver, "liquid_state_revision", None),
+        simulation_time=getattr(solver, "sim_time", None),
+    ) as attempt:
+        ds = _domain_settings(scene)
+        surface = output_object(scene, SURFACE_NAME)
+        has_surface = (surface is not None and surface.type == "MESH" and
+                       len(surface.data.vertices) > 0)
+        _record_cost("host_frame_acquisitions", phase="live_adaptation")
+        if hasattr(solver, "host_frame"):
+            host = solver.host_frame()
+        else:
+            from ..sim.frame_output import HostFrame
+            host = HostFrame(solver)
+        publish_surface = (
+            force_surface or not has_surface or
+            host.should_publish_surface(
+                getattr(ds, "live_surface_publish_cadence", 1))
+        )
+        payload = prepare_live_payload(scene, host, publish_surface=publish_surface)
+        build_key = getattr(getattr(solver, "surface", None), "mesh_key", None)
+        publication = publish_payload(scene, payload)
+        from . import rigid_publication
 
-    rigid_publication.publish_live(scene, sess)
-    return publication
+        rigid_publication.publish_live(scene, sess)
+        attempt.succeed(
+            synchronized=getattr(publication, "synchronized", False),
+            warning=getattr(publication, "warning", ""), build_key=build_key,
+            retained_obj=surface)
+        return publication
 
 
 def update_outputs_from_cache_frame(scene, frame_data):
     """Write a cached frame snapshot into the regular Blender output objects."""
     _require_bpy()
-    publication = publish_payload(scene, prepare_cache_payload(scene, frame_data),
-                                  preserve_preview_points=True)
-    from . import rigid_publication
+    cache_identity = getattr(frame_data, "cache_identity", None)
+    cache_frame = int(frame_data["frame"]) if cache_identity is not None else None
+    with surface_publication.surface_attempt(
+        scene, source=surface_publication.SurfaceSource.CACHE, cache_identity=cache_identity,
+        cache_frame=cache_frame, source_timeline_frame=cache_frame,
+        solver_frame=int(frame_data["solver_frame"]) if cache_identity is not None else None,
+        simulation_time=float(frame_data["simulation_time"]) if cache_identity is not None else None,
+    ) as attempt:
+        publication = publish_payload(scene, prepare_cache_payload(scene, frame_data),
+                                      preserve_preview_points=True)
+        from . import rigid_publication
 
-    rigid_publication.publish_cache_frame(scene, frame_data)
-    return publication
+        rigid_publication.publish_cache_frame(scene, frame_data)
+        attempt.succeed(synchronized=getattr(publication, "synchronized", False),
+                        warning=getattr(publication, "warning", ""))
+        return publication
 
 
 def _clear_points(scene, name):
@@ -1978,6 +2019,8 @@ def remove_output(scene, kind, *, expected_object=None):
         raise RuntimeError("FluidSim output identity changed before removal")
     if not bool(getattr(obj, "get", lambda *_args: False)("fluidsim_owned")):
         raise RuntimeError("refusing to remove an output not owned by FluidSim")
+    if kind == SURFACE_NAME:
+        surface_publication.invalidate_surfaces(scene)
     _remove_output_object(obj)
     return True
 
@@ -1985,6 +2028,7 @@ def remove_output(scene, kind, *, expected_object=None):
 def remove_outputs(scene=None):
     _require_bpy()
     clear_published_points()
+    surface_publication.invalidate_surfaces(scene)
     if scene is not None:
         objects = [
             output_object(scene, name)

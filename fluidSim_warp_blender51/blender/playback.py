@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import bpy
 
+from . import surface_publication
 from .scene_access import scene_identity
 
 _handlers = getattr(getattr(bpy, "app", None), "handlers", None)
@@ -220,12 +221,15 @@ def prepare_live_preview(scene, *, depsgraph=None, allow_restart=False):
         if not sess.owns_scene(scene):
             pending_settings.apply_changes(
                 scene, depsgraph=depsgraph, allow_restart=True, force_restart=True)
-            return
-        pending_settings.apply_changes(scene, depsgraph=depsgraph, allow_restart=allow_restart)
+        else:
+            pending_settings.apply_changes(scene, depsgraph=depsgraph, allow_restart=allow_restart)
     except Exception:
         with suppress_mode_transitions():
             scene.fluidsim.cache_playback_enabled = previous_cache_mode
         raise
+    if previous_cache_mode:
+        surface_publication.invalidate_surfaces(
+            scene, source=surface_publication.SurfaceSource.CACHE)
 
 
 def arm_timeline_playback(scene, *, depsgraph=None):
@@ -402,22 +406,32 @@ def set_cache_playback_enabled(scene, enabled: bool):
             return False
     if enabled:
         sess.release(scene)
-        _CACHE_CURSORS.pop(scene_identity(scene), None)
-        _CACHE_OUTPUT_SETTINGS.pop(scene_identity(scene), None)
-        if getattr(fs, "live", False):
+    surface_publication.invalidate_surfaces(scene)
+    _CACHE_CURSORS.pop(scene_identity(scene), None)
+    _CACHE_OUTPUT_SETTINGS.pop(scene_identity(scene), None)
+    if getattr(fs, "live", False):
+        if enabled:
             fs.status = "Cache playback enabled - press play"
-    else:
-        _CACHE_CURSORS.pop(scene_identity(scene), None)
-        _CACHE_OUTPUT_SETTINGS.pop(scene_identity(scene), None)
-        if getattr(fs, "live", False):
+        else:
             set_live_enabled(scene, True)
     return True
 
 
-def clear_cache_cursors():
-    """Clear all non-authoritative cache playback positions."""
-    _CACHE_CURSORS.clear()
-    _CACHE_OUTPUT_SETTINGS.clear()
+def clear_cache_cursors(cache_path=None, *, first_frame=None):
+    """Retire cache playback positions and surfaces, optionally by root and frame."""
+    if cache_path is None:
+        _CACHE_CURSORS.clear()
+        _CACHE_OUTPUT_SETTINGS.clear()
+        surface_publication.invalidate_surfaces(source=surface_publication.SurfaceSource.CACHE)
+        return
+
+    root = surface_publication.cache_root_token(cache_path)
+    for scene_key, (path, frame, *_) in tuple(_CACHE_OUTPUT_SETTINGS.items()):
+        affected = first_frame is None or frame >= first_frame
+        if affected and surface_publication.cache_root_token(path) == root:
+            _CACHE_CURSORS.pop(scene_key, None)
+            _CACHE_OUTPUT_SETTINGS.pop(scene_key, None)
+    surface_publication.invalidate_cache_surfaces(root, first_frame=first_frame)
 
 
 def _cache_output_settings(scene, *, frame=None):
@@ -476,13 +490,13 @@ def _check_cache_scene_key(scene, frame_data):
     """
     import numpy as np
 
-    from . import cache_identity
-
     frame = int(frame_data.get("frame", -1))
     baked = (str(np.asarray(frame_data["settings_signature"]).item())
              if "settings_signature" in frame_data else "")
     if not baked:
         return
+    from . import cache_identity
+
     current = cache_identity.settings_signature(scene)
     if baked == current or baked in cache_identity.legacy_settings_signatures(scene):
         return
@@ -614,9 +628,10 @@ def handle_frame_change(sess, scene, depsgraph):
     frame = scene.frame_current
     if getattr(fs, "cache_playback_enabled", False):
         scene_id = scene_identity(scene)
-        if _CACHE_CURSORS.get(scene_id) == frame:
-            return
         try:
+            if (_CACHE_CURSORS.get(scene_id) == frame
+                    and _CACHE_OUTPUT_SETTINGS.get(scene_id) == _cache_output_settings(scene)):
+                return
             play_cache_frame(sess, scene, frame)
             # Do not consume a timeline frame until publication succeeds. A
             # repaired/replaced cache can then be retried at the same frame.

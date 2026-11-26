@@ -21,7 +21,9 @@ import pytest
 from fluidSim_warp_blender51 import blender as blender_package
 from fluidSim_warp_blender51.blender import production_bake
 from fluidSim_warp_blender51.blender.production_bake import (
-    BakeController, BakeStatus, ProductionBakeBackend,
+    BakeController,
+    BakeStatus,
+    ProductionBakeBackend,
 )
 
 
@@ -67,6 +69,7 @@ def backend(monkeypatch, tmp_path):
 
     fake_playback = types.ModuleType("fluidSim_warp_blender51.blender.playback")
     fake_playback.suppress_frame_handlers = suppress
+    fake_playback.clear_cache_cursors = lambda *_args, **_kwargs: None
     fake_effects = types.ModuleType("fluidSim_warp_blender51.blender.effects")
     fake_effects.effect_identity = lambda _scene: ("effects", ())
     for name, module in (("playback", fake_playback), ("effects", fake_effects)):
@@ -172,6 +175,43 @@ def test_successful_restart_clears_old_data_only_after_admission_and_sync(backen
     assert not (base / "checkpoints").exists()
 
 
+def test_restart_manifest_write_failure_retires_the_deleted_cache_receipt(backend, monkeypatch):
+    from dataclasses import replace
+
+    from fluidSim_warp_blender51.blender import surface_publication as publication
+    from fluidSim_warp_blender51.io import cache
+    from tests.cache_io.fixtures.tiny_cache import build_tiny_cache
+
+    scene = _Scene(frame=1)
+    base = build_tiny_cache(backend.cache_path(scene))
+    path = production_bake.manifest_path(base)
+    old = production_bake.load_manifest(path)
+    frame = cache.read_frame(str(base), 1)
+    with publication.surface_attempt(
+        scene, source=publication.SurfaceSource.CACHE, cache_frame=1,
+        cache_identity=frame.cache_identity,
+    ) as attempt:
+        attempt.record(vertex_count=3, triangle_count=1, visible=True)
+        attempt.succeed(synchronized=True)
+    assert publication.current_surface_publication(scene) is not None
+    monkeypatch.setattr(blender_package.playback, "clear_cache_cursors",
+                        publication.invalidate_cache_surfaces)
+    session = _Session(scene)
+    session.solver = SimpleNamespace(frame=0)
+    _snapshot(backend, session)
+    backend._new_manifest = lambda *_args: replace(old, frames={})
+
+    def fail_write(_path, _manifest):
+        assert not path.exists() and not (base / "frames").exists()
+        raise OSError("replacement manifest write failed")
+
+    monkeypatch.setattr(production_bake, "write_manifest_atomic", fail_write)
+    with pytest.raises(OSError, match="replacement manifest write failed"):
+        backend.initialize(scene, 1, 3, restart=True)
+
+    assert publication.current_surface_publication(scene) is None
+
+
 def test_restoring_live_is_not_refused_by_the_bakes_own_guard(backend, monkeypatch):
     scene = _Scene(live=False)
 
@@ -245,6 +285,7 @@ class _PreviewSession:
     def initialize(self, scene, depsgraph=None):
         self.initialized.append(scene)
         self.owner = scene
+        self.solved_timeline_frame = scene.frame_current
 
     def sync_scene(self, _scene, _depsgraph=None):
         pass
@@ -335,6 +376,43 @@ def test_unchanged_settings_still_restore_the_preview(backend, monkeypatch):
     assert backend.restore_notice == ""
 
 
+@pytest.mark.parametrize("prior_mapping", [12, None])
+def test_preview_checkpoint_restores_its_solved_timeline(backend, monkeypatch, prior_mapping):
+    from fluidSim_warp_blender51.blender import cache_identity
+
+    scene, session, restored = _held_edit_world(
+        backend, monkeypatch, current_settings="before")
+    session.solved_timeline_frame = prior_mapping
+    session.scene_inputs = SimpleNamespace(export_frozen_state=lambda: None)
+    monkeypatch.setattr(blender_package.scene_bridge, "session", lambda: session)
+    monkeypatch.setattr(cache_identity, "signature_bundle", lambda *_args: {
+        "scene_key": "key", "settings_signature": "before", "source_signature": "sources",
+    })
+    monkeypatch.setattr(production_bake, "capture_solver", lambda *_args, **_kwargs: "captured")
+    backend._snapshot_live_state(scene)
+    session.solved_timeline_frame = 100
+
+    backend.finish(scene)
+
+    assert restored == ["captured"]
+    assert scene.frame_current == 37
+    assert session.solved_timeline_frame == prior_mapping
+
+
+def test_rebake_signals_truncation_after_manifest_commit(backend, monkeypatch, tmp_path):
+    events = []
+    backend.base_dir = tmp_path
+    monkeypatch.setattr(production_bake, "write_manifest_atomic",
+                        lambda _path, _manifest: events.append("commit"))
+    monkeypatch.setattr(
+        blender_package.playback, "clear_cache_cursors",
+        lambda path, *, first_frame=None: events.append((path, first_frame)),
+        raising=False,
+    )
+    backend._discard_stale_frames(3)
+    assert events == ["commit", (tmp_path, 3)]
+
+
 def test_a_held_live_tier_edit_still_restores_the_preview(backend, monkeypatch):
     # Only a Reinitialize-tier edit changes the grid the checkpoint fits; a
     # live edit (viscosity, say) restores the preview and shows as pending.
@@ -380,6 +458,7 @@ def test_preview_restoration_primes_original_frame_before_admission(backend, mon
 
 def _resume_with_frozen_points(backend, monkeypatch, tmp_path, *, foreign=False):
     import numpy as np
+
     from fluidSim_warp_blender51.blender import scene_inputs
     from fluidSim_warp_blender51.io import checkpoint
 
@@ -454,8 +533,9 @@ def test_foreign_frozen_object_id_refuses_before_replacing_preview_or_cache(back
 def test_preview_frozen_state_and_original_frame_return_on_every_terminal_path(
         backend, monkeypatch, tmp_path, finish):
     scene, session, restored, _path = _resume_with_frozen_points(backend, monkeypatch, tmp_path)
-    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
     import numpy as np
+
+    from fluidSim_warp_blender51.blender.scene_inputs import SceneInputs
 
     key = ('source', 'POINTS', 'dependency')
     inputs = SceneInputs()

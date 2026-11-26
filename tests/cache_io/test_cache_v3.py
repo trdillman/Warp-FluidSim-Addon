@@ -12,6 +12,7 @@ import ast
 import dataclasses
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -446,6 +447,50 @@ def test_v3_frame_with_disabled_narrow_band_reads_back_with_empty_sdf(tmp_path: 
     assert data["liquid_sdf_leaf_coords"].shape == (0, 3)
     assert cache.available_frames(str(tmp_path)) == [1]
     assert cache.read_sequence_metadata(str(tmp_path))["format_version"] == 3
+
+
+
+def test_verified_frame_exposes_manifest_checksum_as_a_separate_receipt(tmp_path: Path):
+    _write_v3_cache(tmp_path, _frame_npz())
+    manifest = load_manifest(manifest_path(tmp_path))
+    result = cache.read_frame(str(tmp_path), 1)
+
+    assert isinstance(result, dict) and "cache_identity" not in result
+    assert getattr(result, "cache_identity", None) == (
+        os.path.normcase(os.path.realpath(tmp_path)), manifest.frames[1].frame_sha256)
+
+
+def test_verified_cache_alias_receipt_retires_with_original_root_after_retarget(tmp_path: Path):
+    from fluidSim_warp_blender51.blender import surface_publication as publication
+
+    original = tmp_path / "original"
+    replacement = tmp_path / "replacement"
+    alias = tmp_path / "alias"
+    _write_v3_cache(original, _frame_npz())
+    replacement.mkdir()
+    try:
+        alias.symlink_to(original, target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
+
+    receipt = cache.read_frame(str(alias), 1)
+    scene = object()
+    try:
+        with publication.surface_attempt(
+            scene, source=publication.SurfaceSource.CACHE, cache_frame=1,
+            cache_identity=receipt.cache_identity,
+        ) as attempt:
+            attempt.record(vertex_count=3, triangle_count=1, visible=True)
+            attempt.succeed(synchronized=True)
+        assert publication.current_surface_publication(scene) is not None
+
+        alias.rename(tmp_path / "previous_alias")
+        alias.symlink_to(replacement, target_is_directory=True)
+        publication.invalidate_cache_surfaces(original)
+        assert publication.current_surface_publication(scene) is None
+        assert receipt.cache_identity[0] == os.path.normcase(os.path.realpath(original))
+    finally:
+        publication.invalidate_surfaces(scene)
 
 
 def test_enabled_narrow_band_with_empty_liquid_sdf_arrays_is_rejected(tmp_path: Path):
