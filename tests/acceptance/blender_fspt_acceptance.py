@@ -14,6 +14,9 @@ from mathutils import Vector
 
 ENGINE = "FLUIDSIM_FSPT"
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tests" / "support"))
+from _test_device import script_device  # noqa: E402
+
 WIDTH, HEIGHT = 128, 96
 
 
@@ -65,7 +68,7 @@ def load_addon(args, report):
 def runtime_info(addon):
     runtime = importlib.import_module(addon.__name__ + ".runtime.warp_runtime")
     wp = runtime._import_warp()
-    gpu = wp.get_device("cuda:0")
+    gpu = wp.get_device(script_device())
     assert gpu.is_cuda, gpu
     state = runtime.probe_runtime(force=True)
     assert state.available, state.message
@@ -127,7 +130,7 @@ def fixture():
     scene.render.resolution_x, scene.render.resolution_y = WIDTH, HEIGHT
     scene.render.resolution_percentage = 100
     settings = scene.fspt
-    settings.device = "cuda:0"
+    settings.device = script_device()
     settings.samples, settings.viewport_samples, settings.max_bounces = 32, 4, 6
     settings.seed = 31
     settings.resolution_percentage = 100
@@ -137,7 +140,7 @@ def fixture():
 
 def validate_info(value):
     assert value.get("status") != "ERROR", value
-    assert value.get("device") == "cuda:0", value
+    assert value.get("device") == script_device(), value
     assert value.get("backend") and value.get("transport") and value.get("key"), value
 
 

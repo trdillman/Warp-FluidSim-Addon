@@ -5,7 +5,7 @@ import bpy
 import numpy as np
 from bpy.props import IntProperty, PointerProperty, StringProperty
 
-from ..fspt.contracts import CameraSnapshot, frame_key, require_current
+from ..fspt.contracts import MAX_BOUNCES, CameraSnapshot, frame_key, require_current
 from ..unregister_guard import class_registration, unregister_classes
 
 ENGINE_ID = "FLUIDSIM_FSPT"
@@ -19,7 +19,7 @@ _REGISTERED = False
 class FSPTSettings(bpy.types.PropertyGroup):
     samples: IntProperty(name="Final Samples", default=64, min=1, max=4096)
     viewport_samples: IntProperty(name="Viewport Samples", default=64, min=1, max=4096)
-    max_bounces: IntProperty(name="Max Bounces", default=6, min=1, max=64)
+    max_bounces: IntProperty(name="Max Bounces", default=6, min=1, max=MAX_BOUNCES)
     seed: IntProperty(name="Seed", default=0, min=0, max=1000000)
     resolution_percentage: IntProperty(name="Viewport Resolution %", default=100, min=10, max=100)
     device: StringProperty(name="CUDA Device", default="cuda:0")

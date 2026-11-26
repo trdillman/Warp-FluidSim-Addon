@@ -210,7 +210,7 @@ def anonymous_instances(adapter):
 
 
 def numerical(adapter, backend_cls, scene, case):
-    backend = backend_cls(device="cuda:0")
+    backend = backend_cls(device=fixture.script_device())
     readings = {}
     try:
         clip_test = case in {"PERSP", "ORTHO"}
@@ -227,7 +227,7 @@ def numerical(adapter, backend_cls, scene, case):
             snapshot = adapter.extract_scene(dg)
             camera = adapter.camera_snapshot(dg, 8, 8)
             frame = backend.render(snapshot, camera, 8, 8, samples=2, max_bounces=bounces, seed=23)
-            assert frame.device == "cuda:0" and frame.samples == 2, (frame.device, frame.samples)
+            assert frame.device == fixture.script_device() and frame.samples == 2, (frame.device, frame.samples)
             values = frame.pixels[..., :3]
             error = float(np.max(np.abs(values - expected)))
             label = f"clip_{clip_end}_bounces_{bounces}"
@@ -265,10 +265,10 @@ def glass_transport(adapter, backend_cls, scene, total_reflection):
     dg = depsgraph()
     snapshot = adapter.extract_scene(dg)
     camera = adapter.camera_snapshot(dg, 8, 8)
-    backend = backend_cls(device="cuda:0")
+    backend = backend_cls(device=fixture.script_device())
     try:
         frame = backend.render(snapshot, camera, 8, 8, samples=2, max_bounces=2, seed=23)
-        assert frame.device == "cuda:0" and frame.samples == 2
+        assert frame.device == fixture.script_device() and frame.samples == 2
         rgb = frame.pixels[..., :3]
         evidence = {"expected": expected.tolist(), "mean": rgb.mean(axis=(0, 1)).tolist(),
                     "max_abs_error": float(np.max(np.abs(rgb - expected))), "device": frame.device}

@@ -8,6 +8,8 @@ import math
 
 import numpy as np
 
+MAX_BOUNCES = 64
+
 
 def _rgb(value, name, *, bounded=False):
     result = tuple(float(x) for x in value)
@@ -115,7 +117,7 @@ class CameraSnapshot:
 
 
 def frame_key(scene, camera, width, height, max_bounces, seed):
-    if not (1 <= width <= 16384 and 1 <= height <= 16384 and 1 <= max_bounces <= 64):
+    if not (1 <= width <= 16384 and 1 <= height <= 16384 and 1 <= max_bounces <= MAX_BOUNCES):
         raise ValueError("invalid render dimensions or bounce limit")
     return (scene.digest, camera.digest, int(width), int(height), int(max_bounces), int(seed))
 
