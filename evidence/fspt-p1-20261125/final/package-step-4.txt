@@ -1,0 +1,3 @@
+[bgate] running on this PC, not the pool: `--command` runs a Blender CLI command (e.g. extension install) for this PC (+2 more)
+STATUS Installed "fluidsim_warp"
+[bgate] log saved: C:\Users\Tyler\AppData\Local\blender-gate\logs\agent-fspt-p1-20261125\20261125-230335-8e0266736930.log

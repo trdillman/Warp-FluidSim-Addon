@@ -1,0 +1,58 @@
+{
+  "status": "VERIFIED",
+  "scope": "experimental package; no release qualification",
+  "source_sha": "0ece56afe51b88b3a42f7596b65ba58f750f36b5",
+  "python_checks": "separate focused source suite; broad host lane recorded separately",
+  "stage": {
+    "step": 5,
+    "command": [
+      "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\bin\\bgate.exe",
+      "run",
+      "--session",
+      "agent:fspt-p1-20261125",
+      "--class",
+      "shared",
+      "--max-seconds",
+      "240",
+      "--label",
+      "fspt-package-5",
+      "--input",
+      "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tests\\acceptance\\blender_fspt_acceptance.py",
+      "--",
+      "--background",
+      "--offline-mode",
+      "--python-exit-code",
+      "1",
+      "--python",
+      "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\installed_acceptance.py"
+    ],
+    "cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1"
+  },
+  "artifacts": [
+    {
+      "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\package\\fluidsim_warp-4.1.0-linux_x64.zip",
+      "platform": "linux-x64",
+      "runtime_dependency": "user-install",
+      "size": 8417424,
+      "sha256": "d85ecdc5893a13ed23c8c5c6c2c67214f979e8c0ff481b02d7d7ecf6433e8210"
+    },
+    {
+      "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\package\\fluidsim_warp-4.1.0-windows_x64.zip",
+      "platform": "windows-x64",
+      "runtime_dependency": "user-install",
+      "size": 8417422,
+      "sha256": "92538a05e236b470fa659db7637c3cab9ba8bb79ac0a5923015f579b5224713d"
+    }
+  ],
+  "installed_report": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\installed\\render.json",
+  "installed_python_tree_sha256": "a3fd7be6b719a7c3d0f0ca77b3a9a47ab2dfc5d60271e6bb9304e322b429c244",
+  "installed_runtime": {
+    "warp": "1.18.0",
+    "warp_path": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\5.2\\python\\Lib\\site-packages\\warp\\__init__.py",
+    "device": "cuda:0",
+    "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+    "cuda_driver": 13050,
+    "cuda_toolkit": 13040
+  },
+  "elapsed_seconds": 102.97777499999938
+}

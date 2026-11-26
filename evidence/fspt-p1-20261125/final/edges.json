@@ -1,0 +1,269 @@
+{
+  "status": "VERIFIED",
+  "verifier_sha256": "7099a497313a189de56d150db4bcda4314474bb4e8ef2ef59fa379e0898cf0b8",
+  "fixture_sha256": "98787648f0a930dd76c65dabed7ae94448a2648c1ab04bea6872744ce6904904",
+  "cases": {
+    "object_emission_override": {
+      "status": "VERIFIED",
+      "evidence": {
+        "assigned_emission": [
+          1.25,
+          2.5,
+          3.75
+        ]
+      }
+    },
+    "object_principled_override": {
+      "status": "VERIFIED",
+      "evidence": {
+        "rejection": "Object Principled override: unsupported shader Principled BSDF (ShaderNodeBsdfPrincipled); P1 supports Diffuse, smooth Glass and Emission"
+      }
+    },
+    "view_layer_material_override": {
+      "status": "VERIFIED",
+      "evidence": {
+        "rejection": "ViewLayer: view-layer material/world overrides are not supported by P1"
+      }
+    },
+    "muted_surface_link": {
+      "status": "VERIFIED",
+      "evidence": {
+        "rejection": "Edge ShaderNodeBsdfDiffuse.003: muted Surface graph link is not supported by P1"
+      }
+    },
+    "mixed_mesh_points": {
+      "status": "VERIFIED",
+      "evidence": {
+        "rejection": "Plane: evaluated pointcloud geometry is not supported by P1",
+        "evaluated_points": 4
+      }
+    },
+    "anonymous_geometry_instances": {
+      "status": "VERIFIED",
+      "evidence": {
+        "rejection": "Plane: anonymous geometry instances are not supported by P1; use Realize Instances"
+      }
+    },
+    "glass_ior_one": {
+      "status": "VERIFIED",
+      "evidence": {
+        "expected": [
+          1.25,
+          2.5,
+          3.75
+        ],
+        "mean": [
+          1.25,
+          2.5,
+          3.75
+        ],
+        "max_abs_error": 0.0,
+        "device": "cuda:0"
+      }
+    },
+    "glass_tir_70_degrees": {
+      "status": "VERIFIED",
+      "evidence": {
+        "expected": [
+          0.03125,
+          0.125,
+          0.375
+        ],
+        "mean": [
+          0.03125,
+          0.125,
+          0.375
+        ],
+        "max_abs_error": 0.0,
+        "device": "cuda:0"
+      }
+    },
+    "clip_perspective": {
+      "status": "VERIFIED",
+      "evidence": {
+        "clip_2_bounces_1": {
+          "max_abs_error": 0.0,
+          "expected": [
+            0.125,
+            0.25,
+            0.5
+          ],
+          "mean": [
+            0.125,
+            0.25,
+            0.5
+          ],
+          "device": "cuda:0"
+        },
+        "clip_10_bounces_1": {
+          "max_abs_error": 0.0,
+          "expected": [
+            1.25,
+            2.5,
+            3.75
+          ],
+          "mean": [
+            1.25,
+            2.5,
+            3.75
+          ],
+          "device": "cuda:0"
+        }
+      }
+    },
+    "clip_orthographic": {
+      "status": "VERIFIED",
+      "evidence": {
+        "clip_2_bounces_1": {
+          "max_abs_error": 0.0,
+          "expected": [
+            0.125,
+            0.25,
+            0.5
+          ],
+          "mean": [
+            0.125,
+            0.25,
+            0.5
+          ],
+          "device": "cuda:0"
+        },
+        "clip_10_bounces_1": {
+          "max_abs_error": 0.0,
+          "expected": [
+            1.25,
+            2.5,
+            3.75
+          ],
+          "mean": [
+            1.25,
+            2.5,
+            3.75
+          ],
+          "device": "cuda:0"
+        }
+      }
+    },
+    "diffuse_bounce_depth": {
+      "status": "VERIFIED",
+      "evidence": {
+        "clip_10_bounces_1": {
+          "max_abs_error": 0.0,
+          "expected": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "mean": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "device": "cuda:0"
+        },
+        "clip_10_bounces_2": {
+          "max_abs_error": 0.0,
+          "expected": [
+            0.03125,
+            0.125,
+            0.375
+          ],
+          "mean": [
+            0.03125,
+            0.125,
+            0.375
+          ],
+          "device": "cuda:0"
+        }
+      }
+    },
+    "film_transparent": {
+      "status": "VERIFIED",
+      "evidence": {
+        "operator": "Error: FSPT P1 does not support transparent film\nError: FSPT P1 does not support transparent film\n",
+        "engine": {
+          "status": "ERROR",
+          "error": "RuntimeError: FSPT P1 does not support transparent film"
+        },
+        "published": []
+      }
+    },
+    "multiview": {
+      "status": "VERIFIED",
+      "evidence": {
+        "operator": "Error: FSPT P1 does not support multiview/stereo rendering\nError: FSPT P1 does not support multiview/stereo rendering\n",
+        "engine": {
+          "status": "ERROR",
+          "error": "RuntimeError: FSPT P1 does not support multiview/stereo rendering"
+        },
+        "published": []
+      }
+    },
+    "multiple_layers": {
+      "status": "VERIFIED",
+      "evidence": {
+        "operator": "Error: FSPT P1 requires exactly one enabled view layer\nError: FSPT P1 requires exactly one enabled view layer\nError: FSPT P1 requires exactly one enabled view layer\n",
+        "engine": {
+          "status": "ERROR",
+          "error": "RuntimeError: FSPT P1 requires exactly one enabled view layer"
+        },
+        "published": []
+      }
+    },
+    "render_after_refusal": {
+      "status": "VERIFIED",
+      "evidence": {
+        "operator": [
+          "FINISHED"
+        ],
+        "engine": {
+          "status": "COMPLETE",
+          "key": [
+            "67126d3be8fa8a8500de942d025e168a067d823a6525a63fbf622ae14b35e09c",
+            "415f7cb676b2a3f57ec43375d9de205f0289107a0a2d9ff72600c80b8732c3fe",
+            8,
+            8,
+            6,
+            0
+          ],
+          "samples": 2,
+          "device": "cuda:0",
+          "backend": "warp-cuda-reference-v1",
+          "transport": "host-staged-rgba32f",
+          "width": 8,
+          "height": 8,
+          "scene_frame": 1
+        },
+        "exr": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\edges-recovery-6ockla8e\\recovery\\recovered.exr",
+        "exr_sha256": "4fae21e5308999afe655a1d5a213c4b02162205448ac6a741b540f18c7e1ac18",
+        "mean_rgb": [
+          0.125,
+          0.25,
+          0.5
+        ],
+        "refused_directories": {
+          "film_transparent": [],
+          "multiview": [],
+          "multiple_layers": []
+        }
+      }
+    }
+  },
+  "stage": "complete",
+  "addon": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\fluidSim_warp_blender51\\__init__.py",
+  "python_tree_sha256": "00215ba75e4e0e72b81a8526327b9639f078a726c280225f0bebf3430552735f",
+  "blender": "5.2.0 LTS",
+  "blender_build": "fbe6228777e7",
+  "blender_executable": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+  "python": "3.13.13 (main, May  8 2026, 12:37:03) [MSC v.1944 64 bit (AMD64)]",
+  "os": "Windows-11-10.0.26200-SP0",
+  "runtime": {
+    "warp": "1.18.0",
+    "warp_path": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\5.2\\python\\Lib\\site-packages\\warp\\__init__.py",
+    "device": "cuda:0",
+    "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+    "cuda_driver": 13050,
+    "cuda_toolkit": 13040
+  },
+  "output_directory": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\edges-recovery-6ockla8e"
+}

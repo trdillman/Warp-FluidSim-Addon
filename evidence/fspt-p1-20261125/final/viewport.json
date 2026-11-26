@@ -1,0 +1,362 @@
+{
+  "status": "VERIFIED",
+  "verifier_sha256": "9da9e68438c8d13adfdce9fb275ae78636b0fded959be0df4a99cacc74b9d540",
+  "fixture_sha256": "98787648f0a930dd76c65dabed7ae94448a2648c1ab04bea6872744ce6904904",
+  "stages": {
+    "initial": {
+      "frame": {
+        "status": "COMPLETE",
+        "key": [
+          "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+          "e116e3279e8967f99c5924e548af63de7a6c9efc6783a5760d40c79c4383a0e8",
+          525,
+          298,
+          6,
+          31
+        ],
+        "samples": 8,
+        "device": "cuda:0",
+        "backend": "warp-cuda-reference-v1",
+        "transport": "host-staged-rgba32f",
+        "width": 525,
+        "height": 298,
+        "scene_frame": 1,
+        "draw_count": 8
+      },
+      "observations": [
+        {
+          "key": [
+            "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+            "e116e3279e8967f99c5924e548af63de7a6c9efc6783a5760d40c79c4383a0e8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 1,
+          "draws": 1
+        },
+        {
+          "key": [
+            "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+            "e116e3279e8967f99c5924e548af63de7a6c9efc6783a5760d40c79c4383a0e8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 3,
+          "draws": 3
+        },
+        {
+          "key": [
+            "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+            "e116e3279e8967f99c5924e548af63de7a6c9efc6783a5760d40c79c4383a0e8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 5,
+          "draws": 5
+        },
+        {
+          "key": [
+            "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+            "e116e3279e8967f99c5924e548af63de7a6c9efc6783a5760d40c79c4383a0e8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 7,
+          "draws": 7
+        },
+        {
+          "key": [
+            "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+            "e116e3279e8967f99c5924e548af63de7a6c9efc6783a5760d40c79c4383a0e8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 8,
+          "draws": 8
+        }
+      ],
+      "screenshot": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\viewport-code-final-initial-screenshot.png",
+      "screenshot_sha256": "4c24321a1349df3aad5fa6c64c68fd2bcb0f32c0fec5e9d4775fc1df7fb6b65c",
+      "center_patch_sha256": "a378fccc59208bc39bff23cbdd2d57dcd746c9c6f3d74abdafc9f070770d3e17",
+      "center_patch_contrast": 0.6261438131332397,
+      "region_size": [
+        2100,
+        1193
+      ]
+    },
+    "camera_edit": {
+      "frame": {
+        "status": "COMPLETE",
+        "key": [
+          "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+          "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+          525,
+          298,
+          6,
+          31
+        ],
+        "samples": 8,
+        "device": "cuda:0",
+        "backend": "warp-cuda-reference-v1",
+        "transport": "host-staged-rgba32f",
+        "width": 525,
+        "height": 298,
+        "scene_frame": 1,
+        "draw_count": 16
+      },
+      "observations": [
+        {
+          "key": [
+            "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 1,
+          "draws": 9
+        },
+        {
+          "key": [
+            "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 4,
+          "draws": 12
+        },
+        {
+          "key": [
+            "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 6,
+          "draws": 14
+        },
+        {
+          "key": [
+            "1cf2896dda858499dce68d01bc26ab2f124fd5940651e713824284f79afd9ebf",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 8,
+          "draws": 16
+        }
+      ],
+      "screenshot": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\viewport-code-final-camera_edit-screenshot.png",
+      "screenshot_sha256": "64d3e70f703a99b89f182553d80cabc01a683706c99885753192b172bf906e6e",
+      "center_patch_sha256": "069006ffb6ab57d37b3628bc35e4890777b18422d4005ca88ee262c3ef5d89a5",
+      "center_patch_contrast": 0.6379084587097168,
+      "region_size": [
+        2100,
+        1193
+      ],
+      "center_patch_mean_abs_delta": 0.044254645705223083
+    },
+    "material_edit": {
+      "frame": {
+        "status": "COMPLETE",
+        "key": [
+          "c1e48760e7a6053a2ab35e8abfc81e00989708173e5c1f53f66ad287bc921c8a",
+          "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+          525,
+          298,
+          6,
+          31
+        ],
+        "samples": 8,
+        "device": "cuda:0",
+        "backend": "warp-cuda-reference-v1",
+        "transport": "host-staged-rgba32f",
+        "width": 525,
+        "height": 298,
+        "scene_frame": 1,
+        "draw_count": 24
+      },
+      "observations": [
+        {
+          "key": [
+            "c1e48760e7a6053a2ab35e8abfc81e00989708173e5c1f53f66ad287bc921c8a",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 1,
+          "draws": 17
+        },
+        {
+          "key": [
+            "c1e48760e7a6053a2ab35e8abfc81e00989708173e5c1f53f66ad287bc921c8a",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 4,
+          "draws": 20
+        },
+        {
+          "key": [
+            "c1e48760e7a6053a2ab35e8abfc81e00989708173e5c1f53f66ad287bc921c8a",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 6,
+          "draws": 22
+        },
+        {
+          "key": [
+            "c1e48760e7a6053a2ab35e8abfc81e00989708173e5c1f53f66ad287bc921c8a",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 8,
+          "draws": 24
+        }
+      ],
+      "screenshot": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\viewport-code-final-material_edit-screenshot.png",
+      "screenshot_sha256": "9424b43ae961e740885d2706f71717e7f0c95e37111e9f06a5b2e6a73ba4a48a",
+      "center_patch_sha256": "d9208828b60de010859e09be03e8d89c73bc404ce9dcb0c460f0e71d1f52700a",
+      "center_patch_contrast": 0.6379084587097168,
+      "region_size": [
+        2100,
+        1193
+      ],
+      "center_patch_mean_abs_delta": 0.05154765024781227
+    },
+    "resize": {
+      "frame": {
+        "status": "COMPLETE",
+        "key": [
+          "c1e48760e7a6053a2ab35e8abfc81e00989708173e5c1f53f66ad287bc921c8a",
+          "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+          315,
+          178,
+          6,
+          31
+        ],
+        "samples": 8,
+        "device": "cuda:0",
+        "backend": "warp-cuda-reference-v1",
+        "transport": "host-staged-rgba32f",
+        "width": 315,
+        "height": 178,
+        "scene_frame": 1,
+        "draw_count": 32
+      },
+      "observations": [
+        {
+          "key": [
+            "c1e48760e7a6053a2ab35e8abfc81e00989708173e5c1f53f66ad287bc921c8a",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            315,
+            178,
+            6,
+            31
+          ],
+          "samples": 1,
+          "draws": 25
+        },
+        {
+          "key": [
+            "c1e48760e7a6053a2ab35e8abfc81e00989708173e5c1f53f66ad287bc921c8a",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            315,
+            178,
+            6,
+            31
+          ],
+          "samples": 4,
+          "draws": 28
+        },
+        {
+          "key": [
+            "c1e48760e7a6053a2ab35e8abfc81e00989708173e5c1f53f66ad287bc921c8a",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            315,
+            178,
+            6,
+            31
+          ],
+          "samples": 6,
+          "draws": 30
+        },
+        {
+          "key": [
+            "c1e48760e7a6053a2ab35e8abfc81e00989708173e5c1f53f66ad287bc921c8a",
+            "0fd972d6a7ddd606afb61283e4c0b1f2fa67d08125cfb60efe6678e4279751c8",
+            315,
+            178,
+            6,
+            31
+          ],
+          "samples": 8,
+          "draws": 32
+        }
+      ],
+      "screenshot": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\viewport-code-final-resize-screenshot.png",
+      "screenshot_sha256": "2c0cde2a20651ae53f714c77d52552b10258ac39cde037cfd48ce094fab5e68c",
+      "center_patch_sha256": "772cc0a74befe75b3d431abd8cbc098ec1974756e660d4f1da23b5c7bdd5c4b7",
+      "center_patch_contrast": 0.6392157077789307,
+      "region_size": [
+        2100,
+        1193
+      ]
+    }
+  },
+  "stage": "complete",
+  "addon": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\fluidSim_warp_blender51\\__init__.py",
+  "python_tree_sha256": "00215ba75e4e0e72b81a8526327b9639f078a726c280225f0bebf3430552735f",
+  "blender": "5.2.0 LTS",
+  "blender_build": "fbe6228777e7",
+  "blender_executable": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+  "python": "3.13.13 (main, May  8 2026, 12:37:03) [MSC v.1944 64 bit (AMD64)]",
+  "os": "Windows-11-10.0.26200-SP0",
+  "runtime": {
+    "warp": "1.18.0",
+    "warp_path": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\5.2\\python\\Lib\\site-packages\\warp\\__init__.py",
+    "device": "cuda:0",
+    "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+    "cuda_driver": 13050,
+    "cuda_toolkit": 13040
+  },
+  "screenshot": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\viewport-code-final-resize-screenshot.png",
+  "screenshot_sha256": "2c0cde2a20651ae53f714c77d52552b10258ac39cde037cfd48ce094fab5e68c",
+  "center_patch_sha256": "772cc0a74befe75b3d431abd8cbc098ec1974756e660d4f1da23b5c7bdd5c4b7",
+  "center_patch_contrast": 0.6392157077789307,
+  "region_size": [
+    2100,
+    1193
+  ],
+  "elapsed_seconds": 5.758532600004401
+}

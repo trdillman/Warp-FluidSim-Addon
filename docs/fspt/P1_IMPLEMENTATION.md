@@ -1,133 +1,91 @@
 # FSPT P1 Blender/CUDA foundation
 
-**Authorization:** Tyler: “Start building this”, 25 November 2026, referring to
-https://chatgpt.com/space/page_e736fb28ec2881918bc688878f62ab03.
-**Base:** freshly fetched `df8b72bed7967ff7ce855099335c762577f89b0f`.
-**Branch:** `experimental/fspt-p1-20261125`.
-**Workspace:** `C:/Users/Tyler/projects/fluidsim-fspt-20261125`.
-**Owner:** ChatGPT GPT-6.2 Astra lead, per the roadmap's OpenAI roster.
+Tyler authorized implementation on 25 November 2026. The experimental branch
+is `experimental/fspt-p1-20261125`, based on
+`df8b72bed7967ff7ce855099335c762577f89b0f`, in
+`C:/Users/Tyler/projects/fluidsim-fspt-20261125`. The Astra lead owns delivery
+under the roadmap's OpenAI roster. The canonical worktree and prior sessions'
+uncommitted changes were preserved. [Roadmap](https://chatgpt.com/space/page_e736fb28ec2881918bc688878f62ab03)
 
-## Goal and boundary
+## Implemented scope
 
-Implement the first real Blender RenderEngine proof, including an actual CUDA
-path-traced image, scene/material/camera changes, progressive refinement and
-camera Render Result. This is an experimental P1 slice; P2–P6 and the full
-product compatibility/performance contract remain open. No merge or release.
+FSPT renders static evaluated triangle meshes through a Blender RenderEngine.
+The adapter copies geometry, material assignments and camera data into owned
+NumPy snapshots. A lazy Warp CUDA backend traces paths against a software BVH
+and accumulates samples under a key derived from scene, camera, resolution and
+render settings. The rendered viewport uploads completed pixels through host
+memory. Final output is one opaque Combined image from one enabled view layer.
 
-The dirty canonical checkout is preserved. Its committed tree matches the
-fresh remote base; its additional merge commits do not add source differences.
-Existing worktrees and all local edits remain owned by their prior sessions.
-No FSPT commit or worktree was found. The historical rendering experiment is
-absent; preserved discovery records identify particle draw and interop SDKs,
-not a path tracer. Their future transport reuse remains a separate decision.
+The supported material graphs connect Diffuse BSDF at zero roughness, Emission,
+or smooth Glass BSDF directly to Surface with constant inputs. All Principled
+BSDFs are rejected. Constant Background worlds and mesh emitters provide
+lighting. The adapter respects object-linked material slots. Unsupported
+active graphs, layer material/world overrides, transparent film, multiview,
+non-mesh evaluated components and anonymous GeometrySet instances trigger
+diagnostics. CPU rendering is rejected.
 
-## Architecture decision for this proof
+## Implementation and verification status
 
-Use a Blender adapter with owned immutable NumPy snapshots and a lazy Warp
-CUDA backend. This reuses the add-on's existing Warp dependency and version
-policy. The renderer explicitly rejects CPU devices; no other renderer is
-substituted. Warp's software BVH is a feasibility backend, not an OptiX/RTX
-performance claim. `warp-optix` is an alternative for the backend comparison:
-its published wheels currently target CPython 3.12, whereas this Blender's
-Python is 3.13.13. A native 3.13 build remains unqualified. RTXPT would add its
-own graphics integration. No dependency upgrade/download is required here.
+- [x] Preserve existing work and establish the baseline of 43 registration/runtime checks with CUDA hidden.
+- [x] Implement owned snapshots, validation and frame identity.
+- [x] Implement CUDA path tracing, progressive accumulation and invalidation.
+- [x] Integrate add-on registration, Blender camera Render Result and rendered viewport presentation.
+- [x] Run real Blender/CUDA preflight, image, edit and rejection controls.
+- [x] Build and inspect the extension package and obtain independent optical and integration reviews.
+- [x] Bind final candidate `0ece56afe51b88b3a42f7596b65ba58f750f36b5`, package, runtime receipts and review disposition to the immutable source.
+- [x] Update the roadmap and canonical FluidSim tracker with real imagery and bounded results.
 
-GPU images use an explicit host-staging presentation path. Record it as such;
-do not claim zero-copy. Read bpy only from Blender callbacks; no Python worker
-thread traverses Blender state. Existing solver, publication, playback, cache,
-surface waves, sheet detail and simulation outputs are not rewritten.
+The focused host lane passed 79 checks. The broader host run timed out at
+300 seconds. Its gate-inventory defect was corrected and that focused suite
+passed. The broader suite has no passing result.
 
-## P1 compatibility contract
+The recorded experimental runtime used Blender 5.2.0 build `fbe6228777e7`,
+Python 3.13.13, Warp 1.18.0 and an RTX 4080 SUPER. Source and installed-package
+acceptance exercise the selected engine via `bpy.ops.render.render`, check saved
+images and compare camera/material edits. The windowed verifier observes
+progressive draws and captures actual pixels. It checks changes in viewport
+render resolution with a fixed window size. Automatic blender-gate routing,
+private profiles, declared inputs and bounded leases apply to these lanes.
 
-Support evaluated mesh triangles, transforms/instances, perspective and
-orthographic cameras, constant Background worlds, Diffuse BSDF, Emission,
-and smooth Glass BSDF with Fresnel reflection/refraction/TIR. A deliberately
-restricted unlinked Principled subset may be translated only with explicit
-diagnostics for unsupported semantics. Emissive mesh lighting and world light
-produce an actual multi-bounce estimator. Texture graphs, rough transmission,
-general Principled, Blender light objects, volumes, whitewater, caustic
-qualification, MIS/NEE, denoising, and final compatibility belong to later
-milestones. Unsupported active content must be visible and final rendering
-must refuse it; never silently replace complex materials with generic water.
+The 14 analytic and guard cases cover both object-slot overrides, a layer
+material override, muted Surface linkage, mixed mesh/point output, anonymous
+geometry instances, IOR-1 glass, a 70-degree total-internal-reflection
+interface, both camera far-clip modes, diffuse bounce depth, transparent film,
+multiview and multiple enabled layers. A fifteenth control issues a real
+valid render after refusal, checks saved EXR pixels and rechecks all refused
+output directories. All 15 passed in one standalone Blender process with
+exit 0. Final-source camera and windowed viewport acceptance also exited 0.
+The Windows extension installed and passed its camera-render controls from
+the installed module path. All 186 packaged Python files matched the source
+and installed payloads. See the [evidence index](../../evidence/fspt-p1-20261125/README.md)
+for artifact hashes, terminal receipts and the two final review dispositions.
 
-## Tasks and completion proof
+The two Sol reviews began at `7dfa4421159e5e5caad63095b9635f2a68b8e18f`.
+Follow-up work addressed material selection, muted links, evaluated geometry,
+camera clipping, final output routing and GPU cleanup. Earlier failures,
+including a native crash during an unsupported render, remain part of the
+record. The canonical static fixture rendered from `3a062` at 512 × 384,
+128 samples, six bounces and seed 31. Its evidence index records the PNG hash.
 
-- [x] Reconcile base, preserve local work, read roadmap/tracker/owner rules.
-- [x] Baseline: 43 registration/runtime host tests passed, CUDA hidden.
-- [ ] Implement owned/validated snapshot and frame identity contracts.
-- [ ] Implement lazy CUDA path tracing and progressive accumulation.
-- [ ] Integrate atomic add-on registration and rendered viewport callbacks.
-- [x] Execute real Blender preflight and image/change/negative-control tests.
-- [ ] Build through the existing extension packager and inspect package identity.
-- [ ] Run independent Sol optical and integration reviews of one candidate.
-- [ ] Retain evidence and update roadmap plus canonical FluidSim tracker.
+## Remaining qualification
 
-## Tests and evidence
-
-Host contract tests: immutable copied arrays, finite/index validation, optical
-input validation, camera/scene/settings invalidation, stale-image rejection,
-and registration preservation. Runtime tests must exercise `bpy.ops.render`
-with FSPT selected, assert finite nonuniform output, prove camera/material
-edits change the image, reject CPU and unsupported material input, and record
-the loaded paths, source/package hash, Blender/Python/Warp/GPU identities.
-Windowed rendered-viewport tests must additionally prove presentation and
-capture an original screenshot/recording. Headless results cannot pass that
-claim. Profiling numbers remain diagnostic unless an exclusive clean lease
-and matched fixed-quality benchmark satisfy the roadmap contract.
-
-All Blender/GPU jobs use blender-gate automatic routing with an explicit
-session and kill time, declared inputs, and private profile paths. No forced
-node/local/offload flags. Source, installed-package and GUI results are
-separate. `evidence/fspt-p1-20261125/` retains failures and receipts.
-
-## Review focus
-
-Negative scale and instancing; unsupported linked material/world nodes;
-camera projection changes at unchanged scene generation; viewport resize and
-engine switch; empty geometry and nonfinite input; current-frame identity;
-module import/registration without a GPU; package versus source import paths.
-
-## Open acceptance decisions
-
-No live FPS target or complete material/pass list is frozen by this P1 proof.
-The roadmap's 1080p/1M-triangle/30-FPS points remain proposed evaluations.
-The first small fixture is a feasibility proof, not a production benchmark or
-a FluidSim demo. The full P0 production-scene inventory and backend comparison
-must close before later qualification. Capture a real FSPT canonical image
-after P1 output is verified; concept imagery cannot substitute.
-
-## Review corrections and bounded evidence
-
-Both independent Sol reviewers inspected `7dfa4421159e5e5caad63095b9635f2a68b8e18f`.
-The next candidate addresses their material override, muted link, evaluated
-geometry, camera clip, final-output routing and GPU cleanup findings. The
-original negative-control native crash, failing regressions and first package
-proof remain retained separately from the corrected results.
-
-On Blender 5.2.0 `fbe6228777e7`, Python 3.13.13, Warp 1.18.0 and RTX 4080 SUPER,
-the corrected source passed 78 focused source/registration/gate-inventory
-checks, 13 real Blender edge cases, camera Render Result acceptance, and
-windowed progressive presentation. The viewport verifier no longer forces
-redraws from its polling loop and captures actual pixels at every edit stage.
-Glass at IOR 1, an isolated 70-degree total-internal-reflection interface,
-diffuse bounce depth and perspective/orthographic far clipping matched the
-small analytic fixtures. These are specific controls, not general production
-optical equivalence or performance qualification.
-
-P1 final output is one opaque Combined image from one enabled view layer.
-Transparent film, stereo/multiview, view-layer material/world overrides,
-anonymous GeometrySet instances, non-mesh evaluated components and unsupported
-shader graphs fail visibly. Explicit object material slots are respected.
-The production gate now includes the headless FSPT checks, with the viewport
-check in its GUI lane. The earlier broad host run timed out at 300 seconds;
-its identified gate-inventory failure was corrected and the inventory suite
-then passed. The broad suite is not claimed as passing.
+The complete product endpoint still includes live fluid integration, the P2–P6
+roadmap and production compatibility and performance. Current evidence covers
+static scenes at ordinary Blender unit scales near the origin. Live simulation,
+RTX traversal, zero-copy presentation, MIS/NEE, complete materials and passes,
+image sequences, cancellation, and physical viewport resizing remain
+unqualified. The proposed 1080p, one-million-triangle, 30 FPS evaluation
+requires a fixed-quality benchmark. The P0 production-scene inventory and
+backend comparison remain open.
 
 The current surface offset is `max(1e-5, 1e-6 * length(hit_position))` in
-Blender units. Qualification is limited to the ordinary unit-scale fixtures
-near the world origin. Thin interfaces, extreme coordinate scales, nested
-media, interpolated shading normals and complete material/pass support remain
-unqualified. A component-wise error bound and translated thin-interface
-regression are required before extending that claim in P2. The certified
-Warp 1.19 production environment and approved runtime provenance remain a
-separate release gate; the observed Warp 1.18 prototype result does not pass it.
+Blender units. Thin interfaces, extreme coordinates, nested media and
+interpolated shading normals need additional controls. P2 needs a
+component-wise error bound and translated thin-interface regression before
+extending the supported scale range.
+
+The full production gate invoked from `3a062` was blocked by missing reviewed
+`BLENDER_SHA256` provenance. The prototype profile used Warp 1.18; the
+certified Warp 1.19 environment was not qualified by this work. The production
+gate has no passing result. Merge and release remain outside the authorized
+experimental work.
