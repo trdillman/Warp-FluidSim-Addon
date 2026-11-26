@@ -1,6 +1,10 @@
 {
   "source_sha": "0ece56afe51b88b3a42f7596b65ba58f750f36b5",
   "files": {
+    ".gitattributes": {
+      "bytes": 8,
+      "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+    },
     "edges-gate.log": {
       "bytes": 2754,
       "sha256": "601cbbac7fe32cb3864ff02c78b36905880942b8d4bde5b7d96de19d6f16980a"

@@ -1,0 +1,40 @@
+[bgate] lease 42d062295ef3 class shared session agent:fspt-p1-20261125 label fspt-viewport-code-final
+[bgate] started 2026-11-25 23:03:38 cwd=C:\Users\Tyler\projects\fluidsim-fspt-20261125
+[bgate] command: "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --factory-startup --python-exit-code 1 --python tests/acceptance/blender_fspt_viewport_acceptance.py -- --json-out artifacts/fspt-p1/viewport-code-final.json
+FSPT loaded C:\Users\Tyler\projects\fluidsim-fspt-20261125\fluidSim_warp_blender51\__init__.py
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.5
+   Devices:
+     "cpu"      : "AMD64 Family 23 Model 113 Stepping 0, AuthenticAMD"
+     "cuda:0"   : "NVIDIA GeForce RTX 4080 SUPER" (16 GiB, sm_89, mempool enabled)
+   Kernel cache:
+     \\?\C:\Users\Tyler\projects\fluidsim-fspt-20261125\artifacts\fspt-p1\profile-fspt-p1-viewport\warp-cache\1.18.0
+Module warp.utils dd15119 load on device 'cuda:0' took 2.51 ms  (cached)
+Module warp._src.coloring 4f5e3b2 load on device 'cuda:0' took 2.50 ms  (cached)
+Module warp.math 4443472 load on device 'cuda:0' took 1.65 ms  (cached)
+Module fluidSim_warp_blender51.sim.fields 6d92c4d load on device 'cuda:0' took 2.38 ms  (cached)
+Module fluidSim_warp_blender51.sim.solver 8fa6e76 load on device 'cuda:0' took 2.57 ms  (cached)
+Module fluidSim_warp_blender51.sim.particles 9baba9f load on device 'cuda:0' took 2.17 ms  (cached)
+Module fluidSim_warp_blender51.sim.color_mixing ebdea92 load on device 'cuda:0' took 3.06 ms  (cached)
+Module fluidSim_warp_blender51.sim.surface_tension 2c07f22 load on device 'cuda:0' took 3.08 ms  (cached)
+Module fluidSim_warp_blender51.sim.pressure f6c9729 load on device 'cuda:0' took 4.84 ms  (cached)
+Module fluidSim_warp_blender51.sim.viscosity 53794e7 load on device 'cuda:0' took 3.06 ms  (cached)
+Module fluidSim_warp_blender51.sim.whitewater 5eb51a2 load on device 'cuda:0' took 5.00 ms  (cached)
+Module fluidSim_warp_blender51.sim.kernels_fluid a4b2ab3 load on device 'cuda:0' took 19.61 ms  (cached)
+Module fluidSim_warp_blender51.sim.surface d10e23e load on device 'cuda:0' took 4.03 ms  (cached)
+Module fluidSim_warp_blender51.sim.surface_anisotropy 11a219e load on device 'cuda:0' took 2.66 ms  (cached)
+Module warp.geometry.marching_cubes 3da50b9 load on device 'cuda:0' took 2.51 ms  (cached)
+Module warp.geometry b269d9b load on device 'cuda:0' took 3.66 ms  (cached)
+Module warp.geometry.sparse_marching_cubes 0adc01f load on device 'cuda:0' took 3.45 ms  (cached)
+Module fluidSim_warp_blender51.sim.source_contracts 4443472 load on device 'cuda:0' took 2.18 ms  (cached)
+Module fluidSim_warp_blender51.sim.kernels_rigid dbc297d load on device 'cuda:0' took 4.64 ms  (cached)
+Module fluidSim_warp_blender51.sim.source_kernels 8956003 load on device 'cuda:0' took 11.57 ms  (cached)
+Module fluidSim_warp_blender51.sim.sourcing 5b262c4 load on device 'cuda:0' took 1.97 ms  (cached)
+Module fluidSim_warp_blender51.sim.kernels_core e6b47f2 load on device 'cuda:0' took 5.03 ms  (cached)
+Module fluidSim_warp_blender51.sim.source_regions 29df30a load on device 'cuda:0' took 4.33 ms  (cached)
+Module fluidSim_warp_blender51.fspt.kernels 4fc31f0 load on device 'cuda:0' took 3.74 ms  (cached)
+FSPT-VIEWPORT-PASS C:\Users\Tyler\projects\fluidsim-fspt-20261125\artifacts\fspt-p1\viewport-code-final.json
+00:08.625  blend            | Saved session recovery to "C:\Users\Tyler\projects\fluidsim-fspt-20261125\artifacts\fspt-p1\profile-fspt-p1-viewport\temp\quit.blend"
+
+Blender quit
+[bgate] exit code 0 after 10.1s
