@@ -77,6 +77,16 @@ def test_muted_surface_link_is_rejected():
         translate_material(material)
 
 
+def test_anonymous_geometry_reference_has_actionable_diagnostic():
+    from fluidSim_warp_blender51.blender.fspt_scene import _validate_evaluated_geometry
+
+    geometry = SimpleNamespace(pointcloud=None, curves=None, volume=None, grease_pencil=None,
+                               instance_references=lambda: [object()])
+    obj = SimpleNamespace(name="Anonymous instance", evaluated_geometry=lambda: geometry)
+    with pytest.raises(UnsupportedSceneError, match="Realize Instances"):
+        _validate_evaluated_geometry(obj)
+
+
 def test_rough_glass_is_rejected():
     material, _ = graph(node("BsdfGlass", Color=(*RGB, 1), Roughness=0.25, IOR=1.52,
                              Normal=(0, 0, 0)))

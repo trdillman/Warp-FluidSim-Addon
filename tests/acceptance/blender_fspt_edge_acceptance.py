@@ -151,11 +151,62 @@ def render_guard(addon, scene, dest, case):
         op = sorted(bpy.ops.render.render(write_still=True))
     except RuntimeError as exc:
         op = str(exc)
+        assert any(t in op.lower() for t in terms), op
+    else:
+        assert op == ["CANCELLED"], op
     info = fixture.info(addon, "LAST_RENDER_INFO")
     emitted = sorted(p.name for p in dest.iterdir())
     assert info.get("status") == "ERROR" and not emitted, (op, info, emitted)
     assert any(t in str(info.get("error", "")).lower() for t in terms), info
     return {"operator": op, "engine": info, "published": emitted}
+
+
+def render_after_refusal(addon, scene, scratch):
+    """Prove recovery through Blender's public render boundary, including saved pixels."""
+    dest = scratch / "recovery"
+    dest.mkdir()
+    filepath = dest / "recovered.exr"
+    scene.render.filepath = str(filepath)
+    scene.render.image_settings.file_format = "OPEN_EXR"
+    scene.render.image_settings.color_mode = "RGBA"
+    scene.render.image_settings.color_depth = "32"
+    op = bpy.ops.render.render(write_still=True)
+    info = fixture.info(addon, "LAST_RENDER_INFO")
+    assert op == {"FINISHED"} and filepath.is_file(), (op, info)
+    fixture.validate_info(info)
+    assert info["status"] == "COMPLETE" and info["samples"] == 2, info
+    image = bpy.data.images.load(str(filepath), check_existing=False)
+    try:
+        assert tuple(image.size) == (8, 8), tuple(image.size)
+        values = np.empty(8 * 8 * 4, dtype=np.float32)
+        image.pixels.foreach_get(values)
+        rgba = values.reshape(8, 8, 4)
+        assert np.isfinite(rgba).all() and np.allclose(rgba[..., :3], SKY, atol=2e-5)
+        assert np.allclose(rgba[..., 3], 1, atol=1e-5)
+    finally:
+        bpy.data.images.remove(image)
+    refused = {name: sorted(p.name for p in (scratch / name).iterdir())
+               for name in ("film_transparent", "multiview", "multiple_layers")}
+    assert not any(refused.values()), refused
+    return {"operator": sorted(op), "engine": info, "exr": str(filepath),
+            "exr_sha256": fixture.sha(filepath), "mean_rgb": rgba[..., :3].mean(axis=(0, 1)).tolist(),
+            "refused_directories": refused}
+
+
+def anonymous_instances(adapter):
+    obj, _ = plane()
+    mod = obj.modifiers.new("Anonymous instance regression", "NODES")
+    tree = bpy.data.node_groups.new("Edge anonymous instance", "GeometryNodeTree")
+    tree.interface.new_socket(name="Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    cube = tree.nodes.new("GeometryNodeMeshCube")
+    instance = tree.nodes.new("GeometryNodeGeometryToInstance")
+    out = tree.nodes.new("NodeGroupOutput")
+    tree.links.new(cube.outputs["Mesh"], instance.inputs["Geometry"])
+    tree.links.new(instance.outputs["Instances"], out.inputs["Geometry"])
+    mod.node_group = tree
+    geometry = obj.evaluated_get(depsgraph()).evaluated_geometry()
+    assert any(type(ref).__name__ == "GeometrySet" for ref in geometry.instance_references())
+    return expect_rejection(adapter, ("realize instances",))
 
 
 def numerical(adapter, backend_cls, scene, case):
@@ -250,6 +301,7 @@ def main():
             "view_layer_material_override": lambda scene: layer_override(adapter),
             "muted_surface_link": lambda scene: muted_link(adapter),
             "mixed_mesh_points": lambda scene: points_output(adapter),
+            "anonymous_geometry_instances": lambda scene: anonymous_instances(adapter),
             "glass_ior_one": lambda scene: glass_transport(adapter, backend.CudaBackend, scene, False),
             "glass_tir_70_degrees": lambda scene: glass_transport(adapter, backend.CudaBackend, scene, True),
             "clip_perspective": lambda scene: numerical(adapter, backend.CudaBackend, scene, "PERSP"),
@@ -258,6 +310,9 @@ def main():
         }
         for name in ("film_transparent", "multiview", "multiple_layers"):
             cases[name] = lambda scene, name=name: render_guard(addon, scene, scratch / name, name)
+        # Blender retains its render-abort flag after a deliberately reported ERROR.
+        # A real successful render both proves recovery and permits a truthful clean exit.
+        cases["render_after_refusal"] = lambda scene: render_after_refusal(addon, scene, scratch)
         for name, run in cases.items():
             fixture.checkpoint(path, report, name)
             try:

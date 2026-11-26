@@ -103,7 +103,8 @@ def _validate_evaluated_geometry(obj):
     # Object/collection instances are exported by depsgraph.object_instances.
     # Anonymous geometry references require a separate extraction contract.
     for reference in geometry.instance_references():
-        if reference is not None and reference.bl_rna.identifier not in {"Object", "Collection"}:
+        identifier = getattr(getattr(reference, "bl_rna", None), "identifier", None)
+        if reference is not None and identifier not in {"Object", "Collection"}:
             _fail(obj, "anonymous geometry instances are not supported by P1; use Realize Instances")
 
 
