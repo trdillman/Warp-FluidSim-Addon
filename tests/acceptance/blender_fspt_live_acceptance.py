@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import traceback
+from collections import Counter, deque
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -135,8 +136,7 @@ def _mesh_arrays(mesh):
     return points, triangles
 
 
-def _evaluated_geometry(bpy, surface):
-    depsgraph = bpy.context.evaluated_depsgraph_get()
+def _evaluated_geometry(depsgraph, surface):
     evaluated = surface.evaluated_get(depsgraph)
     mesh = evaluated.to_mesh(preserve_all_data_layers=False, depsgraph=depsgraph)
     try:
@@ -156,8 +156,13 @@ class LiveAcceptance:
         self.path = args.json_out.resolve()
         self.folder = self.path.with_name(self.path.stem + "-originals")
         self.started = time.monotonic()
-        self.report = {"status": "RUNNING", "stage": "load", "frames": [], "controls": {}}
-        self.latest = None
+        self.drop_counts = Counter()
+        self.report = {"status": "RUNNING", "stage": "load", "frames": [], "controls": {},
+                       "draw_observer": {"drops": self.drop_counts, "entered": 0, "matched": 0}}
+        self.pending = deque(maxlen=4)
+        self.last_draw_identity = None
+        self.observer_error = None
+        self.diagnostic_at = 0.0
         self.prior_pixels = None
         self.frozen_payload = None
         self.stage = "ready"
@@ -185,7 +190,6 @@ class LiveAcceptance:
         self.geometry_nodes = module("blender.geometry_nodes")
         self.pending_settings = module("blender.pending_settings")
         self.engine = module("blender.fspt_engine")
-        self.backend = module("fspt.backend")
         self.report["runtime"] = self.base.runtime_info(self.addon)
         assert self.report["runtime"]["warp"] == "1.19.0", self.report["runtime"]
         bpy.ops.wm.open_mainfile(filepath=str(self.args.blend.resolve()), load_ui=False)
@@ -202,8 +206,10 @@ class LiveAcceptance:
                                "voxel_size": domain.voxel_size,
                                "whitewater_simulation_enabled": domain.whitewater_enabled,
                                "hidden_presentation": ["points", "whitewater", "Blender light objects"]}
+        self.report["demo"]["authored_output_visibility"] = self.output_visibility(scene)
         _prepare_fixture(bpy, self.base, scene)
         self.output.refresh_existing_output_settings(scene)
+        self.report["demo"]["prepared_output_visibility"] = self.output_visibility(scene)
         self.prepared = self.folder / "dam_break-fspt-live.blend"
         assert bpy.ops.wm.save_as_mainfile(filepath=str(self.prepared), copy=True) == {"FINISHED"}
         self.report["prepared_blend"] = str(self.prepared)
@@ -212,10 +218,11 @@ class LiveAcceptance:
                                    "seed": scene.fspt.seed, "max_bounces": scene.fspt.max_bounces,
                                    "live_samples": 1, "paused_samples": REFINED_SAMPLES,
                                    "route": "EVALUATED_MESH"}
-        self.render_spy = patch.object(self.backend.CudaBackend, "render", self.observe_render())
-        self.render_spy.start()
+        self.draw_spy = patch.object(self.engine.FSPTRenderEngine, "view_draw", self.observe_draw())
+        self.draw_spy.start()
         self.base.checkpoint(self.path, self.report, "viewport_setup")
         self.viewport()
+        self.observer_start_draws = self.engine._DRAW_COUNT
 
     @property
     def scene(self):
@@ -233,22 +240,61 @@ class LiveAcceptance:
         space.shading.type = "RENDERED"
         self.area.tag_redraw()
 
-    def observe_render(self):
-        original = self.backend.CudaBackend.render
+    def observe_draw(self):
+        original = self.engine.FSPTRenderEngine.view_draw
 
-        def render(backend, snapshot, camera, width, height, **kwargs):
-            frame = original(backend, snapshot, camera, width, height, **kwargs)
-            if len(frame.publications) == 1:
-                # Only the demo's fluid has glass. Select the actual submitted
-                # face rows, including connectivity and their world positions.
-                glass = [i for i, material in enumerate(snapshot.materials) if material.kind == "glass"]
-                assert len(glass) == 1, f"Expected one identifiable fluid material, found {glass}"
-                faces = snapshot.triangles[snapshot.material_indices == glass[0]]
-                digest = surface_digest(snapshot.vertices, faces)
-                self.latest = (frame, digest, len(faces))
-            return frame
+        def draw(renderer, context, depsgraph):
+            before = self.engine._DRAW_COUNT
+            original(renderer, context, depsgraph)
+            if context.window != self.window or context.area != self.area or context.region != self.region:
+                return
+            if (self.stage not in {"live", "pause_base", "refine", "freeze_base", "freeze",
+                                  "reused_frame", "reopen"} or self.observer_error):
+                return
+            self.report["draw_observer"]["entered"] += 1
+            try:
+                info = dict(self.engine.LAST_VIEWPORT_INFO)
+                if info.get("status") != "COMPLETE" or self.engine._DRAW_COUNT <= before:
+                    self.drop("draw_not_complete", info.get("error", info.get("reason")))
+                    return
+                view = getattr(renderer, "_view", None)
+                frame = renderer._last_frame if view is None else view.presentable
+                snapshot = renderer._snapshot if view is None else view.snapshot
+                if frame is None or snapshot is None:
+                    self.drop("draw_missing_owned_frame")
+                    return
+                identity = self.stage, frame.key, frame.samples
+                if identity == self.last_draw_identity:
+                    return
+                observation = self.capture_draw(context, depsgraph, frame, snapshot, info)
+                if observation is not None:
+                    self.last_draw_identity = identity
+                    if len(self.pending) == self.pending.maxlen:
+                        self.drop("observer_backlog")
+                    self.pending.append(observation)
+                    self.report["draw_observer"]["matched"] += 1
+            except Exception:
+                self.observer_error = traceback.format_exc()
 
-        return render
+        return draw
+
+    def drop(self, reason, detail=None):
+        self.drop_counts[reason] += 1
+        self.report["draw_observer"]["latest_drop"] = {"stage": self.stage, "reason": reason,
+                                                        "detail": detail}
+
+    def output_visibility(self, scene):
+        layer = self.bpy.context.view_layer
+        names = (self.output.SURFACE_NAME, self.output.PARTICLES_NAME, *self.output.WHITEWATER_OUTPUT_NAMES)
+        outputs = {}
+        for name in names:
+            obj = self.output.output_object(scene, name, ensure=False)
+            if obj is not None:
+                outputs[name] = {"object_token": self.surface.id_token(obj),
+                                 "hide_viewport": bool(obj.hide_viewport),
+                                 "hide_render": bool(obj.hide_render),
+                                 "layer_visible": bool(obj.visible_get(view_layer=layer))}
+        return outputs
 
     def override(self):
         return self.bpy.context.temp_override(window=self.window, screen=self.window.screen,
@@ -266,20 +312,34 @@ class LiveAcceptance:
             assert self.bpy.ops.screen.animation_cancel(restore_frame=False) == {"FINISHED"}
         assert not self.window.screen.is_animation_playing
 
-    def observe(self, *, samples=1):
-        scene, sess = self.scene, self.bridge.session()
+    def capture_draw(self, context, depsgraph, frame, snapshot, info):
+        """Join evaluated geometry, submitted scene and image in the draw callback."""
+        scene = getattr(depsgraph.scene, "original", depsgraph.scene)
+        sess = self.bridge.session()
         publication = self.surface.current_surface_publication(scene)
         if not publication or not publication.visible or publication.triangle_count == 0:
+            self.drop("no_visible_publication", int(scene.frame_current))
             return None
-        info = dict(self.engine.LAST_VIEWPORT_INFO)
-        if not self.latest or info.get("status") != "COMPLETE" or info.get("samples") != samples:
-            return None
-        frame, renderer_geometry, renderer_triangles = self.latest
-        if tuple(info["key"]) != frame.key or frame.samples != samples:
-            return None
+        assert tuple(info["key"]) == frame.key and info["samples"] == frame.samples
         if frame.publications != (publication,) or frame.scene_frame != scene.frame_current:
+            self.drop("presentation_behind_publication",
+                      {"presented_frame": frame.scene_frame, "current_frame": int(scene.frame_current),
+                       "presented_generation": [stamp.generation for stamp in frame.publications],
+                       "current_generation": publication.generation})
             return None
-        if not sess.owns_scene(scene) or publication.solver_frame != sess.solver.frame:
+        if not sess.owns_scene(scene):
+            self.drop("session_does_not_own_scene", int(scene.frame_current))
+            return None
+        solver = sess.solver
+        if (publication.solver_frame != solver.frame
+                or publication.state_revision != solver.liquid_state_revision
+                or publication.source_timeline_frame != scene.frame_current):
+            self.drop("solved_state_mismatch",
+                      {"presented_solver_frame": publication.solver_frame, "solver_frame": solver.frame,
+                       "presented_state_revision": publication.state_revision,
+                       "state_revision": solver.liquid_state_revision,
+                       "source_timeline_frame": publication.source_timeline_frame,
+                       "current_frame": int(scene.frame_current)})
             return None
         self.base.validate_info(info)
         assert info["scene_frame"] == publication.timeline_frame == scene.frame_current
@@ -287,30 +347,58 @@ class LiveAcceptance:
         sources = info.get("sources")
         assert sources and len(sources) == 1, "Presented telemetry has no submitted fluid source"
         for name in ("scene_token", "owner_token", "epoch", "channel", "generation", "source",
-                     "timeline_frame", "solver_frame", "state_revision"):
+                     "timeline_frame", "source_timeline_frame", "solver_frame", "state_revision"):
             assert json.dumps(sources[0][name]) == json.dumps(getattr(publication, name)), (
                 f"Presented {name} did not match the submitted source")
-        assert self.window.scene == scene
+        assert context.window.scene == scene
+        assert snapshot.publications == frame.publications
+        # Only the fluid uses glass in the prepared scene. Read exactly the
+        # submitted face rows and compare to a separate evaluated mesh read.
+        glass = [i for i, mat in enumerate(snapshot.materials) if mat.kind == "glass"]
+        assert len(glass) == 1, f"Expected one identifiable fluid material, found {glass}"
+        faces = snapshot.triangles[snapshot.material_indices == glass[0]]
+        renderer_geometry = surface_digest(snapshot.vertices, faces)
         surface = self.output.output_object(scene, self.output.SURFACE_NAME, ensure=False)
-        geometry, vertices, triangles = _evaluated_geometry(self.bpy, surface)
+        geometry, vertices, triangles = _evaluated_geometry(depsgraph, surface)
         assert geometry == renderer_geometry, "Submitted fluid is different from the current evaluated surface"
-        assert triangles == renderer_triangles == publication.triangle_count
+        assert triangles == len(faces) == publication.triangle_count
         pixels = np.array(frame.pixels, copy=True)
         assert pixels.ndim == 3 and pixels.shape[-1] == 4 and np.isfinite(pixels).all()
         row = {key: getattr(publication, key) for key in (
-            "timeline_frame", "solver_frame", "state_revision", "simulation_time", "epoch",
+            "timeline_frame", "source_timeline_frame", "solver_frame", "state_revision", "simulation_time", "epoch",
             "generation", "build_key", "channel", "source", "scene_token", "owner_token")}
         row.update(geometry_sha256=geometry, rendered_surface_sha256=renderer_geometry,
                    image_sha256=hashlib.sha256(pixels.tobytes()).hexdigest(),
                    evaluated_vertex_count=vertices, evaluated_triangle_count=triangles,
-                   animation_playing=bool(self.window.screen.is_animation_playing), telemetry=info)
+                   animation_playing=bool(context.window.screen.is_animation_playing), telemetry=info)
+        if self.stage == "reopen":
+            row["solver_particle_count"] = solver.particles.refresh_host_count()
+        pixels.setflags(write=False)
         return row, pixels
+
+    def observe(self, *, samples=1):
+        while self.pending:
+            result = self.pending.popleft()
+            if result[0]["telemetry"]["samples"] == samples:
+                return result
+            self.drop("sample_target_not_reached", result[0]["telemetry"]["samples"])
+        return None
+
+    def change_stage(self, stage):
+        self.pending.clear()
+        self.stage = stage
+        self.area.tag_redraw()
 
     def save_observation(self, label, row, pixels, *, screenshot=False):
         path = self.folder / f"{label}.npy"
         np.save(path, pixels, allow_pickle=False)
         row.update(raw_pixels=str(path), raw_pixels_sha256=self.base.sha(path))
         if screenshot:
+            current = self.engine.LAST_VIEWPORT_INFO
+            if (current.get("key") != row["telemetry"]["key"]
+                    or current.get("samples") != row["telemetry"]["samples"]):
+                row["screenshot_not_saved"] = "Playback presented a newer image before the screen capture"
+                return
             path = self.folder / f"{label}-screenshot.png"
             with self.override():
                 assert self.bpy.ops.screen.screenshot(filepath=str(path)) == {"FINISHED"}
@@ -342,13 +430,29 @@ class LiveAcceptance:
 
         if number == PAUSE_AFTER:
             self.pause()
-            self.scene.fspt.viewport_samples = REFINED_SAMPLES
-            self.stage = "refine"
-            self.area.tag_redraw()
+            self.change_stage("pause_base")
         elif number == LIVE_STATES:
             self.pause()
             assert len({item["geometry_sha256"] for item in frames}) == LIVE_STATES
             assert len({item["image_sha256"] for item in frames}) == LIVE_STATES
+            self.change_stage("freeze_base")
+
+    def pause_baseline(self):
+        result = self.observe()
+        if result is None:
+            self.area.tag_redraw()
+            return
+        row, pixels = result
+        assert not row["animation_playing"]
+        assert row["timeline_frame"] == self.scene.frame_current
+        if self.stage == "pause_base":
+            self.save_observation("paused-baseline", row, pixels)
+            self.report["controls"]["paused_baseline"] = row
+            self.scene.fspt.viewport_samples = REFINED_SAMPLES
+            self.change_stage("refine")
+        else:
+            self.save_observation("frozen-baseline", row, pixels)
+            self.freeze_reference = row, pixels
             self.start_freeze()
 
     def refine(self):
@@ -357,7 +461,7 @@ class LiveAcceptance:
             self.area.tag_redraw()
             return
         row, pixels = result
-        live = self.report["frames"][-1]
+        live = self.report["controls"]["paused_baseline"]
         assert not row["animation_playing"]
         for key in ("timeline_frame", "solver_frame", "state_revision", "epoch", "generation",
                     "geometry_sha256"):
@@ -366,9 +470,10 @@ class LiveAcceptance:
         assert row["telemetry"]["draw_count"] > live["telemetry"]["draw_count"]
         assert row["image_sha256"] != live["image_sha256"]
         self.save_observation("paused-refinement", row, pixels, screenshot=True)
+        assert "screenshot" in row, "The paused refined image could not be captured"
         self.report["controls"]["pause_refine"] = row
         self.scene.fspt.viewport_samples = 1
-        self.stage = "live"
+        self.change_stage("live")
         self.play()
 
     def start_freeze(self):
@@ -392,7 +497,7 @@ class LiveAcceptance:
 
         self.frozen_payload = patch.object(self.output, "prepare_live_payload", freeze)
         self.frozen_payload.start()
-        self.stage = "freeze"
+        self.change_stage("freeze")
         self.play()
 
     def reject_frozen(self):
@@ -403,14 +508,14 @@ class LiveAcceptance:
             self.area.tag_redraw()
             return
         row, pixels = row_pixels
-        prior = self.report["frames"][-1]
+        prior, prior_pixels = self.freeze_reference
         if row["state_revision"] <= prior["state_revision"]:
             return
         self.pause()
         self.frozen_payload.stop()
         self.frozen_payload = None
         try:
-            verify_advance(prior, row, self.prior_pixels, pixels)
+            verify_advance(prior, row, prior_pixels, pixels)
         except FrozenSurfaceError as error:
             assert row["image_sha256"] == prior["image_sha256"], "Frozen geometry changed fixed-seed pixels"
             self.save_observation("frozen-control", row, pixels)
@@ -420,7 +525,7 @@ class LiveAcceptance:
                 "prior": prior, "observed": row}
         else:
             raise AssertionError("Accepted a surface after its publication geometry was frozen")
-        self.stage = "publication_controls"
+        self.change_stage("publication_controls")
 
     def publication_controls(self):
         scene, sess = self.scene, self.bridge.session()
@@ -502,8 +607,7 @@ class LiveAcceptance:
         assert current is None or current.epoch != synced.epoch, "Rewind retained the retired solver epoch"
         for frame in range(scene.frame_start + 1, self.target_reused_frame["timeline_frame"] + 1):
             scene.frame_set(frame)
-        self.stage = "reused_frame"
-        self.area.tag_redraw()
+        self.change_stage("reused_frame")
 
     def reject_reused_frame(self):
         result = self.observe()
@@ -519,12 +623,12 @@ class LiveAcceptance:
         self.save_observation("reset-reused-frame", row, pixels, screenshot=True)
         self.report["controls"]["reset"] = {"prior": prior, "observed": row}
         self.base.checkpoint(self.path, self.report, "reopen")
-        self.latest = None
+        self.pending.clear()
         self.engine.LAST_VIEWPORT_INFO = {}
         assert self.bpy.ops.wm.open_mainfile(filepath=str(self.prepared), load_ui=False) == {"FINISHED"}
         assert self.scene.frame_current == self.scene.frame_start and self.scene.fluidsim.live
         self.viewport()
-        self.stage = "reopen_ready"
+        self.change_stage("reopen_ready")
 
     def reopen(self):
         result = self.observe()
@@ -532,9 +636,8 @@ class LiveAcceptance:
             self.area.tag_redraw()
             return
         row, pixels = result
-        sess = self.bridge.session()
-        particle_count = sess.solver.particles.refresh_host_count()
-        assert row["animation_playing"] and sess.owns_scene(self.scene) and particle_count > 0
+        particle_count = row["solver_particle_count"]
+        assert row["animation_playing"] and particle_count > 0
         prior = self.report["controls"]["reset"]["observed"]
         assert row["epoch"] != prior["epoch"] or row["scene_token"] != prior["scene_token"]
         self.pause()
@@ -543,10 +646,36 @@ class LiveAcceptance:
         assert len(self.report["frames"]) == LIVE_STATES
         self.finish()
 
+    def diagnostic(self):
+        scene = self.scene
+        sess = self.bridge.session()
+        solver = sess.solver if sess.owns_scene(scene) else None
+        state = self.surface.get_surface_state(scene)
+        self.report["runtime_checkpoint"] = {
+            "timeline_frame": int(scene.frame_current), "live_status": scene.fluidsim.status,
+            "solver_frame": getattr(solver, "frame", None),
+            "state_revision": getattr(solver, "liquid_state_revision", None),
+            "surface": state.status, "surface_reason": state.reason,
+            "surface_generation": state.committed.generation if state.committed else None,
+            "surface_triangles": state.committed.triangle_count if state.committed else None,
+            "output_visibility": self.output_visibility(scene),
+            "presentation": dict(self.engine.LAST_VIEWPORT_INFO),
+        }
+        self.base.checkpoint(self.path, self.report, self.stage)
+
     def tick(self):
         try:
+            if self.observer_error:
+                raise RuntimeError(f"Completed draw could not be verified:\n{self.observer_error}")
+            if (self.engine._DRAW_COUNT - self.observer_start_draws >= 10
+                    and self.report["draw_observer"]["entered"] == 0):
+                raise RuntimeError("Native draws did not reach the owned viewport observer")
             if time.monotonic() - self.started > self.args.deadline:
+                self.diagnostic()
                 raise TimeoutError(f"Timed out in {self.stage}: {self.engine.LAST_VIEWPORT_INFO!r}")
+            if time.monotonic() >= self.diagnostic_at:
+                self.diagnostic_at = time.monotonic() + 1
+                self.diagnostic()
             if self.stage in {"live", "freeze", "reopen"}:
                 assert self.scene.fluidsim.live, self.scene.fluidsim.status
                 status = self.engine.LAST_VIEWPORT_INFO.get("status")
@@ -557,10 +686,12 @@ class LiveAcceptance:
                         self.report["last_viewport_error"] = issue
                         self.base.checkpoint(self.path, self.report, self.stage)
             if self.stage in {"ready", "reopen_ready"}:
-                self.stage = "live" if self.stage == "ready" else "reopen"
+                self.change_stage("live" if self.stage == "ready" else "reopen")
                 self.play()
             elif self.stage == "live":
                 self.accept_live()
+            elif self.stage in {"pause_base", "freeze_base"}:
+                self.pause_baseline()
             elif self.stage == "refine":
                 self.refine()
             elif self.stage == "freeze":
@@ -578,7 +709,7 @@ class LiveAcceptance:
         return None
 
     def finish(self):
-        self.render_spy.stop()
+        self.draw_spy.stop()
         self.area.spaces.active.shading.type = "SOLID"
         self.scene.render.engine = "BLENDER_WORKBENCH"
         self.addon.unregister()
