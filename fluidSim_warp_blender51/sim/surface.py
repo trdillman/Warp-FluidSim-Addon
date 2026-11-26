@@ -10,30 +10,31 @@ Ports of the fluid_surface_collision kernel group:
 from __future__ import annotations
 
 import math
+
 import numpy as np
 import warp as wp
+
 from .fastlaunch import launch as fast_launch
 
 wp.set_module_options({"enable_backward": False})
 
 from . import constants as C
-from .quality_contract import AuthoredQualitySettings, resolve_quality
-from .surface_tension_math import (
-    normal_support_voxels, required_sdf_splat_radius_voxels)
 from .fields import (
-    leaf_linear_index,
-    leaf_coord_of_voxel,
-    leaf_local_of_voxel,
-    voxel_in_domain,
-    voxel_flat_index,
-    voxel_coord_of_flat,
-    voxel_center_world,
-    world_to_voxel,
     field_read_f,
     field_read_i,
+    leaf_coord_of_voxel,
+    leaf_linear_index,
+    leaf_local_of_voxel,
+    voxel_center_world,
+    voxel_coord_of_flat,
+    voxel_flat_index,
+    voxel_in_domain,
+    world_to_voxel,
 )
+from .quality_contract import AuthoredQualitySettings, resolve_quality
 from .registry import register_fn
 from .surface_anisotropy import AnisotropicSurfacer, k_blend_by_weight
+from .surface_tension_math import normal_support_voxels, required_sdf_splat_radius_voxels
 
 try:  # Warp >= 1.18: sparse marching cubes over a caller-supplied cell list.
     from warp.geometry import (
@@ -335,12 +336,16 @@ class SurfacePipeline:
 
     def invalidate(self):
         self.mesh_cache = self.mesh_key = None
+        # Same-frame rebuilds may keep an equal build key. Only capture users
+        # need a generation, so ordinary simulation does no stamp allocation.
+        if getattr(self, "_device_surface_owner", None) is not None:
+            self._device_surface_revision += 1
         host = getattr(self.solver, "_host_frame_cache", None)
         if host is not None:
             host.invalidate_surface()
 
     def ensure_resources(self, force=False):
-        from .fields import SparseGrid, ScalarField
+        from .fields import ScalarField, SparseGrid
 
         solver = self.solver
         s = solver.settings
@@ -836,6 +841,10 @@ class SurfacePipeline:
         key = self.solver_sdf_build_key()
         if getattr(self, "solver_sdf_key", None) == key:
             return True
+        if getattr(self, "render_sdf", None) is self.sdf:
+            # A shared physical field may be rewritten even when the caller
+            # does not request render output. A render build must certify it.
+            self._device_render_incomplete = True
         try:
             positions = solver._surface_positions()
             self.build_sdf(
@@ -856,6 +865,8 @@ class SurfacePipeline:
         solver, s = self.solver, self.solver.settings
         if build_lowres is None:
             build_lowres = bool(getattr(s, "surface_build_lowres_sdf", False))
+        if build_render and s.surface_enabled:
+            self._device_render_incomplete = True
         if build_lowres and not self.ensure_solver_sdf_current():
             if build_render and s.surface_enabled:
                 raise RuntimeError(self.solver_sdf_error)
@@ -886,7 +897,9 @@ class SurfacePipeline:
             if narrow_band is not None:
                 narrow_band.union_into_render_sdf(self.grid, self.render_sdf)
         self.built_key = self.build_key()
+        self._record_surface_source()
         self.invalidate()
+        self._device_render_incomplete = False
         return True
 
     def after_substep(self):
@@ -967,6 +980,7 @@ class SurfacePipeline:
         # Manual and substep cadence may not have built this frame's surface.
         if self.built_key != self.build_key():
             self.build(build_render=True, build_lowres=False)
+        self._device_waves_incomplete = True
         self._ensure_waves()
         verts, tris = self.render_extractor.extract(self.render_sdf)
         dt = float(s.time_scale) / max(float(s.frame_rate), 1e-6)
@@ -976,6 +990,8 @@ class SurfacePipeline:
         host = getattr(self.solver, "_host_frame_cache", None)
         if host is not None:
             host.invalidate_surface()
+        self._record_surface_source()
+        self._device_waves_incomplete = False
         return self.mesh_cache
 
     def _ensure_waves(self):
@@ -1002,9 +1018,12 @@ class SurfacePipeline:
                 getattr(self.solver.settings, "surface_waves_enabled", False)):
             return
         prefix = "surface_waves_"
+        self._device_waves_incomplete = True
+        self.invalidate()
         self._ensure_waves().import_state(
             {k[len(prefix):]: v for k, v in arrays.items() if k.startswith(prefix)},
             {k[len(prefix):]: v for k, v in scalars.items() if k.startswith(prefix)})
+        self._device_waves_incomplete = False
 
     def rebuild(self):
         if self.waves is not None:
@@ -1019,6 +1038,7 @@ class SurfacePipeline:
         self.built_key = None
         self.solver_sdf_key = None
         self.solver_sdf_error = ""
+        self._device_waves_incomplete = False
         self.invalidate()
         self.extractor.reset_buffers()
         if self.waves is not None:
@@ -1044,6 +1064,92 @@ class SurfacePipeline:
             self.mesh_cache = (verts, tris)
             self.mesh_key = key
         return self.mesh_cache
+
+    def _record_surface_source(self):
+        self._surface_source_frame = getattr(self.solver, "frame", None)
+        self._surface_source_time = getattr(self.solver, "sim_time", None)
+        device = getattr(getattr(self.render_sdf, "data", None), "device", None)
+        self._surface_source_stream = device.stream if device is not None and device.is_cuda else None
+
+    def device_surface_stamp(self):
+        """Identify this already-built render field and its current wave state."""
+        from dataclasses import astuple
+
+        from .device_surface import DeviceSurfaceStamp, DeviceSurfaceUnavailable
+
+        if (self.solver is None or not self.solver.settings.surface_enabled
+                or self.built_key is None or self.built_key != self.build_key()
+                or getattr(self, "_device_render_incomplete", False)
+                or getattr(self, "_surface_source_frame", None) is None
+                or getattr(self, "_surface_source_time", None) is None):
+            raise DeviceSurfaceUnavailable("current render surface is unavailable")
+        enabled = bool(getattr(self.solver.settings, "surface_waves_enabled", False))
+        if enabled and getattr(self, "_device_waves_incomplete", False):
+            raise DeviceSurfaceUnavailable("current render surface is unavailable")
+        if getattr(self, "_device_surface_owner", None) is None:
+            self._device_surface_owner = object()
+            self._device_surface_revision = 0
+        waves = self.waves if enabled else None
+        return DeviceSurfaceStamp(
+            self._device_surface_owner, self.built_key, self.render_extractor.backend,
+            self._device_surface_revision,
+            int(self._surface_source_frame), float(self._surface_source_time), enabled,
+            int(waves.frame) if waves is not None else 0,
+            int(waves.state_revision) if waves is not None else 0,
+            astuple(waves.settings) if waves is not None else ())
+
+    def _final_device_arrays(self):
+        """Fresh world-space geometry from the render (including Sheet Detail) SDF."""
+        from .device_surface import SurfaceDeviceArrays
+
+        verts, indices = self.render_extractor.extract_sparse_device(self.render_sdf)
+        if (self.waves is not None and self.waves.count
+                and getattr(self.solver.settings, "surface_waves_enabled", False)):
+            return self.waves.displace_device(verts, indices)
+        return SurfaceDeviceArrays(verts, indices)
+
+    def copy_final_device_surface(self, destination, *, expected_stamp,
+                                  required_channels=(), materialize_host=False):
+        """Opt-in synchronous submission on the solver's normal publication thread.
+
+        No solver step or rebuild is authorized. Sparse extraction is repeated
+        on demand when a host-only publication already consumed the geometry;
+        compaction/MC scalar readbacks and stateful wave stepping still apply.
+        With simultaneous existing host demand, materialize_host fills an absent
+        host mesh cache from the same final output, without a second extraction.
+        Blender eligibility and device-wide slot admission belong to the caller.
+        """
+        from .device_surface import (
+            DeviceSurfaceDestination,
+            DeviceSurfacePacket,
+            DeviceSurfaceUnavailable,
+        )
+
+        backend = self.render_extractor.backend
+        if backend != "sparse":
+            raise DeviceSurfaceUnavailable(f"{backend} surface requires evaluated mesh")
+        if not set(required_channels) <= DeviceSurfacePacket.channels:
+            raise DeviceSurfaceUnavailable("required surface channels need evaluated mesh")
+        if expected_stamp != self.device_surface_stamp():
+            raise DeviceSurfaceUnavailable("stale device surface stamp")
+        if not isinstance(destination, DeviceSurfaceDestination):
+            raise DeviceSurfaceUnavailable("an admitted device surface reservation is required")
+
+        known_counts = None
+        if self.mesh_cache is not None and self.mesh_key == self.built_key:
+            known_counts = (len(self.mesh_cache[0]), len(self.mesh_cache[1]))
+        packet = destination._capture(
+            self.solver.device, expected_stamp, self._final_device_arrays,
+            producer_stream=self._surface_source_stream, known_counts=known_counts)
+        host_mesh = None
+        if materialize_host and known_counts is None:
+            host_mesh = (packet.positions.numpy().reshape(-1, 3),
+                         packet.indices.numpy().reshape(-1, 3))
+        if self.device_surface_stamp() != expected_stamp:
+            raise DeviceSurfaceUnavailable("stale device surface after capture")
+        if host_mesh is not None:
+            self.mesh_cache, self.mesh_key = host_mesh, self.built_key
+        return packet
 
     def metadata(self):
         s = self.solver.settings
@@ -1797,10 +1903,29 @@ class SurfaceExtractor:
         return self._extract_dense(sdf_field, iso)
 
     def _extract_sparse(self, sdf_field, iso):
+        arrays = self._sparse_arrays(sdf_field, iso)
+        if arrays is None:
+            return self._empty()
+        verts, indices = arrays
+        return (np.asarray(verts.numpy(), dtype=np.float32).reshape(-1, 3),
+                np.asarray(indices.numpy(), dtype=np.int32).reshape(-1, 3))
+
+    def extract_sparse_device(self, sdf_field, iso=0.0):
+        """World-space wp.vec3 and flat int32 indices; no bulk output readback."""
+        if self.backend != "sparse":
+            from .device_surface import DeviceSurfaceUnavailable
+            raise DeviceSurfaceUnavailable(f"{self.backend} has no sparse device surface")
+        arrays = self._sparse_arrays(sdf_field, iso)
+        if arrays is None:
+            return (wp.empty(0, dtype=wp.vec3, device=self.device),
+                    wp.empty(0, dtype=wp.int32, device=self.device))
+        return arrays
+
+    def _sparse_arrays(self, sdf_field, iso):
         g = self.grid
         n_leaves = int(getattr(g, "active_leaf_count", 0))
         if n_leaves <= 0:
-            return self._empty()
+            return None
         n_candidates = n_leaves * _CELLS_PER_LEAF
         if self._cell_flags is None or self._cell_flags.shape[0] < n_candidates:
             self._cell_flags = wp.zeros(n_candidates, dtype=wp.int32,
@@ -1822,7 +1947,7 @@ class SurfaceExtractor:
         last_flag = flags[n_candidates - 1:n_candidates].numpy()
         n_cells = int(last_offset[0]) + int(last_flag[0])
         if n_cells == 0:
-            return self._empty()
+            return None
         if self._cells is None or self._cells.shape[0] < n_cells:
             self._cells = wp.zeros(n_cells, dtype=wp.vec3i, device=self.device)
             self._corner_values = wp.zeros(8 * n_cells, dtype=wp.float32,
@@ -1837,14 +1962,11 @@ class SurfaceExtractor:
         )
         vs = float(g.voxel_size)
         o = np.asarray(g.origin, dtype=np.float64) + 0.5 * vs
-        verts, indices = _sparse_mc_from_cells(
+        return _sparse_mc_from_cells(
             cells, values,
             origin=wp.vec3(float(o[0]), float(o[1]), float(o[2])),
             cell_width=vs, threshold=float(iso), device=self.device,
         )
-        verts = np.asarray(verts.numpy(), dtype=np.float32).reshape(-1, 3)
-        tris = np.asarray(indices.numpy(), dtype=np.int32).reshape(-1, 3)
-        return verts, tris
 
     def _extract_dense(self, sdf_field, iso):
         g = self.grid

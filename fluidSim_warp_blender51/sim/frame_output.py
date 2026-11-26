@@ -318,6 +318,18 @@ class HostFrame:
             return np.zeros((0, 3), dtype=np.float32)
         return self._get(("whitewater", stride), load)
 
+    def copy_final_device_surface(self, destination, *, expected_stamp, required_channels=(),
+                                  materialize_host=False):
+        """Copy the current surface, sharing its extraction on joint host demand."""
+        from .device_surface import DeviceSurfaceUnavailable
+
+        if (self.solver is None or self.frame != self.solver.frame
+                or getattr(self.solver, "_host_frame_cache", None) is not self):
+            raise DeviceSurfaceUnavailable("stale host frame for device surface")
+        return self.solver.surface.copy_final_device_surface(
+            destination, expected_stamp=expected_stamp, required_channels=required_channels,
+            materialize_host=materialize_host)
+
     @property
     def surface_mesh(self):
         def load():
