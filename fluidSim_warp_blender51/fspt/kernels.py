@@ -46,6 +46,7 @@ def trace_paths(
         sy = 2.0 * (float(y) + wp.randf(rng)) / float(height) - 1.0
         origin = unproject(inverse_vp, sx, sy, -1.0)
         far = unproject(inverse_vp, sx, sy, 1.0)
+        primary_distance = wp.length(far - origin)
         direction = wp.normalize(far - origin)
         throughput = wp.vec3(1.0, 1.0, 1.0)
         radiance = wp.vec3(0.0, 0.0, 0.0)
@@ -55,7 +56,10 @@ def trace_paths(
             normal = wp.vec3(0.0, 0.0, 1.0)
             face = int(0)
             if triangle_count > 0:
-                hit = wp.mesh_query_ray(mesh, origin, direction, 1.0e20)
+                max_distance = float(1.0e20)
+                if bounce == 0:
+                    max_distance = primary_distance
+                hit = wp.mesh_query_ray(mesh, origin, direction, max_distance)
                 found = hit.result
                 distance = hit.t
                 normal = hit.normal

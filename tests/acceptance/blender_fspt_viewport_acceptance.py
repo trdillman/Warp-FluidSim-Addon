@@ -1,4 +1,5 @@
 """Windowed Blender rendered-viewport acceptance with a bounded timer."""
+import hashlib
 import importlib.util
 import os
 import time
@@ -56,14 +57,15 @@ def main():
     prior = {}
     observations = []
 
+    prior_patch = None
+
     def tick():
-        nonlocal stage, prior, observations
+        nonlocal stage, prior, observations, prior_patch
         try:
             if time.monotonic() - started >= 120:
                 raise TimeoutError(f"Viewport stage {stage}: last observations {observations[-3:]}")
             frame = fixture.info(addon, "LAST_VIEWPORT_INFO")
             assert frame.get("status") != "ERROR", frame
-            area.tag_redraw()
             if not frame or not frame.get("key") or frame["key"] == prior.get("key"):
                 return 0.03
             fixture.validate_info(frame)
@@ -82,6 +84,41 @@ def main():
             if frame["samples"] < scene.fspt.viewport_samples:
                 return 0.03
             report["stages"][stage] = {"frame": frame, "observations": observations}
+            # Read an actual screen capture. Window decorations & panels alone
+            # cannot satisfy the central viewport patch variation assertion.
+            fixture.checkpoint(path, report, stage + "_screenshot")
+            screenshot = path.with_name(path.stem + "-" + stage + "-screenshot.png")
+            if screenshot.exists():
+                screenshot.unlink()
+            with bpy.context.temp_override(window=window, area=area, region=region):
+                result = bpy.ops.screen.screenshot(filepath=str(screenshot))
+            assert result == {"FINISHED"}
+            image = bpy.data.images.load(str(screenshot), check_existing=False)
+            try:
+                w, h = image.size
+                rgba = np.empty(w * h * 4, np.float32)
+                image.pixels.foreach_get(rgba)
+                sx, sy = w / window.width, h / window.height
+                x0, x1 = (round((region.x + region.width * t) * sx) for t in (0.35, 0.65))
+                y0, y1 = (round((region.y + region.height * t) * sy) for t in (0.35, 0.65))
+                patch = rgba.reshape(h, w, 4)[y0:y1, x0:x1, :3].copy()
+                assert patch.size and np.isfinite(patch).all()
+                contrast = float(np.percentile(patch.mean(axis=2), 95) -
+                                 np.percentile(patch.mean(axis=2), 5))
+                assert contrast > 0.01, f"Viewport center lacks image contrast: {contrast}"
+            finally:
+                bpy.data.images.remove(image)
+            capture = {"screenshot": str(screenshot), "screenshot_sha256": fixture.sha(screenshot),
+                       "center_patch_sha256": hashlib.sha256(patch.tobytes()).hexdigest(),
+                       "center_patch_contrast": contrast, "region_size": [region.width, region.height]}
+            report["stages"][stage].update(capture)
+            report.update(capture)
+            if stage in ("camera_edit", "material_edit"):
+                assert patch.shape == prior_patch.shape
+                delta = float(np.abs(patch - prior_patch).mean())
+                report["stages"][stage]["center_patch_mean_abs_delta"] = delta
+                assert delta > 0.001, f"{stage} screenshot change too small: {delta}"
+            prior_patch = patch
             if stage == "initial":
                 fixture.checkpoint(path, report, "camera_edit")
                 scene.camera.location.x += 0.8
@@ -92,32 +129,6 @@ def main():
                 fixture.checkpoint(path, report, "resize")
                 scene.fspt.resolution_percentage = 15
             else:
-                # Read an actual screen capture. Window decorations & panels alone
-                # cannot satisfy the central viewport patch variation assertion.
-                fixture.checkpoint(path, report, "screenshot")
-                screenshot = path.with_name(path.stem + "-screenshot.png")
-                if screenshot.exists():
-                    screenshot.unlink()
-                with bpy.context.temp_override(window=window, area=area, region=region):
-                    result = bpy.ops.screen.screenshot(filepath=str(screenshot))
-                assert result == {"FINISHED"}
-                image = bpy.data.images.load(str(screenshot), check_existing=False)
-                try:
-                    w, h = image.size
-                    rgba = np.empty(w * h * 4, np.float32)
-                    image.pixels.foreach_get(rgba)
-                    sx, sy = w / window.width, h / window.height
-                    x0, x1 = (round((region.x + region.width * t) * sx) for t in (0.35, 0.65))
-                    y0, y1 = (round((region.y + region.height * t) * sy) for t in (0.35, 0.65))
-                    patch = rgba.reshape(h, w, 4)[y0:y1, x0:x1, :3]
-                    assert patch.size and np.isfinite(patch).all()
-                    contrast = float(np.percentile(patch.mean(axis=2), 95) -
-                                     np.percentile(patch.mean(axis=2), 5))
-                    assert contrast > 0.01, f"Viewport center lacks image contrast: {contrast}"
-                finally:
-                    bpy.data.images.remove(image)
-                report.update(screenshot=str(screenshot), screenshot_sha256=fixture.sha(screenshot),
-                              center_patch_contrast=contrast, region_size=[region.width, region.height])
                 for name, item in report["stages"].items():
                     final = item["frame"]
                     assert any(obs["key"] == final["key"] and obs["draws"] < final["draw_count"]

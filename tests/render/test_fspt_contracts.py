@@ -120,3 +120,11 @@ def test_lazy_package_does_not_import_warp_or_blender():
         "assert 'bpy' not in sys.modules; assert 'warp' not in sys.modules")],
         capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_camera_rejects_infinite_homogeneous_far_plane():
+    c = contracts()
+    matrix = np.eye(4, dtype=np.float32)
+    matrix[3, 2] = -1
+    with pytest.raises(ValueError, match="clip|projection"):
+        c.CameraSnapshot(matrix)

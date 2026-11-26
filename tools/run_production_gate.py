@@ -100,6 +100,9 @@ GATE_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
 GATE_BLENDER_USER_EXTENSIONS = ROOT / "artifacts" / "gate_blender_user_extensions"
 # Background Blender acceptance scripts that take no arguments: (script, marker).
 BACKGROUND_ACCEPTANCE = (
+    ("tests/acceptance/blender_fspt_preflight.py", "FSPT-PREFLIGHT-PASS"),
+    ("tests/acceptance/blender_fspt_acceptance.py", "FSPT-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_fspt_edge_acceptance.py", "FSPT-EDGE-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_append_migration_acceptance.py", "APPEND-MIGRATION-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_vdb_production_bake_acceptance.py", "VDB-PRODUCTION-BAKE-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_cache_vdb_export_acceptance.py", "CACHE-VDB-EXPORT-ACCEPTANCE-PASS"),
@@ -1028,6 +1031,7 @@ def _production_main(argv=None):
         "tests/acceptance/blender_phase3_profile_safe_review.py",
         "tests/acceptance/blender_phase4_live_interaction_acceptance.py",
         "tests/acceptance/blender_gui_acceptance.py",
+        "tests/acceptance/blender_fspt_viewport_acceptance.py",
         "tests/acceptance/blender_gui_playback_probe.py",
         "tests/acceptance/blender_rigid_authoring_ui_acceptance.py",
         "tests/acceptance/blender_viewport_2frame_gate.py",
@@ -1136,6 +1140,12 @@ def _production_main(argv=None):
         entry for entry in entries if entry[1] in QUIET_ACCEPTANCE],
         name="gate_batch_quiet")
     if include_gui:
+        _run("FSPT rendered viewport acceptance", _blender(
+            blender_exe,
+            "--factory-startup",
+            "--python",
+            "tests/acceptance/blender_fspt_viewport_acceptance.py",
+        ), env=env, reject_output=True, expect_marker="FSPT-VIEWPORT-PASS")
         _run("interactive GUI acceptance", _blender(
             blender_exe,
             "--factory-startup",

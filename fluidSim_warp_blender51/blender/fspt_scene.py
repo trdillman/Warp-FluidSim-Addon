@@ -43,6 +43,8 @@ def _shader(owner, output_type):
     link = surface.links[0]
     if not getattr(link, "is_valid", True):
         _fail(owner, "invalid Surface graph link")
+    if getattr(link, "is_muted", False):
+        _fail(owner, "muted Surface graph link is not supported by P1")
     shader = link.from_node
     if getattr(shader, "mute", False):
         _fail(owner, "muted shader graph is not supported by P1")
@@ -93,15 +95,30 @@ def world_color(world):
     return color
 
 
+def _validate_evaluated_geometry(obj):
+    geometry = obj.evaluated_geometry()
+    for component in ("pointcloud", "curves", "volume", "grease_pencil"):
+        if getattr(geometry, component) is not None:
+            _fail(obj, f"evaluated {component} geometry is not supported by P1")
+    # Object/collection instances are exported by depsgraph.object_instances.
+    # Anonymous geometry references require a separate extraction contract.
+    for reference in geometry.instance_references():
+        if reference is not None and reference.bl_rna.identifier not in {"Object", "Collection"}:
+            _fail(obj, "anonymous geometry instances are not supported by P1; use Realize Instances")
+
+
 def extract_scene(depsgraph, for_viewport=False):
     scene = depsgraph.scene
+    layer = depsgraph.view_layer
+    if layer.material_override is not None or getattr(layer, "world_override", None) is not None:
+        _fail(layer, "view-layer material/world overrides are not supported by P1")
     world = world_color(scene.world)
     vertices, triangles, assignments, materials = [], [], [], [Material()]
     material_cache = {}
     vertex_offset = 0
     for instance in depsgraph.object_instances:
         obj = instance.object
-        if not getattr(instance, "show_self", True) or obj.hide_render:
+        if not for_viewport and obj.hide_render:
             continue
         if for_viewport and not instance.is_instance and not obj.original.visible_get():
             continue
@@ -112,6 +129,9 @@ def extract_scene(depsgraph, for_viewport=False):
             continue
         if obj.type != "MESH":
             _fail(obj, f"unsupported {obj.type} object; P1 accepts evaluated triangle meshes and mesh emitters")
+        _validate_evaluated_geometry(obj)
+        if not getattr(instance, "show_self", True):
+            continue
         mesh = obj.to_mesh(preserve_all_data_layers=False, depsgraph=depsgraph)
         try:
             mesh.calc_loop_triangles()
@@ -130,6 +150,8 @@ def extract_scene(depsgraph, for_viewport=False):
             ids = np.empty(len(faces), dtype=np.int32)
             for slot in np.unique(slots):
                 material = mesh.materials[int(slot)] if int(slot) < len(mesh.materials) else None
+                if int(slot) < len(obj.material_slots) and obj.material_slots[int(slot)].link == "OBJECT":
+                    material = obj.material_slots[int(slot)].material
                 if material is None:
                     index = 0
                 else:

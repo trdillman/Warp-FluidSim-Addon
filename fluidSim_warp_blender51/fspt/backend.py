@@ -68,17 +68,23 @@ class CudaBackend:
             self.history.begin(key)
         arrays = self.arrays
         inverse = wp.mat44(*camera.inverse_view_projection.ravel().tolist())
-        wp.launch(self.kernel, dim=width * height, inputs=[
-            self.mesh.id if self.mesh else wp.uint64(0), len(scene.triangles),
-            arrays["materials"], arrays["kinds"], arrays["colors"], arrays["emissions"], arrays["iors"],
-            wp.vec3(*scene.world), inverse, width, height, self.history.samples,
-            int(samples), int(max_bounces), int(seed), self.accumulation, self.output,
-        ], device=self.device)
-        wp.synchronize_device(self.device)
-        pixels = self.output.numpy().reshape(height, width, 4)
-        if not np.isfinite(pixels).all():
+        try:
+            wp.launch(self.kernel, dim=width * height, inputs=[
+                self.mesh.id if self.mesh else wp.uint64(0), len(scene.triangles),
+                arrays["materials"], arrays["kinds"], arrays["colors"], arrays["emissions"], arrays["iors"],
+                wp.vec3(*scene.world), inverse, width, height, self.history.samples,
+                int(samples), int(max_bounces), int(seed), self.accumulation, self.output,
+            ], device=self.device)
+            wp.synchronize_device(self.device)
+            pixels = self.output.numpy().reshape(height, width, 4)
+            if not np.isfinite(pixels).all():
+                raise RuntimeError("FSPT CUDA output contains nonfinite values")
+        except Exception:
+            # A failed dispatch/readback may have changed only part of an image.
+            # Never reuse that buffer or its previous sample count on retry.
             self.history = AccumulationState()
-            raise RuntimeError("FSPT CUDA output contains nonfinite values")
+            self.accumulation = self.output = None
+            raise
         self.history.advance(int(samples))
         return RenderFrame(pixels, key, self.history.samples, str(self.output.device),
                            BACKEND_ID, TRANSPORT_ID)
@@ -86,6 +92,10 @@ class CudaBackend:
     def close(self):
         if self.closed:
             return
-        self.wp.synchronize_device(self.device)
-        self.mesh = self.arrays = self.accumulation = self.output = None
-        self.closed = True
+        try:
+            self.wp.synchronize_device(self.device)
+        finally:
+            self.mesh = self.arrays = self.accumulation = self.output = None
+            self.scene_digest = None
+            self.history = AccumulationState()
+            self.closed = True

@@ -70,6 +70,13 @@ def test_linked_color_is_rejected():
         translate_material(material)
 
 
+def test_muted_surface_link_is_rejected():
+    material, output = graph(diffuse())
+    output.inputs["Surface"].links[0].is_muted = True
+    with pytest.raises(UnsupportedSceneError, match="muted"):
+        translate_material(material)
+
+
 def test_rough_glass_is_rejected():
     material, _ = graph(node("BsdfGlass", Color=(*RGB, 1), Roughness=0.25, IOR=1.52,
                              Normal=(0, 0, 0)))

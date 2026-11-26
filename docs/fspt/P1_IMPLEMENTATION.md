@@ -57,7 +57,7 @@ must refuse it; never silently replace complex materials with generic water.
 - [ ] Implement owned/validated snapshot and frame identity contracts.
 - [ ] Implement lazy CUDA path tracing and progressive accumulation.
 - [ ] Integrate atomic add-on registration and rendered viewport callbacks.
-- [ ] Execute real Blender preflight and image/change/negative-control tests.
+- [x] Execute real Blender preflight and image/change/negative-control tests.
 - [ ] Build through the existing extension packager and inspect package identity.
 - [ ] Run independent Sol optical and integration reviews of one candidate.
 - [ ] Retain evidence and update roadmap plus canonical FluidSim tracker.
@@ -95,3 +95,39 @@ The first small fixture is a feasibility proof, not a production benchmark or
 a FluidSim demo. The full P0 production-scene inventory and backend comparison
 must close before later qualification. Capture a real FSPT canonical image
 after P1 output is verified; concept imagery cannot substitute.
+
+## Review corrections and bounded evidence
+
+Both independent Sol reviewers inspected `7dfa4421159e5e5caad63095b9635f2a68b8e18f`.
+The next candidate addresses their material override, muted link, evaluated
+geometry, camera clip, final-output routing and GPU cleanup findings. The
+original negative-control native crash, failing regressions and first package
+proof remain retained separately from the corrected results.
+
+On Blender 5.2.0 `fbe6228777e7`, Python 3.13.13, Warp 1.18.0 and RTX 4080 SUPER,
+the corrected source passed 78 focused source/registration/gate-inventory
+checks, 13 real Blender edge cases, camera Render Result acceptance, and
+windowed progressive presentation. The viewport verifier no longer forces
+redraws from its polling loop and captures actual pixels at every edit stage.
+Glass at IOR 1, an isolated 70-degree total-internal-reflection interface,
+diffuse bounce depth and perspective/orthographic far clipping matched the
+small analytic fixtures. These are specific controls, not general production
+optical equivalence or performance qualification.
+
+P1 final output is one opaque Combined image from one enabled view layer.
+Transparent film, stereo/multiview, view-layer material/world overrides,
+anonymous GeometrySet instances, non-mesh evaluated components and unsupported
+shader graphs fail visibly. Explicit object material slots are respected.
+The production gate now includes the headless FSPT checks, with the viewport
+check in its GUI lane. The earlier broad host run timed out at 300 seconds;
+its identified gate-inventory failure was corrected and the inventory suite
+then passed. The broad suite is not claimed as passing.
+
+The current surface offset is `max(1e-5, 1e-6 * length(hit_position))` in
+Blender units. Qualification is limited to the ordinary unit-scale fixtures
+near the world origin. Thin interfaces, extreme coordinate scales, nested
+media, interpolated shading normals and complete material/pass support remain
+unqualified. A component-wise error bound and translated thin-interface
+regression are required before extending that claim in P2. The certified
+Warp 1.19 production environment and approved runtime provenance remain a
+separate release gate; the observed Warp 1.18 prototype result does not pass it.

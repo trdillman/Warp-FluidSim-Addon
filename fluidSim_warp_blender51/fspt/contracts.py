@@ -98,6 +98,18 @@ class CameraSnapshot:
         matrix = _owned(self.inverse_view_projection, np.float32, (4, 4), "camera matrix")
         if matrix.shape != (4, 4) or abs(float(np.linalg.det(matrix))) < 1e-20:
             raise ValueError("camera matrix must be invertible and 4 by 4")
+        # Invertibility alone does not ensure finite near/far unprojection.
+        # Extreme clip ratios can round the far plane to homogeneous w=0.
+        corners = np.array([(x, y, z, 1) for x in (-1, 1) for y in (-1, 1)
+                            for z in (-1, 1)], dtype=np.float64)
+        projected = corners @ matrix.astype(np.float64).T
+        weights = projected[:, 3]
+        if np.any(np.abs(weights) < 1e-12) or weights.min() * weights.max() < 0:
+            raise ValueError("camera clip projection is not finite; reduce the near/far ratio")
+        endpoints = projected[:, :3] / weights[:, None]
+        if (not np.isfinite(endpoints).all()
+                or np.max(np.linalg.norm(endpoints, axis=1)) > np.sqrt(np.finfo(np.float32).max) / 4):
+            raise ValueError("camera clip projection exceeds float32 ray bounds")
         object.__setattr__(self, "inverse_view_projection", matrix)
         object.__setattr__(self, "digest", hashlib.sha256(matrix.tobytes()).hexdigest())
 

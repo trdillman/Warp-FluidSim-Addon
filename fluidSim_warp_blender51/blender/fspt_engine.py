@@ -49,12 +49,12 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
 
     def close(self):
         backend = getattr(self, "_backend", None)
-        if backend is not None:
-            backend.close()
         self._backend = None
         self._snapshot = None
         self._last_frame = None
         self._texture = None
+        if backend is not None:
+            backend.close()
 
     def __del__(self):
         try:
@@ -89,12 +89,18 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
             height = max(1, int(scene.render.resolution_y * scene.render.resolution_percentage / 100))
             if scene.render.use_border:
                 raise RuntimeError("FSPT P1 does not yet support render borders; disable Border")
+            if scene.render.film_transparent:
+                raise RuntimeError("FSPT P1 does not support transparent film")
+            if scene.render.use_multiview:
+                raise RuntimeError("FSPT P1 does not support multiview/stereo rendering")
+            if sum(layer.use for layer in scene.view_layers) != 1:
+                raise RuntimeError("FSPT P1 requires exactly one enabled view layer")
             snapshot = extract_scene(depsgraph, for_viewport=False)
             camera = camera_snapshot(depsgraph, width, height)
             # A final job starts at sample zero even if this instance is reused.
             self.close()
             backend = self._get_backend(settings)
-            result = self.begin_result(0, 0, width, height)
+            result = self.begin_result(0, 0, width, height, layer=depsgraph.view_layer.name)
             for _ in range(settings.samples):
                 if self.test_break():
                     cancelled = True
@@ -122,7 +128,15 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
                 self.end_result(result, cancel=True)
             self.error_set(str(exc))
         finally:
-            self.close()
+            try:
+                self.close()
+            except Exception as exc:
+                message = f"FSPT GPU teardown failed: {exc}"
+                LAST_RENDER_INFO["status"] = "ERROR"
+                LAST_RENDER_INFO.setdefault("error", message)
+                LAST_RENDER_INFO["cleanup_error"] = message
+                self.report({"ERROR"}, message)
+                self.error_set(LAST_RENDER_INFO["error"])
 
     def view_update(self, context, depsgraph):
         from .fspt_scene import extract_scene
@@ -194,9 +208,13 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
             if frame.samples < settings.viewport_samples:
                 self.tag_redraw()
         except Exception as exc:
-            self._last_frame = self._texture = None
-            LAST_VIEWPORT_INFO = {"status": "ERROR", "error": f"{type(exc).__name__}: {exc}"}
-            self._draw_error(str(exc))
+            message = f"{type(exc).__name__}: {exc}"
+            try:
+                self.close()
+            except Exception as cleanup:
+                message += f"; GPU teardown: {cleanup}"
+            LAST_VIEWPORT_INFO = {"status": "ERROR", "error": message}
+            self._draw_error(message)
 
 
 class FSPTRenderPanel(bpy.types.Panel):
