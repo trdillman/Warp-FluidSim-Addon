@@ -110,6 +110,7 @@ def _validate_evaluated_geometry(obj):
 
 def extract_scene(depsgraph, for_viewport=False):
     from .fspt_bridge import SurfaceNotReadyError, capture_publications, validate_publications
+    from .scene_access import active_domain_object
     from .surface_publication import id_token
 
     scene = depsgraph.scene
@@ -124,9 +125,14 @@ def extract_scene(depsgraph, for_viewport=False):
     material_cache = {}
     captured_outputs = set()
     expected_outputs = {p.object_token for p in publications}
+    # FluidSim designates its domain through the Scene pointer. Object roles
+    # contain no DOMAIN enum: a visible wire domain normally has role NONE.
+    domain_token = id_token(active_domain_object(getattr(scene, "original", scene)))
     vertex_offset = 0
     for instance in depsgraph.object_instances:
         obj = instance.object
+        if domain_token is not None and id_token(obj.original) == domain_token:
+            continue
         if not for_viewport and obj.hide_render:
             continue
         if for_viewport and not instance.is_instance and not obj.original.visible_get(view_layer=layer):

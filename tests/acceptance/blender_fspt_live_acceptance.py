@@ -127,6 +127,50 @@ def _prepare_fixture(bpy, base, scene):
     settings.seed = 31
 
 
+def _domain_extraction_control(bpy, adapter, pending_settings):
+    """Native ownership contrast: a NONE-role domain versus a NONE-role mesh."""
+    window = bpy.context.window
+    previous = window.scene
+    scene = bpy.data.scenes.new("FSPT domain ownership control")
+    objects, meshes = [], []
+    try:
+        window.scene = scene
+        with pending_settings.suppress_callbacks(scene):
+            scene.fluidsim.live = False
+            scene.fluidsim.show_surface = False
+            for name, offset in (("Control Domain", 0), ("Control ordinary mesh", 10)):
+                mesh = bpy.data.meshes.new(name)
+                mesh.from_pydata([(offset, 0, 0), (offset + 1, 0, 0), (offset, 1, 0)], [], [(0, 1, 2)])
+                mesh.update()
+                obj = bpy.data.objects.new(name, mesh)
+                scene.collection.objects.link(obj)
+                objects.append(obj)
+                meshes.append(mesh)
+            domain, ordinary = objects
+            scene.fluidsim.domain_object = domain
+            domain.display_type = "WIRE"
+        bpy.context.view_layer.update()
+        assert domain.fluidsim.role == ordinary.fluidsim.role == "NONE"
+        assert domain.visible_get() and ordinary.visible_get()
+        graph = bpy.context.evaluated_depsgraph_get()
+        for viewport in (True, False):
+            snapshot = adapter.extract_scene(graph, for_viewport=viewport)
+            assert len(snapshot.triangles) == 1 and len(snapshot.vertices) == 3
+            np.testing.assert_array_equal(snapshot.vertices, np.asarray(
+                [(10, 0, 0), (11, 0, 0), (10, 1, 0)], dtype=np.float32))
+        return {"domain_role": domain.fluidsim.role, "ordinary_role": ordinary.fluidsim.role,
+                "domain_layer_visible": True, "ordinary_layer_visible": True,
+                "viewport_triangles": 1, "final_triangles": 1,
+                "ordinary_geometry_retained": True, "domain_geometry_omitted": True}
+    finally:
+        window.scene = previous
+        for obj in objects:
+            bpy.data.objects.remove(obj, do_unlink=True)
+        for mesh in meshes:
+            bpy.data.meshes.remove(mesh)
+        bpy.data.scenes.remove(scene)
+
+
 def _mesh_arrays(mesh):
     mesh.calc_loop_triangles()
     points = np.empty((len(mesh.vertices), 3), dtype=np.float32)
@@ -173,6 +217,10 @@ class LiveAcceptance:
     def prepare(self):
         bpy = self.bpy
         assert not bpy.app.background, "Requires a real Blender window"
+        # This process owns a private profile. Prevent the ordinary startup
+        # splash from obscuring retained runtime screenshots.
+        bpy.context.preferences.view.show_splash = False
+        bpy.context.preferences.use_preferences_save = False
         assert self.args.blend.is_file(), f"Missing authored demo: {self.args.blend}"
         self.folder.mkdir(parents=True, exist_ok=False)
         self.report.update(verifier_sha256=self.base.sha(Path(__file__)),
@@ -192,6 +240,8 @@ class LiveAcceptance:
         self.engine = module("blender.fspt_engine")
         self.report["runtime"] = self.base.runtime_info(self.addon)
         assert self.report["runtime"]["warp"] == "1.19.0", self.report["runtime"]
+        self.report["controls"]["domain_ownership"] = _domain_extraction_control(
+            bpy, module("blender.fspt_scene"), self.pending_settings)
         bpy.ops.wm.open_mainfile(filepath=str(self.args.blend.resolve()), load_ui=False)
         scene = bpy.context.scene
         assert scene.fluidsim.live and scene.frame_current == scene.frame_start

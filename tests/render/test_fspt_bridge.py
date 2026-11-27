@@ -260,3 +260,54 @@ def test_final_fluid_preparation_refuses_while_bake_owns_state(accepted, monkeyp
     with pytest.raises(b.SurfaceNotReadyError, match="Bake|bake"):
         b.prepare_final_publication(graph)
     assert publication.current_surface_publication(scene) == before
+
+
+@pytest.mark.parametrize("for_viewport", [True, False])
+def test_designated_domain_with_none_role_is_not_render_geometry(monkeypatch, for_viewport):
+    """Domain ownership is a Scene pointer, not an Object role enum value."""
+    import numpy as np
+
+    from fluidSim_warp_blender51.blender.fspt_scene import extract_scene
+
+    class Rows:
+        def __init__(self, values):
+            self.values = np.asarray(values)
+
+        def __len__(self):
+            return len(self.values)
+
+        def foreach_get(self, name, target):
+            values = np.zeros(len(self.values), dtype=np.int32) if name == "material_index" else self.values
+            target[:] = values.ravel()
+
+    class MeshObject(SimpleNamespace):
+        def get(self, key):
+            return None
+
+    mesh = SimpleNamespace(vertices=Rows([[2, 0, 0], [3, 0, 0], [2, 1, 0]]),
+                           loop_triangles=Rows([[0, 1, 2]]), materials=[],
+                           calc_loop_triangles=lambda: None)
+    geometry = SimpleNamespace(pointcloud=None, curves=None, volume=None,
+                               grease_pencil=None, instance_references=lambda: ())
+    extracted = []
+
+    def obj(name, uid):
+        item = MeshObject(name=name, session_uid=uid, type="MESH", hide_render=False,
+                          fluidsim=SimpleNamespace(role="NONE"), material_slots=[],
+                          visible_get=lambda **kw: True, evaluated_geometry=lambda: geometry,
+                          to_mesh_clear=lambda: None)
+        item.original = item
+        item.to_mesh = lambda **kw: (extracted.append(name), mesh)[1]
+        return item
+
+    domain, ordinary = obj("Designated Domain", 1301), obj("Ordinary mesh", 1302)
+    scene = SimpleNamespace(session_uid=1300, frame_current=1, world=None,
+                            fluidsim=SimpleNamespace(domain_object=domain, show_surface=False))
+    monkeypatch.setattr(bridge(), "_surface_object", lambda _scene: None)
+    graph = SimpleNamespace(scene=scene, view_layer=SimpleNamespace(material_override=None),
+        object_instances=[SimpleNamespace(object=item, is_instance=False, show_self=True,
+                                          matrix_world=np.eye(4)) for item in (domain, ordinary)])
+    snapshot = extract_scene(graph, for_viewport=for_viewport)
+    assert extracted == ["Ordinary mesh"]
+    np.testing.assert_array_equal(snapshot.vertices, mesh.vertices.values)
+    assert len(snapshot.triangles) == 1
