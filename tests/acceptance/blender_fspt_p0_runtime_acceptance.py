@@ -321,17 +321,24 @@ def inspect_blender_apis():
             for p in function.parameters
         ]
     view = bpy.context.preferences.view
+    graph = bpy.context.evaluated_depsgraph_get()
+    camera = bpy.context.scene.camera
+    assert camera is not None, "Factory scene camera is required by this API probe"
+    window = bpy.context.window
+    # RNA methods are bound on instances; not every bpy.types class exposes a
+    # Python descriptor for a method advertised by its bl_rna.functions table.
+    graph.update()
     return {
         "RenderEngine": observed,
         "timers": {
             name: _symbol(getattr(bpy.app.timers, name))
             for name in ("register", "unregister", "is_registered")
         },
-        "depsgraph_update": _symbol(bpy.types.Depsgraph.update),
-        "evaluated_object": _symbol(bpy.types.ID.evaluated_get),
-        "camera_calc_matrix": _symbol(bpy.types.Object.calc_matrix_camera),
+        "depsgraph_update": _symbol(graph.update),
+        "evaluated_object": _symbol(camera.evaluated_get),
+        "camera_calc_matrix": _symbol(camera.calc_matrix_camera),
         "view_layer_update_render_passes": _symbol(
-            bpy.types.ViewLayer.update_render_passes
+            bpy.context.view_layer.update_render_passes
         ),
         "depth_of_field": sorted(bpy.types.CameraDOFSettings.bl_rna.properties.keys()),
         "motion_blur_render_properties": sorted(
@@ -346,8 +353,9 @@ def inspect_blender_apis():
             "value": getattr(view, "show_splash", None),
         },
         "event_simulate": {
-            "available": hasattr(bpy.types.Window, "event_simulate"),
-            "api": _symbol(getattr(bpy.types.Window, "event_simulate", None)),
+            "available": bpy.types.Window.bl_rna.functions.get("event_simulate")
+            is not None,
+            "api": _symbol(getattr(window, "event_simulate", None)),
             "launch_flag_present": "--enable-event-simulate" in sys.argv,
         },
         "source": "runtime RNA and built-in docstrings in observed Blender executable",
