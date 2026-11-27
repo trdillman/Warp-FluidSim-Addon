@@ -149,6 +149,10 @@ BACKGROUND_ACCEPTANCE = (
 )
 # Acceptance scripts that take --json-out: (label, script, report path, marker).
 REPORT_ACCEPTANCE = (
+    ("FSPT asynchronous CUDA backend", "tests/acceptance/blender_fspt_async_acceptance.py",
+     "artifacts/fspt_async_acceptance.json", "FSPT-ASYNC-BACKEND-PASS"),
+    ("FSPT final device surface", "tests/acceptance/blender_fspt_device_surface_acceptance.py",
+     "artifacts/fspt_device_surface_acceptance.json", "FSPT-DEVICE-SURFACE-PASS"),
     ("paused cache output acceptance", "tests/acceptance/blender_paused_cache_output_acceptance.py",
      "artifacts/paused_cache_output_acceptance.json", "PAUSED-CACHE-OUTPUT-ACCEPTANCE-PASS"),
     ("allocation accounting acceptance", "tests/acceptance/blender_allocation_accounting_acceptance.py",
@@ -172,6 +176,10 @@ SOURCE_REPORT_ACCEPTANCE = (
 # tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
+    "tests/acceptance/blender_fspt_p0_runtime_acceptance.py": (
+        "P0 feasibility runs in a separately admitted real graphics window with "
+        "an explicitly built and hash-bound optional OptiX probe. It records API, "
+        "ABI and transport capabilities; it is not a product backend release gate."),
     "tests/acceptance/blender_saved_preview_acceptance.py": (
         "Requires an installed candidate, exact archive/source identity, a private "
         "profile and separate produce/reopen processes for both render selections; "
@@ -1032,6 +1040,7 @@ def _production_main(argv=None):
         "tests/acceptance/blender_phase4_live_interaction_acceptance.py",
         "tests/acceptance/blender_gui_acceptance.py",
         "tests/acceptance/blender_fspt_viewport_acceptance.py",
+        "tests/acceptance/blender_fspt_live_acceptance.py",
         "tests/acceptance/blender_gui_playback_probe.py",
         "tests/acceptance/blender_rigid_authoring_ui_acceptance.py",
         "tests/acceptance/blender_viewport_2frame_gate.py",
@@ -1140,6 +1149,12 @@ def _production_main(argv=None):
         entry for entry in entries if entry[1] in QUIET_ACCEPTANCE],
         name="gate_batch_quiet")
     if include_gui:
+        _run("FSPT changing live surface acceptance", _blender(
+            blender_exe, "--factory-startup", "--python-exit-code", "1",
+            "--python", "tests/acceptance/blender_fspt_live_acceptance.py",
+            "--", "--json-out", str(_RUN_DIRECTORY / "fspt-live.json"),
+            "--blend", str(ROOT / "demos/dam_break.blend"), "--deadline", "360",
+        ), env=env, reject_output=True, expect_marker="FSPT-LIVE-ACCEPTANCE-PASS")
         _run("FSPT rendered viewport acceptance", _blender(
             blender_exe,
             "--factory-startup",
