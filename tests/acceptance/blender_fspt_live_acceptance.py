@@ -358,9 +358,20 @@ class LiveAcceptance:
 
     def pause(self):
         assert self.window.screen.is_animation_playing
+        frame_before = int(self.window.scene.frame_current)
         with self.override():
-            assert self.bpy.ops.screen.animation_cancel(restore_frame=False) == {"FINISHED"}
-        assert not self.window.screen.is_animation_playing
+            result = self.bpy.ops.screen.animation_cancel(restore_frame=False)
+        receipt = {"stage": self.stage, "operator_result": sorted(result),
+                   "playing_before": True,
+                   "playing_after": bool(self.window.screen.is_animation_playing),
+                   "frame_before": frame_before,
+                   "frame_after": int(self.window.scene.frame_current)}
+        self.report["controls"].setdefault("pause_transitions", []).append(receipt)
+        # Blender's screen_animation_cancel_exec returns OPERATOR_PASS_THROUGH
+        # after stopping playback. Its operator status is not the postcondition.
+        assert not receipt["playing_after"], f"Playback did not stop: {receipt}"
+        assert receipt["frame_after"] == frame_before, f"Pause restored a different frame: {receipt}"
+        assert result in ({"FINISHED"}, {"PASS_THROUGH"}, {"CANCELLED"}), receipt
 
     def capture_draw(self, context, depsgraph, frame, snapshot, info):
         """Join evaluated geometry, submitted scene and image in the draw callback."""

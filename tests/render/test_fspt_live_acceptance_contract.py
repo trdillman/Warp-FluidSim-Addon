@@ -1,6 +1,8 @@
 """Controls for the independent live-acceptance content oracle."""
 import importlib.util
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -55,3 +57,40 @@ def test_surface_digest_depends_on_actual_positions_and_connectivity():
     assert digest != accept.surface_digest(vertices, tris[:, ::-1])
     assert digest == accept.surface_digest(np.vstack((vertices + 4, vertices)),
                                            tris + len(vertices))
+
+
+@pytest.mark.parametrize("result", [{"PASS_THROUGH"}, {"CANCELLED"}, {"FINISHED"}])
+def test_pause_requires_observed_stop_and_records_operator_status(result):
+    accept = _harness()
+    run = object.__new__(accept.LiveAcceptance)
+    run.window = SimpleNamespace(screen=SimpleNamespace(is_animation_playing=True),
+                                 scene=SimpleNamespace(frame_current=15))
+    run.report = {"controls": {}}
+    run.stage = "live"
+    run.override = nullcontext
+
+    def cancel(*, restore_frame):
+        assert restore_frame is False
+        run.window.screen.is_animation_playing = False
+        return result
+
+    run.bpy = SimpleNamespace(ops=SimpleNamespace(screen=SimpleNamespace(animation_cancel=cancel)))
+    run.pause()
+    receipt = run.report["controls"]["pause_transitions"][-1]
+    assert receipt["operator_result"] == sorted(result)
+    assert receipt["playing_before"] is True and receipt["playing_after"] is False
+    assert receipt["frame_before"] == receipt["frame_after"] == 15
+
+
+def test_pause_rejects_success_status_when_playback_did_not_stop():
+    accept = _harness()
+    run = object.__new__(accept.LiveAcceptance)
+    run.window = SimpleNamespace(screen=SimpleNamespace(is_animation_playing=True),
+                                 scene=SimpleNamespace(frame_current=15))
+    run.report = {"controls": {}}
+    run.stage = "live"
+    run.override = nullcontext
+    run.bpy = SimpleNamespace(ops=SimpleNamespace(screen=SimpleNamespace(
+        animation_cancel=lambda **kwargs: {"FINISHED"})))
+    with pytest.raises(AssertionError, match="Playback did not stop"):
+        run.pause()
