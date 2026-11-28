@@ -561,15 +561,15 @@ def run_render(opts):
         log(f"look test written to {scene.render.filepath}")
         return
 
-    frames = sorted(int(f[6:10]) for f in os.listdir(mesh_dir) if f.startswith("verts_"))
     manifest = os.path.join(out, "sim_series.json")
-    if not os.path.exists(manifest):
+    if not os.path.exists(manifest) or not os.path.isdir(mesh_dir):
         raise SystemExit(
             f"no sim_series.json in {out}: the last simulation did not finish "
             "(or never ran); run the sim stage first")
     # Only the frames the last simulation recorded, never stray older meshes.
     with open(manifest, encoding="utf-8") as fh:
         recorded = set(json.load(fh)["frames"])
+    frames = sorted(int(f[6:10]) for f in os.listdir(mesh_dir) if f.startswith("verts_"))
     frames = [f for f in frames if f in recorded]
     if opts["frames"]:
         frames = [f for f in frames if opts["frames"][0] <= f <= opts["frames"][1]]
