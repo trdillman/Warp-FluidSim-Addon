@@ -2066,8 +2066,9 @@ def author_nets_showcase():
     ds.min_substeps = 1
     ds.max_substeps = ns.MAX_SUBSTEPS
     ds.flip_ratio = 0.97
-    ds.narrow_band_enabled = True
-    ds.narrow_band_voxels = ns.NARROW_BAND_VOXELS
+    # Off: a source's startup demand is its full volume whatever the band, so
+    # the pool is a thin film instead (see nets_showcase.expected_particles).
+    ds.narrow_band_enabled = False
     ds.whitewater_enabled = False
     ds.profiling_enabled = False
     # The render surface follows the simulation grid (the default mode), so
@@ -2109,7 +2110,7 @@ def author_nets_showcase():
         f"Three drops fall into a marble trough one after the other: a crown,\n"
         f"then a drop into the ripples, then a drop into the wreckage.\n"
         f"{p.voxel * 1000:.0f} mm voxels, {max(ns.divisions(p))} cells along the domain, about\n"
-        f"{ns.expected_particles(p) / 1e6:.1f}M particles (Narrow Band on). The preset is\n"
+        f"{ns.expected_particles(p) / 1e6:.1f}M particles (Narrow Band off). The preset is\n"
         f"'{p.name}' (NETS_SHOWCASE_PRESET=hero|draft when it was built).\n\n"
         "The mesh is Surface Nets. That backend is picked by an environment\n"
         "variable that a .blend cannot store, so start Blender with\n"
@@ -2163,7 +2164,7 @@ def build_nets_showcase():
     first = int(series["particle_count"][0])
     expected = ns.expected_particles(p)
     log(f"nets_showcase [{p.name}]: {first:,} particles at frame 1 "
-        f"(shell estimate {expected:,.0f}, full fill {ns.full_fill_particles(p):,.0f}), "
+        f"(estimate {expected:,.0f}), "
         f"peak {max(series['particle_count']):,}, "
         f"mean step {np.mean(series['step_ms']):.0f} ms")
     if sess.solver is None:
@@ -2182,9 +2183,9 @@ def build_nets_showcase():
                 f"nets_showcase frame {frame}: liquid is within "
                 f"{check['wall_clearance_m'] * 1000:.1f} mm of a domain wall; the "
                 "Surface Nets mesh would be cut there")
-    if not 0.4 * expected <= first <= p.max_particles:
+    if not 0.6 * expected <= first <= p.max_particles:
         raise RuntimeError(
-            f"nets_showcase emitted {first:,} particles, shell estimate "
+            f"nets_showcase emitted {first:,} particles, estimate "
             f"{expected:,.0f}, reserve {p.max_particles:,}")
     write_meta("nets_showcase", {
         "scene": "nets_showcase",
@@ -2202,7 +2203,7 @@ def build_nets_showcase():
         "leaf_capacity": p.leaf_capacity,
         "surface_backend": ns.BACKEND,
         "surface_max_dense_dim": p.max_dense_dim,
-        "narrow_band_voxels": ns.NARROW_BAND_VOXELS,
+        "narrow_band_enabled": False,
         "whitewater_enabled": False,
         "fidelity": ns.fidelity(p),
         "build_checks": {str(k): v for k, v in sorted(checks.items())},

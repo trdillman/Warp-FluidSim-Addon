@@ -117,13 +117,24 @@ def test_no_shipped_demo_beats_the_baseline():
     assert 0 < best_cells <= ns.BASELINE["longest_axis_cells"]
 
 
-def test_hero_particles_fit_the_reserve_and_a_16gb_card():
+def test_hero_startup_demand_fits_the_reserve_and_a_16gb_card():
     p = ns.PRESETS[ns.HERO]
-    assert ns.expected_particles(p) * 1.25 < p.max_particles
-    # Narrow Band is what makes the scene affordable: a full fill would not fit.
-    assert ns.full_fill_particles(p) > 10 * ns.expected_particles(p)
+    # A source's startup demand is its whole volume (no narrow-band culling is
+    # credited), so the reserve has to cover the full fill, with headroom.
+    assert ns.expected_particles(p) * 1.15 < p.max_particles
     # Rough per-particle cost (position, velocity, APIC rows, bins) well under 200 B.
     assert p.max_particles * 200 < 2 * GIB
+
+
+def test_pool_is_a_thin_film_so_the_full_fill_stays_affordable():
+    p = ns.PRESETS[ns.HERO]
+    pool_particles = ns.pool_volume() / p.voxel ** 3 * ns.PARTICLES_PER_VOXEL
+    assert pool_particles < 6_000_000
+    assert ns.POOL_DEPTH >= 4 * p.voxel  # still several voxels deep
+
+
+def test_presets_do_not_depend_on_narrow_band():
+    assert not hasattr(ns, "NARROW_BAND_VOXELS")
 
 
 def test_surface_box_fits_max_dense_dim():
@@ -150,15 +161,15 @@ def test_hero_fits_a_16gb_card_by_the_addons_own_estimate():
         viscosity=False, surface_tension=False)
     settings = dataclasses.replace(
         P._build_settings(args), domain_min=ns.DOMAIN_LO, domain_max=ns.DOMAIN_HI,
-        leaf_capacity=p.leaf_capacity, narrow_band_enabled=True,
-        narrow_band_voxels=ns.NARROW_BAND_VOXELS, surface_max_dense_dim=p.max_dense_dim)
+        leaf_capacity=p.leaf_capacity, narrow_band_enabled=False,
+        surface_max_dense_dim=p.max_dense_dim)
     assert estimate_solver_bytes(settings) < 12 * GIB
 
 
 def test_draft_is_the_same_scene_at_half_resolution():
     hero, draft = ns.PRESETS[ns.HERO], ns.PRESETS[ns.DRAFT]
     assert draft.voxel == pytest.approx(2 * hero.voxel)
-    assert ns.expected_particles(draft) == pytest.approx(ns.expected_particles(hero) / 4, rel=1e-6)
+    assert ns.expected_particles(draft) == pytest.approx(ns.expected_particles(hero) / 8, rel=1e-6)
 
 
 def test_preset_lookup(monkeypatch):
@@ -209,4 +220,6 @@ def test_builder_and_renderer_are_wired_to_the_shared_numbers():
     with open(os.path.join(REPO, "tools", "demos", "render_nets_showcase.py"), encoding="utf-8") as fh:
         renderer = fh.read()
     assert "render_extractor.backend" in renderer
+    # A paused or failed step must stop the capture, not save the old surface again.
+    assert "sess.last_frame != frame" in renderer
     assert "FLUIDSIM_SURFACE_BACKEND" in renderer or "ns.BACKEND_ENV" in renderer

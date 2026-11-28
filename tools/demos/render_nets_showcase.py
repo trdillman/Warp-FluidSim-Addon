@@ -16,7 +16,9 @@ PNGs and encodes ``nets_showcase.mp4``.
 
 Options (after ``--``): ``--frames A B`` (default: the scene's range),
 ``--samples N`` (default 128), ``--size W H`` (default 1920 1080), ``--engine
-CYCLES|EEVEE``, ``--still FRAME`` (render one frame and stop), ``--out DIR`` (default ``artifacts/nets_showcase``), ``--blend PATH``.
+CYCLES|EEVEE``, ``--still FRAME`` (render one frame and stop), ``--resume`` (keep PNGs
+already rendered with the same size, samples, engine and meshes; without it
+every frame is rendered again), ``--out DIR`` (default ``artifacts/nets_showcase``), ``--blend PATH``.
 ``--look-test`` renders a stand-in splash so the lighting can be checked
 without a simulation.
 """
@@ -50,7 +52,7 @@ def log(msg):
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     opts = {"stage": None, "frames": None, "samples": 128, "size": (1920, 1080),
-            "engine": "CYCLES", "still": None, "look_test": False,
+            "engine": "CYCLES", "still": None, "look_test": False, "resume": False,
             "out": DEFAULT_OUT, "blend": DEFAULT_BLEND}
     i = 0
     while i < len(argv):
@@ -78,6 +80,8 @@ def parse_args():
         elif a == "--blend":
             opts["blend"] = os.path.abspath(argv[i + 1])
             i += 1
+        elif a == "--resume":
+            opts["resume"] = True
         elif a == "--look-test":
             opts["look_test"] = True
         else:
@@ -147,6 +151,15 @@ def run_sim(opts):
             if frame == scene.frame_start:
                 continue
             raise RuntimeError(f"frame {frame}: no active solver")
+        # A failed step pauses Live and keeps the old solver and surface, which
+        # would be saved again under this frame number. Stop instead.
+        if frame != scene.frame_start:
+            error = str(getattr(sess, "error", "") or "")
+            if error or not scene.fluidsim.live or sess.last_frame != frame:
+                raise RuntimeError(
+                    f"frame {frame}: the simulation did not advance "
+                    f"(live={scene.fluidsim.live}, last_frame={sess.last_frame}, "
+                    f"error={error or scene.fluidsim.status!r})")
         backend = solver.surface.render_extractor.backend
         if backend != ns.BACKEND:
             raise RuntimeError(
@@ -437,6 +450,13 @@ def encode_with_ffmpeg(frames_dir, frames, out_path):
                     "-crf", "16", "-preset", "slow", out_path], check=True)
 
 
+def mesh_stamp(mesh_dir):
+    """Changes whenever the saved meshes do (names, sizes and times)."""
+    names = sorted(n for n in os.listdir(mesh_dir) if n.endswith(".npy"))
+    return [[n, os.path.getsize(os.path.join(mesh_dir, n)),
+             int(os.path.getmtime(os.path.join(mesh_dir, n)))] for n in names]
+
+
 def run_render(opts):
     out = opts["out"]
     mesh_dir = os.path.join(out, "meshes")
@@ -491,9 +511,22 @@ def run_render(opts):
         raise SystemExit(f"no meshes in {mesh_dir}; run the sim stage first")
     t0 = time.perf_counter()
     rendered = []
+    config = {"size": list(opts["size"]), "samples": opts["samples"],
+              "engine": opts["engine"], "preset": ns.preset().name,
+              "mesh_stamp": mesh_stamp(mesh_dir)}
+    config_path = os.path.join(frames_dir, "render_config.json")
+    keep = False
+    if opts["resume"] and os.path.exists(config_path):
+        with open(config_path, encoding="utf-8") as fh:
+            keep = json.load(fh) == config
+        if not keep:
+            log("render settings or meshes changed since the last run; rendering every frame again")
+    if opts["still"] is None:
+        with open(config_path, "w", encoding="utf-8") as fh:
+            json.dump(config, fh)
     for f in frames:
         path = os.path.join(frames_dir, f"frame_{f:04d}.png")
-        if not os.path.exists(path) or opts["still"] is not None:
+        if not (keep and os.path.exists(path)) or opts["still"] is not None:
             verts = np.load(os.path.join(mesh_dir, f"verts_{f:04d}.npy"))
             tris = np.load(os.path.join(mesh_dir, f"tris_{f:04d}.npy"))
             set_water_mesh(water, verts, tris)

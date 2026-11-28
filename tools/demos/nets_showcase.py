@@ -23,6 +23,9 @@ Layout rules that come from the Surface Nets review (see
 * Every drop is at least ``MIN_DROP_VOXELS`` voxels across at the hero
   resolution, so the "small droplets shrink" effect of Surface Nets is small
   next to the drop itself. Spray finer than that will shrink a little.
+* Narrow Band is off and the pool is a thin film (8 mm). A source's startup
+  demand is its whole volume, so a deep pool would be booked at tens of
+  millions of particles before any narrow-band culling.
 * The domain is a long box, not a cube. The Surface Nets extractor works in a
   dense box, 40 bytes per voxel in the add-on's own memory estimate, so the two
   short axes are kept short to fit a 16 GB card.
@@ -50,7 +53,6 @@ TIME_SCALE = 0.30
 FRAMES = 144
 MAX_SUBSTEPS = 32
 PARTICLES_PER_VOXEL = 8.0
-NARROW_BAND_VOXELS = 3.0
 
 G = 9.81
 
@@ -71,10 +73,10 @@ class Preset:
 
 
 PRESETS = {
-    HERO: Preset(HERO, voxel=0.001, leaf_capacity=32768,
-                 max_particles=4_500_000, max_dense_dim=576),
+    HERO: Preset(HERO, voxel=0.001, leaf_capacity=24576,
+                 max_particles=8_000_000, max_dense_dim=576),
     DRAFT: Preset(DRAFT, voxel=0.002, leaf_capacity=8192,
-                  max_particles=1_200_000, max_dense_dim=288),
+                  max_particles=1_300_000, max_dense_dim=288),
 }
 
 
@@ -91,13 +93,13 @@ def preset(name=None):
 
 DOMAIN_HX, DOMAIN_HY = 0.28, 0.17
 DOMAIN_LO = (-DOMAIN_HX, -DOMAIN_HY, 0.0)
-DOMAIN_HI = (DOMAIN_HX, DOMAIN_HY, 0.44)
+DOMAIN_HI = (DOMAIN_HX, DOMAIN_HY, 0.40)
 
 SLAB_TOP = 0.03          # the floor the pool sits on, well above the domain floor
 SLAB_BELOW = 0.05        # collider reaches below the domain floor
 SLAB_OVERHANG = 0.02     # and past the sides, so no liquid can reach the walls' edge
 POOL_HX, POOL_HY = 0.22, 0.10   # inner half sizes of the trough
-POOL_DEPTH = 0.05
+POOL_DEPTH = 0.008      # a thin film: every pool voxel holds particles, see expected_particles
 POOL_TOP = SLAB_TOP + POOL_DEPTH
 WALL_THICKNESS = 0.014
 WALL_TOP = POOL_TOP + 0.03
@@ -127,8 +129,8 @@ class Drop:
         return self.center[2] + self.radius
 
 
-# Biggest first, left to right. Impacts at about frames 5, 9 and 14 (liquid
-# time per frame is TIME_SCALE / FPS = 12.5 ms).
+# Biggest first, left to right. Impacts at about frames 5, 9 and 14 (liquid time per
+# frame is TIME_SCALE / FPS = 12.5 ms).
 DROPS = (
     Drop("Nets Drop A", (-0.130, 0.000), 0.028, 3.0, 0.045),
     Drop("Nets Drop B", (0.000, 0.015), 0.020, 2.0, 0.100),
@@ -136,8 +138,8 @@ DROPS = (
 )
 
 # Camera for a 16:9 frame: a little above the trough rim, looking along its side.
-CAMERA_LOCATION = (0.0, -1.05, 0.36)
-CAMERA_TARGET = (0.0, 0.0, 0.20)
+CAMERA_LOCATION = (0.0, -1.00, 0.32)
+CAMERA_TARGET = (0.0, 0.0, 0.17)
 CAMERA_LENS = 45.0
 
 WATER_COLOR = (0.55, 0.80, 0.95, 1.0)
@@ -177,22 +179,18 @@ def pool_volume():
 
 
 def expected_particles(p=None):
-    """Initial-fill particles with Narrow Band on (a shell estimate).
+    """Particles the Initial Fill emits (pool plus drops), at 8 per voxel.
 
-    The pool keeps ``NARROW_BAND_VOXELS`` of particles under its top face and
-    each drop keeps the same under its skin. The builder reports the real
-    count; this is for sizing the reserve and for the tests.
+    Narrow Band is off. A source's startup demand is its full volume (the
+    admission planner books it before any culling), so a deep pool would be
+    budgeted at tens of millions of particles. The pool is a thin film instead,
+    a few voxels deep, and every voxel of it holds particles anyway.
     """
     p = p or preset()
-    band = NARROW_BAND_VOXELS * p.voxel
-    per_voxel = PARTICLES_PER_VOXEL / p.voxel ** 3
-    pool = pool_area() * band
-    drops = sum(4.0 * math.pi * d.radius ** 2 * band for d in DROPS)
-    return (pool + drops) * per_voxel
+    return full_fill_particles(p)
 
 
 def full_fill_particles(p=None):
-    """What the same fill would cost without Narrow Band."""
     p = p or preset()
     volume = pool_volume() + sum(4.0 / 3.0 * math.pi * d.radius ** 3 for d in DROPS)
     return volume / p.voxel ** 3 * PARTICLES_PER_VOXEL
