@@ -157,6 +157,8 @@ REPORT_ACCEPTANCE = (
      "artifacts/fspt_surface_pool_acceptance.json", "FSPT-SURFACE-POOL-PASS"),
     ("FSPT device geometry consumer", "tests/acceptance/blender_fspt_device_consumer_acceptance.py",
      "artifacts/fspt_device_consumer_acceptance.json", "FSPT-DEVICE-CONSUMER-PASS"),
+    ("FSPT demand-driven device producer", "tests/acceptance/blender_fspt_device_bridge_acceptance.py",
+     "artifacts/fspt_device_bridge_acceptance.json", "FSPT-DEVICE-BRIDGE-PASS"),
     ("FSPT aggregate geometry reuse", "tests/acceptance/blender_fspt_persistent_assets.py",
      "artifacts/fspt_persistent_assets.json", "FSPT-PERSISTENT-ASSETS-PASS"),
     ("FSPT solver completion clock", "tests/acceptance/blender_fspt_state_clock_acceptance.py",
