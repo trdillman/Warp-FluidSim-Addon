@@ -67,7 +67,7 @@ def test_fspt_async_gui_and_live_proofs_remain_in_the_full_production_gate():
     assert {"tests/acceptance/blender_fspt_async_viewport_acceptance.py",
             "tests/acceptance/blender_fspt_async_live_acceptance.py"} <= launched
     source = GATE_PATH.read_text(encoding="utf-8")
-    assert '"--cycles", "50"' in source
+    assert '"--lifecycle-cycles", "50"' in source
     assert '"--states", "240"' in source and '"--soak-seconds", "600"' in source
     assert "tests/acceptance/blender_fspt_live_acceptance.py" in gate.MANUAL_BLENDER_PROBES
     for filename, marker in (

@@ -1159,7 +1159,7 @@ def _production_main(argv=None):
             blender_exe, "--factory-startup", "--python-exit-code", "1",
             "--python", "tests/acceptance/blender_fspt_async_viewport_acceptance.py",
             "--", "--json-out", str(_RUN_DIRECTORY / "fspt-async-viewport.json"),
-            "--cycles", "50", "--deadline", "360",
+            "--lifecycle-cycles", "50", "--deadline", "360",
         ), env=env, reject_output=True, expect_marker="FSPT-ASYNC-VIEWPORT-PASS")
         _run("FSPT changing asynchronous live surface acceptance", _blender(
             blender_exe, "--factory-startup", "--python-exit-code", "1",

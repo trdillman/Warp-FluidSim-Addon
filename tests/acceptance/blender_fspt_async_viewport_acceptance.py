@@ -30,7 +30,7 @@ def arguments():
     parser.add_argument("--json-out", type=Path, required=True)
     parser.add_argument("--addon-root", type=Path, default=ROOT)
     parser.add_argument("--addon-module", default="fluidSim_warp_blender51")
-    parser.add_argument("--cycles", type=int, default=50)
+    parser.add_argument("--lifecycle-cycles", dest="cycles", type=int, default=50)
     parser.add_argument("--deadline", type=float, default=360)
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else [])
     if not 1 <= args.cycles <= 200 or not 0 < args.deadline <= 900:
