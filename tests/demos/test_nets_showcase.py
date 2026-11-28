@@ -84,7 +84,7 @@ def test_trough_wall_parts_do_not_overlap_inside_one_mesh():
 
 def test_drops_are_big_enough_for_surface_nets_at_hero_resolution():
     for drop in ns.DROPS:
-        assert ns.drop_voxels(drop) >= ns.MIN_DROP_VOXELS
+        assert ns.drop_voxels(drop, ns.PRESETS[ns.HERO]) >= ns.MIN_DROP_VOXELS
 
 
 def test_impacts_are_gentle():
