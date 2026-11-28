@@ -35,6 +35,8 @@ launched by path from outside the repo (`wt_gate.ps1`, README/AGENTS/CI notes).
 | `upres_cove.py` | Preset for the opt-in `upres_cove` guided upres review scene (the dam_break cove at 2 cm, ~864k particles), outside the gallery and demo gate | `build_demo_scenes.py`, `profiling/compare_guided_upres.py`, `tests/demos/test_upres_cove.py` |
 | `nets_showcase.py` | Layout, presets (hero 1 mm / draft 2 mm), meshes and the resolution-vs-Upres-Cove numbers for the opt-in `nets_showcase` Surface Nets demo, outside the gallery and demo gate | `build_demo_scenes.py`, `render_nets_showcase.py`, `tests/demos/test_nets_showcase.py` |
 | `render_nets_showcase.py` | Blender script, two stages: `sim` plays the saved demo with the Surface Nets backend and saves each frame's mesh; `render` lights it and writes PNGs and an mp4 (Cycles) | manual (`docs/NETS_SHOWCASE.md`), `tests/demos/test_nets_showcase.py` |
+| `live_demo.py` | Shows any demo live: builds this checkout's add-on, installs it into a temporary Blender profile, opens the demo with Live on, cache playback off and the Liquid Deck on, and presses Play | manual (`docs/LIVE_DEMOS.md`), `tests/demos/test_live_demo.py` |
+| `live_demo_boot.py` | Blender-side half of `live_demo.py`: checks the loaded add-on, sets Live and the Deck, frames the viewport, presses Play and writes a status file | `live_demo.py` |
 
 ### `learned_guess/` (4.0 learned pressure guess; developer machine only)
 Pure-Warp scenes plus a PyTorch trainer; torch never ships. Datasets and
