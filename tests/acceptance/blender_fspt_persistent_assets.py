@@ -21,7 +21,9 @@ def oracle_kernel(wp):
                    sky: wp.vec3, matrix: wp.mat44, width: int, height: int, seed: int,
                    output: wp.array(dtype=wp.vec4)):
         pixel = wp.tid()
-        rng = wp.rand_init(seed, pixel)
+        # Independent expression of the documented seed/pixel/sample-zero key.
+        # Do not call the production sampler or integrator in this oracle.
+        rng = wp.rand_init(wp.int32(wp.rand_init(seed, pixel)), 0)
         x = 2.0 * (float(pixel % width) + wp.randf(rng)) / float(width) - 1.0
         y = 2.0 * (float(pixel // width) + wp.randf(rng)) / float(height) - 1.0
         start = matrix * wp.vec4(x, y, -1.0, 1.0)

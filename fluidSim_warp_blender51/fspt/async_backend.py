@@ -23,46 +23,103 @@ BACKEND_ID = "warp-cuda-async-v1"
 TRANSPORT_ID = "host-pinned-rgba32f"
 
 
+class CheckedSubmissionDiscarded(RuntimeError):
+    """A failed job was discarded only after checked owned-work retirement."""
+
+
 @dataclass
 class _StreamRetirement:
     result: int | None = None
+    attempts: int = 0
+
+
+# Last-resort strong ownership when Python finalization itself encounters a
+# native failure. Explicit retire() retries remove the matching owner only.
+_UNRETIRED_STREAMS = set()
+
+
+class _StreamCreationError(RuntimeError):
+    def __init__(self, stream):
+        super().__init__('FSPT stream construction cleanup requires checked retirement')
+        self.stream = stream
 
 
 def _nonblocking_stream(wp, device):
     # Warp 1.19's own Stream(device) uses CU_STREAM_DEFAULT. Let its wrapper
     # borrow a nonblocking stream and unregister before native destruction.
     driver = cuda_driver()
-    handle = driver.create_nonblocking(wp, device)
 
     class OwnedStream(wp.Stream):
+        def retire(self):
+            """Destroy the exact owned handle once, retaining failed attempts."""
+            with self._retirement_lock:
+                if self._native_handle is None:
+                    return
+                try:
+                    if self.cuda_stream and not self._unregistered:
+                        # Warp 1.19's borrowed Stream.__del__ suppresses some
+                        # failures and does not clear its handle. Call its
+                        # primary unregister operation explicitly and once.
+                        device.runtime.core.wp_cuda_stream_unregister(device.context, self.cuda_stream)
+                        self._unregistered = True
+                    self.retirement.attempts += 1
+                    self.retirement.result = driver.destroy(wp, device, self._native_handle)
+                    check_cuda(self.retirement.result, 'cuStreamDestroy_v2')
+                except BaseException:
+                    _UNRETIRED_STREAMS.add(self)
+                    raise
+                self._native_handle = self.cuda_stream = None
+                _UNRETIRED_STREAMS.discard(self)
+
+        def _require_open(self):
+            if self._native_handle is None or self._unregistered:
+                raise RuntimeError('FSPT CUDA stream is retiring or retired')
+
         def record_checked(self, stream):
+            self._require_open()
             event = wp.Event(device)
             driver.record(wp, device, stream, event)
             return event
 
         def wait_checked(self, event):
+            self._require_open()
             driver.wait(wp, device, self, event)
 
         def completed(self, event):
+            self._require_open()
             return driver.completed(wp, device, event)
 
         def __del__(self):
             try:
-                super().__del__()  # Warp unregisters its borrowed stream first
-            finally:
-                receipt = getattr(self, "retirement", None)
-                if receipt is not None and receipt.result is None:
-                    receipt.result = driver.destroy(wp, device, handle)
+                if hasattr(self, '_native_handle'):
+                    self.retire()
+            except BaseException:
+                # Retain the raw handle and wrapper if destructor fallback
+                # cannot prove retirement; never let Warp destroy it again.
+                _UNRETIRED_STREAMS.add(self)
 
     with wp.ScopedDevice(device):
-        try:
-            stream = OwnedStream(device, cuda_stream=handle)
-        except BaseException:
-            check_cuda(driver.destroy(wp, device, handle), "cuStreamDestroy_v2")
-            raise
+        # Create the Python owner before allocating its native handle, so a
+        # failed wrapper allocation cannot orphan an already-created stream.
+        stream = OwnedStream.__new__(OwnedStream)
+        stream._native_handle = None
+        stream._unregistered = False
+        stream._retirement_lock = RLock()
         stream.retirement = _StreamRetirement()
-        if stream.is_blocking:
-            raise RuntimeError("FSPT CUDA driver stream is blocking")
+        # __new__ on Warp initializes this; explicit initialization also keeps
+        # constructor-failure test doubles and partial wrappers well-defined.
+        stream.cuda_stream = None
+        try:
+            stream._native_handle = driver.create_nonblocking(wp, device)
+            OwnedStream.__init__(stream, device, cuda_stream=stream._native_handle)
+            if stream.is_blocking:
+                raise RuntimeError("FSPT CUDA driver stream is blocking")
+        except BaseException:
+            try:
+                stream.retire()
+            except BaseException as exc:
+                raise _StreamCreationError(stream) from exc
+            raise
     return stream
 
 
@@ -100,6 +157,7 @@ class AsyncCudaBackend(CudaBackend):
         self._render_stream = None
         self._pinned = None
         self._capacity = 0
+        self._closing = False
 
     @property
     def pending(self):
@@ -126,7 +184,7 @@ class AsyncCudaBackend(CudaBackend):
             self._state_lock.release()
 
     def _submit(self, scene, camera, width, height, samples, max_bounces, seed, final):
-        if self.closed:
+        if self.closed or self._closing:
             raise RuntimeError("FSPT backend is closed")
         if self.pending:
             return False
@@ -179,6 +237,9 @@ class AsyncCudaBackend(CudaBackend):
             self._queue_geometry_validation(stream)
             job.copied = stream.record_checked(stream)
         except BaseException as exc:
+            if isinstance(exc, _StreamCreationError):
+                self._render_stream = exc.stream
+                self._closing = True
             self._abort(exc)
             raise
         return True
@@ -198,7 +259,7 @@ class AsyncCudaBackend(CudaBackend):
             return None
         if job.failure is not None:
             self._abort(job.failure)
-            raise RuntimeError("FSPT discarded a failed submission")
+            raise CheckedSubmissionDiscarded("FSPT discarded a failed submission")
         try:
             if wait:
                 self.wp.synchronize_event(job.copied)
@@ -273,18 +334,27 @@ class AsyncCudaBackend(CudaBackend):
         with self._state_lock:
             if self.closed:
                 return
+            self._closing = True
             self.arbiter.cancel(self.owner)
             if self.pending:
                 self._abort(RuntimeError("FSPT submission cancelled by close"))
+            stream = self._render_stream
+            if stream is not None:
+                retire = getattr(stream, 'retire', None)
+                if retire is not None:
+                    retire()
+                else:
+                    retirement = getattr(stream, 'retirement', None)
+                    if retirement is not None:
+                        if retirement.result is None:
+                            raise RuntimeError('FSPT CUDA stream retirement has no checked receipt')
+                        check_cuda(retirement.result, 'cuStreamDestroy_v2')
             self._forget_scene()
             self.accumulation = self.output = self._pinned = None
-            retirement = getattr(self._render_stream, "retirement", None)
             self._prepare_stream = self._render_stream = None
             self._capacity = 0
             self.history = AccumulationState()
             self.closed = True
-            if retirement is not None and retirement.result is not None:
-                check_cuda(retirement.result, "cuStreamDestroy_v2")
 
     def __del__(self):
         if hasattr(self, "_state_lock") and not self.closed:

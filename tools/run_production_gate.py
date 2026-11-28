@@ -387,6 +387,7 @@ def _reject_json_constant(value):
 
 def _record_fspt_report(label, script, path):
     from tools.gate.qualification import atomic_json
+    from tools.gate.fspt_evidence import validate_report
 
     if not path.is_file() or path.is_symlink():
         raise RuntimeError(f"{label}: missing FSPT acceptance report: {path}")
@@ -399,8 +400,10 @@ def _record_fspt_report(label, script, path):
         raise RuntimeError(f"{label}: expected a JSON object in FSPT acceptance report: {path}")
     if report.get("status") != "VERIFIED":
         raise RuntimeError(f"{label}: FSPT acceptance report status {report.get('status')!r}: {path}")
+    originals = validate_report(ROOT, script, path, report, _QUALIFICATION)
     receipt = {"step": label, "script": script, "report": str(path), "status": "VERIFIED",
-               "run_id": _RUN_DIRECTORY.name, "sha256": hashlib.sha256(payload).hexdigest()}
+               "run_id": _RUN_DIRECTORY.name, "sha256": hashlib.sha256(payload).hexdigest(),
+               "evidence_files": originals}
     atomic_json(path.with_suffix(".receipt.json"), receipt)
     _FSPT_REPORTS[script] = receipt
 
@@ -412,6 +415,10 @@ def _fspt_report_manifest():
         report = Path(receipt["report"])
         if not report.is_file() or report.is_symlink() or sha256(report) != receipt["sha256"]:
             raise RuntimeError(f"FSPT acceptance report changed or disappeared: {report}")
+        for name, expected in receipt.get("evidence_files", {}).items():
+            original = Path(name)
+            if not original.is_file() or original.is_symlink() or sha256(original) != expected:
+                raise RuntimeError(f"FSPT original evidence changed or disappeared: {original}")
     return dict(_FSPT_REPORTS)
 
 
@@ -1155,6 +1162,7 @@ def _production_main(argv=None):
         "tests/acceptance/blender_fspt_live_acceptance.py",
         "tests/acceptance/blender_fspt_async_viewport_acceptance.py",
         "tests/acceptance/blender_fspt_async_live_acceptance.py",
+        "tests/acceptance/blender_fspt_device_viewport_acceptance.py",
         "tests/acceptance/blender_gui_playback_probe.py",
         "tests/acceptance/blender_rigid_authoring_ui_acceptance.py",
         "tests/acceptance/blender_viewport_2frame_gate.py",
@@ -1264,6 +1272,12 @@ def _production_main(argv=None):
         entry for entry in entries if entry[1] in QUIET_ACCEPTANCE],
         name="gate_batch_quiet")
     if include_gui:
+        _run("FSPT device publication and GUI-worker Final handoff", _blender(
+            blender_exe, "--factory-startup", "--python-exit-code", "1",
+            "--python", "tests/acceptance/blender_fspt_device_viewport_acceptance.py",
+            "--", "--json-out", str(_RUN_DIRECTORY / "fspt-device-viewport.json"),
+            "--deadline", "240",
+        ), env=env, reject_output=True, expect_marker="FSPT-DEVICE-VIEWPORT-PASS")
         _run("FSPT asynchronous viewport lifecycle acceptance", _blender(
             blender_exe, "--factory-startup", "--python-exit-code", "1",
             "--python", "tests/acceptance/blender_fspt_async_viewport_acceptance.py",

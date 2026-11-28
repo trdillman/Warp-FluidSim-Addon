@@ -181,6 +181,24 @@ def viewport_observations():
     return [dict(engine._view_info) for engine in tuple(_ENGINES) if engine._view_info]
 
 
+def _retire_failed_views():
+    """Retry strong orphan owners at an explicit main-thread lifecycle boundary."""
+    for view in tuple(_COORDINATOR.retirement_failures):
+        try:
+            owner = next((engine for engine in tuple(_ENGINES)
+                          if getattr(engine, '_view', None) is view), None)
+            if owner is None:
+                view.retire_backend()
+            else:
+                # Finish the enclosing engine cleanup as well; a recovered
+                # live engine must not retain a permanently closed view.
+                owner.close()
+        except Exception as exc:
+            # retire_backend keeps this view registered and strongly owned.
+            # An independent failed device must not prevent other retirement.
+            print(f"FSPT retained viewport retirement failed: {exc}")
+
+
 @bpy.app.handlers.persistent
 def _on_fspt_view_history_pre(*_args):
     from ..fspt.final_handoff import MAIN_FINAL_HANDOFF
@@ -191,6 +209,7 @@ def _on_fspt_view_history_pre(*_args):
             engine.close()
         except Exception as exc:
             print(f"FSPT history retirement failed: {exc}")
+    _retire_failed_views()
     _retire_failed_finals()
     _device_runtime().shutdown()
 
@@ -714,6 +733,9 @@ def register():
 def unregister():
     global _REGISTERED
     if not _REGISTERED:
+        _retire_failed_views()
+        _retire_failed_finals()
+        _device_runtime().shutdown()
         return
     _REGISTERED = False
     if bpy.app.timers.is_registered(_pump_views):
@@ -732,6 +754,7 @@ def unregister():
             engine.close()
         except Exception as exc:
             print(f"FSPT backend teardown failed: {exc}")
+    _retire_failed_views()
     _retire_failed_finals()
     _device_runtime().shutdown()
     if hasattr(bpy.types.Scene, "fspt"):

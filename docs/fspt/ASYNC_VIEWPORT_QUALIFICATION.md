@@ -8,6 +8,28 @@ full liquid appearance or an installed package.
 
 ## Qualification ledger
 
+### Sampling correction after independent review
+
+The original sampling key added seed and absolute sample number. That made
+adjacent seeds share almost every sample stream in a long render: seed 31/sample 1
+and seed 32/sample 0 were identical in the retained Warp CPU control. The corrected
+key hashes seed/pixel first, then the absolute sample index, with explicit 32-bit
+wrapping. An independently written flat-mesh primary-ray oracle uses the same
+documented sample-zero mapping without calling the production helper.
+
+Actual Warp CPU tracing now separates the formerly identical pair while keeping
+same-seed split and single-dispatch progressive renders bitwise equal. Boundary
+controls include pixel 16,777,215 and sample 4,095 against an independent integer
+PCG reference. The independent review observed 2,525 of 32,768 glass pixels differ
+across the formerly aliased pair; normal-incidence reflection and transmission
+weight remained consistent with their analytic controls. A finite 32-bit state
+still permits collisions. This fixes exact systematic reuse; it does not certify
+statistical independence or the roadmap's final optical confidence requirements.
+All image receipts below remain bound to their original source; successor native
+pixel and GUI qualification are required after this sampler change.
+
+### Retained native and host receipts
+
 | Candidate / lane | Observed result | Evidence boundary |
 | --- | --- | --- |
 | Cloud async candidate and gate inventory | 196 render/inventory tests passed before the final FIFO controls; 75 focused controls passed after that correction; full configured Ruff passed all 13 manifest files | Host control logic only. Final two-file FIFO change preserves active GPU leases and withdraws obsolete queued intent. |

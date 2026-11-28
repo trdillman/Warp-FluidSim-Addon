@@ -102,6 +102,32 @@ No earlier failure is relabelled as a pass.
 
 ## Integrated qualification status
 
+The first integrated native broker candidate, `a113b5dd51ee9d60ccd9d82f45aa2ebe5aa46f72`,
+failed at the two-facade transition. The retained report is
+`viewport-backend-a113b5dd51-20261128T055117396702Z/viewport-backend/acceptance.json`
+(SHA-256 `133d08eb2046786fb1b697a9384993cb87acbb3ac4713eeeaad6aaaad50b170c`).
+An artifact-only timing probe on unchanged source measured 15.002368 seconds
+inside an idle peer's close while another stream was held by the verifier.
+Its failed report, SHA-256
+`44ee808ea2e8c181b4c56e8bd216ff73c758b21811cba8d2982252b51e7fe6d9`,
+is retained under `viewport-diag-a113b5dd51-20261128T055602619084Z/viewport-diag/`.
+The native timeout was not extended or reclassified.
+
+The reviewed successor polls the full facade cohort before destructive cleanup
+and holds device admission through reclamation. Ordinary view closure only
+withdraws intent and leaves the delegate strongly owned. Explicit broker close
+drains all pending delegates and refuses success while any delegate remains,
+including evaluated backends outside the optional geometry ledger. Native stream
+destruction is explicit and retryable: a failed destroy retains its raw handle,
+wrapper and failure state, even when other Python references still exist.
+
+Lifecycle cleanup retries orphaned failed views and failed Final owners. A
+poisoned pool permits one checked recovery pass; active peers and denied admission
+preserve that unused attempt. A typed result distinguishes a discarded job whose
+drain succeeded from an unclassified cleanup failure. Only checked bridge close
+with zero bytes and zero generations clears the block. These repairs passed
+independent host controls; they still require successor native qualification.
+
 Host runtime/render regressions, focused adversarial review controls, Ruff and
 source manifests are retained with the candidate. Native broker/worker acceptance
 is now a required report-producing production-gate lane. It uses real CUDA
@@ -110,8 +136,22 @@ multiple facades, zero-byte generations, failed-read recovery and guarded actual
 Blender static capture. Its supplied selection binding is explicitly a component
 fixture, not a claim of ordinary runtime/GUI publication provenance.
 
-At this document's initial source checkpoint, native integrated runtime/Final
-qualification and the full normal production gate are pending. Their exact
+The full production gate also requires the controlled device-publication and
+GUI-worker Final verifier. It must retain two advancing native Session GPU
+publications, independent GPU/evaluated geometry observations and changing images,
+then invoke a real Blender Final while a viewport job is pending. The engine's
+own main-thread timer must retire its owned aggregate before Final allocation,
+and preserve admission through checked Final close. This fixture does not claim
+ordinary rendered-region GPU eligibility, display timing or performance.
+
+The controller grades required cases, source and runtime identities, ordered
+ownership receipts and distinct nonempty originals. It rehashes originals at
+manifest time. Active root test configurations are part of the verifier
+fingerprint, including all pytest 9 discovery names; an ignored untracked config
+cannot silently replace the reviewed test options.
+
+Native integrated runtime/Final qualification and the full normal production
+gate remain pending at this successor source checkpoint. Their exact
 candidate reports must be added before claiming those scopes. Existing limited
 functional proof does not satisfy 24 fresh states/s, simulation/wall ratio,
 1080p/1M-triangle throughput, completion-to-presentation age, 1.05 solver overhead,

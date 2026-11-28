@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from threading import RLock, current_thread
 
+from .async_backend import CheckedSubmissionDiscarded
 from .contracts import SceneSnapshot
 from .device_scene import DeviceSceneRequest, DeviceSceneUnavailable
 from .scheduler import get_arbiter
@@ -35,6 +36,8 @@ class ViewportBackendBroker:
         self._thread = current_thread()
         self._mode = self._target = mode
         self._views = set()
+        self._retirement_owner = object()
+        self.retirement_deferred = False
         self.closed = False
 
     def _check_thread(self):
@@ -98,22 +101,46 @@ class ViewportBackendBroker:
     def pump(self):
         """Poll once, never synchronize a job or release an unproven allocation."""
         self._check_thread()
+        self.retirement_deferred = False
         waiting = False
         transition = self._mode is None
-        for view in tuple(self._views):
-            if not view._lock.acquire(blocking=False):
-                waiting = True
-                continue
-            try:
+        locked = []
+        lease = None
+        try:
+            # Phase one observes the entire cohort before any destructive
+            # close. CUDA allocation/stream destruction can otherwise wait on
+            # an unrelated pending peer even when this delegate is idle.
+            for view in tuple(self._views):
+                if not view._lock.acquire(blocking=False):
+                    waiting = True
+                    continue
+                locked.append(view)
                 delegate = view._delegate
-                retiring = transition or view.closed or self.closed
-                if delegate is not None and retiring and delegate.pending:
-                    completed = delegate.collect()
+                if delegate is not None and delegate.pending:
+                    try:
+                        completed = delegate.collect()
+                    except CheckedSubmissionDiscarded:
+                        if (delegate.pending or not (transition or view.closed or self.closed
+                                                     or self.recovery_required)):
+                            raise
+                        completed = None
                     if completed is not None and not view.closed:
                         view._completed = completed
                     if delegate.pending:
                         waiting = True
-                        continue
+            if waiting:
+                self.retirement_deferred = True
+                return self.ready_mode
+            # Hold device admission through reclamation, so a new peer cannot
+            # start between an idle observation and a CUDA free/destroy call.
+            lease = self.arbiter.try_acquire(self._retirement_owner)
+            if lease is None:
+                self.arbiter.cancel(self._retirement_owner)
+                self.retirement_deferred = True
+                return self.ready_mode
+            for view in locked:
+                delegate = view._delegate
+                retiring = transition or view.closed or self.closed
                 if delegate is not None and not delegate.pending:
                     retire = getattr(delegate, 'retire_completed_geometry', None)
                     if retire is not None:
@@ -124,16 +151,20 @@ class ViewportBackendBroker:
                 if view.closed and view._delegate is None:
                     view._completed = None
                     self._views.discard(view)
-            finally:
+            self.geometry_budget.pool.poll()
+            if transition and not any(v._delegate is not None for v in self._views):
+                # Retired generations count until their last-read proof.
+                if (self.geometry_budget.reserved_bytes == 0
+                        and self.geometry_budget.generation_count == 0):
+                    self._mode = self._target
+            return self.ready_mode
+        finally:
+            if lease is not None:
+                self.arbiter.release(lease)
+            else:
+                self.arbiter.cancel(self._retirement_owner)
+            for view in reversed(locked):
                 view._lock.release()
-        self.geometry_budget.pool.poll()
-        if transition and not waiting and not any(v._delegate is not None for v in self._views):
-            # Closed device backends can still be retained by last-read fences.
-            # No evaluated constructor is permitted until the actual ledger is empty.
-            if (self.geometry_budget.reserved_bytes == 0
-                    and self.geometry_budget.generation_count == 0):
-                self._mode = self._target
-        return self.ready_mode
 
     def close(self):
         """Explicit lifecycle drain; the runtime closes the pool after this owner."""
@@ -143,7 +174,21 @@ class ViewportBackendBroker:
             self.closed = True
         for view in tuple(self._views):
             view.close()
+        # Explicit lifecycle teardown may wait for owned work. Drain the whole
+        # cohort before pump performs any native resource disposal, including
+        # evaluated delegates that have no entries in the geometry ledger.
+        for view in tuple(self._views):
+            with view._lock:
+                delegate = view._delegate
+                if delegate is not None and delegate.pending:
+                    try:
+                        delegate.collect(wait=True)
+                    except CheckedSubmissionDiscarded:
+                        if delegate.pending:
+                            raise
         self.pump()
+        if any(view._delegate is not None for view in self._views):
+            raise RouteTransitionPending('Viewport retirement deferred; delegates remain owned')
 
 
 class _ViewportBackend:
@@ -223,15 +268,8 @@ class _ViewportBackend:
             self._lock.release()
 
     def close(self):
-        # A render worker can request closure but cannot mutate the main-thread
-        # pool. The broker keeps this facade and delegate until its next pump.
+        # Ordinary closure on either thread only withdraws intent. Even an
+        # idle delegate's native frees can wait on an active peer; the broker
+        # retains every owner until its cohort/admission checks permit disposal.
         self.closed = True
         self._cancel()
-        if current_thread() is not self.broker._thread:
-            return
-        with self._lock:
-            if self._delegate is not None:
-                self._delegate.close()
-                self._delegate = None
-            self._completed = None
-        self.broker._views.discard(self)

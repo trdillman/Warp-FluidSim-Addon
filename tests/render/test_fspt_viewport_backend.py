@@ -113,11 +113,109 @@ def test_one_fallback_transitions_all_views_before_evaluated_allocation(routed):
         submit(left, host_scene(), a.camera)
     assert a.broker.ready_mode is None
     a.broker.pump()
-    assert a.delegates[0].closed and not a.delegates[1].closed
+    assert not any(delegate.closed for delegate in a.delegates)
     a.delegates[1].ready = True
     a.pool.ready = True
     assert a.broker.pump() == 'EVALUATED'
     assert all(d.closed for d in a.delegates)
+
+
+def test_idle_delegate_is_not_closed_or_reclaimed_behind_pending_peer(routed):
+    a = routed
+    left, right = a.broker.new_backend(), a.broker.new_backend()
+    assert submit(left, a.scene, a.camera)
+    a.delegates[0].ready = True
+    assert left.collect() is not None
+    assert submit(right, a.scene, a.camera)
+    a.broker.request_mode('EVALUATED')
+    retired = []
+    a.delegates[0].retire_completed_geometry = lambda: retired.append(True)
+    polls = a.pool.polls
+    assert a.broker.pump() is None
+    assert not retired and a.pool.polls == polls
+    assert not any(d.closed for d in a.delegates)
+    a.delegates[1].ready = True
+    a.pool.ready = True
+    assert a.broker.pump() == 'EVALUATED'
+    assert retired and right.collect() is not None
+
+
+def test_other_device_arbiter_owner_blocks_all_destructive_retirement(routed):
+    a = routed
+    view = a.broker.new_backend()
+    assert submit(view, a.scene, a.camera)
+    a.delegates[0].ready = True
+    view.collect()
+    a.broker.request_mode('EVALUATED')
+    rival = a.broker.arbiter.try_acquire(object())
+    polls = a.pool.polls
+    try:
+        assert a.broker.pump() is None
+        assert not a.delegates[0].closed and a.pool.polls == polls
+        assert a.broker._retirement_owner not in a.broker.arbiter._viewport_waiters
+    finally:
+        a.broker.arbiter.release(rival)
+    a.pool.ready = True
+    assert a.broker.pump() == 'EVALUATED'
+
+
+def test_reclamation_holds_arbiter_admission_across_close_and_pool_poll(routed):
+    a = routed
+    view = a.broker.new_backend()
+    assert submit(view, a.scene, a.camera)
+    a.delegates[0].ready = True
+    view.collect()
+    a.broker.request_mode('EVALUATED')
+    old_close, old_poll = a.delegates[0].close, a.pool.poll
+    observations = []
+
+    def check_then(function):
+        def guarded():
+            assert a.broker.arbiter._active.owner is a.broker._retirement_owner
+            rival = object()
+            assert a.broker.arbiter.try_acquire(rival) is None
+            a.broker.arbiter.cancel(rival)
+            observations.append(True)
+            return function()
+        return guarded
+
+    a.delegates[0].close = check_then(old_close)
+    a.pool.poll = check_then(old_poll)
+    a.pool.ready = True
+    try:
+        assert a.broker.pump() == 'EVALUATED'
+        assert observations == [True, True]
+        assert a.broker.arbiter._active is None
+    finally:
+        a.delegates[0].close, a.pool.poll = old_close, old_poll
+
+
+def test_unavailable_peer_lock_defers_every_close_and_pool_reclamation(routed):
+    from threading import Event
+
+    a = routed
+    left, right = a.broker.new_backend(), a.broker.new_backend()
+    assert submit(left, a.scene, a.camera)
+    a.delegates[0].ready = True
+    left.collect()
+    a.broker.request_mode('EVALUATED')
+    locked, release = Event(), Event()
+    def hold():
+        with right._lock:
+            locked.set()
+            assert release.wait(2)
+    worker = Thread(target=hold)
+    worker.start()
+    try:
+        assert locked.wait(2)
+        polls = a.pool.polls
+        assert a.broker.pump() is None
+        assert not a.delegates[0].closed and a.pool.polls == polls
+    finally:
+        release.set()
+        worker.join(2)
+    a.pool.ready = True
+    assert a.broker.pump() == 'EVALUATED'
 
 
 def test_gpu_reentry_is_explicit_and_never_silently_flips_peer_mode(routed):
@@ -245,3 +343,73 @@ def test_worker_close_keeps_pending_delegate_owned_until_main_pump(routed):
     a.pool.ready = True
     a.broker.pump()
     assert a.delegates[0].closed and view not in a.broker._views
+
+
+def test_main_facade_close_keeps_idle_delegate_until_active_peer_has_completed(routed):
+    a = routed
+    first, peer = a.broker.new_backend(), a.broker.new_backend()
+    assert submit(first, a.scene, a.camera)
+    idle = a.delegates[0]
+    idle.ready = True
+    first.collect()
+    assert submit(peer, a.scene, a.camera)
+    running = a.delegates[1]
+    lease = a.broker.arbiter._active
+    first.close()
+    assert first.closed and first in a.broker._views
+    assert first._delegate is idle and not idle.closed
+    assert running.pending and a.broker.arbiter._active is lease
+    a.broker.pump()
+    assert not idle.closed and ('collect', True) not in running.calls
+    running.ready = True
+    a.pool.ready = True
+    a.broker.pump()
+    assert idle.closed and first not in a.broker._views
+    assert not running.pending
+
+
+def test_explicit_broker_close_drains_every_peer_before_any_native_retirement(routed):
+    a = routed
+    first, peer = a.broker.new_backend(), a.broker.new_backend()
+    assert submit(first, a.scene, a.camera)
+    idle = a.delegates[0]
+    idle.ready = True
+    first.collect()
+    assert submit(peer, a.scene, a.camera)
+    running = a.delegates[1]
+    original = idle.close
+    observed = []
+    def close():
+        observed.append(running.pending)
+        original()
+    idle.close = close
+    a.pool.ready = True
+    a.broker.close()
+    assert observed == [False]
+    assert ('collect', True) in running.calls
+    assert not a.broker._views and all(delegate.closed for delegate in a.delegates)
+
+
+def test_explicit_close_cannot_succeed_with_unretired_evaluated_zero_ledger_delegate(routed):
+    from fluidSim_warp_blender51.fspt.viewport_backend import RouteTransitionPending
+
+    a = routed
+    a.broker.request_mode('EVALUATED')
+    a.broker.pump()
+    view = a.broker.new_backend()
+    assert submit(view, host_scene(), a.camera)
+    delegate = a.delegates[0]
+    delegate.ready = True
+    view.collect()
+    assert a.budget.reserved_bytes == a.budget.generation_count == 0
+    external = a.broker.arbiter.try_acquire(object())
+    assert external is not None
+    try:
+        with pytest.raises(RouteTransitionPending, match='retirement'):
+            a.broker.close()
+        assert view._delegate is delegate and not delegate.closed
+        assert view in a.broker._views
+    finally:
+        a.broker.arbiter.release(external)
+    a.broker.close()
+    assert not a.broker._views and delegate.closed

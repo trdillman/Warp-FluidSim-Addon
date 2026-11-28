@@ -486,12 +486,16 @@ def _gate_lanes(monkeypatch, tmp_path, *, drop=None):
     performance budget, which runs after every background Blender script lane
     (including the quiet batch that follows the concurrent lanes). The invocation
     and reports live in a test-owned directory. The mocked runner records each
-    lane and supplies the FSPT JSON expected by the real report checks. No child
-    process starts. ``drop`` removes one background script from the gate's table.
+    lane and supplies status JSON for the real freshness/hash checks. Native
+    source/image grading is a separate tested boundary, stubbed here because
+    this fixture proves lane dispatch and owns no native runtime or originals.
+    No child process starts. ``drop`` removes one script from the gate's table.
     """
     spec = importlib.util.spec_from_file_location("run_production_gate_memory_lane", _GATE_PATH)
     gate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gate)
+    from tools.gate import fspt_evidence
+    monkeypatch.setattr(fspt_evidence, "validate_report", lambda *_args: {})
     lanes = []
 
     def run_step(label, command, env, reject_output, expect_marker):

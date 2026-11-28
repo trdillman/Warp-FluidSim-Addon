@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -94,6 +95,14 @@ class Broker:
 
 @pytest.fixture
 def case(monkeypatch):
+    from fluidSim_warp_blender51 import blender
+
+    # Host boundary tests can reload publication after this fixture's module
+    # was collected. Runtime resolves it through the package at call time;
+    # bind both import routes to the exact output_object stub owned here and
+    # let monkeypatch restore the prior modules when this fixture ends.
+    monkeypatch.setitem(sys.modules, output.__name__, output)
+    monkeypatch.setattr(blender, 'output_publication', output)
     monkeypatch.setenv("FLUIDSIM_FSPT_DEVICE_SURFACE", "1")
     monkeypatch.setattr(runtime, "_SCENES", {})
     monkeypatch.setattr(runtime, "_DEVICES", {})

@@ -306,7 +306,8 @@ def test_borrowed_cuda_handle_is_checked_and_unregistered_before_native_destroy(
     from fluidSim_warp_blender51.fspt import async_backend as module
 
     calls = []
-    device = object()
+    device = SimpleNamespace(context=11, runtime=SimpleNamespace(core=SimpleNamespace(
+        wp_cuda_stream_unregister=lambda context, handle: calls.append(('unregister', handle)))))
 
     class ExternalStream:
         is_blocking = False

@@ -10,6 +10,17 @@ import warp as wp
 
 
 @wp.func
+def path_rng(seed: int, pixel: int, sample: int):
+    # Separate the render seed/pixel key from the absolute progressive sample.
+    # Adding sample to seed made adjacent seeds reuse almost every path.
+    # Both Warp PCG hashes wrap uint32 explicitly; no pixel*sample flattening
+    # can overflow at supported image sizes. This is a finite-state sampler,
+    # not a claim of statistical independence or globally disjoint streams.
+    key = wp.rand_init(seed, pixel)
+    return wp.rand_init(wp.int32(key), sample)
+
+
+@wp.func
 def unproject(matrix: wp.mat44, x: float, y: float, z: float):
     point = matrix * wp.vec4(x, y, z, 1.0)
     return wp.vec3(point[0], point[1], point[2]) / point[3]
@@ -43,7 +54,7 @@ def trace_paths(
     y = pixel // width
     total = accumulation[pixel]
     for sample in range(sample_count):
-        rng = wp.rand_init(seed + first_sample + sample, pixel)
+        rng = path_rng(seed, pixel, first_sample + sample)
         sx = 2.0 * (float(x) + wp.randf(rng)) / float(width) - 1.0
         sy = 2.0 * (float(y) + wp.randf(rng)) / float(height) - 1.0
         origin = unproject(inverse_vp, sx, sy, -1.0)

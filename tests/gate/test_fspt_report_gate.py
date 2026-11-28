@@ -14,6 +14,7 @@ BATCH_SCRIPT = "tests/acceptance/blender_fspt_async_acceptance.py"
 MARKER = "FSPT-ASYNC-VIEWPORT-PASS"
 BATCH_MARKER = "FSPT-ASYNC-BACKEND-PASS"
 VERIFIED = b'{"status":"VERIFIED"}\n'
+BROKER_SCRIPT = "tests/acceptance/blender_fspt_viewport_backend_acceptance.py"
 
 
 @pytest.fixture
@@ -89,6 +90,14 @@ def test_fresh_verified_report_is_hashed_and_bound(monkeypatch, gate_run):
     report.write_bytes(b'{"status":"VERIFIED","changed":true}')
     with pytest.raises(RuntimeError, match="changed"):
         gate._fspt_report_manifest()
+
+
+def test_broker_label_alone_cannot_supply_native_evidence(gate_run):
+    report = gate_run / "broker.json"
+    report.write_bytes(VERIFIED)
+    with pytest.raises(RuntimeError, match="evidence"):
+        gate._record_fspt_report("FSPT broker", BROKER_SCRIPT, report)
+    assert not report.with_suffix(".receipt.json").exists()
 
 
 def test_verified_json_does_not_replace_the_success_marker(monkeypatch, gate_run):

@@ -71,6 +71,7 @@ class DeviceResources:
     committed: bool = False
     recovery_attempted: bool = False
     pump_blocked: bool = False
+    pump_recovery_pending: bool = False
     closing: bool = False
 
 
@@ -570,6 +571,9 @@ def _recover_failed_pool(alias, resource):
         # Only an explicit owner drain can retire a poisoned pool. It remains
         # latched out of the GPU route even if evaluated rendering can resume.
         resource.bridge.close()
+        if resource.budget.reserved_bytes or resource.budget.generation_count:
+            raise RuntimeError("Explicit FSPT geometry remains after failed-pool retirement")
+        resource.pump_blocked = resource.pump_recovery_pending = False
     except Exception as exc:
         resource.pump_blocked = True
         _DEVICE_ERRORS[alias] = f"Device retirement requires explicit shutdown: {type(exc).__name__}: {exc}"
@@ -691,19 +695,41 @@ def pump():
         if not enabled() or next(_active_views(device=alias), None) is None:
             _retire_device(alias, resource)
             continue
-        if resource.pump_blocked:
-            continue
+        recovering = resource.pump_blocked
+        if recovering:
+            if not resource.pump_recovery_pending:
+                continue
+            # A last-read record fault can leave a surrendered lease attached
+            # to its delegate. Permit exactly one follow-up owner pass, before
+            # checked pool close; never turn an arbitrary pump fault into a
+            # recurring timer retry. Final suppression above preserves this
+            # allowance without executing or consuming it.
+            resource.pump_recovery_pending = False
         try:
             resource.broker.pump()
+            if recovering and getattr(resource.broker, 'retirement_deferred', False):
+                # No destructive owner pass started. Contention and an active
+                # peer must not consume the one checked recovery allowance.
+                resource.pump_recovery_pending = True
+                pending = True
+                continue
             if resource.pool.poisoned and alias not in _DEVICE_ERRORS:
                 _device_fault(alias, "FSPT device surface pool is quarantined")
             if resource.pool.poisoned:
                 _recover_failed_pool(alias, resource)
+            if recovering and resource.pump_blocked:
+                _DEVICE_ERRORS[alias] = (
+                    "Device retirement requires explicit shutdown after bounded broker recovery: "
+                    + _DEVICE_ERRORS.get(alias, "ownership remains uncertain"))
+                continue
             pending |= (resource.broker.ready_mode is None and not
                         (resource.recovery_attempted and resource.pool.poisoned and
                          (resource.budget.reserved_bytes or resource.budget.generation_count)))
         except Exception as exc:
             resource.pump_blocked = True
+            resource.pump_recovery_pending = (
+                not recovering and resource.pool.poisoned and not resource.recovery_attempted)
+            pending |= resource.pump_recovery_pending
             fail_optional(alias, exc)
     return pending
 
