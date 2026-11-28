@@ -27,8 +27,11 @@ state = {"started": time.time(), "playing": False}
 
 def write():
     status["updated"] = time.strftime("%H:%M:%S")
+    # Write a whole file beside the report, then swap it in, so a reader never sees half a file.
+    temporary = REPORT.with_name(REPORT.name + ".tmp")
     try:
-        REPORT.write_text(json.dumps(status, indent=2, default=str), encoding="utf-8")
+        temporary.write_text(json.dumps(status, indent=2, default=str), encoding="utf-8")
+        os.replace(temporary, REPORT)
     except OSError:
         pass
 
@@ -70,6 +73,12 @@ def prepare(window, area, region):
         status.setdefault("env", {})[key] = os.environ.get(key)
         if os.environ.get(key) != value:
             raise RuntimeError(f"{key} must be {value!r} for this demo")
+    if CONFIG["expected_env"].get("FLUIDSIM_SURFACE_BACKEND") == "nets":
+        # The variable alone is not enough: an older Warp quietly falls back to another mesh.
+        surface = __import__(module_name + ".sim.surface", fromlist=["x"])
+        status["surface_nets_available"] = bool(surface.SURFACE_NETS_AVAILABLE)
+        if not surface.SURFACE_NETS_AVAILABLE:
+            raise RuntimeError("this demo needs the Surface Nets backend, which the installed Warp does not provide")
 
     prefs = bpy.context.preferences.addons[module_name].preferences
     if hasattr(prefs, "deck_mode"):
@@ -91,6 +100,12 @@ def prepare(window, area, region):
         space.region_3d.view_perspective = "CAMERA"
     scene.frame_set(scene.frame_start)
     fs.live = True
+    # Turning Live on initializes the solver; a failure is only recorded in the status text.
+    bridge = __import__(module_name + ".blender.scene_bridge", fromlist=["x"])
+    session_error = str(getattr(bridge.session(), "error", "") or "")
+    text = (fs.status or "").lower()
+    if not fs.live or session_error or "fail" in text or "refused" in text:
+        raise RuntimeError(f"Live Simulation did not start: {session_error or fs.status!r}")
     status["live"] = bool(fs.live)
     status["cache_playback_enabled"] = bool(fs.cache_playback_enabled)
     status["deck_shown"] = bool(fs.deck_shown)
@@ -143,6 +158,7 @@ def tick():
         heartbeat()
     except Exception as exc:  # noqa: BLE001
         status["stage"] = "error"
+        status["ok"] = False
         status["error"] = repr(exc)
         status["traceback"] = traceback.format_exc()
         write()

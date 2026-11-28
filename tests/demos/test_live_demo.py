@@ -95,7 +95,8 @@ def test_boot_script_forces_live_realtime_playback_with_the_deck_on():
     ast.parse(source)
     for needle in ("fs.live = True", "cache_playback_enabled = False",
                    "cache_enabled = False", "deck_shown = True", "animation_play",
-                   "addon_in_temp_profile", "live_stopped"):
+                   "addon_in_temp_profile", "live_stopped", "os.replace",
+                   "SURFACE_NETS_AVAILABLE", "Live Simulation did not start"):
         assert needle in source, needle
 
 

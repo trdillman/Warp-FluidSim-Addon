@@ -219,7 +219,7 @@ def main(argv=None) -> int:
             return 2
         package = build_package(blender, profile)
         install_package(blender, package, profile, env)
-        report = args.report or (profile / "live_status.json")
+        report = args.report.resolve() if args.report else (profile / "live_status.json")
         write_config(profile / "config.json", demo=args.demo, report=report, profile=profile,
                      shading=args.shading, camera_view=not args.no_camera_view)
         print(f"profile: {profile}\nstatus file: {report}", flush=True)
@@ -227,10 +227,10 @@ def main(argv=None) -> int:
             args.keep_profile = True
             return 0
         started = time.time()
-        subprocess.run(blender_command(blender, blend, BOOT_SCRIPT), env=env, cwd=REPO,
-                       check=False)
+        result = subprocess.run(blender_command(blender, blend, BOOT_SCRIPT), env=env, cwd=REPO,
+                                check=False)
         print(f"Blender closed after {time.time() - started:.0f} s", flush=True)
-        return 0
+        return result.returncode
     finally:
         if args.keep_profile:
             print(f"kept temporary profile: {profile}")
