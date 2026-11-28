@@ -131,6 +131,15 @@ def run_sim(opts):
     scene = bpy.context.scene
     if not scene.fluidsim.live:
         raise SystemExit("the saved scene is not in Live mode")
+    # Start the solver here, once. The first frame_set would otherwise start it
+    # and then Reset it for the start frame, which plans the old and the new
+    # solver together and is refused at hero resolution on a 16 GB card.
+    first = scene_bridge.session()
+    if not first.active:
+        if bpy.ops.fluidsim.initialize() != {"FINISHED"}:
+            raise RuntimeError(
+                f"Initialize was refused: {scene.fluidsim.status!r}")
+        first.last_frame = scene.frame_start
     start, end = scene.frame_start, scene.frame_end
     if opts["frames"]:
         start, end = max(start, opts["frames"][0]), min(end, opts["frames"][1])

@@ -76,10 +76,14 @@ def test_trough_walls_are_taller_than_the_splash_and_the_front_is_glass():
     names = [m.name for m in ns.trough_wall_meshes()]
     assert names == ["Nets Trough Front", "Nets Trough Back", "Nets Trough Left",
                      "Nets Trough Right"]
-    # The camera-side wall is clear glass in the render, not hidden.
+    # The camera-side wall is clear glass in the render. The build hides it from
+    # its own preview (the wall would block the view) and the render stage shows it.
     assert ns.GLASS_WALLS == ("Nets Trough Front",)
-    assert "hide_render" not in _builder_source().split("def build_nets_showcase")[0].split(
-        "def author_nets_showcase")[1].split("make_temple_object")[1].split("add_camera_light")[0]
+    assert "ns.GLASS_WALLS" in _builder_source()
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "tools", "demos",
+                           "render_nets_showcase.py"), encoding="utf-8") as fh:
+        render = fh.read()
+    assert "obj.hide_render = False" in render and "make_glass_material" in render
 
 
 def test_trough_keeps_water_far_from_the_domain_walls():
@@ -309,3 +313,13 @@ def test_authoring_does_not_start_a_solver_before_the_build_initializes():
 def test_playback_save_rebuilds_the_solver_instead_of_resetting_it():
     # A Reset needs the old and the new solver in memory together.
     assert "fresh_solver=True" in _builder_source().split("def build_nets_showcase")[1]
+
+
+def test_sim_stage_starts_the_solver_once_without_a_reset():
+    with open(os.path.join(os.path.dirname(__file__), "..", "..", "tools", "demos",
+                           "render_nets_showcase.py"), encoding="utf-8") as fh:
+        render = fh.read()
+    run_sim = render.split("def run_sim")[1].split("def ")[0]
+    assert 'bpy.ops.fluidsim.initialize() != {"FINISHED"}' in run_sim
+    assert "first.last_frame = scene.frame_start" in run_sim
+    assert run_sim.index("first.last_frame") < run_sim.index("scene.frame_set(")

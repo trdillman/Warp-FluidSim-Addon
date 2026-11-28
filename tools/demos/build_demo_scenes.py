@@ -2107,6 +2107,10 @@ def author_nets_showcase():
     for data in ns.collider_meshes():
         obj = make_temple_object(scene, data, materials)
         _colliders.tag_collider(obj, friction=data.friction, restitution=0.0)
+        if data.name in ns.GLASS_WALLS:
+            # Out of the build's preview, which would see only the wall; the
+            # render stage shows it again as clear glass.
+            obj.hide_render = True
     add_camera_light(scene, ns.CAMERA_LOCATION, (0.0, 0.0, 0.0))
     look_at(scene.camera, ns.CAMERA_TARGET)
     scene.camera.data.lens = ns.CAMERA_LENS
