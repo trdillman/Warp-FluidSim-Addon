@@ -155,6 +155,11 @@ class SurfaceLease:
         self._pool._check_thread()
         return self._slot.packet
 
+    @property
+    def retired(self):
+        """True only after checked pool retirement released this reader's owners."""
+        return self._slot is None and self._stream is None
+
     def retain(self, owner):
         if self._slot is None:
             raise RuntimeError("surface lease has finished")
@@ -307,9 +312,15 @@ class SurfacePool:
                         slot.readers.remove(reader)
                 if slot.ready and slot.key != self._key and not slot.readers:
                     self._slots.remove(slot)
+            self._collect_geometry_retirements()
         except BaseException:
             self.poisoned = True
             raise
+
+    def _collect_geometry_retirements(self):
+        budget = getattr(self, '_geometry_array_budget', None)
+        if budget is not None:
+            budget.collect_retired()
 
     def acquire(self, key, reader_stream, *, owners=()):
         self._check_thread()
@@ -348,6 +359,7 @@ class SurfacePool:
                 slot.readers.clear()
                 slot.failure = slot.packet = slot.destination = slot.producer = None
                 self._slots.remove(slot)
+            self._collect_geometry_retirements()
         except BaseException:
             self.poisoned = True
             raise

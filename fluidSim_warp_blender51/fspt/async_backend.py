@@ -167,7 +167,8 @@ class AsyncCudaBackend(CudaBackend):
             arrays = self.arrays
             inverse = wp.mat44(*camera.inverse_view_projection.ravel().tolist())
             wp.launch(self.kernel, dim=count, inputs=[
-                self.mesh.id if self.mesh else wp.uint64(0), len(scene.triangles),
+                self.mesh.id if self.mesh else wp.uint64(0),
+                scene.triangle_count if hasattr(scene, "triangle_count") else len(scene.triangles),
                 arrays["materials"], arrays["kinds"], arrays["colors"], arrays["emissions"], arrays["iors"],
                 wp.vec3(*scene.world), inverse, width, height, self.history.samples,
                 samples, max_bounces, seed, self.accumulation, self.output,
@@ -175,6 +176,7 @@ class AsyncCudaBackend(CudaBackend):
             self.statistics["dispatches"] += 1
             job.rendered = stream.record_checked(stream)
             wp.copy(self._pinned, self.output, count=count, stream=stream)
+            self._queue_geometry_validation(stream)
             job.copied = stream.record_checked(stream)
         except BaseException as exc:
             self._abort(exc)
@@ -202,6 +204,7 @@ class AsyncCudaBackend(CudaBackend):
                 self.wp.synchronize_event(job.copied)
             elif not self._render_stream.completed(job.copied):
                 return None
+            self._validate_completed_geometry()
             _, _, width, height, _, _ = job.key
             pixels = self._pinned.numpy()[:width * height].reshape(height, width, 4).copy()
             if not np.isfinite(pixels).all():
@@ -217,6 +220,12 @@ class AsyncCudaBackend(CudaBackend):
             raise
         self._retire()
         return frame
+
+    def _queue_geometry_validation(self, stream):
+        """Optional bounded device-geometry status transfer, ordered before copied."""
+
+    def _validate_completed_geometry(self):
+        """An optimized geometry consumer may reject completed invalid inputs."""
 
     def _retire(self):
         job = self._job
