@@ -206,6 +206,8 @@ def camera_snapshot(depsgraph, width, height):
         _fail(camera, "P1 supports perspective and orthographic cameras")
     if camera.data.dof.use_dof:
         _fail(camera, "depth of field is not supported by P1")
+    if scene.render.use_motion_blur:
+        _fail(scene, "camera motion blur is not supported by P1; disable Motion Blur")
     projection = camera.calc_matrix_camera(depsgraph, x=width, y=height,
                                           scale_x=scene.render.pixel_aspect_x,
                                           scale_y=scene.render.pixel_aspect_y)
