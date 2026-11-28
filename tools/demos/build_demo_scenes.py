@@ -24,6 +24,12 @@ not become source-control assets.
                      `-- upres_cove`; saved to artifacts/review_demos/, not
                      demos/; tools/profiling/compare_guided_upres.py
                      --demo upres_cove runs the upres on it).
+6. nets_showcase   - a triple splash into a marble trough at 1 mm voxels (560
+                     cells along the long axis), built for the Surface Nets render
+                     surface (build explicitly with `-- nets_showcase`; set
+                     NETS_SHOWCASE_PRESET=draft for the 2 mm check run; saved
+                     to artifacts/review_demos/, not demos/;
+                     tools/demos/render_nets_showcase.py renders it).
 
 The exported data is analyzed offline by tools/demos/analyze_demos.py.
 """
@@ -237,7 +243,7 @@ def add_camera_light(scene, cam_loc, cam_rot):
 
 
 def run_scene(name, frames, dump_velocities=True, advance_timeline=False,
-              on_frame=None):
+              on_frame=None, export_frames=True):
     """Step the live session; export per-frame particle data + aggregates.
 
     ``advance_timeline`` moves ``scene.frame_current`` in lockstep with the
@@ -248,6 +254,8 @@ def run_scene(name, frames, dump_velocities=True, advance_timeline=False,
     off by default so the static-collider scenes stay byte-identical.
 
     ``on_frame(f)`` runs after frame ``f`` is stepped and exported.
+    ``export_frames=False`` skips the per-frame ``.npz`` files (millions of
+    particles per frame); the series and ``on_frame`` still run.
     """
     from fluidSim_warp_blender51.blender.scene_bridge import session
 
@@ -271,15 +279,16 @@ def run_scene(name, frames, dump_velocities=True, advance_timeline=False,
         bpy.ops.fluidsim.step(frames=1)
         solver = sess.solver
         pos = solver.particle_positions()
-        vel = solver.particle_velocities()
+        vel = solver.particle_velocities() if export_frames else None
         ww = solver.whitewater_positions()
-        payload = {"positions": pos.astype(np.float16)}
-        if dump_velocities:
-            payload["velocities"] = vel.astype(np.float16)
-        if len(ww):
-            payload["whitewater"] = ww.astype(np.float16)
-        np.savez_compressed(os.path.join(out_dir, f"frame_{f:04d}.npz"),
-                            **payload)
+        if export_frames:
+            payload = {"positions": pos.astype(np.float16)}
+            if dump_velocities:
+                payload["velocities"] = vel.astype(np.float16)
+            if len(ww):
+                payload["whitewater"] = ww.astype(np.float16)
+            np.savez_compressed(os.path.join(out_dir, f"frame_{f:04d}.npz"),
+                                **payload)
         fs = scene.fluidsim
         series["frames"].append(f)
         series["particle_count"].append(int(len(pos)))
@@ -2010,6 +2019,203 @@ def build_upres_cove():
     save_playable("upres_cove", scene, uc.FRAMES, seed_particles=first,
                   directory=REVIEW_DEMOS)
 
+# Nets Showcase: a triple splash into a marble trough at 1 mm voxels, built to
+# show the Surface Nets render surface. Opt-in and outside the gallery and the
+# demo gate, like tsunami_parthenon and upres_cove. Numbers and geometry live in
+# tools/demos/nets_showcase.py; tools/demos/render_nets_showcase.py renders it.
+# The Surface Nets backend is chosen by the FLUIDSIM_SURFACE_BACKEND environment
+# variable, which is not saved in the .blend: launch Blender with it set.
+NETS_SHOWCASE_PREVIEW_FRAME = 16
+NETS_SHOWCASE_BUILD_FRAMES = 24
+NETS_SHOWCASE_CHECK_FRAMES = (2, 8, 16, 24)
+
+
+def make_source_sphere(scene, center, radius, name, *, emit_rate, velocity):
+    """An Initial Fill sphere source that launches its liquid with ``velocity``."""
+    from fluidSim_warp_blender51.blender import sources as _sources
+
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.5)
+    src = bpy.context.active_object
+    src.name = name
+    src.location = tuple(center)
+    src.dimensions = (2.0 * radius,) * 3
+    _sources.tag_source(src, shape="SPHERE", mode="PARTICLES")
+    src.fluidsim.emit_rate = emit_rate
+    src.fluidsim.emission_mode = "INITIAL_FILL"
+    src.fluidsim.source_region_kind = "ANALYTIC"
+    src.fluidsim.use_object_velocity = False
+    src.fluidsim.initial_velocity = tuple(velocity)
+    src.show_name = True
+    return src
+
+
+def author_nets_showcase():
+    scene = fresh_scene()
+    from fluidSim_warp_blender51.blender import colliders as _colliders
+    from tools.demos import nets_showcase as ns
+
+    p = ns.preset()
+    fs = scene.fluidsim
+    lo, hi = ns.DOMAIN_LO, ns.DOMAIN_HI
+    make_domain(scene, lo, hi, "NetsShowcase Domain")
+    ds = domain_settings(scene)
+    set_resolution(ds, lo, hi, p.voxel)
+    ds.max_particles = p.max_particles
+    ds.leaf_capacity = p.leaf_capacity
+    ds.time_scale = ns.TIME_SCALE
+    ds.min_substeps = 1
+    ds.max_substeps = ns.MAX_SUBSTEPS
+    ds.flip_ratio = 0.97
+    ds.narrow_band_enabled = True
+    ds.narrow_band_voxels = ns.NARROW_BAND_VOXELS
+    ds.whitewater_enabled = False
+    ds.profiling_enabled = False
+    # The render surface follows the simulation grid (the default mode), so
+    # the sim voxel is also the mesh cell. Nets extracts from a dense box that
+    # must hold the whole domain.
+    ds.surface_max_dense_dim = p.max_dense_dim
+    show_liquid(scene, "NetsShowcase", ns.WATER_COLOR, view="SURFACE")
+    fs.live = True
+    scene.frame_start = 1
+    scene.frame_end = ns.FRAMES
+    scene.render.fps = ns.FPS
+    scene.frame_set(1)
+    inset = p.voxel
+    make_source_box(
+        scene, (-ns.POOL_HX + inset, -ns.POOL_HY + inset, ns.SLAB_TOP),
+        (ns.POOL_HX - inset, ns.POOL_HY - inset, ns.POOL_TOP), "NetsShowcase Pool",
+        emit_rate=ns.PARTICLES_PER_VOXEL,
+        emission_mode="INITIAL_FILL").hide_render = True
+    for drop in ns.DROPS:
+        make_source_sphere(
+            scene, drop.center, drop.radius, drop.name,
+            emit_rate=ns.PARTICLES_PER_VOXEL,
+            velocity=(0.0, 0.0, -drop.speed)).hide_render = True
+    materials = {name: demo_material(name, color, roughness=0.35)
+                 for name, color in ns.MATERIAL_COLORS.items()}
+    for data in ns.collider_meshes():
+        obj = make_temple_object(scene, data, materials)
+        _colliders.tag_collider(obj, friction=data.friction, restitution=0.0)
+    add_camera_light(scene, ns.CAMERA_LOCATION, (0.0, 0.0, 0.0))
+    look_at(scene.camera, ns.CAMERA_TARGET)
+    scene.camera.data.lens = ns.CAMERA_LENS
+    scene.render.resolution_x = 1920
+    scene.render.resolution_y = 1080
+    use_material_shading(scene)
+    bpy.context.view_layer.update()
+    add_text_block("README_Nets_Showcase", (
+        "Nets Showcase (Surface Nets render surface)\n"
+        "===========================================\n\n"
+        f"Three drops fall into a marble trough one after the other: a crown,\n"
+        f"then a drop into the ripples, then a drop into the wreckage.\n"
+        f"{p.voxel * 1000:.0f} mm voxels, {max(ns.divisions(p))} cells along the domain, about\n"
+        f"{ns.expected_particles(p) / 1e6:.1f}M particles (Narrow Band on). The preset is\n"
+        f"'{p.name}' (NETS_SHOWCASE_PRESET=hero|draft when it was built).\n\n"
+        "The mesh is Surface Nets. That backend is picked by an environment\n"
+        "variable that a .blend cannot store, so start Blender with\n"
+        "FLUIDSIM_SURFACE_BACKEND=nets (PowerShell:\n"
+        "$env:FLUIDSIM_SURFACE_BACKEND = 'nets'); without it the surface\n"
+        "falls back to the default marching cubes mesh.\n\n"
+        "This is a heavy scene: it needs a 16 GB card and runs far from real\n"
+        "time. tools/demos/render_nets_showcase.py steps and renders it.\n"))
+    return scene
+
+
+def build_nets_showcase():
+    from fluidSim_warp_blender51.blender.scene_bridge import session
+    from tools.demos import nets_showcase as ns
+
+    # The extractor reads this when the solver is created, so set it first.
+    os.environ[ns.BACKEND_ENV] = ns.BACKEND
+    p = ns.preset()
+    scene = author_nets_showcase()
+    initialize_demo()
+    sess = session()
+    checks = {}
+
+    def record(frame):
+        if frame == NETS_SHOWCASE_PREVIEW_FRAME:
+            render_preview("nets_showcase", min_water_fraction=0.005,
+                           directory=REVIEW_DEMOS)
+        if frame in NETS_SHOWCASE_CHECK_FRAMES:
+            solver = sess.solver
+            pos = solver.particle_positions()
+            high = pos[pos[:, 2] > ns.POOL_TOP + 0.03]
+            vel = solver.particle_velocities()
+            falling = vel[pos[:, 2] > ns.POOL_TOP + 0.03]
+            extractor = solver.surface.render_extractor
+            checks[frame] = {
+                "particles": int(len(pos)),
+                "top_z": float(pos[:, 2].max()),
+                "wall_clearance_m": ns.wall_clearance(pos),
+                "inside_wall_fraction": ns.inside_wall_fraction(pos),
+                "airborne_particles": int(len(high)),
+                "airborne_mean_vz": (float(falling[:, 2].mean())
+                                     if len(falling) else None),
+                "surface_backend": extractor.backend,
+                "max_dense_dim": int(extractor.max_dense_dim),
+            }
+            log(f"nets_showcase frame {frame}: {checks[frame]}")
+
+    series = run_scene("nets_showcase", NETS_SHOWCASE_BUILD_FRAMES,
+                       dump_velocities=False, on_frame=record,
+                       export_frames=False)
+    first = int(series["particle_count"][0])
+    expected = ns.expected_particles(p)
+    log(f"nets_showcase [{p.name}]: {first:,} particles at frame 1 "
+        f"(shell estimate {expected:,.0f}, full fill {ns.full_fill_particles(p):,.0f}), "
+        f"peak {max(series['particle_count']):,}, "
+        f"mean step {np.mean(series['step_ms']):.0f} ms")
+    if sess.solver is None:
+        raise RuntimeError("nets_showcase: solver released during the build")
+    for frame, check in checks.items():
+        if check["surface_backend"] != ns.BACKEND:
+            raise RuntimeError(
+                f"nets_showcase frame {frame}: surface backend is "
+                f"{check['surface_backend']!r}, expected {ns.BACKEND!r}")
+        if check["inside_wall_fraction"] > 1.0e-4:
+            raise RuntimeError(
+                f"nets_showcase frame {frame}: {check['inside_wall_fraction']:.2%} "
+                "of the particles are inside the basin wall")
+        if check["wall_clearance_m"] < 10 * p.voxel:
+            raise RuntimeError(
+                f"nets_showcase frame {frame}: liquid is within "
+                f"{check['wall_clearance_m'] * 1000:.1f} mm of a domain wall; the "
+                "Surface Nets mesh would be cut there")
+    if not 0.4 * expected <= first <= p.max_particles:
+        raise RuntimeError(
+            f"nets_showcase emitted {first:,} particles, shell estimate "
+            f"{expected:,.0f}, reserve {p.max_particles:,}")
+    write_meta("nets_showcase", {
+        "scene": "nets_showcase",
+        "preset": p.name,
+        "domain": [list(ns.DOMAIN_LO), list(ns.DOMAIN_HI)],
+        "voxel_size": p.voxel,
+        "cells": list(ns.divisions(p)),
+        "fps": FPS,
+        "time_scale": ns.TIME_SCALE,
+        "source_objects": ["NetsShowcase Pool"] + [d.name for d in ns.DROPS],
+        "collider_objects": [m.name for m in ns.collider_meshes()],
+        "source_emission_mode": "INITIAL_FILL",
+        "source_emitted_particles": first,
+        "max_particles": p.max_particles,
+        "leaf_capacity": p.leaf_capacity,
+        "surface_backend": ns.BACKEND,
+        "surface_max_dense_dim": p.max_dense_dim,
+        "narrow_band_voxels": ns.NARROW_BAND_VOXELS,
+        "whitewater_enabled": False,
+        "fidelity": ns.fidelity(p),
+        "build_checks": {str(k): v for k, v in sorted(checks.items())},
+        "build_frames": NETS_SHOWCASE_BUILD_FRAMES,
+        "build_peak_particles": int(max(series["particle_count"])),
+        "build_mean_step_ms": float(np.mean(series["step_ms"])),
+    }, directory=REVIEW_DEMOS)
+    use_material_shading(scene)
+    # Not demos/: check_demo_blends.py fails on any untracked demos/*.blend.
+    save_playable("nets_showcase", scene, ns.FRAMES, seed_particles=first,
+                  directory=REVIEW_DEMOS)
+
+
 # ---------------------------------------------------------------------------
 
 def main():
@@ -2026,6 +2232,7 @@ def main():
         "deep_plunge": build_deep_plunge,
         "tsunami_parthenon": build_tsunami_parthenon,
         "upres_cove": build_upres_cove,
+        "nets_showcase": build_nets_showcase,
     }
     targets = list(DEFAULT_SCENES)
     if "--" in sys.argv:
