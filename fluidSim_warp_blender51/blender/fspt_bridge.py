@@ -5,6 +5,8 @@ mesh; consumers copy it and revalidate before accepting or presenting work.
 """
 import os
 from dataclasses import asdict
+from math import isfinite
+from time import monotonic
 
 from . import surface_publication as publication
 from .scene_access import active_domain_object
@@ -119,6 +121,50 @@ def validate_publications(scene, captured, *, for_viewport, exact_frame=False, v
                                    view_layer=view_layer)
     if tuple(captured) != current:
         raise SurfaceNotReadyError("Fluid publication generation changed during capture or rendering")
+
+
+def forward_live_publication(previous, current):
+    """Only an advancing solved state can preserve owned viewport history."""
+    if previous is None or current is None:
+        return False
+    identities = ("scene_token", "owner_token", "epoch", "channel", "source",
+                  "cache_identity", "object_token", "mesh_token")
+    if (previous.source != publication.SurfaceSource.LIVE
+            or any(getattr(previous, name) != getattr(current, name) for name in identities)
+            or not previous.visible or not current.visible
+            or not previous.triangle_count or not current.triangle_count):
+        return False
+    for name in ("generation", "solver_frame", "state_revision", "simulation_time", "source_timeline_frame"):
+        old, new = getattr(previous, name), getattr(current, name)
+        if old is None or new is None or not isfinite(float(old)) or not isfinite(float(new)) or new <= old:
+            return False
+    return True
+
+
+def validate_viewport_publications(scene, captured, *, view_layer=None, clock=monotonic):
+    """Validate already-owned pixels, with at most 250 ms of LIVE retention.
+
+    This does not grant access to a mutable Blender mesh. Capture and final
+    rendering still use validate_publications and exact generation equality.
+    Publication completion is a lower bound on solver-state age, not the P0
+    authoritative completed-state clock required for performance qualification.
+    """
+    captured = tuple(captured)
+    current = capture_publications(scene, for_viewport=True, view_layer=view_layer)
+    now = float(clock())
+    ages = [now - stamp.published_at for stamp in captured]
+    if not isfinite(now) or any(not isfinite(age) or age < 0 for age in ages):
+        raise SurfaceNotReadyError("Invalid viewport publication age clock")
+    retained = captured != current
+    if retained:
+        if len(captured) != 1 or len(current) != 1 or not forward_live_publication(captured[0], current[0]):
+            raise SurfaceNotReadyError("Owned image has no compatible advancing LIVE publication")
+        if max(ages) > 0.25:
+            raise SurfaceNotReadyError("Retained image publication age exceeded 250 ms")
+    return {"status": "RETAINED" if retained else "CURRENT",
+            "publication_age_seconds": max(ages) if ages else None,
+            "retention_limit_seconds": 0.25,
+            "age_clock": "host monotonic publication completion; not authoritative solver-ready"}
 
 
 def prepare_final_publication(depsgraph):

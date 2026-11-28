@@ -176,6 +176,10 @@ SOURCE_REPORT_ACCEPTANCE = (
 # tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
+    "tests/acceptance/blender_fspt_live_acceptance.py": (
+        "Retained strict draw-current oracle for the synchronous reference renderer. "
+        "The gated asynchronous live verifier inherits its content/fault/reset controls "
+        "and joins independent capture-time geometry to the actual presented snapshot."),
     "tests/acceptance/blender_fspt_p0_runtime_acceptance.py": (
         "P0 feasibility runs in a separately admitted real graphics window with "
         "an explicitly built and hash-bound optional OptiX probe. It records API, "
@@ -295,8 +299,8 @@ def _profile_directory(*, windows=None):
 
 
 def _env():
-    from tools.release.build_extension import _blender_process_environment
     from tools.gate import qualification as q
+    from tools.release.build_extension import _blender_process_environment
     profile = _profile_directory()
     if _RUN_DIRECTORY is not None:
         q.atomic_json(_RUN_DIRECTORY / "private_profile.json", {"profile_directory": str(profile)})
@@ -1041,6 +1045,8 @@ def _production_main(argv=None):
         "tests/acceptance/blender_gui_acceptance.py",
         "tests/acceptance/blender_fspt_viewport_acceptance.py",
         "tests/acceptance/blender_fspt_live_acceptance.py",
+        "tests/acceptance/blender_fspt_async_viewport_acceptance.py",
+        "tests/acceptance/blender_fspt_async_live_acceptance.py",
         "tests/acceptance/blender_gui_playback_probe.py",
         "tests/acceptance/blender_rigid_authoring_ui_acceptance.py",
         "tests/acceptance/blender_viewport_2frame_gate.py",
@@ -1149,12 +1155,19 @@ def _production_main(argv=None):
         entry for entry in entries if entry[1] in QUIET_ACCEPTANCE],
         name="gate_batch_quiet")
     if include_gui:
-        _run("FSPT changing live surface acceptance", _blender(
+        _run("FSPT asynchronous viewport lifecycle acceptance", _blender(
             blender_exe, "--factory-startup", "--python-exit-code", "1",
-            "--python", "tests/acceptance/blender_fspt_live_acceptance.py",
-            "--", "--json-out", str(_RUN_DIRECTORY / "fspt-live.json"),
-            "--blend", str(ROOT / "demos/dam_break.blend"), "--deadline", "360",
-        ), env=env, reject_output=True, expect_marker="FSPT-LIVE-ACCEPTANCE-PASS")
+            "--python", "tests/acceptance/blender_fspt_async_viewport_acceptance.py",
+            "--", "--json-out", str(_RUN_DIRECTORY / "fspt-async-viewport.json"),
+            "--cycles", "50", "--deadline", "360",
+        ), env=env, reject_output=True, expect_marker="FSPT-ASYNC-VIEWPORT-PASS")
+        _run("FSPT changing asynchronous live surface acceptance", _blender(
+            blender_exe, "--factory-startup", "--python-exit-code", "1",
+            "--python", "tests/acceptance/blender_fspt_async_live_acceptance.py",
+            "--", "--json-out", str(_RUN_DIRECTORY / "fspt-async-live.json"),
+            "--blend", str(ROOT / "demos/dam_break.blend"), "--states", "240",
+            "--soak-seconds", "600", "--deadline", "1800",
+        ), env=env, reject_output=True, expect_marker="FSPT-ASYNC-LIVE-ACCEPTANCE-PASS")
         _run("FSPT rendered viewport acceptance", _blender(
             blender_exe,
             "--factory-startup",

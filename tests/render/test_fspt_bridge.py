@@ -49,6 +49,62 @@ def test_static_scene_does_not_require_a_solver(monkeypatch):
     assert b.capture_publications(SimpleNamespace(session_uid=400), for_viewport=True) == ()
 
 
+def _advance_live(scene, surface, *, solver_frame=7, state_revision=61,
+                  simulation_time=0.30, synchronized=True, triangle_count=1):
+    with publication.surface_attempt(scene, source=publication.SurfaceSource.LIVE,
+                                     epoch=25, timeline_frame=8, solver_frame=solver_frame,
+                                     state_revision=state_revision, simulation_time=simulation_time,
+                                     source_timeline_frame=8) as attempt:
+        attempt.mark_mutation()
+        attempt.record(vertex_count=3, triangle_count=triangle_count, visible=True, obj=surface)
+        attempt.succeed(synchronized=synchronized)
+
+
+def test_owned_viewport_image_can_follow_a_later_live_publication_for_at_most_250_ms(accepted):
+    b, scene, surface = accepted
+    old = b.capture_publications(scene, for_viewport=True)
+    _advance_live(scene, surface)
+    result = b.validate_viewport_publications(scene, old, clock=lambda: old[0].published_at + 0.2)
+    assert result["status"] == "RETAINED" and result["publication_age_seconds"] == pytest.approx(0.2)
+    assert result["retention_limit_seconds"] == 0.25
+    assert "not authoritative solver-ready" in result["age_clock"]
+    with pytest.raises(b.SurfaceNotReadyError, match="age"):
+        b.validate_viewport_publications(scene, old, clock=lambda: old[0].published_at + 0.2501)
+    with pytest.raises(b.SurfaceNotReadyError):
+        b.validate_publications(scene, old, for_viewport=True)
+
+
+def test_paused_current_image_remains_valid_without_being_claimed_recent(accepted):
+    b, scene, _ = accepted
+    current = b.capture_publications(scene, for_viewport=True)
+    result = b.validate_viewport_publications(scene, current, clock=lambda: current[0].published_at + 600)
+    assert result["status"] == "CURRENT" and result["publication_age_seconds"] == pytest.approx(600)
+
+
+@pytest.mark.parametrize("field,value", [("solver_frame", 6), ("state_revision", 60),
+                                         ("simulation_time", 0.25), ("triangle_count", 0)])
+def test_owned_history_rejects_same_state_rebuilds_and_cleared_geometry(accepted, field, value):
+    b, scene, surface = accepted
+    old = b.capture_publications(scene, for_viewport=True)
+    _advance_live(scene, surface, **{field: value})
+    with pytest.raises(b.SurfaceNotReadyError, match="compatible|advancing"):
+        b.validate_viewport_publications(scene, old, clock=lambda: old[0].published_at + 0.1)
+
+
+def test_owned_history_refuses_pending_sync_and_mutation_quarantine(accepted):
+    b, scene, surface = accepted
+    old = b.capture_publications(scene, for_viewport=True)
+    _advance_live(scene, surface, synchronized=False)
+    with pytest.raises(b.SurfaceNotReadyError):
+        b.validate_viewport_publications(scene, old, clock=lambda: old[0].published_at + 0.1)
+    with publication.surface_attempt(scene, source=publication.SurfaceSource.LIVE,
+                                     epoch=25, timeline_frame=9) as attempt:
+        attempt.mark_mutation()
+        attempt.fail(RuntimeError("partial write"))
+    with pytest.raises(b.SurfaceNotReadyError):
+        b.validate_viewport_publications(scene, old, clock=lambda: old[0].published_at + 0.1)
+
+
 def test_capture_preserves_published_state_when_timeline_moves(accepted):
     b, scene, _ = accepted
     original = b.capture_publications(scene, for_viewport=True)
