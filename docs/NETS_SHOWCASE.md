@@ -15,13 +15,13 @@ into the wreckage, with the crown sheets meeting in the middle. Slow motion
 |---|---|---|---|
 | Voxel (sim and surface) | 20 mm | **1 mm** | 2 mm |
 | Cells along the longest axis | 280 | **600** (2.1x) | 300 |
-| Cells in the whole domain | 2.2 M | **67 M** (30x) | 8.4 M |
-| Particles at start | ~864 k | **~6.8 M** (7.9x), Narrow Band off | ~0.85 M |
+| Cells in the whole domain | 2.2 M | **57 M** (26x) | 7.1 M |
+| Particles at start | ~864 k | **~5.7 M** (6.7x), Narrow Band off | ~0.72 M |
 
 The shipped demos are coarser still (dam_break 187 cells, crown_splash 80).
 "Twice the fidelity" is read as twice the cells along the longest axis, with
 the domain cell count and particle count higher multiples. The scenes are
-different sizes (Upres Cove is a 5.6 m cove, this is a 0.6 m domain around a 0.46 m trough), so the
+different sizes (Upres Cove is a 5.6 m cove, this is a 0.6 m domain around a 0.38 m trough), so the
 voxel size in millimetres is the plainest comparison. The particle count is a
 estimate until the build reports the real one (in `meta.json`).
 The numbers live in `tools/demos/nets_showcase.py` and are checked by
@@ -31,11 +31,13 @@ The numbers live in `tools/demos/nets_showcase.py` and are checked by
 
 - No liquid touches a domain wall. Surface Nets stops half a voxel short of its
   extraction box where liquid meets a domain wall, which would show as a gap. The
-  pool sits on a collider slab 16 mm above the domain floor, and the trough walls
-  are 300 mm tall, above the highest spray the GPU draft runs saw (0.28 m with 50 mm
-  walls, which let the water run out over the slab to the domain walls). The wall on
-  the camera side is left out of the render, so it holds the water like a pane of
-  clear glass. The drops are dropped nearly from rest (about 2 m/s at the pool). A
+  pool sits on a collider slab 16 mm above the domain floor and the trough walls
+  (220 mm) are well above the spray. The first GPU runs threw spray 0.28 m up from
+  2.0-2.35 m/s impacts, over 50 mm walls, and the water ran out over the slab to the
+  domain walls. Splash height grows with the square of the impact speed, so all
+  three drops now land at about 1.4 m/s (the later two are thrown upwards so they come
+  down late and slowly); that is what lets the walls, the domain height and the leaf
+  capacity stay small. The wall on the camera side is rendered as clear glass. A
   stray droplet can still reach a wall, which costs a speck; the build fails if more
   than 0.1% of the particles get within 10 voxels of a wall.
 - The admission planner books capacity before the first step, and two things it
@@ -45,17 +47,19 @@ The numbers live in `tools/demos/nets_showcase.py` and are checked by
     whole cube. So the pool is a grid of ten small box sources (`pool_tiles`).
   - Every collider books the leaves of its bounding box, so each wall is its own
     mesh and the slab only covers the trough, not the whole floor. Even so the
-    hero scene needs about 35,000 leaves, which is why hero's leaf capacity is
-    45,056 (about 7.7 GiB of the 11.8 GiB estimate).
+    hero scene still books about 23,000 leaves and the solver really uses about 1.65
+    times that at the first step (58,000 against a 35,000 booking in the run that
+    found it), so hero's leaf capacity is 49,152 (about 8.4 GiB of the 12.1 GiB
+    estimate).
 - Every drop is at least 32 voxels across at hero resolution. Surface Nets
   shrinks very small droplets more than marching cubes (about 2.5 voxels: 83%
   of the volume against 91%); fine spray will shrink a little, the drops will not.
 - The pool is a thin film (8 mm) and Narrow Band is off. A source's startup demand
   is its whole volume, booked before any narrow-band culling, so a deep pool
   would be budgeted at tens of millions of particles whatever the band.
-- The domain is a long box (600 x 280 x 400 cells), not a cube. The Surface Nets
+- The domain is a long box (600 x 280 x 340 cells), not a cube. The Surface Nets
   extractor works in a dense box, and the add-on's own estimate puts the whole
-  hero scene at about 11.8 GiB, which is tight on a 16 GB card.
+  hero scene at about 12.1 GiB, which is tight on a 16 GB card.
 - The backend is chosen by `FLUIDSIM_SURFACE_BACKEND=nets` and is not saved in a
   `.blend` or a bake. A misspelt value silently falls back to marching cubes, so
   both scripts set it themselves and then read the backend the render surface

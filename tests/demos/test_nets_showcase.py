@@ -66,9 +66,12 @@ def _builder_source():
 
 
 def test_trough_walls_are_taller_than_the_splash_and_the_front_is_glass():
-    # GPU runs saw spray up to 0.28 m with low walls; the walls must clear it.
+    # The spray of a v m/s impact rises about v^2 / 2g (0.28 m at the first run's
+    # 2.35 m/s); the walls clear twice that for the 1.4 m/s impacts.
     assert ns.TROUGH_TOP_FRONT == ns.TROUGH_TOP_BACK == ns.TROUGH_TOP_END
-    assert ns.TROUGH_TOP_FRONT >= 0.30
+    fastest = max(d.speed + ns.G * d.impact_time for d in ns.DROPS)
+    assert ns.TROUGH_HEIGHT >= 2.0 * fastest ** 2 / (2.0 * ns.G)
+    assert ns.TROUGH_TOP_FRONT > max(d.top for d in ns.DROPS)
     assert ns.TROUGH_TOP_FRONT < ns.DOMAIN_HI[2] - 0.05
     names = [m.name for m in ns.trough_wall_meshes()]
     assert names == ["Nets Trough Front", "Nets Trough Back", "Nets Trough Left",

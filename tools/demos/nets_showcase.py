@@ -78,8 +78,8 @@ class Preset:
 
 
 PRESETS = {
-    HERO: Preset(HERO, voxel=0.001, leaf_capacity=45056,
-                 max_particles=8_000_000, max_dense_dim=640),
+    HERO: Preset(HERO, voxel=0.001, leaf_capacity=49152,
+                 max_particles=6_700_000, max_dense_dim=640),
     DRAFT: Preset(DRAFT, voxel=0.002, leaf_capacity=16384,
                   max_particles=1_300_000, max_dense_dim=320),
 }
@@ -98,21 +98,21 @@ def preset(name=None):
 
 DOMAIN_HX, DOMAIN_HY = 0.30, 0.14
 DOMAIN_LO = (-DOMAIN_HX, -DOMAIN_HY, 0.0)
-DOMAIN_HI = (DOMAIN_HX, DOMAIN_HY, 0.40)
+DOMAIN_HI = (DOMAIN_HX, DOMAIN_HY, 0.34)
 
 SLAB_TOP = 0.016         # the floor the pool sits on (hero: 16 voxels above the domain floor)
 SLAB_BELOW = 0.05        # collider reaches below the domain floor
-SLAB_OVERHANG = 0.02     # past the outer face of the trough walls
-POOL_HX, POOL_HY = 0.22, 0.10   # inner half sizes of the trough
+SLAB_OVERHANG = 0.006    # past the outer face of the trough walls
+POOL_HX, POOL_HY = 0.18, 0.10   # inner half sizes of the trough
 POOL_DEPTH = 0.008      # a thin film: every pool voxel holds particles, see expected_particles
 POOL_TOP = SLAB_TOP + POOL_DEPTH
 WALL_THICKNESS = 0.008
 # Trough wall height above the pool. The walls are taller than any spray the
-# three drops throw (the first GPU runs saw 0.28 m with the walls at 0.05 m, and
-# the water ran out over the slab to the domain walls). The camera-side wall is
+# three drops throw (the first GPU runs saw 0.28 m from 2+ m/s impacts with the walls
+# at 0.05 m, and the water ran out over the slab to the domain walls). The camera-side wall is
 # rendered as clear glass (see GLASS_WALLS), so the camera sees the splash
 # through it like the front of a tank.
-TROUGH_HEIGHT = 0.30
+TROUGH_HEIGHT = 0.22
 TROUGH_TOP_FRONT = POOL_TOP + TROUGH_HEIGHT
 TROUGH_TOP_BACK = POOL_TOP + TROUGH_HEIGHT
 TROUGH_TOP_END = POOL_TOP + TROUGH_HEIGHT
@@ -126,7 +126,7 @@ class Drop:
     name: str
     center_xy: tuple
     radius: float
-    speed: float        # downward launch speed, m/s
+    speed: float        # downward launch speed, m/s (negative: thrown up)
     impact_time: float  # seconds of liquid time until the bottom meets the pool
 
     @property
@@ -143,14 +143,16 @@ class Drop:
         return self.center[2] + self.radius
 
 
-# Biggest first, left to right. Dropped nearly from rest (the first has a small
-# push) so the impacts are gentle: 2.0, 1.9 and 2.35 m/s. A harder splash threw
-# spray into the domain walls on the first GPU run. Impacts at about frames 9,
-# 16 and 20 (liquid time per frame is TIME_SCALE / FPS = 12.5 ms).
+# Biggest first, left to right. All three land at about 1.4 m/s, gently, because
+# the splash height (and with it the wall height, the domain height and the leaf
+# capacity) grows with the square of the speed: the first run's 2.0-2.35 m/s
+# splashes threw spray 0.28 m up. The later drops are thrown UP (negative speed)
+# so they come down late and slowly. Impacts at about frames 9, 16 and 20
+# (liquid time per frame is TIME_SCALE / FPS = 12.5 ms).
 DROPS = (
-    Drop("Nets Drop A", (-0.130, 0.000), 0.028, 1.0, 0.102),
-    Drop("Nets Drop B", (0.000, 0.015), 0.020, 0.0, 0.190),
-    Drop("Nets Drop C", (0.130, -0.020), 0.016, 0.0, 0.240),
+    Drop("Nets Drop A", (-0.130, 0.000), 0.028, 0.40, 0.102),
+    Drop("Nets Drop B", (0.000, 0.015), 0.020, -0.46, 0.190),
+    Drop("Nets Drop C", (0.130, -0.020), 0.016, -0.95, 0.240),
 )
 
 # Camera for a 16:9 frame: at the top of the trough walls, looking along its side.
