@@ -100,20 +100,29 @@ class AsyncViewportAcceptance:
 
     def instrument(self):
         engine, backend = self.engine, self.backend_module.AsyncCudaBackend
-        for name, phase in (("view_draw", "draw"), ("view_update", "update"), ("render", "final")):
-            original = getattr(engine.FSPTRenderEngine, name)
-            def callback(instance, *args, _original=original, _phase=phase, **kwargs):
-                previous, self.phase = self.phase, _phase
-                started = time.perf_counter()
-                try:
-                    if _phase != "final":
-                        assert current_thread() is main_thread(), _phase
-                    return _original(instance, *args, **kwargs)
-                finally:
-                    self.times[_phase].append(time.perf_counter() - started)
-                    self.calls[_phase] += 1
-                    self.phase = previous
-            self.patch(engine.FSPTRenderEngine, name, callback)
+        callbacks = {name: getattr(engine.FSPTRenderEngine, name)
+                     for name in ("view_draw", "view_update", "render")}
+        def callback(name, phase, instance, *args):
+            previous, self.phase = self.phase, phase
+            started = time.perf_counter()
+            try:
+                if phase != "final":
+                    assert current_thread() is main_thread(), phase
+                return callbacks[name](instance, *args)
+            finally:
+                self.times[phase].append(time.perf_counter() - started)
+                self.calls[phase] += 1
+                self.phase = previous
+        # RNA dispatch derives the supplied argument count from the Python
+        # code signature. Keep explicit parameters on every engine callback.
+        def view_draw(instance, context, depsgraph):
+            return callback("view_draw", "draw", instance, context, depsgraph)
+        def view_update(instance, context, depsgraph):
+            return callback("view_update", "update", instance, context, depsgraph)
+        def render(instance, depsgraph):
+            return callback("render", "final", instance, depsgraph)
+        for name, wrapper in (("view_draw", view_draw), ("view_update", view_update), ("render", render)):
+            self.patch(engine.FSPTRenderEngine, name, wrapper)
         original_init = backend.__init__
         def create(instance, *args, **kwargs):
             assert self.phase != "draw", "Drawing constructed a CUDA backend"
