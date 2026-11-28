@@ -7,7 +7,7 @@ Gallery or the demo gate, and its `.blend` is saved to `artifacts/review_demos/`
 Three drops of different sizes fall into a long, shallow marble trough one after
 the other, left to right: a crown, then a drop into its ripples, then a drop
 into the wreckage, with the crown sheets meeting in the middle. Slow motion
-(Time Scale 0.3), 144 frames.
+(Time Scale 0.2), 144 frames.
 
 ## How much finer than before
 

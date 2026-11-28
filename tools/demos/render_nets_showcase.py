@@ -207,7 +207,12 @@ def run_sim(opts):
             f"step {series['step_ms'][-1]:.0f} ms, "
             f"{series['wall_s'][-1]:.1f} s, backend {backend}")
     series["total_s"] = time.perf_counter() - t_all
-    series["preset"] = ns.preset().name
+    # The preset the saved scene was really built at (its voxel), not whatever
+    # NETS_SHOWCASE_PRESET happens to say in this shell.
+    voxel = float(solver.settings.voxel_size)
+    series["preset"] = next(
+        (name for name, pr in ns.PRESETS.items() if abs(pr.voxel - voxel) < 1e-9),
+        f"voxel_{voxel:g}")
     with open(os.path.join(opts["out"], "sim_series.json"), "w", encoding="utf-8") as fh:
         json.dump(series, fh)
     if not series["frames"]:
@@ -568,7 +573,8 @@ def run_render(opts):
             "(or never ran); run the sim stage first")
     # Only the frames the last simulation recorded, never stray older meshes.
     with open(manifest, encoding="utf-8") as fh:
-        recorded = set(json.load(fh)["frames"])
+        capture = json.load(fh)
+    recorded = set(capture["frames"])
     frames = sorted(int(f[6:10]) for f in os.listdir(mesh_dir) if f.startswith("verts_"))
     frames = [f for f in frames if f in recorded]
     if opts["frames"]:
@@ -582,7 +588,7 @@ def run_render(opts):
     t0 = time.perf_counter()
     rendered = []
     config = {"size": list(opts["size"]), "samples": opts["samples"],
-              "engine": opts["engine"], "preset": ns.preset().name,
+              "engine": opts["engine"], "preset": capture.get("preset", "unknown"),
               "mesh_stamp": mesh_stamp(mesh_dir),
               "camera": [list(ns.CAMERA_LOCATION), list(ns.CAMERA_TARGET),
                          ns.CAMERA_LENS]}

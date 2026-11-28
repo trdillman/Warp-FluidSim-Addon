@@ -213,7 +213,10 @@ def test_hero_fits_a_16gb_card_by_the_addons_own_estimate():
         P._build_settings(args), domain_min=ns.DOMAIN_LO, domain_max=ns.DOMAIN_HI,
         leaf_capacity=p.leaf_capacity, narrow_band_enabled=False,
         surface_max_dense_dim=p.max_dense_dim)
-    assert estimate_solver_bytes(settings) < 12 * GIB
+    # 12.5 GiB, under the 12.6 GiB the add-on's admission left on the 16 GB
+    # RTX 4080 SUPER the hero ran on (it planned 12.2 GiB, was admitted, and
+    # peaked at 11.9 GiB of the whole card, desktop included).
+    assert estimate_solver_bytes(settings) < 12.5 * GIB
 
 
 def test_draft_is_the_same_scene_at_half_resolution():
@@ -299,7 +302,7 @@ def test_builder_and_renderer_are_wired_to_the_shared_numbers():
     assert "sess.last_frame != frame" in renderer
     # Meshes from an earlier run must not reach the render.
     assert 'os.remove(os.path.join(mesh_dir, name))' in renderer
-    assert 'json.load(fh)["frames"]' in renderer
+    assert 'capture["frames"]' in renderer
     assert "FLUIDSIM_SURFACE_BACKEND" in renderer or "ns.BACKEND_ENV" in renderer
 
 
