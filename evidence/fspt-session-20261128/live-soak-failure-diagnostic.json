@@ -1,0 +1,1517 @@
+{
+  "schema": 1,
+  "scope": "Read-only diagnosis of the retained failed 0607 standalone async-live soak",
+  "head": "0607daad9354b872c7530277371b1d998443c394",
+  "native_read_only_runs": [
+    "313eb9aa49b248cb8d23b8a0c330aa80",
+    "cb7fef2670194ec4b9d6eca10086116a"
+  ],
+  "native_report": {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance.json",
+    "sha256": "8afc88c9bcce7740ebf44d5e28c21e70ac07f51a722d1134dc485bd33dabe6ae",
+    "bytes": 1645189
+  },
+  "matching_source_receipts": {
+    "before": {
+      "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\source-before.json",
+      "sha256": "fa30e7f23f432b2621eb84c526dc3473b77e099a4793a31e6f48b733b119200b",
+      "bytes": 177450
+    },
+    "after": {
+      "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\source-after.json",
+      "sha256": "fa30e7f23f432b2621eb84c526dc3473b77e099a4793a31e6f48b733b119200b",
+      "bytes": 177450
+    }
+  },
+  "exclusive_lease": {
+    "id": "f265e23c1ffe",
+    "cls": "exclusive",
+    "state": "released",
+    "verdict": "clean",
+    "gpu_samples": 127,
+    "contamination": [],
+    "exit_code": 1,
+    "owner_pid": 19812,
+    "owner_ctime": 134403253303856600,
+    "pids": [
+      [
+        5828,
+        134403253533763440
+      ]
+    ],
+    "session": "agent:fspt-continue-20261128",
+    "max_seconds": 1830,
+    "run_seconds": 157.024,
+    "profile": {
+      "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\config",
+      "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\datafiles",
+      "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\extensions",
+      "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\scripts"
+    }
+  },
+  "chronology": {
+    "native_start": "2026-11-28T07:42:10.065971+00:00",
+    "observed_reopen_stdout": "02:22.672",
+    "terminal": "2026-11-28T07:45:10.266862+00:00",
+    "fixture_completed_controls": [
+      "domain_ownership",
+      "pause_transitions",
+      "paused_baseline",
+      "pause_refine",
+      "freeze",
+      "mutation_cadence",
+      "sync_warning",
+      "reset",
+      "reopen"
+    ],
+    "first_240_elapsed_observer_seconds": 119.14556259999517,
+    "successful_selected_draws": {
+      "RETAINED": 240
+    },
+    "soak_new_states": 7,
+    "soak_changed_images": 6,
+    "complete_600_second_soak": false,
+    "expected_assertion": "No new completed live-image progress for 10 seconds"
+  },
+  "observation": {
+    "report_keys": [
+      "status",
+      "stage",
+      "frames",
+      "controls",
+      "draw_observer",
+      "verifier_sha256",
+      "fixture_helper_sha256",
+      "input_blend",
+      "input_blend_sha256",
+      "addon",
+      "python_tree_sha256",
+      "blender",
+      "blender_build",
+      "blender_executable",
+      "python",
+      "os",
+      "runtime",
+      "demo",
+      "prepared_blend",
+      "prepared_blend_sha256",
+      "viewport",
+      "reference_verifier_sha256",
+      "requested_states",
+      "requested_soak_seconds",
+      "proof_boundary",
+      "performance_scope",
+      "capture_audit_count",
+      "async_boundary_calls",
+      "runtime_checkpoint",
+      "last_viewport_error",
+      "soak",
+      "error"
+    ],
+    "first_row_keys": [
+      "timeline_frame",
+      "source_timeline_frame",
+      "solver_frame",
+      "state_revision",
+      "simulation_time",
+      "epoch",
+      "generation",
+      "build_key",
+      "channel",
+      "source",
+      "scene_token",
+      "owner_token",
+      "state_ready_at",
+      "geometry_sha256",
+      "rendered_surface_sha256",
+      "image_sha256",
+      "evaluated_vertex_count",
+      "evaluated_triangle_count",
+      "capture_audit",
+      "presented_at_observer",
+      "presentation_status",
+      "publication_to_draw_seconds",
+      "solver_state_to_draw_seconds",
+      "requested_frame_at_draw",
+      "animation_playing",
+      "telemetry",
+      "raw_pixels",
+      "raw_pixels_sha256",
+      "screenshot",
+      "screenshot_sha256"
+    ],
+    "telemetry_keys": [
+      "status",
+      "key",
+      "samples",
+      "device",
+      "backend",
+      "transport",
+      "width",
+      "height",
+      "scene_frame",
+      "sources",
+      "geometry_digest",
+      "statistics",
+      "draw_count",
+      "region_id",
+      "capture_statistics",
+      "presentation"
+    ],
+    "capture_audit_keys": [
+      "snapshot_digest",
+      "geometry_sha256",
+      "evaluated_vertex_count",
+      "evaluated_triangle_count",
+      "captured_at_observer",
+      "source_generation",
+      "source_epoch",
+      "source_scene",
+      "solver_frame_at_capture",
+      "state_revision_at_capture"
+    ],
+    "scope": null,
+    "demo": {
+      "scene": "Scene",
+      "start": 1,
+      "sources": [
+        "DamBreak Source Column"
+      ],
+      "voxel_size": 0.029946522787213326,
+      "whitewater_simulation_enabled": true,
+      "hidden_presentation": [
+        "points",
+        "whitewater",
+        "Blender light objects"
+      ],
+      "authored_output_visibility": {
+        "FluidSim Surface": {
+          "object_token": 193,
+          "hide_viewport": false,
+          "hide_render": false,
+          "layer_visible": true
+        },
+        "FluidSim Particles": {
+          "object_token": 192,
+          "hide_viewport": false,
+          "hide_render": false,
+          "layer_visible": true
+        },
+        "FluidSim Whitewater": {
+          "object_token": 194,
+          "hide_viewport": false,
+          "hide_render": false,
+          "layer_visible": true
+        }
+      },
+      "prepared_output_visibility": {
+        "FluidSim Surface": {
+          "object_token": 193,
+          "hide_viewport": false,
+          "hide_render": false,
+          "layer_visible": true
+        },
+        "FluidSim Particles": {
+          "object_token": 192,
+          "hide_viewport": true,
+          "hide_render": true,
+          "layer_visible": false
+        },
+        "FluidSim Whitewater": {
+          "object_token": 194,
+          "hide_viewport": true,
+          "hide_render": true,
+          "layer_visible": false
+        }
+      },
+      "authored_frame_end": 120,
+      "acceptance_frame_end": 100000
+    },
+    "terminal": {
+      "status": "FAILED",
+      "started_at": "2026-11-28T07:42:10.065971+00:00",
+      "finished_at": "2026-11-28T07:45:10.266862+00:00",
+      "returncode": 1,
+      "marker_seen": false,
+      "record_sha256": {
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\stdout.log": "c943b233070bd3ea12d0c5480db2ea8b90c3c7fdea9662197e8088165b0741f7",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\stderr.log": "874860531f65e3bdb0aaa91b795dc3bf874376cfc5cbf0f86450599d0fb7c93c",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\lease.json": "aa62d6e8ff0bc7fe1b36e1ca6b0be73d6ddc2324363a2d3ae1770c422cd9efc0",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance.json": "8afc88c9bcce7740ebf44d5e28c21e70ac07f51a722d1134dc485bd33dabe6ae"
+      },
+      "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\run_exclusive_fspt_gui.py\", line 280, in run_lane\n    validate_lease(lease, label=label, argv=argv, executable=q.BLENDER, root=q.ROOT,\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                   lease_seconds=lease_seconds, private_profile=row[\"private_profile\"])\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\run_exclusive_fspt_gui.py\", line 95, in validate_lease\n    require(type(lease.get(\"exit_code\")) is int and lease[\"exit_code\"] == 0\n    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n            and lease.get(\"argv\") == argv\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<2 lines>...\n            and lease.get(\"max_seconds\") == lease_seconds,\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n            \"Exclusive BGATE receipt does not bind exact Blender command and cap\")\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\run_exclusive_fspt_gui.py\", line 46, in require\n    raise RuntimeError(reason)\nRuntimeError: Exclusive BGATE receipt does not bind exact Blender command and cap\n"
+    },
+    "first_240": {
+      "count": 240,
+      "summary": {
+        "timeline_frame": {
+          "n": 240,
+          "min": 2,
+          "median": 496,
+          "p95": 733,
+          "max": 759
+        },
+        "source_timeline_frame": {
+          "n": 240,
+          "min": 2,
+          "median": 496,
+          "p95": 733,
+          "max": 759
+        },
+        "solver_frame": {
+          "n": 240,
+          "min": 1,
+          "median": 495,
+          "p95": 732,
+          "max": 758
+        },
+        "state_revision": {
+          "n": 240,
+          "min": 5,
+          "median": 6605,
+          "p95": 8501,
+          "max": 8709
+        },
+        "evaluated_vertex_count": {
+          "n": 240,
+          "min": 4360,
+          "median": 12134,
+          "p95": 17672,
+          "max": 18875
+        },
+        "evaluated_triangle_count": {
+          "n": 240,
+          "min": 8518,
+          "median": 23799,
+          "p95": 35002,
+          "max": 37434
+        },
+        "presented_at_observer": {
+          "n": 240,
+          "min": 224038.6421014,
+          "median": 224118.7688844,
+          "p95": 224153.9875566,
+          "max": 224157.787664
+        },
+        "publication_to_draw_seconds": {
+          "n": 240,
+          "min": 0.12878359999740496,
+          "median": 0.2325126499927137,
+          "p95": 0.24691469999379478,
+          "max": 0.24955690000206232
+        },
+        "solver_state_to_draw_seconds": {
+          "n": 240,
+          "min": 0.1489757999952417,
+          "median": 0.2434852000005776,
+          "p95": 0.25934810002218,
+          "max": 0.2638761999842245
+        },
+        "image_mean_abs_delta": {
+          "n": 239,
+          "min": 0.0004849621618632227,
+          "median": 0.0011976294917985797,
+          "p95": 0.0033576826099306345,
+          "max": 0.009023156948387623
+        },
+        "solver_particle_count": null
+      },
+      "counts": {
+        "presentation": {
+          "RETAINED": 240
+        }
+      },
+      "observer_wall_span_seconds": 119.14556259999517,
+      "distinct_geometry": 240,
+      "distinct_image": 240,
+      "adjacent_observer_interval_seconds": {
+        "n": 239,
+        "min": 0.26260369998635724,
+        "median": 0.31268630002159625,
+        "p95": 0.6597384000197053,
+        "max": 22.910418499988737
+      },
+      "first": {
+        "timeline_frame": 2,
+        "source_timeline_frame": 2,
+        "solver_frame": 1,
+        "state_revision": 5,
+        "evaluated_vertex_count": 4360,
+        "evaluated_triangle_count": 8518,
+        "presented_at_observer": 224038.6421014,
+        "publication_to_draw_seconds": 0.12878359999740496,
+        "solver_state_to_draw_seconds": 0.15895500002079643,
+        "epoch": 1,
+        "generation": 1,
+        "presentation_status": "RETAINED",
+        "animation_playing": true,
+        "channel": "EVALUATED_MESH",
+        "source": "LIVE",
+        "geometry_sha256": "46d3ff3241f8fdc3c7a9c20ed872a54cd8cf577a2b6519fff6cd9d0513d8b4e5",
+        "image_sha256": "878692946e4952fa4d74ad46ff2f6d7a36e469f899cd2f328262e935169affbf",
+        "telemetry": {
+          "status": "COMPLETE",
+          "key": [
+            "2278ec0e33c9263ee0a2e430dc361bf9a22748b58617d0a8f1f759488ac291b2",
+            "3321b0d28a26bd0e53a6fd1b571ee7ab90f2d6966a31f174a9f80750becb0584",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 1,
+          "device": "cuda:0",
+          "backend": "warp-cuda-async-v1",
+          "transport": "host-pinned-rgba32f",
+          "width": 525,
+          "height": 298,
+          "scene_frame": 2,
+          "sources": [
+            {
+              "scene_token": 177,
+              "owner_token": [
+                185,
+                "FluidSim Output"
+              ],
+              "epoch": 1,
+              "channel": "EVALUATED_MESH",
+              "generation": 1,
+              "source": "LIVE",
+              "timeline_frame": 2,
+              "solver_frame": 1,
+              "state_revision": 5,
+              "simulation_time": 0.041666666666666664,
+              "cache_frame": null,
+              "cache_identity": null,
+              "build_key": [
+                5,
+                1,
+                [
+                  0,
+                  2,
+                  0,
+                  8,
+                  512,
+                  1,
+                  false,
+                  [
+                    0.029946522787213326,
+                    1.2000000476837158,
+                    2,
+                    2,
+                    0,
+                    0.7,
+                    0,
+                    1,
+                    0,
+                    1,
+                    2,
+                    1,
+                    0.7,
+                    false,
+                    1.5,
+                    1,
+                    "ball",
+                    "propagate",
+                    null
+                  ],
+                  [
+                    false,
+                    2,
+                    4,
+                    0.5,
+                    0,
+                    false,
+                    8,
+                    0.35,
+                    2
+                  ],
+                  0
+                ]
+              ],
+              "object_token": 193,
+              "mesh_token": 208,
+              "vertex_count": 4360,
+              "triangle_count": 8518,
+              "visible": true,
+              "published_at": 224038.5133178,
+              "captured_at": 224038.4834442,
+              "source_timeline_frame": 2,
+              "state_ready_at": 224038.4831464
+            }
+          ],
+          "geometry_digest": "c5f15c1a7084b049cda122521f84bf9b8c029f8572c93642e546b4acbbea3fa2",
+          "statistics": {
+            "geometry_uploads": 1,
+            "mesh_builds": 1,
+            "geometry_array_allocations": 2,
+            "position_upload_bytes": 154752,
+            "index_upload_bytes": 306144,
+            "position_upload_ranges": 1,
+            "index_upload_ranges": 1,
+            "shading_uploads": 1,
+            "image_allocations": 1,
+            "dispatches": 1,
+            "readbacks": 1
+          },
+          "draw_count": 1,
+          "region_id": 1543679667360,
+          "capture_statistics": {
+            "captures": 2,
+            "capture_denials": 0,
+            "surface_invalidations": 1,
+            "scene_invalidations": 6,
+            "submitted": 1,
+            "collected": 1,
+            "discarded": 0
+          },
+          "presentation": {
+            "status": "RETAINED",
+            "publication_age_seconds": 0.1289540999860037,
+            "solver_state_age_seconds": 0.15912550000939518,
+            "solver_state_age_clock": "host monotonic Solver Session completion before optional publication",
+            "retention_limit_seconds": 0.25,
+            "age_clock": "host monotonic publication completion; not authoritative solver-ready"
+          }
+        },
+        "capture_audit": {
+          "snapshot_digest": "2278ec0e33c9263ee0a2e430dc361bf9a22748b58617d0a8f1f759488ac291b2",
+          "geometry_sha256": "46d3ff3241f8fdc3c7a9c20ed872a54cd8cf577a2b6519fff6cd9d0513d8b4e5",
+          "evaluated_vertex_count": 4360,
+          "evaluated_triangle_count": 8518,
+          "captured_at_observer": 224038.5496639,
+          "source_generation": 1,
+          "source_epoch": 1,
+          "source_scene": 177,
+          "solver_frame_at_capture": 1,
+          "state_revision_at_capture": 5
+        }
+      },
+      "last": {
+        "timeline_frame": 759,
+        "source_timeline_frame": 759,
+        "solver_frame": 758,
+        "state_revision": 8709,
+        "evaluated_vertex_count": 10613,
+        "evaluated_triangle_count": 20708,
+        "presented_at_observer": 224157.787664,
+        "publication_to_draw_seconds": 0.22784569999203086,
+        "solver_state_to_draw_seconds": 0.237179699994158,
+        "image_mean_abs_delta": 0.0004948673886246979,
+        "epoch": 1,
+        "generation": 758,
+        "presentation_status": "RETAINED",
+        "animation_playing": true,
+        "channel": "EVALUATED_MESH",
+        "source": "LIVE",
+        "geometry_sha256": "176ebaf551bf3c61d38195be07a272f9359bb5be3c08b9d2b59e7435a5061121",
+        "image_sha256": "607c89586ae9db5a2a159394d6626f93a521973fe844600a9dba9a7d75dab8ce",
+        "telemetry": {
+          "status": "COMPLETE",
+          "key": [
+            "82c3c4cf555c437afd3a726d4d1f63fcb56386cf28749db7ae9b1c04960ed670",
+            "3321b0d28a26bd0e53a6fd1b571ee7ab90f2d6966a31f174a9f80750becb0584",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 1,
+          "device": "cuda:0",
+          "backend": "warp-cuda-async-v1",
+          "transport": "host-pinned-rgba32f",
+          "width": 525,
+          "height": 298,
+          "scene_frame": 759,
+          "sources": [
+            {
+              "scene_token": 177,
+              "owner_token": [
+                185,
+                "FluidSim Output"
+              ],
+              "epoch": 1,
+              "channel": "EVALUATED_MESH",
+              "generation": 758,
+              "source": "LIVE",
+              "timeline_frame": 759,
+              "solver_frame": 758,
+              "state_revision": 8709,
+              "simulation_time": 31.58333333333279,
+              "cache_frame": null,
+              "cache_identity": null,
+              "build_key": [
+                8709,
+                758,
+                [
+                  0,
+                  2,
+                  0,
+                  8,
+                  512,
+                  1,
+                  false,
+                  [
+                    0.029946522787213326,
+                    1.2000000476837158,
+                    2,
+                    2,
+                    0,
+                    0.7,
+                    0,
+                    1,
+                    0,
+                    1,
+                    2,
+                    1,
+                    0.7,
+                    false,
+                    1.5,
+                    1,
+                    "ball",
+                    "propagate",
+                    null
+                  ],
+                  [
+                    false,
+                    2,
+                    4,
+                    0.5,
+                    0,
+                    false,
+                    8,
+                    0.35,
+                    2
+                  ],
+                  0
+                ]
+              ],
+              "object_token": 193,
+              "mesh_token": 208,
+              "vertex_count": 10613,
+              "triangle_count": 20708,
+              "visible": true,
+              "published_at": 224157.5598183,
+              "captured_at": 224157.5507406,
+              "source_timeline_frame": 759,
+              "state_ready_at": 224157.5504843
+            }
+          ],
+          "geometry_digest": "f84a824abafac99befd70a7c011b69fd26ff5124a19362362977e70083aaed65",
+          "statistics": {
+            "geometry_uploads": 380,
+            "mesh_builds": 380,
+            "geometry_array_allocations": 32,
+            "position_upload_bytes": 105591336,
+            "index_upload_bytes": 209411016,
+            "position_upload_ranges": 2900,
+            "index_upload_ranges": 2921,
+            "shading_uploads": 377,
+            "image_allocations": 1,
+            "dispatches": 387,
+            "readbacks": 387
+          },
+          "draw_count": 252,
+          "region_id": 1543679667360,
+          "capture_statistics": {
+            "captures": 759,
+            "capture_denials": 0,
+            "surface_invalidations": 758,
+            "scene_invalidations": 6,
+            "submitted": 387,
+            "collected": 387,
+            "discarded": 1
+          },
+          "presentation": {
+            "status": "RETAINED",
+            "publication_age_seconds": 0.22806449999916367,
+            "solver_state_age_seconds": 0.2373985000012908,
+            "solver_state_age_clock": "host monotonic Solver Session completion before optional publication",
+            "retention_limit_seconds": 0.25,
+            "age_clock": "host monotonic publication completion; not authoritative solver-ready"
+          }
+        },
+        "capture_audit": {
+          "snapshot_digest": "82c3c4cf555c437afd3a726d4d1f63fcb56386cf28749db7ae9b1c04960ed670",
+          "geometry_sha256": "176ebaf551bf3c61d38195be07a272f9359bb5be3c08b9d2b59e7435a5061121",
+          "evaluated_vertex_count": 10613,
+          "evaluated_triangle_count": 20708,
+          "captured_at_observer": 224157.6221266,
+          "source_generation": 758,
+          "source_epoch": 1,
+          "source_scene": 177,
+          "solver_frame_at_capture": 758,
+          "state_revision_at_capture": 8709
+        }
+      }
+    },
+    "controls_present": [
+      "domain_ownership",
+      "pause_transitions",
+      "paused_baseline",
+      "pause_refine",
+      "freeze",
+      "mutation_cadence",
+      "sync_warning",
+      "reset",
+      "reopen"
+    ],
+    "pause_refine": {
+      "timeline_frame": 146,
+      "source_timeline_frame": 146,
+      "solver_frame": 145,
+      "state_revision": 3597,
+      "evaluated_vertex_count": 18756,
+      "evaluated_triangle_count": 37224,
+      "presented_at_observer": 224064.4232946,
+      "publication_to_draw_seconds": 0.6373904000211041,
+      "solver_state_to_draw_seconds": 0.6512708000082057,
+      "epoch": 1,
+      "generation": 145,
+      "presentation_status": "CURRENT",
+      "animation_playing": false,
+      "channel": "EVALUATED_MESH",
+      "source": "LIVE",
+      "geometry_sha256": "0a91ad4262180e7df62b25068eb50b5a765e3534a7c6a57fa83bd66aa2e3269a",
+      "image_sha256": "fe583556c9071d28873588411201cb418d3862ef2d2d46d3d44e3735efc0a049",
+      "telemetry": {
+        "status": "COMPLETE",
+        "key": [
+          "5af92cf7c9ad7aa0c1bd626609b1ffcc28f37a968455e6a1859cd2d07c29736c",
+          "3321b0d28a26bd0e53a6fd1b571ee7ab90f2d6966a31f174a9f80750becb0584",
+          525,
+          298,
+          6,
+          31
+        ],
+        "samples": 8,
+        "device": "cuda:0",
+        "backend": "warp-cuda-async-v1",
+        "transport": "host-pinned-rgba32f",
+        "width": 525,
+        "height": 298,
+        "scene_frame": 146,
+        "sources": [
+          {
+            "scene_token": 177,
+            "owner_token": [
+              185,
+              "FluidSim Output"
+            ],
+            "epoch": 1,
+            "channel": "EVALUATED_MESH",
+            "generation": 145,
+            "source": "LIVE",
+            "timeline_frame": 146,
+            "solver_frame": 145,
+            "state_revision": 3597,
+            "simulation_time": 6.041666666666735,
+            "cache_frame": null,
+            "cache_identity": null,
+            "build_key": [
+              3597,
+              145,
+              [
+                0,
+                2,
+                0,
+                8,
+                512,
+                1,
+                false,
+                [
+                  0.029946522787213326,
+                  1.2000000476837158,
+                  2,
+                  2,
+                  0,
+                  0.7,
+                  0,
+                  1,
+                  0,
+                  1,
+                  2,
+                  1,
+                  0.7,
+                  false,
+                  1.5,
+                  1,
+                  "ball",
+                  "propagate",
+                  null
+                ],
+                [
+                  false,
+                  2,
+                  4,
+                  0.5,
+                  0,
+                  false,
+                  8,
+                  0.35,
+                  2
+                ],
+                0
+              ]
+            ],
+            "object_token": 193,
+            "mesh_token": 208,
+            "vertex_count": 18756,
+            "triangle_count": 37224,
+            "visible": true,
+            "published_at": 224063.7859042,
+            "captured_at": 224063.7722681,
+            "source_timeline_frame": 146,
+            "state_ready_at": 224063.7720238
+          }
+        ],
+        "geometry_digest": "022f6479fcac838bb2b9267ca92621178aff5d53da6f3fe4849f53c9b0bde067",
+        "statistics": {
+          "geometry_uploads": 73,
+          "mesh_builds": 73,
+          "geometry_array_allocations": 32,
+          "position_upload_bytes": 25134528,
+          "index_upload_bytes": 49796184,
+          "position_upload_ranges": 472,
+          "index_upload_ranges": 472,
+          "shading_uploads": 73,
+          "image_allocations": 1,
+          "dispatches": 80,
+          "readbacks": 80
+        },
+        "draw_count": 19,
+        "region_id": 1543679667360,
+        "capture_statistics": {
+          "captures": 145,
+          "capture_denials": 0,
+          "surface_invalidations": 144,
+          "scene_invalidations": 6,
+          "submitted": 80,
+          "collected": 80,
+          "discarded": 1
+        },
+        "presentation": {
+          "status": "CURRENT",
+          "publication_age_seconds": 0.6375083000166342,
+          "solver_state_age_seconds": 0.6513887000037357,
+          "solver_state_age_clock": "host monotonic Solver Session completion before optional publication",
+          "retention_limit_seconds": 0.25,
+          "age_clock": "host monotonic publication completion; not authoritative solver-ready"
+        }
+      },
+      "capture_audit": {
+        "snapshot_digest": "5af92cf7c9ad7aa0c1bd626609b1ffcc28f37a968455e6a1859cd2d07c29736c",
+        "geometry_sha256": "0a91ad4262180e7df62b25068eb50b5a765e3534a7c6a57fa83bd66aa2e3269a",
+        "evaluated_vertex_count": 18756,
+        "evaluated_triangle_count": 37224,
+        "captured_at_observer": 224063.8797422,
+        "source_generation": 145,
+        "source_epoch": 1,
+        "source_scene": 177,
+        "solver_frame_at_capture": 145,
+        "state_revision_at_capture": 3597
+      }
+    },
+    "reset": {
+      "observed": {
+        "timeline_frame": 2,
+        "source_timeline_frame": 2,
+        "solver_frame": 1,
+        "state_revision": 5,
+        "evaluated_vertex_count": 4360,
+        "evaluated_triangle_count": 8518,
+        "presented_at_observer": 224159.2044407,
+        "publication_to_draw_seconds": 0.0905512000026647,
+        "solver_state_to_draw_seconds": 0.09770620000199415,
+        "epoch": 2,
+        "generation": 767,
+        "presentation_status": "CURRENT",
+        "animation_playing": false,
+        "channel": "EVALUATED_MESH",
+        "source": "LIVE",
+        "geometry_sha256": "46d3ff3241f8fdc3c7a9c20ed872a54cd8cf577a2b6519fff6cd9d0513d8b4e5",
+        "image_sha256": "878692946e4952fa4d74ad46ff2f6d7a36e469f899cd2f328262e935169affbf",
+        "telemetry": {
+          "status": "COMPLETE",
+          "key": [
+            "934935031682551ca65065b052b80b7d718a1a30aba2af1e56fdb25ca299d8e7",
+            "3321b0d28a26bd0e53a6fd1b571ee7ab90f2d6966a31f174a9f80750becb0584",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 1,
+          "device": "cuda:0",
+          "backend": "warp-cuda-async-v1",
+          "transport": "host-pinned-rgba32f",
+          "width": 525,
+          "height": 298,
+          "scene_frame": 2,
+          "sources": [
+            {
+              "scene_token": 177,
+              "owner_token": [
+                185,
+                "FluidSim Output"
+              ],
+              "epoch": 2,
+              "channel": "EVALUATED_MESH",
+              "generation": 767,
+              "source": "LIVE",
+              "timeline_frame": 2,
+              "solver_frame": 1,
+              "state_revision": 5,
+              "simulation_time": 0.041666666666666664,
+              "cache_frame": null,
+              "cache_identity": null,
+              "build_key": [
+                5,
+                1,
+                [
+                  0,
+                  2,
+                  0,
+                  8,
+                  512,
+                  1,
+                  false,
+                  [
+                    0.029946522787213326,
+                    1.2000000476837158,
+                    2,
+                    2,
+                    0,
+                    0.7,
+                    0,
+                    1,
+                    0,
+                    1,
+                    2,
+                    1,
+                    0.7,
+                    false,
+                    1.5,
+                    1,
+                    "ball",
+                    "propagate",
+                    null
+                  ],
+                  [
+                    false,
+                    2,
+                    4,
+                    0.5,
+                    0,
+                    false,
+                    8,
+                    0.35,
+                    2
+                  ],
+                  0
+                ]
+              ],
+              "object_token": 193,
+              "mesh_token": 208,
+              "vertex_count": 4360,
+              "triangle_count": 8518,
+              "visible": true,
+              "published_at": 224159.1138895,
+              "captured_at": 224159.1070025,
+              "source_timeline_frame": 2,
+              "state_ready_at": 224159.1067345
+            }
+          ],
+          "geometry_digest": "c5f15c1a7084b049cda122521f84bf9b8c029f8572c93642e546b4acbbea3fa2",
+          "statistics": {
+            "geometry_uploads": 382,
+            "mesh_builds": 382,
+            "geometry_array_allocations": 32,
+            "position_upload_bytes": 105975312,
+            "index_upload_bytes": 210168336,
+            "position_upload_ranges": 2916,
+            "index_upload_ranges": 2937,
+            "shading_uploads": 379,
+            "image_allocations": 1,
+            "dispatches": 391,
+            "readbacks": 391
+          },
+          "draw_count": 256,
+          "region_id": 1543679667360,
+          "capture_statistics": {
+            "captures": 764,
+            "capture_denials": 0,
+            "surface_invalidations": 762,
+            "scene_invalidations": 16,
+            "submitted": 391,
+            "collected": 391,
+            "discarded": 2
+          },
+          "presentation": {
+            "status": "CURRENT",
+            "publication_age_seconds": 0.09076510000159033,
+            "solver_state_age_seconds": 0.09792010000091977,
+            "solver_state_age_clock": "host monotonic Solver Session completion before optional publication",
+            "retention_limit_seconds": 0.25,
+            "age_clock": "host monotonic publication completion; not authoritative solver-ready"
+          }
+        },
+        "capture_audit": {
+          "snapshot_digest": "934935031682551ca65065b052b80b7d718a1a30aba2af1e56fdb25ca299d8e7",
+          "geometry_sha256": "46d3ff3241f8fdc3c7a9c20ed872a54cd8cf577a2b6519fff6cd9d0513d8b4e5",
+          "evaluated_vertex_count": 4360,
+          "evaluated_triangle_count": 8518,
+          "captured_at_observer": 224159.1524333,
+          "source_generation": 767,
+          "source_epoch": 2,
+          "source_scene": 177,
+          "solver_frame_at_capture": 1,
+          "state_revision_at_capture": 5
+        }
+      }
+    },
+    "reopen": {
+      "reported_particle_count": 256000,
+      "observed": {
+        "timeline_frame": 2,
+        "source_timeline_frame": 2,
+        "solver_frame": 1,
+        "state_revision": 5,
+        "evaluated_vertex_count": 4360,
+        "evaluated_triangle_count": 8518,
+        "presented_at_observer": 224160.1189982,
+        "publication_to_draw_seconds": 0.14675009998609312,
+        "solver_state_to_draw_seconds": 0.1539471999858506,
+        "solver_particle_count": 256000,
+        "epoch": 3,
+        "generation": 768,
+        "presentation_status": "RETAINED",
+        "animation_playing": true,
+        "channel": "EVALUATED_MESH",
+        "source": "LIVE",
+        "geometry_sha256": "46d3ff3241f8fdc3c7a9c20ed872a54cd8cf577a2b6519fff6cd9d0513d8b4e5",
+        "image_sha256": "878692946e4952fa4d74ad46ff2f6d7a36e469f899cd2f328262e935169affbf",
+        "telemetry": {
+          "status": "COMPLETE",
+          "key": [
+            "9356acd6205428beac2e162963ccbce9b16070cbeb8f595214a8b01f30bd79e4",
+            "3321b0d28a26bd0e53a6fd1b571ee7ab90f2d6966a31f174a9f80750becb0584",
+            525,
+            298,
+            6,
+            31
+          ],
+          "samples": 1,
+          "device": "cuda:0",
+          "backend": "warp-cuda-async-v1",
+          "transport": "host-pinned-rgba32f",
+          "width": 525,
+          "height": 298,
+          "scene_frame": 2,
+          "sources": [
+            {
+              "scene_token": 17924,
+              "owner_token": [
+                17932,
+                "FluidSim Output"
+              ],
+              "epoch": 3,
+              "channel": "EVALUATED_MESH",
+              "generation": 768,
+              "source": "LIVE",
+              "timeline_frame": 2,
+              "solver_frame": 1,
+              "state_revision": 5,
+              "simulation_time": 0.041666666666666664,
+              "cache_frame": null,
+              "cache_identity": null,
+              "build_key": [
+                5,
+                1,
+                [
+                  0,
+                  2,
+                  0,
+                  8,
+                  512,
+                  1,
+                  false,
+                  [
+                    0.029946522787213326,
+                    1.2000000476837158,
+                    2,
+                    2,
+                    0,
+                    0.7,
+                    0,
+                    1,
+                    0,
+                    1,
+                    2,
+                    1,
+                    0.7,
+                    false,
+                    1.5,
+                    1,
+                    "ball",
+                    "propagate",
+                    null
+                  ],
+                  [
+                    false,
+                    2,
+                    4,
+                    0.5,
+                    0,
+                    false,
+                    8,
+                    0.35,
+                    2
+                  ],
+                  0
+                ]
+              ],
+              "object_token": 17940,
+              "mesh_token": 17956,
+              "vertex_count": 4360,
+              "triangle_count": 8518,
+              "visible": true,
+              "published_at": 224159.9722481,
+              "captured_at": 224159.9653137,
+              "source_timeline_frame": 2,
+              "state_ready_at": 224159.965051
+            }
+          ],
+          "geometry_digest": "c5f15c1a7084b049cda122521f84bf9b8c029f8572c93642e546b4acbbea3fa2",
+          "statistics": {
+            "geometry_uploads": 1,
+            "mesh_builds": 1,
+            "geometry_array_allocations": 2,
+            "position_upload_bytes": 154752,
+            "index_upload_bytes": 306144,
+            "position_upload_ranges": 1,
+            "index_upload_ranges": 1,
+            "shading_uploads": 1,
+            "image_allocations": 1,
+            "dispatches": 1,
+            "readbacks": 1
+          },
+          "draw_count": 257,
+          "region_id": 1543679667360,
+          "capture_statistics": {
+            "captures": 2,
+            "capture_denials": 0,
+            "surface_invalidations": 1,
+            "scene_invalidations": 6,
+            "submitted": 1,
+            "collected": 1,
+            "discarded": 0
+          },
+          "presentation": {
+            "status": "RETAINED",
+            "publication_age_seconds": 0.14696519999415614,
+            "solver_state_age_seconds": 0.15416229999391362,
+            "solver_state_age_clock": "host monotonic Solver Session completion before optional publication",
+            "retention_limit_seconds": 0.25,
+            "age_clock": "host monotonic publication completion; not authoritative solver-ready"
+          }
+        },
+        "capture_audit": {
+          "snapshot_digest": "9356acd6205428beac2e162963ccbce9b16070cbeb8f595214a8b01f30bd79e4",
+          "geometry_sha256": "46d3ff3241f8fdc3c7a9c20ed872a54cd8cf577a2b6519fff6cd9d0513d8b4e5",
+          "evaluated_vertex_count": 4360,
+          "evaluated_triangle_count": 8518,
+          "captured_at_observer": 224160.0089828,
+          "source_generation": 768,
+          "source_epoch": 3,
+          "source_scene": 17924,
+          "solver_frame_at_capture": 1,
+          "state_revision_at_capture": 5
+        }
+      }
+    },
+    "soak": {
+      "status": "RUNNING",
+      "new_states": 7,
+      "changed_images": 6,
+      "maximum_image_capacity": 156450,
+      "sample_count": 1,
+      "retained_samples": [
+        {
+          "timeline_frame": 4,
+          "source_timeline_frame": 4,
+          "solver_frame": 3,
+          "state_revision": 25,
+          "evaluated_vertex_count": 4580,
+          "evaluated_triangle_count": 8948,
+          "presented_at_observer": 224160.5008265,
+          "publication_to_draw_seconds": 0.3167271999991499,
+          "solver_state_to_draw_seconds": 0.32364730001427233,
+          "epoch": 3,
+          "generation": 770,
+          "presentation_status": "CURRENT",
+          "animation_playing": true,
+          "channel": "EVALUATED_MESH",
+          "source": "LIVE",
+          "geometry_sha256": "739fcf5dab2f89a2b08fd41d3cd9f34db1db0325939adbc3c38d8e94958b01ac",
+          "image_sha256": "a48b9e0612d621e3f8a1ee1ec7358ed9b3fd8da3a9156bd29932bc5c1eb0160a",
+          "telemetry": {
+            "status": "COMPLETE",
+            "key": [
+              "10ca85bade9a82bf4fe1e5ff68a780e073120f111162785a81cda9af7639d5a7",
+              "3321b0d28a26bd0e53a6fd1b571ee7ab90f2d6966a31f174a9f80750becb0584",
+              525,
+              298,
+              6,
+              31
+            ],
+            "samples": 1,
+            "device": "cuda:0",
+            "backend": "warp-cuda-async-v1",
+            "transport": "host-pinned-rgba32f",
+            "width": 525,
+            "height": 298,
+            "scene_frame": 4,
+            "sources": [
+              {
+                "scene_token": 17924,
+                "owner_token": [
+                  17932,
+                  "FluidSim Output"
+                ],
+                "epoch": 3,
+                "channel": "EVALUATED_MESH",
+                "generation": 770,
+                "source": "LIVE",
+                "timeline_frame": 4,
+                "solver_frame": 3,
+                "state_revision": 25,
+                "simulation_time": 0.125,
+                "cache_frame": null,
+                "cache_identity": null,
+                "build_key": [
+                  25,
+                  3,
+                  [
+                    0,
+                    2,
+                    0,
+                    8,
+                    512,
+                    1,
+                    false,
+                    [
+                      0.029946522787213326,
+                      1.2000000476837158,
+                      2,
+                      2,
+                      0,
+                      0.7,
+                      0,
+                      1,
+                      0,
+                      1,
+                      2,
+                      1,
+                      0.7,
+                      false,
+                      1.5,
+                      1,
+                      "ball",
+                      "propagate",
+                      null
+                    ],
+                    [
+                      false,
+                      2,
+                      4,
+                      0.5,
+                      0,
+                      false,
+                      8,
+                      0.35,
+                      2
+                    ],
+                    0
+                  ]
+                ],
+                "object_token": 17940,
+                "mesh_token": 17956,
+                "vertex_count": 4580,
+                "triangle_count": 8948,
+                "visible": true,
+                "published_at": 224160.1840993,
+                "captured_at": 224160.1774389,
+                "source_timeline_frame": 4,
+                "state_ready_at": 224160.1771792
+              }
+            ],
+            "geometry_digest": "683a3979fe002108522a175594d7b2bfe68b9c67b59cbfbfc337431af95f0339",
+            "statistics": {
+              "geometry_uploads": 2,
+              "mesh_builds": 2,
+              "geometry_array_allocations": 4,
+              "position_upload_bytes": 312144,
+              "index_upload_bytes": 617448,
+              "position_upload_ranges": 2,
+              "index_upload_ranges": 2,
+              "shading_uploads": 2,
+              "image_allocations": 1,
+              "dispatches": 2,
+              "readbacks": 2
+            },
+            "draw_count": 258,
+            "region_id": 1543679667360,
+            "capture_statistics": {
+              "captures": 3,
+              "capture_denials": 0,
+              "surface_invalidations": 2,
+              "scene_invalidations": 6,
+              "submitted": 2,
+              "collected": 2,
+              "discarded": 0
+            },
+            "presentation": {
+              "status": "CURRENT",
+              "publication_age_seconds": 0.3168399999849498,
+              "solver_state_age_seconds": 0.32376010000007227,
+              "solver_state_age_clock": "host monotonic Solver Session completion before optional publication",
+              "retention_limit_seconds": 0.25,
+              "age_clock": "host monotonic publication completion; not authoritative solver-ready"
+            }
+          },
+          "capture_audit": {
+            "snapshot_digest": "10ca85bade9a82bf4fe1e5ff68a780e073120f111162785a81cda9af7639d5a7",
+            "geometry_sha256": "739fcf5dab2f89a2b08fd41d3cd9f34db1db0325939adbc3c38d8e94958b01ac",
+            "evaluated_vertex_count": 4580,
+            "evaluated_triangle_count": 8948,
+            "captured_at_observer": 224160.2214828,
+            "source_generation": 770,
+            "source_epoch": 3,
+            "source_scene": 17924,
+            "solver_frame_at_capture": 3,
+            "state_revision_at_capture": 25
+          }
+        }
+      ]
+    },
+    "runtime_checkpoint": {
+      "timeline_frame": 65,
+      "live_status": "Frame 64: 256,000 particles, 701,440 voxels, 38.8 ms",
+      "solver_frame": 64,
+      "state_revision": 2109,
+      "surface": "READY",
+      "surface_reason": "",
+      "surface_generation": 831,
+      "surface_triangles": 44720,
+      "output_visibility": {
+        "FluidSim Surface": {
+          "object_token": 17940,
+          "hide_viewport": false,
+          "hide_render": false,
+          "layer_visible": true
+        },
+        "FluidSim Particles": {
+          "object_token": 17939,
+          "hide_viewport": true,
+          "hide_render": true,
+          "layer_visible": false
+        },
+        "FluidSim Whitewater": {
+          "object_token": 17941,
+          "hide_viewport": true,
+          "hide_render": true,
+          "layer_visible": false
+        }
+      },
+      "presentation": {
+        "status": "WAITING",
+        "reason": "Retained image publication age exceeded 250 ms"
+      }
+    },
+    "draw_observer": {
+      "drops": {
+        "draw_not_complete": 591,
+        "sample_target_not_reached": 8
+      },
+      "entered": 855,
+      "matched": 262,
+      "latest_drop": {
+        "stage": "soak",
+        "reason": "draw_not_complete",
+        "detail": "Retained image publication age exceeded 250 ms"
+      }
+    },
+    "capture_audit_count": 828,
+    "async_boundary_calls": {
+      "submit": 423,
+      "collect": 423,
+      "close": 1
+    },
+    "report_error": "Traceback (most recent call last):\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tests\\acceptance\\blender_fspt_async_live_acceptance.py\", line 320, in tick\n    assert now - self.soak_last_draw < 10, \"Soak made no new completed live-image progress for 10 seconds\"\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Soak made no new completed live-image progress for 10 seconds\n",
+    "console": {
+      "stdout.log": {
+        "sha256": "c943b233070bd3ea12d0c5480db2ea8b90c3c7fdea9662197e8088165b0741f7",
+        "lines": 42,
+        "selected": [
+          "   CUDA Toolkit 13.4, Driver 13.5",
+          "     \"cuda:0\"   : \"NVIDIA GeForce RTX 4080 SUPER\" (16 GiB, sm_89, mempool enabled)",
+          "00:03.734  blend            | Read blend: \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\demos\\dam_break.blend\"",
+          "Info: Saved copy as \"dam_break-fspt-live.blend\"",
+          "02:22.672  blend            | Read blend: \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\dam_break-fspt-live.blend\"",
+          "FSPT-LIVE-ACCEPTANCE-FAIL Traceback (most recent call last):",
+          "AssertionError: Soak made no new completed live-image progress for 10 seconds"
+        ]
+      },
+      "stderr.log": {
+        "sha256": "874860531f65e3bdb0aaa91b795dc3bf874376cfc5cbf0f86450599d0fb7c93c",
+        "lines": 1,
+        "selected": [
+          "[bgate] log saved: C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-continue-20261128\\20261128-024233-f265e23c1ffe.log"
+        ]
+      }
+    },
+    "raw_report_sha256": "8afc88c9bcce7740ebf44d5e28c21e70ac07f51a722d1134dc485bd33dabe6ae"
+  },
+  "stage_observation": {
+    "metrics_ms": {
+      "state_ready_to_publication": {
+        "n": 240,
+        "min": 6.779299990739673,
+        "median": 10.9461999963969,
+        "p95": 14.438499987591058,
+        "max": 30.17140002339147
+      },
+      "publication_to_post_oracle_capture_observer": {
+        "n": 240,
+        "min": 36.346099979709834,
+        "median": 68.52990000334103,
+        "p95": 93.25019997777417,
+        "max": 96.73459999612533
+      },
+      "post_oracle_capture_observer_to_draw": {
+        "n": 240,
+        "min": 92.43750001769513,
+        "median": 161.6766499937512,
+        "p95": 177.41150001529604,
+        "max": 184.88099999376573
+      },
+      "adjacent_selected_draw_interval": {
+        "n": 239,
+        "min": 262.60369998635724,
+        "median": 312.68630002159625,
+        "p95": 659.7384000197053,
+        "max": 22910.418499988737
+      },
+      "state_ready_to_capture_observer": {
+        "n": 240,
+        "min": 43.76209998736158,
+        "median": 79.68955000978895,
+        "p95": 107.69780000555329,
+        "max": 111.99579999083653
+      }
+    },
+    "last_viewport_error": "RuntimeError: RuntimeError: RuntimeError: SurfaceNotReadyError: Fluid surface has no eligible publication",
+    "performance_scope": "instrumented functional proof; authoritative solver-ready age unmeasured",
+    "proof_boundary": "independent evaluated geometry at capture joined to completed draw",
+    "viewport": {
+      "resolution_percentage": 25,
+      "seed": 31,
+      "max_bounces": 6,
+      "live_samples": 1,
+      "paused_samples": 8,
+      "route": "EVALUATED_MESH"
+    },
+    "captured_source_deltas": {
+      "0": 240
+    },
+    "last_report_capture_stats": {
+      "captures": 759,
+      "capture_denials": 0,
+      "surface_invalidations": 758,
+      "scene_invalidations": 6,
+      "submitted": 387,
+      "collected": 387,
+      "discarded": 1
+    },
+    "last_report_backend_stats": {
+      "geometry_uploads": 380,
+      "mesh_builds": 380,
+      "geometry_array_allocations": 32,
+      "position_upload_bytes": 105591336,
+      "index_upload_bytes": 209411016,
+      "position_upload_ranges": 2900,
+      "index_upload_ranges": 2921,
+      "shading_uploads": 377,
+      "image_allocations": 1,
+      "dispatches": 387,
+      "readbacks": 387
+    },
+    "raw_selected_wall_span_seconds": 119.14556259999517,
+    "reported_pins": {
+      "blender_build": "fbe6228777e7",
+      "python_tree_sha256": "7a0bd90a12dcc2c52bcef243b096adb7baa6f9403ba789bf0ab60656146b16a8",
+      "verifier_sha256": "0b6d5c2d8aa8aa36ded75bce06b845666b31eeb3ae95bca8616e9f61570b6b7c",
+      "fixture_helper_sha256": "78cb9181ce4025282ee00f3da8172955b89d6cf15bdbfd3d8690f388ece1f9ea",
+      "reference_verifier_sha256": "27c0c0de832ba472f0ab7c0a19b7847dafc5333dab36e89ddf82910d25b56d28"
+    },
+    "source_hashes": {
+      "fluidSim_warp_blender51/blender/fspt_bridge.py": "9341108bc02cadcdbf874e62dd1c1f2b86effdaa5da65df08b73df36afd02f55",
+      "fluidSim_warp_blender51/blender/fspt_engine.py": "03743daa2da79e14925aeae70e71b98350d4c7c9cf6668d538d6388a77202d1f",
+      "fluidSim_warp_blender51/fspt/viewport.py": "7ef0c9454fe75569255d2d0b3c3c2727788b8ce12853c98702f5bc64adff3011",
+      "fluidSim_warp_blender51/fspt/async_backend.py": "680f5bb1d63400d244ab9b5dc0224119cb60e8658b047e8c0294bd739d3fac25",
+      "tests/acceptance/blender_fspt_async_live_acceptance.py": "0b6d5c2d8aa8aa36ded75bce06b845666b31eeb3ae95bca8616e9f61570b6b7c",
+      "tests/acceptance/blender_fspt_live_acceptance.py": "27c0c0de832ba472f0ab7c0a19b7847dafc5333dab36e89ddf82910d25b56d28"
+    }
+  },
+  "dispositions": {
+    "scope_classification": "Shared evaluated viewport completion/presentation age boundary reached; upstream stage causing starvation remains unproven.",
+    "implicated_owner": [
+      "fluidSim_warp_blender51/blender/fspt_bridge.py validate_viewport_publications is the shared retained-frame age predicate for timer collection eligibility and draw presentation.",
+      "fluidSim_warp_blender51/blender/fspt_engine.py _pump_view validates collected frames and requests updates; view_draw validates presentable pixels and clears expired display without invalidating newer pending work.",
+      "fluidSim_warp_blender51/fspt/viewport.py ViewportState._accept/_tick owns acceptance, discard, queued work and submission; the failed report does not expose its per-job state."
+    ],
+    "observed_upstream": [
+      "Final retained runtime checkpoint shows solver frame 64 and READY visible EVALUATED_MESH generation 831, 44,720 triangles, 256,000 particles.",
+      "Reference reopen control reports 256,000 particles. The first 240 rows contain no particle-count field or per-state step duration, so a particle or step-duration comparison across those rows cannot be made.",
+      "First-240 triangle max 37,434, below the failed checkpoint 44,720. This is a workload change and does not isolate a cause.",
+      "BGATE was sampled exclusive CLEAN; there were no contamination observations. Child exit 1 came from the unchanged soak verifier."
+    ],
+    "timing_boundary": [
+      "Capture observer time is taken after the production snapshot and an independent evaluated mesh read. Intervals are observed successful rows, not per-stage CUDA walltimes or compositor presentation.",
+      "CURRENT samples have no retained-frame expiration check. The only retained soak sample was CURRENT at 316.73 ms publication age. All 240 earlier accepted samples were RETAINED, with max 249.56 ms publication age.",
+      "last_viewport_error is a historical ERROR recorded by the inherited live/freeze/reopen tick; the asynchronous soak path bypasses that update. The contemporaneous checkpoint and latest drop both record WAITING on expired retained pixels instead."
+    ],
+    "unproven": [
+      "No failed-soak per-job IDs, accepted/discarded timestamps, last submitted generation, pending fence status, actual scheduler admission outcome, CUDA duration or separate redraw latency were captured.",
+      "Aggregate boundary calls count attempts rather than measured completions. Their equality does not prove the renderer drained all pending work at failure.",
+      "The retained prefix is useful functional evidence; it provides no passing 600-second soak, full gate, ordinary GPU route, or real-time/compositor claim."
+    ]
+  },
+  "selected_png_native_receipt": {
+    "workbench_run": "48d4713d43994d0e8315b7932068869a",
+    "files": [
+      {
+        "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\paused-refinement-screenshot.png",
+        "sha256": "bcef118ead3e7feaa352d3e0a08f11ced7df49ddc522fa71b8476590455f760f",
+        "bytes": 2723902
+      },
+      {
+        "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\reopen-live-screenshot.png",
+        "sha256": "e7d91178a8256449d4afb1e0a9a1ea8b59e3ca3e06645f531b1e4e8e295100f3",
+        "bytes": 2253563
+      },
+      {
+        "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-240-screenshot.png",
+        "sha256": "86c5bfaa67f0e104ce58354b1236b9e7d407eadb574e39611e5d0d94df9a4eaa",
+        "bytes": 2252309
+      },
+      {
+        "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\soak-000-screenshot.png",
+        "sha256": "d548781c563d27ecade5acc8599f55bfcd1a5a26fb0c8fdeaf8aac9699c4272a",
+        "bytes": 2252863
+      }
+    ],
+    "transfer_archive_sha256": "c8503c457b96b0fd8bda6d60eec82459ee8e2573f506c9c278aa8d4c3ba551b4"
+  }
+}

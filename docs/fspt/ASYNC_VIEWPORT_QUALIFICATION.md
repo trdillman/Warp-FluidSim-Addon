@@ -175,3 +175,74 @@ The initial static/GUI observation failures and report-wrapper failures remain
 in their original attempt folders. Their later corrections do not turn those
 failed attempts into passes. P0 completion is recorded separately in
 `P0_RECONCILIATION.md`; P2/P3 and the full real-time contract remain open.
+
+
+## Frozen candidate status, 2026-11-28 UTC
+
+At `5c91c8188e5e148f0218a596ed64de4c087e1cc5`, the independent optical review
+found no blocker within the bounded Diffuse, smooth Glass, Emission, constant
+world and mesh-emitter subset. The exact-source Warp CPU diagnostic separated
+the former adjacent-seed alias in 2,525 of 32,768 pixels and kept same-seed split
+and single-dispatch samples bitwise equal. The previous native images keep
+their original sampling identities. Broader optical and statistical confidence
+remain to be established under the frozen contract.
+
+The same source verified the native broker and the controlled integrated
+device-publication/worker-Final route in a real Blender window. That route used
+two controlled four-sample frames and a real eight-sample Final. It verifies
+the specific source and retirement boundaries described in
+[DEVICE_VIEWPORT_QUALIFICATION.md](DEVICE_VIEWPORT_QUALIFICATION.md).
+Ordinary rendered-region live uses the conservative evaluated fallback when
+Blender coalesces fluid geometry updates. The controlled device fixture supplies
+no new 240-state/600-second soak, compositor timing, authoring fidelity or
+steady-state performance result.
+
+The normal source gate that followed these component proofs did not qualify.
+Two subsequent 0607 production attempts stopped on unattributed exclusive
+broker contamination. Historical 50-cycle and 24-state rows retain their
+executed source identities. [Exact status and attempts](CURRENT_QUALIFICATION_STATUS.md)
+
+## Exact 0607 standalone native viewport and Live trials
+
+The ordinary evaluated route (no device-surface opt-in) ran on Windows source
+`0607daad9354b872c7530277371b1d998443c394`. The static asynchronous viewport
+completed all 50 cycles and the pending-work Final controls, exit 0, under a
+clean exclusive lease. The standalone Live case recorded the initial 240
+distinct audited geometries and completed images, plus fixture controls, then
+exited 1 in the 600-second soak. Seven new soak states and six changed soak
+images were reported before the 10-second progress guard fired. Its separate
+exclusive lease released clean.
+
+All 240 initial rows had RETAINED presentation labels. The initial stage itself
+had 22.910 seconds between accepted solver frames 15 and 143, during playback
+and before the scripted pause. The soak showed ongoing solver readiness and
+expired retained imagery. A later bounded 0607 diagnostic isolated
+capture-before-first-draw in 47 observed late cases and informed the
+ce6afc9a scheduling change. Both successor lanes stopped before broker admission and produced no
+acceptance data or new screenshots. Timing comparison requires an admitted
+run. [Diagnostic and successor scope](CURRENT_QUALIFICATION_STATUS.md#0607-failure-and-the-ce6afc9a-change)
+Distinct-image count, static lifecycle coverage and sustained Live each keep
+their own result. The historical draw-entry timing remains separate from a
+completed-image presentation measurement. [Exact report and case hashes](CURRENT_QUALIFICATION_STATUS.md)
+
+### Original 0607 desktop captures
+
+All four original desktop PNGs are 2560 × 1351. Their byte hashes were
+rechecked. Reduced inspection views and native-resolution status crops
+confirm the visible content below. They are in `async-live/acceptance-originals/` under the native
+run directory indexed in [current qualification status](CURRENT_QUALIFICATION_STATUS.md).
+The observer records accepted draw pixels before the screenshot operation.
+A corresponding NPY and observer row do not certify the later screen contents.
+
+| Original PNG | SHA-256 | Visible content and caption |
+| --- | --- | --- |
+| `paused-refinement-screenshot.png` | `bcef118ead3e7feaa352d3e0a08f11ced7df49ddc522fa71b8476590455f760f` | **Provisional paused evaluation.** The camera-view Dam Break cove and blue fluid are visible, with coarse, noisy shading. Timeline 146, solver 145, evaluated route, 525 × 298 render buffer at 25%, eight spp, six bounces, seed 31. This is evidence of the paused visible result. |
+| `live-240-screenshot.png` | `86c5bfaa67f0e104ce58354b1236b9e7d407eadb574e39611e5d0d94df9a4eaa` | **Live progress diagnostic.** Purple waiting framebuffer displays “FSPT: Retained image publication age exceeded 250 ms”. The desktop shows timeline 761. This captures expiration after the accepted 240th observer row; it does not show that fluid image. |
+| `reopen-live-screenshot.png` | `e7d91178a8256449d4afb1e0a9a1ea8b59e3ca3e06645f531b1e4e8e295100f3` | **Reopen diagnostic.** Purple waiting framebuffer and the same retained-age message, timeline 4. The earlier accepted reopen buffer remains a separate NPY. |
+| `soak-000-screenshot.png` | `d548781c563d27ecade5acc8599f55bfcd1a5a26fb0c8fdeaf8aac9699c4272a` | **Failed-soak diagnostic.** Purple waiting framebuffer and the same retained-age message, timeline 5. The earlier raw soak sample has separate observer telemetry. The PNG records visible expiration during the failed lane. |
+
+Only the paused capture visibly shows the rendered fluid. The three waiting
+captures explain the failure boundary and cannot illustrate successful live
+display. Their contents do not invalidate the prior accepted draw observations,
+and neither evidence type qualifies sustained progress, presentation timing or
+optical quality.

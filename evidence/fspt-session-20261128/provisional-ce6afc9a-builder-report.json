@@ -1,0 +1,22 @@
+{
+  "artifacts": [
+    {
+      "path": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\archives\\fluidsim_warp-4.1.0-linux_x64.zip",
+      "platform": "linux-x64",
+      "runtime_dependency": "user-install",
+      "sha256": "22b2d89e69afea972c5ecfd415dabcfae4a21b8ad2ffc29f651b4a0fa5ef75c0",
+      "size": 8483342
+    },
+    {
+      "path": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\archives\\fluidsim_warp-4.1.0-windows_x64.zip",
+      "platform": "windows-x64",
+      "runtime_dependency": "user-install",
+      "sha256": "6c07df0d034789e41b989c5473765e8393f314079e71acee5785e766713eac7b",
+      "size": 8483340
+    }
+  ],
+  "mode": "build",
+  "release_ready": true,
+  "smoke_platform": "windows-x64",
+  "smoke_report": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\archives\\smoke-test-report.json"
+}

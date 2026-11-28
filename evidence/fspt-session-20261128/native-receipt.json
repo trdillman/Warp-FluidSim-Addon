@@ -1,0 +1,25 @@
+{
+  "workbench_run": "6af7c5c7d48047b0b898b0f31d02e507",
+  "status": "VERIFIED_INCREMENTAL_CHECKPOINT",
+  "archive_path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\compact-delivery-0607daad9354-20261128T073137386031Z.zip",
+  "archive_sha256": "78617ab0b918fda645835eac8bb26eb39eb7d3fed4c07e3ade1b5884efa7c91e",
+  "archive_bytes": 841091,
+  "archive_members": 70,
+  "archive_manifest_sha256": "ee345732da3bf6eee53aa2bf5cb268d13f661c11f92edb84bfef20902d44056f",
+  "bundle": "git/fluidSim-incremental-82f08a9-to-0607daad.bundle",
+  "bundle_sha256": "c06b3c1fc133c522ca2fa038293429a98cfad4491be8a323e6668d617338ac8c",
+  "bundle_bytes": 346492,
+  "bundle_prerequisite": "82f08a9b34c0e2971103acb87ed6d0a4cb63bb89",
+  "head_before_and_after": {
+    "head": "0607daad9354b872c7530277371b1d998443c394",
+    "tree": "b1b359e7fbe65503fbc3f63013a6f7c8cc1e5b4b",
+    "direct_parent": "5c91c8188e5e148f0218a596ed64de4c087e1cc5",
+    "branch_ref": "refs/heads/experimental/fspt-p1-20261125"
+  },
+  "git_bundle_verify": "exit 0",
+  "source_fingerprint": "ec5d2d0eccb21d71f21232821b0e2b8d7746b01f6f79993d2d508981753200cf",
+  "verifier_fingerprint": "9d22b451dadda8e99ef987d57fdf0ee983fea69e302ec4fd1bb51ef700afaf2c",
+  "source_input_count": 884,
+  "receipt_path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\compact-delivery-0607daad9354-20261128T073137386031Z\\archive-receipt.json",
+  "receipt_sha256": "abfbc0d4ac99ae88b2dc9392fec20b7e1e1e2c15d4ae0f1f2b4874881e57bb4f"
+}

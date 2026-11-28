@@ -1,0 +1,60 @@
+{
+  "status": "VERIFIED",
+  "head": "0607daad9354b872c7530277371b1d998443c394",
+  "source_fingerprint": "ec5d2d0eccb21d71f21232821b0e2b8d7746b01f6f79993d2d508981753200cf",
+  "verifier_fingerprint": "9d22b451dadda8e99ef987d57fdf0ee983fea69e302ec4fd1bb51ef700afaf2c",
+  "file_count": 884,
+  "output": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\host-regression\\0607daad9354-external-20261128T071439274723Z",
+  "pytest_command": [
+    "C:\\Program Files\\Blender Foundation\\Blender 5.2\\5.2\\python\\bin\\python.exe",
+    "-B",
+    "-u",
+    "-m",
+    "pytest",
+    "-q",
+    "--basetemp",
+    "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-HostTests\\0607daad9354-20261128T071439274723Z\\full",
+    "-o",
+    "cache_dir=C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\host-regression\\0607daad9354-external-20261128T071439274723Z\\pytest-cache"
+  ],
+  "returncode": 0,
+  "pytest_summary": "4659 passed, 444 skipped, 4 warnings in 553.84s (0:09:13)",
+  "elapsed_seconds": 557.212875999976,
+  "finished_at": "2026-11-28T07:24:24.417115+00:00",
+  "only_generated_demo_differences": [],
+  "storage_fixture_admission": {
+    "outside_candidate_checkout": true,
+    "mandatory_policy_protected_path_matches": []
+  },
+  "temp_root": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-HostTests\\0607daad9354-20261128T071439274723Z",
+  "artifacts": {
+    "status.json": {
+      "sha256": "0ac737a8564558f0521a81f7c9ae7678abf8890e59ae7d8fb252c19ad35ac6e7",
+      "bytes": 8241
+    },
+    "cpu-runtime.json": {
+      "sha256": "ecb232bf143d7c29491945efff90460653e1d633b7fda7cac23aca28632ceefd",
+      "bytes": 997
+    },
+    "source-before.json": {
+      "sha256": "3dc41e68acaa98204967003b2a8b2eda08bdcfa13a4798b1315945ff43b56b7c",
+      "bytes": 109942
+    },
+    "source-after.json": {
+      "sha256": "3dc41e68acaa98204967003b2a8b2eda08bdcfa13a4798b1315945ff43b56b7c",
+      "bytes": 109942
+    },
+    "pytest.log": {
+      "sha256": "9746e8ffb136fdb575f80f9d55d3f30fd7ce0afac5ded74bb1eb79a87e77713d",
+      "bytes": 6559
+    },
+    "focused-storage-fixture.log": {
+      "sha256": "c8399f09dcaf182be23dcee1ab3c2a4298ae6ac891f590acce4137150897fd0e",
+      "bytes": 100
+    },
+    "run_native_host_external.py": {
+      "sha256": "fc56334bbccb3f511ca3929a7578d5f662280f61a1228ccb11656030072df10b",
+      "bytes": 12090
+    }
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "run_id": "415acbc99cb74e2c8f85d4540cda3bfb",
+  "head": "ce6afc9ae8b607a33b5c429e6743a60a86df8b1e",
+  "tree": "4f349bc837b8610b35a39f204f038d2db43c3ea4",
+  "branch": "experimental/fspt-p1-20261125",
+  "tracked_status": [],
+  "successor_status": {
+    "path": "artifacts\\fspt-p0\\presentation-first-bind-20261128T081859669187Z\\status.json",
+    "sha256": "6c9a1c4cdcfda793aed8327cefd6cc702c00e98b6028a923bb72a49c81d75fc0",
+    "record": {
+      "status": "VERIFIED",
+      "previous_failed_wrapper": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\presentation-first-20261128T081525824666Z\\status.json",
+      "commands": [
+        {
+          "label": "test-lint-baseline",
+          "exit_code": 1,
+          "sha256": "e183474038aff6a09ed5e156790359347adcd3545e0db17fa82198305221b9d3"
+        },
+        {
+          "label": "test-lint-candidate",
+          "exit_code": 1,
+          "sha256": "e183474038aff6a09ed5e156790359347adcd3545e0db17fa82198305221b9d3"
+        },
+        {
+          "label": "product-lint",
+          "exit_code": 0,
+          "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+        },
+        {
+          "label": "base-head",
+          "exit_code": 0,
+          "sha256": "60a2ee8ff2fbb54e1622809faab7badfbb6acb62e1e94cb43754bdfd16c09012"
+        },
+        {
+          "label": "changed-files",
+          "exit_code": 0,
+          "sha256": "b5476c5360974a17f6e4c124a3e9f9da8ecd1d05b1e9cca01d576141713a69b9"
+        },
+        {
+          "label": "diff-check",
+          "exit_code": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "label": "git-add",
+          "exit_code": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "label": "git-commit",
+          "exit_code": 0,
+          "sha256": "d0193d980b30b754af0c30542ace09fe015e2759e81290aa3e918217135cb918"
+        },
+        {
+          "label": "head",
+          "exit_code": 0,
+          "sha256": "916f3989a4473c95c3a6e85c4250e20f1f1658a9a579f7f2188908116024f7d3"
+        },
+        {
+          "label": "tree",
+          "exit_code": 0,
+          "sha256": "73d63da948f5d5e9dfdb57f604da84b5a6d3e0a79c0b4d6ba3fab59c639abaca"
+        },
+        {
+          "label": "tracked-status",
+          "exit_code": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "native_render_host_log_sha256": "113d5b1e3a17fed0b22048e6240d9c1d44cac65af6961acf4b506ad988ef4158",
+      "unchanged_baseline_test_lint": [
+        {
+          "code": "RET501",
+          "message": "Do not explicitly `return None` in function if it is the only possible return value",
+          "location": {
+            "column": 13,
+            "row": 96
+          }
+        },
+        {
+          "code": "PLR1711",
+          "message": "Useless `return` statement at end of function",
+          "location": {
+            "column": 13,
+            "row": 96
+          }
+        },
+        {
+          "code": "SIM117",
+          "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+          "location": {
+            "column": 5,
+            "row": 250
+          }
+        }
+      ],
+      "head": "ce6afc9ae8b607a33b5c429e6743a60a86df8b1e",
+      "tree": "4f349bc837b8610b35a39f204f038d2db43c3ea4",
+      "source_fingerprint": "894057a2db428085028ab3e6388e42caf4bd209d526dfe989472616c98756943",
+      "verifier_fingerprint": "b236a2c95e631a040d9958eb506ea859e5b899223bf71d4fd130fcff2646927d",
+      "file_count": 884,
+      "source_freeze_path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\presentation-first-bind-20261128T081859669187Z\\source-freeze.json",
+      "finished_at": "2026-11-28T08:19:01.973226+00:00"
+    }
+  },
+  "parent": "0607daad9354b872c7530277371b1d998443c394",
+  "freeze": {
+    "git_head": "ce6afc9ae8b607a33b5c429e6743a60a86df8b1e",
+    "source_fingerprint": "894057a2db428085028ab3e6388e42caf4bd209d526dfe989472616c98756943",
+    "verifier_fingerprint": "b236a2c95e631a040d9958eb506ea859e5b899223bf71d4fd130fcff2646927d",
+    "inventory_sha256": "0710366113654f45c4756b8a3164df52b22b8f6aa58c67e4d1f90e370c3001a4",
+    "input_count": 884,
+    "stored_0607_input_count": 884,
+    "stored_0607_receipt_sha256": "3dc41e68acaa98204967003b2a8b2eda08bdcfa13a4798b1315945ff43b56b7c",
+    "all_changed_inputs": [
+      "fluidSim_warp_blender51/blender/fspt_engine.py",
+      "fluidSim_warp_blender51/fspt/viewport.py",
+      "tests/render/test_fspt_engine_boundary.py"
+    ]
+  },
+  "changed": {
+    "fluidSim_warp_blender51/blender/fspt_engine.py": {
+      "raw_sha256": "a9c4ba549ce239479a874cde9a1415f39b09ab74a17f8498355c4720eb7c2e09",
+      "lf_sha256": "a9c4ba549ce239479a874cde9a1415f39b09ab74a17f8498355c4720eb7c2e09",
+      "verifier": false
+    },
+    "fluidSim_warp_blender51/fspt/viewport.py": {
+      "raw_sha256": "0154af5d4baf0aa416609bc3022bec319399766c0f179bb9c5a15ebb115ee14f",
+      "lf_sha256": "0154af5d4baf0aa416609bc3022bec319399766c0f179bb9c5a15ebb115ee14f",
+      "verifier": false
+    },
+    "tests/render/test_fspt_engine_boundary.py": {
+      "raw_sha256": "2bedbca51174f7640acdeff354ea2f6b35c3cba79a9de37c1f0af590fbb555f1",
+      "lf_sha256": "2bedbca51174f7640acdeff354ea2f6b35c3cba79a9de37c1f0af590fbb555f1",
+      "verifier": true
+    }
+  },
+  "python_tree_sha256": "3c89d77d85db7ef342cc3250b2461ceb8e9eda88fc318ca5be23a3d1546b06e8",
+  "distribution": {
+    "record_sha256": "5e4896711431ca3bc536481c809f12160ab0bca7de7286d774a49faa00842347",
+    "archive_sha256": "2d184b626c001692c362291911293b6a297179d618d95e9e9192c3a80318adc4",
+    "checksum_sha256": "f35709c2eb91fbb58ebbd354285039df62217e6dbda9c3a4713ec113d728057f",
+    "official_archive_url": "https://download.blender.org/release/Blender5.2/blender-5.2.0-windows-x64.zip",
+    "blender_executable_sha256": "0060916d6921eb4d46c57254609d805a2ea711917399051391a52ba14beb6327",
+    "bundled_python_sha256": "7d984ee02e70c22f04d5e26f1328865d75a5da14b677890896a294f35815d37a"
+  },
+  "final_head": "ce6afc9ae8b607a33b5c429e6743a60a86df8b1e",
+  "final_tracked_status": []
+}

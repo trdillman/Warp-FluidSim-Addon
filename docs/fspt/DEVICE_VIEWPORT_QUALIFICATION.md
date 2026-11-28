@@ -125,8 +125,8 @@ Lifecycle cleanup retries orphaned failed views and failed Final owners. A
 poisoned pool permits one checked recovery pass; active peers and denied admission
 preserve that unused attempt. A typed result distinguishes a discarded job whose
 drain succeeded from an unclassified cleanup failure. Only checked bridge close
-with zero bytes and zero generations clears the block. These repairs passed
-independent host controls; they still require successor native qualification.
+with zero bytes and zero generations clears the block. Independent host
+controls and the successor native receipts below cover these repairs.
 
 Host runtime/render regressions, focused adversarial review controls, Ruff and
 source manifests are retained with the candidate. Native broker/worker acceptance
@@ -149,11 +149,70 @@ ownership receipts and distinct nonempty originals. It rehashes originals at
 manifest time. Active root test configurations are part of the verifier
 fingerprint, including all pytest 9 discovery names; an ignored untracked config
 cannot silently replace the reviewed test options.
+The lightweight add-on registration path remains Warp-free. The optional host
+snapshot entry checks the public exact solver owner before extraction; it
+preserves the existing private read pin and native publication identity.
 
-Native integrated runtime/Final qualification and the full normal production
-gate remain pending at this successor source checkpoint. Their exact
-candidate reports must be added before claiming those scopes. Existing limited
-functional proof does not satisfy 24 fresh states/s, simulation/wall ratio,
-1080p/1M-triangle throughput, completion-to-presentation age, 1.05 solver overhead,
-combined VRAM, full Principled/attributes/optics, all export passes or Linux GPU
-runtime qualification. No roadmap target has been reduced.
+### Exact successor evidence
+
+The repaired broker ran on `383a6e5e41d8aca6e03a4aabb1966084731b8d2c`.
+Its two-facade held-stream, worker, poison recovery, zero-byte generation and
+five checked stream destructions passed. The run as a whole failed when the
+fixture handed Blender's static `Object.to_mesh` a Python graph guard.
+The retained failed report is
+`ownership-383a6e5e41-20261128T062919970689Z/broker/acceptance.json`
+(SHA-256 `7d8c3e9e265e1c2870a90e996fc1404a4f63d32b7452120558483aa62e6a1247`).
+The fixture now passes the native depsgraph to that static RNA call. The
+fluid geometry guards and numerical comparisons remain active. Two host
+controls reproduced the type error with the forwarding removed.
+
+Both successor native lanes returned **0** and **VERIFIED** at
+`5c91c8188e5e148f0218a596ed64de4c087e1cc5`. Their common directory is
+`artifacts/fspt-p0/bridge-qualification/ownership-5c91c8188e-20261128T064212158236Z/`.
+The environment is the reviewed Windows Blender 5.2 build `fbe6228777e7`,
+Warp 1.19.0 and RTX 4080 SUPER on `cuda:0`.
+
+| Lane | Acceptance JSON SHA-256 | Terminal JSON SHA-256 |
+| --- | --- | --- |
+| `broker/` | `cf8dc504a3f2b484c56496f062b7a221de8f2e973088bfc48ddc7ee8bfbd2cf2` | `a297e8321af05c121aadd7b082ca60c873cda6c4cfcbdfb2de7d14036bf65aa8` |
+| `device-viewport/` | `5122cdfce0d34f86564d8b978b814e092ee199fb91981e86b3d5551d376e1d49` | `0407353bbaf7ccc42990402894ef769479242b3e6bcd26b6307293498fb65e79` |
+
+- **Broker.** The fixture observed two generations at peak, five successful
+  checked stream destructions, stale work rejection and poison recovery. An
+  empty pending packet held one generation until its actual copy fence
+  retired, even with zero reserved bytes. All three fluid guard negative
+  controls fired, and guarded capture logged zero bulk fluid reads. The
+  guarded actual Blender scene used an explicitly supplied selection. An
+  independent reopen of both retained NPZs found zero error on the compared
+  positions and pixels against the fixture oracles.
+- **Runtime and worker Final.** Actual Session steps produced GPU publications
+  at timeline frames 2 and 3, solver frames 1 and 2, and state revisions 5 and
+  9. The two four-sample 128×96 images changed by mean absolute RGB
+  `0.00647503277`. The independently read GPU and evaluated positions and
+  indices matched in both originals. The controlled `ViewportState` owned an
+  open aggregate and a pending trace when the real `INVOKE_DEFAULT` returned
+  `RUNNING_MODAL`. The worker drained the trace. The engine's main-thread
+  timer then retired 7,163,956 explicit geometry bytes and one generation,
+  returned an identity-matching zero-byte/zero-generation receipt and detached
+  the view before Final backend allocation. The admission hold lasted through
+  checked stream destruction (result 0), then released. Final completed at
+  timeline frame 3 with eight samples, and the reopened 128×96 EXR was finite
+  and nonconstant. Cleanup recorded no surviving device owner or hold.
+
+The successor run verifies the named component and controlled integration
+boundaries. An independent evidence-hygiene rebind confirmed that exact
+`0607daad9354b872c7530277371b1d998443c394` carries the same product and verifier
+inputs. The native receipts remain at their executed source, `5c91c818…`.
+The ordinary rendered viewport retains evaluated fallback for ambiguous fluid
+updates. The 0607 50-cycle evaluated viewport lane passed and its standalone
+Live soak failed after the 240-image functional prefix. The current ce6afc9a
+scheduling change has its own targeted host result. Both native GUI lanes stopped before
+broker admission. The normal full gate remains blocked after two
+contamination decisions with unproven PID ownership. Provisional and installed
+archive evidence retains its own executed source and runtime scope.
+
+Frozen real-time, optical and compatibility requirements remain in force,
+including 24 fresh states/s, simulation/wall ratio, native-1080p throughput,
+solver-completion-to-presentation age, 1.05 solver overhead, combined VRAM, full
+Principled/attribute/optical semantics, all export passes and Linux GPU runtime.
+[Current status and receipt identities](CURRENT_QUALIFICATION_STATUS.md)

@@ -1,0 +1,547 @@
+{
+  "projection_workbench_run": "edb4375a7b59454a9abc43313fa88a6d",
+  "status_receipt": {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\status.json",
+    "sha256": "d52097ddde1cf8a795113acc1223a6046c5f6a951d390ebe136fb5338feb3001",
+    "bytes": 26060
+  },
+  "status": "FAILED",
+  "requested_head": "0607daad9354b872c7530277371b1d998443c394",
+  "controller_pid": 47876,
+  "started_at": "2026-11-28T07:41:00.110281+00:00",
+  "finished_at": "2026-11-28T07:45:15.359179+00:00",
+  "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\run_exclusive_fspt_gui.py\", line 370, in run\n    require(len(passed) == len(names) and all(passed), \"One or more standalone cases did not verify\")\n    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\run_exclusive_fspt_gui.py\", line 46, in require\n    raise RuntimeError(reason)\nRuntimeError: One or more standalone cases did not verify\n",
+  "requested_lanes": [
+    "async-viewport",
+    "async-live"
+  ],
+  "wrapper_sha256": "61b719c8adac4797d3c9b5dc6e02983a027fdb8cf1f4f44387322f4509d0a572",
+  "source_before_sha256": "fa30e7f23f432b2621eb84c526dc3473b77e099a4793a31e6f48b733b119200b",
+  "source_after_sha256": "fa30e7f23f432b2621eb84c526dc3473b77e099a4793a31e6f48b733b119200b",
+  "lanes": {
+    "async-viewport": {
+      "status": "VERIFIED",
+      "command": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\bin\\bgate.exe",
+        "run",
+        "--class",
+        "exclusive",
+        "--local",
+        "--session",
+        "agent:fspt-continue-20261128",
+        "--wait",
+        "90",
+        "--max-seconds",
+        "390",
+        "--owner",
+        "FluidSim FSPT",
+        "--label",
+        "FluidSim FSPT async-viewport gui-0607daad93-20261128T074100109056Z",
+        "--report",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\lease.json",
+        "--blender",
+        "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+        "--",
+        "--python-use-system-env",
+        "--factory-startup",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tests\\acceptance\\blender_fspt_async_viewport_acceptance.py",
+        "--",
+        "--json-out",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\acceptance.json",
+        "--lifecycle-cycles",
+        "50",
+        "--deadline",
+        "360"
+      ],
+      "returncode": 0,
+      "marker_seen": true,
+      "started_at": "2026-11-28T07:41:09.196268+00:00",
+      "finished_at": "2026-11-28T07:42:09.790808+00:00",
+      "record_sha256": {
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\stdout.log": "09ba9e0e4ccedfa1fc5bf8411d908a34ce07b4fd071f68d95628c0f6098d2956",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\stderr.log": "1d71e082d0c86ac7c10e7c3b5e64a11a59082365e0ec6af5d31f46f7f25ef635",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\lease.json": "2df00c3785e90668105c53590b037435722e1a015e18cb71a601128e69ac61e9",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\acceptance.json": "b1ebdbf33b71d389c473e77d76143e5ae32f944d461cb56edb7176a6719311ce"
+      },
+      "private_profile": {
+        "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\profile\\config",
+        "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\profile\\extensions",
+        "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\profile\\scripts",
+        "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\profile\\datafiles"
+      },
+      "receipts": {
+        "terminal.json": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\terminal.json",
+          "sha256": "0cacfc52cea26610a094e9e9db404a75f9df5594162d46ef5dc2bea821de93a3",
+          "bytes": 12089
+        },
+        "acceptance.json": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\acceptance.json",
+          "sha256": "b1ebdbf33b71d389c473e77d76143e5ae32f944d461cb56edb7176a6719311ce",
+          "bytes": 108808
+        },
+        "lease.json": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\lease.json",
+          "sha256": "2df00c3785e90668105c53590b037435722e1a015e18cb71a601128e69ac61e9",
+          "bytes": 2874
+        },
+        "original-evidence.json": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\original-evidence.json",
+          "sha256": "0081084cab0c0f5dd3d7a55054c56a3efaec16064b622691168cce0114a4f3cd",
+          "bytes": 4282
+        },
+        "stdout.log": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\stdout.log",
+          "sha256": "09ba9e0e4ccedfa1fc5bf8411d908a34ce07b4fd071f68d95628c0f6098d2956",
+          "bytes": 3705
+        },
+        "stderr.log": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\stderr.log",
+          "sha256": "1d71e082d0c86ac7c10e7c3b5e64a11a59082365e0ec6af5d31f46f7f25ef635",
+          "bytes": 129
+        }
+      },
+      "lease": {
+        "id": "d99ecdc67770",
+        "cls": "exclusive",
+        "state": "released",
+        "verdict": "clean",
+        "gpu_samples": 28,
+        "contamination": [],
+        "exit_code": 0,
+        "owner_pid": 29160,
+        "owner_ctime": 134403252694171280,
+        "pids": [
+          [
+            46992,
+            134403252941561680
+          ]
+        ],
+        "session": "agent:fspt-continue-20261128",
+        "max_seconds": 390,
+        "run_seconds": 35.034,
+        "profile": {
+          "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\profile\\config",
+          "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\profile\\datafiles",
+          "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\profile\\extensions",
+          "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\profile\\scripts"
+        }
+      },
+      "original_count": 16,
+      "screenshots_and_final_exr": {
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\acceptance-originals\\initial-screenshot.png": "c02e1443a4deb155b5b9bd68d0f238bbe6abbeca7a639996dfb217ff57dbd7e2",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\acceptance-originals\\two_views-screenshot.png": "7ce6d9a23d968fc5afc80f310d86d854ce6ffea4cc3abf496c9e13ecff7da207",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\acceptance-originals\\world_reassignment-screenshot.png": "38d2e39ccf35517224ff9f9411880f6c582b51d15768aa10e584c08f9b86009d",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\acceptance-originals\\after_final-screenshot.png": "a380ed7253be72a27961766c7523ad75422a24566da3cd4e29d8a6d75cb62388",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\acceptance-originals\\last_cycle-screenshot.png": "aa1a6f75372129587b860a93286a53c496a3d64e41ada2e236f9665eb5b269e8",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\acceptance-originals\\final-with-pending-view.exr": "641c7ef6482ddb35cab6220b05604e6f0f7676c6ea7a8268e52f7dafd1923249",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-viewport\\acceptance-originals\\final-with-pending-view.png": "2718326d760f64977f749029866740defd5593d4693537bf0dc87d300dab629a"
+      },
+      "verifier": {
+        "status": "VERIFIED",
+        "stage": "complete",
+        "scope": "static native callback/resource qualification; no live-performance claim",
+        "elapsed_seconds": 30.399971699982416,
+        "verifier_sha256": "05687d2dda2dfd5c512915d99c7e465d361e3772e927f53c34ed8e2280982146",
+        "python_tree_sha256": "7a0bd90a12dcc2c52bcef243b096adb7baa6f9403ba789bf0ab60656146b16a8",
+        "runtime": {
+          "warp": "1.19.0",
+          "warp_path": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site\\warp\\__init__.py",
+          "device": "cuda:0",
+          "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+          "cuda_driver": 13050,
+          "cuda_toolkit": 13040
+        },
+        "blender_build": "fbe6228777e7"
+      },
+      "workload": {
+        "completed_cycles": 50,
+        "maximum_pending_jobs": 1,
+        "maximum_active_backends": 3,
+        "maximum_combined_image_capacity": 161990,
+        "retirement_receipt_count": 103,
+        "stages": [
+          "initial",
+          "two_views",
+          "world_reassignment",
+          "after_final",
+          "last_cycle"
+        ]
+      }
+    },
+    "async-live": {
+      "status": "FAILED",
+      "command": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\bin\\bgate.exe",
+        "run",
+        "--class",
+        "exclusive",
+        "--local",
+        "--session",
+        "agent:fspt-continue-20261128",
+        "--wait",
+        "90",
+        "--max-seconds",
+        "1830",
+        "--owner",
+        "FluidSim FSPT",
+        "--label",
+        "FluidSim FSPT async-live gui-0607daad93-20261128T074100109056Z",
+        "--report",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\lease.json",
+        "--blender",
+        "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+        "--",
+        "--python-use-system-env",
+        "--factory-startup",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tests\\acceptance\\blender_fspt_async_live_acceptance.py",
+        "--",
+        "--json-out",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance.json",
+        "--blend",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\demos\\dam_break.blend",
+        "--states",
+        "240",
+        "--soak-seconds",
+        "600",
+        "--deadline",
+        "1800"
+      ],
+      "returncode": 1,
+      "marker_seen": false,
+      "started_at": "2026-11-28T07:42:10.065971+00:00",
+      "finished_at": "2026-11-28T07:45:10.266862+00:00",
+      "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\run_exclusive_fspt_gui.py\", line 280, in run_lane\n    validate_lease(lease, label=label, argv=argv, executable=q.BLENDER, root=q.ROOT,\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                   lease_seconds=lease_seconds, private_profile=row[\"private_profile\"])\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\run_exclusive_fspt_gui.py\", line 95, in validate_lease\n    require(type(lease.get(\"exit_code\")) is int and lease[\"exit_code\"] == 0\n    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n            and lease.get(\"argv\") == argv\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<2 lines>...\n            and lease.get(\"max_seconds\") == lease_seconds,\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n            \"Exclusive BGATE receipt does not bind exact Blender command and cap\")\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\run_exclusive_fspt_gui.py\", line 46, in require\n    raise RuntimeError(reason)\nRuntimeError: Exclusive BGATE receipt does not bind exact Blender command and cap\n",
+      "record_sha256": {
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\stdout.log": "c943b233070bd3ea12d0c5480db2ea8b90c3c7fdea9662197e8088165b0741f7",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\stderr.log": "874860531f65e3bdb0aaa91b795dc3bf874376cfc5cbf0f86450599d0fb7c93c",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\lease.json": "aa62d6e8ff0bc7fe1b36e1ca6b0be73d6ddc2324363a2d3ae1770c422cd9efc0",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance.json": "8afc88c9bcce7740ebf44d5e28c21e70ac07f51a722d1134dc485bd33dabe6ae"
+      },
+      "private_profile": {
+        "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\config",
+        "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\extensions",
+        "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\scripts",
+        "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\datafiles"
+      },
+      "receipts": {
+        "terminal.json": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\terminal.json",
+          "sha256": "9437f5e3c094a41cb996cd43fa7840037c65ecbbde052018a9cc70a6d2cc5d94",
+          "bytes": 9016
+        },
+        "acceptance.json": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance.json",
+          "sha256": "8afc88c9bcce7740ebf44d5e28c21e70ac07f51a722d1134dc485bd33dabe6ae",
+          "bytes": 1645189
+        },
+        "lease.json": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\lease.json",
+          "sha256": "aa62d6e8ff0bc7fe1b36e1ca6b0be73d6ddc2324363a2d3ae1770c422cd9efc0",
+          "bytes": 2977
+        },
+        "stdout.log": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\stdout.log",
+          "sha256": "c943b233070bd3ea12d0c5480db2ea8b90c3c7fdea9662197e8088165b0741f7",
+          "bytes": 3872
+        },
+        "stderr.log": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\stderr.log",
+          "sha256": "874860531f65e3bdb0aaa91b795dc3bf874376cfc5cbf0f86450599d0fb7c93c",
+          "bytes": 129
+        }
+      },
+      "lease": {
+        "id": "f265e23c1ffe",
+        "cls": "exclusive",
+        "state": "released",
+        "verdict": "clean",
+        "gpu_samples": 127,
+        "contamination": [],
+        "exit_code": 1,
+        "owner_pid": 19812,
+        "owner_ctime": 134403253303856600,
+        "pids": [
+          [
+            5828,
+            134403253533763440
+          ]
+        ],
+        "session": "agent:fspt-continue-20261128",
+        "max_seconds": 1830,
+        "run_seconds": 157.024,
+        "profile": {
+          "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\config",
+          "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\datafiles",
+          "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\extensions",
+          "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\profile\\scripts"
+        }
+      },
+      "verifier": {
+        "status": "FAILED",
+        "stage": "soak",
+        "verifier_sha256": "0b6d5c2d8aa8aa36ded75bce06b845666b31eeb3ae95bca8616e9f61570b6b7c",
+        "python_tree_sha256": "7a0bd90a12dcc2c52bcef243b096adb7baa6f9403ba789bf0ab60656146b16a8",
+        "runtime": {
+          "warp": "1.19.0",
+          "warp_path": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site\\warp\\__init__.py",
+          "device": "cuda:0",
+          "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+          "cuda_driver": 13050,
+          "cuda_toolkit": 13040
+        },
+        "blender_build": "fbe6228777e7",
+        "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tests\\acceptance\\blender_fspt_async_live_acceptance.py\", line 320, in tick\n    assert now - self.soak_last_draw < 10, \"Soak made no new completed live-image progress for 10 seconds\"\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Soak made no new completed live-image progress for 10 seconds\n"
+      },
+      "workload": {
+        "input_blend": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\demos\\dam_break.blend",
+        "input_blend_sha256": "05e1918423e48fdf22ea702ff5ca2db1c8f7464be865619d382ad5d8118b92f8",
+        "capture_audit_count": 828,
+        "async_boundary_calls": {
+          "submit": 423,
+          "collect": 423,
+          "close": 1
+        },
+        "accepted_frame_count": 240,
+        "unique_geometry": 240,
+        "unique_images": 240,
+        "controls": [
+          "domain_ownership",
+          "pause_transitions",
+          "paused_baseline",
+          "pause_refine",
+          "freeze",
+          "mutation_cadence",
+          "sync_warning",
+          "reset",
+          "reopen"
+        ],
+        "runtime_checkpoint": {
+          "timeline_frame": 65,
+          "live_status": "Frame 64: 256,000 particles, 701,440 voxels, 38.8 ms",
+          "solver_frame": 64,
+          "state_revision": 2109,
+          "surface": "READY",
+          "surface_reason": "",
+          "surface_generation": 831,
+          "surface_triangles": 44720,
+          "output_visibility": {
+            "FluidSim Surface": {
+              "object_token": 17940,
+              "hide_viewport": false,
+              "hide_render": false,
+              "layer_visible": true
+            },
+            "FluidSim Particles": {
+              "object_token": 17939,
+              "hide_viewport": true,
+              "hide_render": true,
+              "layer_visible": false
+            },
+            "FluidSim Whitewater": {
+              "object_token": 17941,
+              "hide_viewport": true,
+              "hide_render": true,
+              "layer_visible": false
+            }
+          },
+          "presentation": {
+            "status": "WAITING",
+            "reason": "Retained image publication age exceeded 250 ms"
+          }
+        },
+        "draw_observer": {
+          "drops": {
+            "draw_not_complete": 591,
+            "sample_target_not_reached": 8
+          },
+          "entered": 855,
+          "matched": 262,
+          "latest_drop": {
+            "stage": "soak",
+            "reason": "draw_not_complete",
+            "detail": "Retained image publication age exceeded 250 ms"
+          }
+        },
+        "first": {
+          "timeline_frame": 2,
+          "source_timeline_frame": 2,
+          "solver_frame": 1,
+          "state_revision": 5,
+          "epoch": 1,
+          "generation": 1,
+          "source": "LIVE",
+          "channel": "EVALUATED_MESH",
+          "geometry_sha256": "46d3ff3241f8fdc3c7a9c20ed872a54cd8cf577a2b6519fff6cd9d0513d8b4e5",
+          "image_sha256": "878692946e4952fa4d74ad46ff2f6d7a36e469f899cd2f328262e935169affbf",
+          "raw_pixels": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-01.npy",
+          "raw_pixels_sha256": "5a23471ee45b466c70f4c12ca0a50c05893bd4552586ada42fb76fc0db02caf3",
+          "screenshot": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-01-screenshot.png",
+          "screenshot_sha256": "4f7f41c5539de1fcdf67fb27f419ac408937d75eaeb4cc6ad726df501ed9b7dc",
+          "presentation_status": "RETAINED",
+          "publication_to_draw_seconds": 0.12878359999740496,
+          "solver_state_to_draw_seconds": 0.15895500002079643
+        },
+        "last": {
+          "timeline_frame": 759,
+          "source_timeline_frame": 759,
+          "solver_frame": 758,
+          "state_revision": 8709,
+          "epoch": 1,
+          "generation": 758,
+          "source": "LIVE",
+          "channel": "EVALUATED_MESH",
+          "geometry_sha256": "176ebaf551bf3c61d38195be07a272f9359bb5be3c08b9d2b59e7435a5061121",
+          "image_sha256": "607c89586ae9db5a2a159394d6626f93a521973fe844600a9dba9a7d75dab8ce",
+          "raw_pixels": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-240.npy",
+          "raw_pixels_sha256": "d47e14fbd352503f1e7ef3aef30d9bdf500ef063016191752873e06800338bf7",
+          "screenshot": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-240-screenshot.png",
+          "screenshot_sha256": "86c5bfaa67f0e104ce58354b1236b9e7d407eadb574e39611e5d0d94df9a4eaa",
+          "presentation_status": "RETAINED",
+          "publication_to_draw_seconds": 0.22784569999203086,
+          "solver_state_to_draw_seconds": 0.237179699994158,
+          "image_mean_abs_delta": 0.0004948673886246979
+        },
+        "soak": {
+          "status": "RUNNING",
+          "new_states": 7,
+          "changed_images": 6,
+          "maximum_image_capacity": 156450,
+          "sample_count": 1,
+          "first_sample": {
+            "timeline_frame": 4,
+            "source_timeline_frame": 4,
+            "solver_frame": 3,
+            "state_revision": 25,
+            "epoch": 3,
+            "generation": 770,
+            "source": "LIVE",
+            "channel": "EVALUATED_MESH",
+            "geometry_sha256": "739fcf5dab2f89a2b08fd41d3cd9f34db1db0325939adbc3c38d8e94958b01ac",
+            "image_sha256": "a48b9e0612d621e3f8a1ee1ec7358ed9b3fd8da3a9156bd29932bc5c1eb0160a",
+            "raw_pixels": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\soak-000.npy",
+            "raw_pixels_sha256": "c4267c70cf657db13c5ca8e39fd874ef2bb84927049179a1c4a675a3e4e859c3",
+            "screenshot": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\soak-000-screenshot.png",
+            "screenshot_sha256": "d548781c563d27ecade5acc8599f55bfcd1a5a26fb0c8fdeaf8aac9699c4272a",
+            "presentation_status": "CURRENT",
+            "publication_to_draw_seconds": 0.3167271999991499,
+            "solver_state_to_draw_seconds": 0.32364730001427233
+          },
+          "last_sample": {
+            "timeline_frame": 4,
+            "source_timeline_frame": 4,
+            "solver_frame": 3,
+            "state_revision": 25,
+            "epoch": 3,
+            "generation": 770,
+            "source": "LIVE",
+            "channel": "EVALUATED_MESH",
+            "geometry_sha256": "739fcf5dab2f89a2b08fd41d3cd9f34db1db0325939adbc3c38d8e94958b01ac",
+            "image_sha256": "a48b9e0612d621e3f8a1ee1ec7358ed9b3fd8da3a9156bd29932bc5c1eb0160a",
+            "raw_pixels": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\soak-000.npy",
+            "raw_pixels_sha256": "c4267c70cf657db13c5ca8e39fd874ef2bb84927049179a1c4a675a3e4e859c3",
+            "screenshot": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\soak-000-screenshot.png",
+            "screenshot_sha256": "d548781c563d27ecade5acc8599f55bfcd1a5a26fb0c8fdeaf8aac9699c4272a",
+            "presentation_status": "CURRENT",
+            "publication_to_draw_seconds": 0.3167271999991499,
+            "solver_state_to_draw_seconds": 0.32364730001427233
+          }
+        }
+      },
+      "selected_verified_image_files": {
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\paused-refinement.npy": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\paused-refinement.npy",
+          "sha256": "13fbecf9c1edd5d10b9996e07ed3995f51e785a3f58316a2885c4abe685374cf",
+          "bytes": 2503328
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\paused-refinement-screenshot.png": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\paused-refinement-screenshot.png",
+          "sha256": "bcef118ead3e7feaa352d3e0a08f11ced7df49ddc522fa71b8476590455f760f",
+          "bytes": 2723902
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\reset-reused-frame.npy": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\reset-reused-frame.npy",
+          "sha256": "5a23471ee45b466c70f4c12ca0a50c05893bd4552586ada42fb76fc0db02caf3",
+          "bytes": 2503328
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\reset-reused-frame-screenshot.png": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\reset-reused-frame-screenshot.png",
+          "sha256": "cb4c70110ca98b12db1c225c80728c9c9ceaaa23ec7ee7925de5da9629f06f4e",
+          "bytes": 2711875
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\reopen-live.npy": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\reopen-live.npy",
+          "sha256": "5a23471ee45b466c70f4c12ca0a50c05893bd4552586ada42fb76fc0db02caf3",
+          "bytes": 2503328
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\reopen-live-screenshot.png": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\reopen-live-screenshot.png",
+          "sha256": "e7d91178a8256449d4afb1e0a9a1ea8b59e3ca3e06645f531b1e4e8e295100f3",
+          "bytes": 2253563
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-01.npy": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-01.npy",
+          "sha256": "5a23471ee45b466c70f4c12ca0a50c05893bd4552586ada42fb76fc0db02caf3",
+          "bytes": 2503328
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-01-screenshot.png": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-01-screenshot.png",
+          "sha256": "4f7f41c5539de1fcdf67fb27f419ac408937d75eaeb4cc6ad726df501ed9b7dc",
+          "bytes": 2252729
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-240.npy": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-240.npy",
+          "sha256": "d47e14fbd352503f1e7ef3aef30d9bdf500ef063016191752873e06800338bf7",
+          "bytes": 2503328
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-240-screenshot.png": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\live-240-screenshot.png",
+          "sha256": "86c5bfaa67f0e104ce58354b1236b9e7d407eadb574e39611e5d0d94df9a4eaa",
+          "bytes": 2252309
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\soak-000.npy": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\soak-000.npy",
+          "sha256": "c4267c70cf657db13c5ca8e39fd874ef2bb84927049179a1c4a675a3e4e859c3",
+          "bytes": 2503328
+        },
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\soak-000-screenshot.png": {
+          "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals\\soak-000-screenshot.png",
+          "sha256": "d548781c563d27ecade5acc8599f55bfcd1a5a26fb0c8fdeaf8aac9699c4272a",
+          "bytes": 2252863
+        }
+      },
+      "raw_image_directory": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\async-live\\acceptance-originals",
+      "retained_npy_count": 247
+    }
+  },
+  "source_before": {
+    "git_head": "0607daad9354b872c7530277371b1d998443c394",
+    "source_fingerprint": "ec5d2d0eccb21d71f21232821b0e2b8d7746b01f6f79993d2d508981753200cf",
+    "verifier_fingerprint": "9d22b451dadda8e99ef987d57fdf0ee983fea69e302ec4fd1bb51ef700afaf2c",
+    "input_count": 884,
+    "receipt": {
+      "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\source-before.json",
+      "sha256": "fa30e7f23f432b2621eb84c526dc3473b77e099a4793a31e6f48b733b119200b",
+      "bytes": 177450
+    },
+    "demo_sha256": "05e1918423e48fdf22ea702ff5ca2db1c8f7464be865619d382ad5d8118b92f8"
+  },
+  "source_after": {
+    "git_head": "0607daad9354b872c7530277371b1d998443c394",
+    "source_fingerprint": "ec5d2d0eccb21d71f21232821b0e2b8d7746b01f6f79993d2d508981753200cf",
+    "verifier_fingerprint": "9d22b451dadda8e99ef987d57fdf0ee983fea69e302ec4fd1bb51ef700afaf2c",
+    "input_count": 884,
+    "receipt": {
+      "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z\\source-after.json",
+      "sha256": "fa30e7f23f432b2621eb84c526dc3473b77e099a4793a31e6f48b733b119200b",
+      "bytes": 177450
+    },
+    "demo_sha256": "05e1918423e48fdf22ea702ff5ca2db1c8f7464be865619d382ad5d8118b92f8"
+  }
+}

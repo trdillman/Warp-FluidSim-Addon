@@ -354,3 +354,36 @@ The archive includes an incremental verified Git bundle from `49aa02be`,
 owned originals/receipts and explicitly unfinished cloud drafts. The later
 final runtime receipt and this disposition are included in the next checkpoint;
 their absence from an earlier archive is not hidden by the archive name.
+
+
+## 10. Follow-on qualification snapshot, 2026-11-28 UTC
+
+**P0/M0 remains complete at the original feasibility boundary.** The P0
+receipts above retain their original candidates, fixture limits and hashes.
+The later independent distribution/verifier review admitted exact source
+`5c91c8188e5e148f0218a596ed64de4c087e1cc5` for the normal production gate.
+Its source fingerprint is
+`ec5d2d0eccb21d71f21232821b0e2b8d7746b01f6f79993d2d508981753200cf`
+and its verifier fingerprint is
+`9d22b451dadda8e99ef987d57fdf0ee983fea69e302ec4fd1bb51ef700afaf2c`.
+The independent flat admission JSON SHA-256 is
+`0c041ca0338d700304fc6159760cffa7dfbd040c02c07d3d7bc86f42b9e92a80`.
+
+This later source carries the authoritative Session completion clock, checked
+aggregate/pool ownership and stream retirement, and a strict production
+evidence grader. Native successor tests verified the CUDA broker and the
+controlled live device publication/GUI-worker Final handoff. The current
+receipts and retained failures are recorded in
+[DEVICE_VIEWPORT_QUALIFICATION.md](DEVICE_VIEWPORT_QUALIFICATION.md).
+Evaluated viewport and fixed aggregate reuse history are recorded in
+[ASYNC_VIEWPORT_QUALIFICATION.md](ASYNC_VIEWPORT_QUALIFICATION.md).
+
+The current Windows source is `ce6afc9ae8b607a33b5c429e6743a60a86df8b1e`.
+It retains the completed P0/M0 feasibility record and adds a presentation
+scheduling fix after the 0607 Live soak failure. The historical 0607 full
+Windows host regression and 50-cycle viewport passed. Its 600-second Live
+soak failed after the initial 240 images. Two normal full gate attempts
+stopped on exclusive broker contamination of unproven PID ownership. The
+successor native GUI attempt ended without exclusive GPU admission. Full P2/P3,
+real-time, optics, exports and Linux runtime remain open.
+[Current milestone and receipt status](CURRENT_QUALIFICATION_STATUS.md)
