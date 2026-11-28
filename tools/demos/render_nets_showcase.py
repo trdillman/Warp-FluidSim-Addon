@@ -510,10 +510,10 @@ def encode_with_ffmpeg(frames_dir, frames, out_path):
 
 
 def mesh_stamp(mesh_dir):
-    """Changes whenever the saved meshes do (names, sizes and times)."""
+    """Changes whenever the saved meshes do (names, sizes and nanosecond times)."""
     names = sorted(n for n in os.listdir(mesh_dir) if n.endswith(".npy"))
     return [[n, os.path.getsize(os.path.join(mesh_dir, n)),
-             int(os.path.getmtime(os.path.join(mesh_dir, n)))] for n in names]
+             os.stat(os.path.join(mesh_dir, n)).st_mtime_ns] for n in names]
 
 
 def run_render(opts):
