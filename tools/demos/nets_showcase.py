@@ -18,17 +18,19 @@ Layout rules that come from the Surface Nets review (see
 
 * No liquid touches a domain wall. The mesh stops half a voxel short of the
   extraction box edge, which would open a visible gap. The pool sits on a
-  collider slab that covers the whole floor of the domain, and the trough wall
-  keeps the pool away from the sides.
+  collider slab, and trough walls taller than the splash keep the water in,
+  well away from the domain sides.
 * Every drop is at least ``MIN_DROP_VOXELS`` voxels across at the hero
   resolution, so the "small droplets shrink" effect of Surface Nets is small
   next to the drop itself. Spray finer than that will shrink a little.
 * Narrow Band is off and the pool is a thin film (8 mm). A source's startup
   demand is its whole volume, so a deep pool would be booked at tens of
   millions of particles before any narrow-band culling.
-* A catch rim runs around the slab edge, 30 mm inside the domain walls: the first
-  GPU run showed the splash running out of the trough and over the slab to the
-  domain walls, so what leaves the trough piles up against the rim instead.
+* Every collider books the leaves of its bounding box at startup (leaf capacity),
+  so the colliders are separate thin walls on a small slab, not rings or a
+  floor-sized slab.
+* Analytic sources are booked as a cube of their longest side, so the pool is
+  a grid of small box sources (``pool_tiles``).
 * The domain is a long box, not a cube. The Surface Nets extractor works in a
   dense box, 40 bytes per voxel in the add-on's own memory estimate, so the two
   short axes are kept short to fit a 16 GB card.
@@ -76,9 +78,9 @@ class Preset:
 
 
 PRESETS = {
-    HERO: Preset(HERO, voxel=0.001, leaf_capacity=24576,
+    HERO: Preset(HERO, voxel=0.001, leaf_capacity=45056,
                  max_particles=8_000_000, max_dense_dim=640),
-    DRAFT: Preset(DRAFT, voxel=0.002, leaf_capacity=8192,
+    DRAFT: Preset(DRAFT, voxel=0.002, leaf_capacity=16384,
                   max_particles=1_300_000, max_dense_dim=320),
 }
 
@@ -94,17 +96,17 @@ def preset(name=None):
 # ---------------------------------------------------------------------------
 # Layout (metres). x is the long axis; the trough is centred in the domain.
 
-DOMAIN_HX, DOMAIN_HY = 0.30, 0.20
+DOMAIN_HX, DOMAIN_HY = 0.30, 0.14
 DOMAIN_LO = (-DOMAIN_HX, -DOMAIN_HY, 0.0)
-DOMAIN_HI = (DOMAIN_HX, DOMAIN_HY, 0.44)
+DOMAIN_HI = (DOMAIN_HX, DOMAIN_HY, 0.40)
 
-SLAB_TOP = 0.03          # the floor the pool sits on, well above the domain floor
+SLAB_TOP = 0.016         # the floor the pool sits on (hero: 16 voxels above the domain floor)
 SLAB_BELOW = 0.05        # collider reaches below the domain floor
-SLAB_OVERHANG = 0.02     # and past the sides, so no liquid can reach the walls' edge
+SLAB_OVERHANG = 0.02     # past the outer face of the trough walls
 POOL_HX, POOL_HY = 0.22, 0.10   # inner half sizes of the trough
 POOL_DEPTH = 0.008      # a thin film: every pool voxel holds particles, see expected_particles
 POOL_TOP = SLAB_TOP + POOL_DEPTH
-WALL_THICKNESS = 0.014
+WALL_THICKNESS = 0.008
 # Trough wall height above the pool. The walls are taller than any spray the
 # three drops throw (the first GPU runs saw 0.28 m with the walls at 0.05 m, and
 # the water ran out over the slab to the domain walls). The camera-side wall is
@@ -116,14 +118,6 @@ TROUGH_TOP_BACK = POOL_TOP + TROUGH_HEIGHT
 TROUGH_TOP_END = POOL_TOP + TROUGH_HEIGHT
 WALL_TOP = TROUGH_TOP_BACK
 HIDDEN_IN_RENDER = ("Nets Trough Front",)
-# A catch rim around the slab edge: what leaves the trough runs out over the slab
-# and must pile up against this, not against the domain wall. Its outer face is
-# RIM_INSET inside the domain.
-RIM_INSET = 0.03
-RIM_TOP_FRONT = SLAB_TOP + 0.02
-RIM_TOP_BACK = SLAB_TOP + 0.045
-RIM_TOP_END = SLAB_TOP + 0.045
-
 MIN_DROP_VOXELS = 18
 
 
@@ -159,7 +153,7 @@ DROPS = (
     Drop("Nets Drop C", (0.130, -0.020), 0.016, 0.0, 0.240),
 )
 
-# Camera for a 16:9 frame: a little above the trough rim, looking along its side.
+# Camera for a 16:9 frame: at the top of the trough walls, looking along its side.
 CAMERA_LOCATION = (0.0, -1.00, 0.32)
 CAMERA_TARGET = (0.0, 0.0, 0.17)
 CAMERA_LENS = 45.0
@@ -169,7 +163,6 @@ WATER_COLOR = (0.55, 0.80, 0.95, 1.0)
 MATERIAL_COLORS = {
     "Nets Marble": (0.86, 0.84, 0.80, 1.0),
     "Nets Slab": (0.045, 0.05, 0.06, 1.0),
-    "Nets Rim": (0.07, 0.075, 0.085, 1.0),
 }
 
 
@@ -217,6 +210,45 @@ def full_fill_particles(p=None):
     p = p or preset()
     volume = pool_volume() + sum(4.0 / 3.0 * math.pi * d.radius ** 3 for d in DROPS)
     return volume / p.voxel ** 3 * PARTICLES_PER_VOXEL
+
+
+# The admission planner bounds every analytic source by a cube of its LARGEST
+# size and compiles all of that cube's leaves. A pool 0.44 m long therefore
+# books a 0.44 m cube (11,200 leaves and 46M particles at 2 mm), is refused for
+# leaf capacity, and the planner falls back to the whole cube as demand. So the
+# pool is cut into tiles no longer than this, each with a small cube.
+MAX_TILE = 0.10
+
+
+def _split(cells, longest):
+    """Cell counts of the smallest equal-ish split whose pieces fit ``longest``."""
+    n = max(1, math.ceil(cells / longest))
+    base, extra = divmod(cells, n)
+    return [base + (1 if i < extra else 0) for i in range(n)]
+
+
+def pool_tiles(p=None):
+    """((lo, hi), ...) corner pairs of the pool's Initial Fill box sources.
+
+    The pool is inset by one voxel from the trough walls. Tiles meet on voxel
+    faces (never on a voxel centre), so no voxel belongs to two tiles.
+    """
+    p = p or preset()
+    v = p.voxel
+    per_tile = max(1, int(MAX_TILE / v))
+    x_cells = round((2.0 * POOL_HX - 2.0 * v) / v)
+    y_cells = round((2.0 * POOL_HY - 2.0 * v) / v)
+    x0, y0 = -POOL_HX + v, -POOL_HY + v
+    tiles = []
+    ix = 0
+    for nx in _split(x_cells, per_tile):
+        iy = 0
+        for ny in _split(y_cells, per_tile):
+            tiles.append(((x0 + ix * v, y0 + iy * v, SLAB_TOP),
+                          (x0 + (ix + nx) * v, y0 + (iy + ny) * v, POOL_TOP)))
+            iy += ny
+        ix += nx
+    return tuple(tiles)
 
 
 def drop_voxels(drop, p=None):
@@ -291,7 +323,11 @@ def _boxes(name, boxes, material):
 
 
 def slab_mesh():
-    hx, hy = DOMAIN_HX + SLAB_OVERHANG, DOMAIN_HY + SLAB_OVERHANG
+    # Every collider books the leaves of its bounding box at startup, and a slab
+    # over the whole domain floor was 13,000 leaves at hero resolution for no
+    # purpose: the trough walls hold the water in.
+    hx = POOL_HX + WALL_THICKNESS + SLAB_OVERHANG
+    hy = POOL_HY + WALL_THICKNESS + SLAB_OVERHANG
     return _boxes("Nets Slab", [((-hx, -hy, -SLAB_BELOW), (hx, hy, SLAB_TOP))], "Nets Slab")
 
 
@@ -315,31 +351,21 @@ def wall_boxes():
                        TROUGH_TOP_FRONT, TROUGH_TOP_BACK, TROUGH_TOP_END)
 
 
-RIM_HX = DOMAIN_HX - RIM_INSET - WALL_THICKNESS   # inner half sizes of the catch rim
-RIM_HY = DOMAIN_HY - RIM_INSET - WALL_THICKNESS
-
-
-def rim_boxes():
-    """(side walls, end walls) of the catch rim."""
-    return _ring_boxes(RIM_HX, RIM_HY, WALL_THICKNESS, SLAB_TOP - OVERLAP,
-                       RIM_TOP_FRONT, RIM_TOP_BACK, RIM_TOP_END)
+def _wall_meshes(prefix, boxes, material):
+    """One mesh per wall: each collider books the leaves of its own bounding box,
+    so a mesh holding both ends of a ring would book the whole ring's interior."""
+    (front, back), (left, right) = boxes
+    return [_boxes(f"{prefix} {name}", [box], material)
+            for name, box in zip(("Front", "Back", "Left", "Right"),
+                                 (front, back, left, right), strict=True)]
 
 
 def trough_wall_meshes():
-    (front, back), ends = wall_boxes()
-    return [_boxes("Nets Trough Front", [front], "Nets Marble"),
-            _boxes("Nets Trough Back", [back], "Nets Marble"),
-            _boxes("Nets Trough Ends", ends, "Nets Marble")]
-
-
-def rim_meshes():
-    sides, ends = rim_boxes()
-    return [_boxes("Nets Rim Sides", sides, "Nets Rim"),
-            _boxes("Nets Rim Ends", ends, "Nets Rim")]
+    return _wall_meshes("Nets Trough", wall_boxes(), "Nets Marble")
 
 
 def collider_meshes():
-    return [slab_mesh(), *trough_wall_meshes(), *rim_meshes()]
+    return [slab_mesh(), *trough_wall_meshes()]
 
 
 def signed_volume(mesh):
@@ -396,21 +422,15 @@ def wall_clearance(positions):
 
 
 def inside_wall_fraction(positions):
-    """Share of particles inside the trough or catch rim walls (should be zero)."""
+    """Share of particles inside the trough walls (should be zero)."""
     pos = np.asarray(positions, dtype=np.float64)
     if len(pos) == 0:
         return 0.0
     margin = 0.002
-    inside = np.zeros(len(pos), dtype=bool)
-    # The wall tops differ per side (the rim's camera side is low), so a particle
-    # above the low wall is over it, not inside it.
-    for hx, hy, top_front, top_back in (
-            (POOL_HX, POOL_HY, TROUGH_TOP_FRONT, TROUGH_TOP_BACK),
-            (RIM_HX, RIM_HY, RIM_TOP_FRONT, RIM_TOP_BACK)):
-        ox, oy = hx + WALL_THICKNESS, hy + WALL_THICKNESS
-        in_outer = (np.abs(pos[:, 0]) < ox - margin) & (np.abs(pos[:, 1]) < oy - margin)
-        in_inner = (np.abs(pos[:, 0]) < hx + margin) & (np.abs(pos[:, 1]) < hy + margin)
-        top = np.where(pos[:, 1] < 0.0, top_front, top_back)
-        in_height = (pos[:, 2] < top - margin) & (pos[:, 2] > SLAB_TOP + margin)
-        inside |= in_outer & ~in_inner & in_height
+    ox, oy = POOL_HX + WALL_THICKNESS, POOL_HY + WALL_THICKNESS
+    in_outer = (np.abs(pos[:, 0]) < ox - margin) & (np.abs(pos[:, 1]) < oy - margin)
+    in_inner = (np.abs(pos[:, 0]) < POOL_HX + margin) & (np.abs(pos[:, 1]) < POOL_HY + margin)
+    top = np.where(pos[:, 1] < 0.0, TROUGH_TOP_FRONT, TROUGH_TOP_BACK)
+    in_height = (pos[:, 2] < top - margin) & (pos[:, 2] > SLAB_TOP + margin)
+    inside = in_outer & ~in_inner & in_height
     return float(np.mean(inside))

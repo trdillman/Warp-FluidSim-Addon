@@ -2081,12 +2081,13 @@ def author_nets_showcase():
     scene.frame_end = ns.FRAMES
     scene.render.fps = ns.FPS
     scene.frame_set(1)
-    inset = p.voxel
-    make_source_box(
-        scene, (-ns.POOL_HX + inset, -ns.POOL_HY + inset, ns.SLAB_TOP),
-        (ns.POOL_HX - inset, ns.POOL_HY - inset, ns.POOL_TOP), "NetsShowcase Pool",
-        emit_rate=ns.PARTICLES_PER_VOXEL,
-        emission_mode="INITIAL_FILL").hide_render = True
+    # Several tiles, not one box: the planner bounds a source by a cube of its
+    # longest side (see nets_showcase.MAX_TILE).
+    for i, (lo_t, hi_t) in enumerate(ns.pool_tiles(p), start=1):
+        make_source_box(
+            scene, lo_t, hi_t, f"NetsShowcase Pool {i:02d}",
+            emit_rate=ns.PARTICLES_PER_VOXEL,
+            emission_mode="INITIAL_FILL").hide_render = True
     for drop in ns.DROPS:
         make_source_sphere(
             scene, drop.center, drop.radius, drop.name,
@@ -2138,7 +2139,14 @@ def build_nets_showcase():
         if os.path.exists(stale_path):
             os.remove(stale_path)
     scene = author_nets_showcase()
-    initialize_demo()
+    assign_input_identities(scene)
+    # The sim stage opens the saved file and initializes through the same
+    # admission check, so a refusal here must stop the build: stepping on
+    # regardless gave a build that passed and a file that could not be opened.
+    if bpy.ops.fluidsim.initialize() != {"FINISHED"}:
+        raise RuntimeError(
+            f"nets_showcase [{p.name}]: Initialize was refused "
+            f"({scene.fluidsim.status!r}); the saved scene could not be simulated")
     sess = session()
     checks = {}
 
@@ -2209,7 +2217,9 @@ def build_nets_showcase():
         "cells": list(ns.divisions(p)),
         "fps": FPS,
         "time_scale": ns.TIME_SCALE,
-        "source_objects": ["NetsShowcase Pool"] + [d.name for d in ns.DROPS],
+        "source_objects": [f"NetsShowcase Pool {i:02d}"
+                           for i in range(1, len(ns.pool_tiles(p)) + 1)]
+                          + [d.name for d in ns.DROPS],
         "collider_objects": [m.name for m in ns.collider_meshes()],
         "source_emission_mode": "INITIAL_FILL",
         "source_emitted_particles": first,

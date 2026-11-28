@@ -41,18 +41,28 @@ def test_no_liquid_can_touch_a_domain_wall_at_rest():
     assert ns.DOMAIN_HX - (ns.POOL_HX + ns.WALL_THICKNESS) >= 30 * p.voxel
     assert ns.DOMAIN_HY - (ns.POOL_HY + ns.WALL_THICKNESS) >= 30 * p.voxel
     # It stands on the slab, not on the domain floor.
-    assert ns.SLAB_TOP >= 20 * p.voxel
+    assert ns.SLAB_TOP >= 10 * p.voxel
     for drop in ns.DROPS:
         assert ns.DOMAIN_HI[2] - drop.top >= 30 * p.voxel
         assert abs(drop.center_xy[0]) + drop.radius < ns.POOL_HX
         assert abs(drop.center_xy[1]) + drop.radius < ns.POOL_HY
 
 
-def test_slab_covers_the_domain_floor():
+def test_slab_covers_the_trough_but_not_the_whole_floor():
     slab = ns.slab_mesh().verts
-    assert slab[:, 0].max() > ns.DOMAIN_HX and slab[:, 0].min() < -ns.DOMAIN_HX
-    assert slab[:, 1].max() > ns.DOMAIN_HY and slab[:, 1].min() < -ns.DOMAIN_HY
+    outer_x, outer_y = ns.POOL_HX + ns.WALL_THICKNESS, ns.POOL_HY + ns.WALL_THICKNESS
+    assert slab[:, 0].max() > outer_x and slab[:, 0].min() < -outer_x
+    assert slab[:, 1].max() > outer_y and slab[:, 1].min() < -outer_y
     assert slab[:, 2].min() < 0.0 < ns.SLAB_TOP
+    # Inside the domain, so its bounding box does not book the whole floor.
+    assert slab[:, 0].max() < ns.DOMAIN_HX and slab[:, 1].max() < ns.DOMAIN_HY
+
+
+def _builder_source():
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "tools", "demos",
+                        "build_demo_scenes.py")
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
 
 
 def test_trough_walls_are_taller_than_the_splash_and_the_front_is_hidden():
@@ -61,39 +71,34 @@ def test_trough_walls_are_taller_than_the_splash_and_the_front_is_hidden():
     assert ns.TROUGH_TOP_FRONT >= 0.30
     assert ns.TROUGH_TOP_FRONT < ns.DOMAIN_HI[2] - 0.05
     names = [m.name for m in ns.trough_wall_meshes()]
-    assert names == ["Nets Trough Front", "Nets Trough Back", "Nets Trough Ends"]
+    assert names == ["Nets Trough Front", "Nets Trough Back", "Nets Trough Left",
+                     "Nets Trough Right"]
     assert ns.HIDDEN_IN_RENDER == ("Nets Trough Front",)
     # The builder hides it from the render but keeps it as a collider.
-    src = open(os.path.join(os.path.dirname(__file__), "..", "..", "tools", "demos",
-                            "build_demo_scenes.py")).read()
+    src = _builder_source()
     assert "obj.hide_render = True" in src and "ns.HIDDEN_IN_RENDER" in src
 
 
-def test_inside_wall_check_ignores_particles_over_the_low_rim():
-    over_front_rim = np.array([[0.0, -(ns.RIM_HY + 0.5 * ns.WALL_THICKNESS),
-                                ns.RIM_TOP_FRONT + 0.01]])
-    in_back_rim = np.array([[0.0, ns.RIM_HY + 0.5 * ns.WALL_THICKNESS,
-                             ns.RIM_TOP_FRONT + 0.01]])
-    assert ns.inside_wall_fraction(over_front_rim) == 0.0
-    assert ns.inside_wall_fraction(in_back_rim) == 1.0
-
-
-def test_catch_rim_keeps_spill_away_from_the_domain_walls():
+def test_trough_keeps_water_far_from_the_domain_walls():
     p = ns.PRESETS[ns.HERO]
-    assert ns.DOMAIN_HX - (ns.RIM_HX + ns.WALL_THICKNESS) == pytest.approx(ns.RIM_INSET)
-    assert ns.DOMAIN_HY - (ns.RIM_HY + ns.WALL_THICKNESS) == pytest.approx(ns.RIM_INSET)
-    assert ns.RIM_INSET >= 20 * p.voxel  # draft: 15 voxels, still over the 10-voxel check
-    assert ns.RIM_INSET >= 10 * ns.PRESETS[ns.DRAFT].voxel
-    assert ns.RIM_TOP_FRONT > ns.SLAB_TOP
-    # Camera line of sight over the front rim to the front edge of the pool.
-    cam = np.array(ns.CAMERA_LOCATION)
-    target = np.array([0.0, -ns.POOL_HY, ns.POOL_TOP])
-    t = (-(ns.RIM_HY + ns.WALL_THICKNESS) - cam[1]) / (target[1] - cam[1])
-    assert cam[2] + t * (target[2] - cam[2]) > ns.RIM_TOP_FRONT
+    clearance = ns.DOMAIN_HX - (ns.POOL_HX + ns.WALL_THICKNESS)
+    assert clearance >= 20 * p.voxel
+    assert ns.DOMAIN_HY - (ns.POOL_HY + ns.WALL_THICKNESS) >= 20 * p.voxel
+    assert ns.WALL_THICKNESS >= 3 * p.voxel
+
+
+def test_inside_wall_check_counts_particles_in_the_wall_only():
+    mid = 0.5 * (ns.SLAB_TOP + ns.TROUGH_TOP_BACK)
+    in_wall = np.array([[0.0, ns.POOL_HY + 0.5 * ns.WALL_THICKNESS, mid]])
+    above = np.array([[0.0, ns.POOL_HY + 0.5 * ns.WALL_THICKNESS, ns.TROUGH_TOP_BACK + 0.01]])
+    in_pool = np.array([[0.0, 0.0, mid]])
+    assert ns.inside_wall_fraction(in_wall) == 1.0
+    assert ns.inside_wall_fraction(above) == 0.0
+    assert ns.inside_wall_fraction(in_pool) == 0.0
 
 
 def test_trough_wall_parts_do_not_overlap_inside_one_mesh():
-    for sides, ends in (ns.wall_boxes(), ns.rim_boxes()):
+    for sides, ends in (ns.wall_boxes(),):
         for group in (sides, ends):
             (lo0, hi0), (lo1, hi1) = group
             assert any(hi0[i] <= lo1[i] or hi1[i] <= lo0[i] for i in range(3))
@@ -267,3 +272,25 @@ def test_builder_and_renderer_are_wired_to_the_shared_numbers():
     assert 'os.remove(os.path.join(mesh_dir, name))' in renderer
     assert 'json.load(fh)["frames"]' in renderer
     assert "FLUIDSIM_SURFACE_BACKEND" in renderer or "ns.BACKEND_ENV" in renderer
+
+
+def test_pool_tiles_cover_the_pool_once_and_keep_each_source_small():
+    for p in ns.PRESETS.values():
+        tiles = ns.pool_tiles(p)
+        v = p.voxel
+        volume = sum(np.prod(np.array(hi) - np.array(lo)) for lo, hi in tiles)
+        inner = (2 * ns.POOL_HX - 2 * v) * (2 * ns.POOL_HY - 2 * v) * ns.POOL_DEPTH
+        assert volume == pytest.approx(inner, rel=1e-6)
+        for lo, hi in tiles:
+            size = np.array(hi) - np.array(lo)
+            # The planner books a cube of the longest side: keep it small.
+            assert size.max() <= ns.MAX_TILE + 1e-9
+            # Tile edges sit on voxel faces (no voxel centre on a shared edge).
+            for value in (lo[0] - (-ns.DOMAIN_HX), lo[1] - (-ns.DOMAIN_HY),
+                          hi[0] - (-ns.DOMAIN_HX), hi[1] - (-ns.DOMAIN_HY)):
+                assert abs(value / v - round(value / v)) < 1e-6
+
+
+def test_build_stops_when_initialize_is_refused():
+    src = _builder_source()
+    assert 'bpy.ops.fluidsim.initialize() != {"FINISHED"}' in src
