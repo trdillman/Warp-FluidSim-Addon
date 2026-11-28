@@ -157,6 +157,8 @@ REPORT_ACCEPTANCE = (
      "artifacts/fspt_surface_pool_acceptance.json", "FSPT-SURFACE-POOL-PASS"),
     ("FSPT aggregate geometry reuse", "tests/acceptance/blender_fspt_persistent_assets.py",
      "artifacts/fspt_persistent_assets.json", "FSPT-PERSISTENT-ASSETS-PASS"),
+    ("FSPT solver completion clock", "tests/acceptance/blender_fspt_state_clock_acceptance.py",
+     "artifacts/fspt_state_clock_acceptance.json", "FSPT-STATE-CLOCK-PASS"),
     ("paused cache output acceptance", "tests/acceptance/blender_paused_cache_output_acceptance.py",
      "artifacts/paused_cache_output_acceptance.json", "PAUSED-CACHE-OUTPUT-ACCEPTANCE-PASS"),
     ("allocation accounting acceptance", "tests/acceptance/blender_allocation_accounting_acceptance.py",

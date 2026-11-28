@@ -45,6 +45,8 @@ class SurfacePublication:
     captured_at marks adapter entry. published_at marks completion of geometry
     publication and the enclosing attempt, including a sync-pending outcome.
     source_timeline_frame is the actual admitted, solved or validated frame.
+    state_ready_at is a separately validated LIVE Solver Session completion
+    clock, before optional publication. Cache and unowned states have no clock.
     """
 
     scene_token: int
@@ -68,6 +70,7 @@ class SurfacePublication:
     published_at: float
     captured_at: float = 0.0
     source_timeline_frame: int | None = None
+    state_ready_at: float | None = None
 
     @property
     def status(self) -> SurfaceStatus:
@@ -300,7 +303,7 @@ class _Attempt:
 def surface_attempt(scene, channel=SurfaceChannel.EVALUATED_MESH, *, source,
                     epoch=None, timeline_frame=None, solver_frame=None,
                     state_revision=None, simulation_time=None, cache_frame=None,
-                    cache_identity=None, source_timeline_frame=None):
+                    cache_identity=None, source_timeline_frame=None, state_ready_at=None):
     """Stage one surface and keep the previous committed descriptor until success."""
     owner = surface_owner_token(scene)
     key = id_token(scene), channel
@@ -316,6 +319,7 @@ def surface_attempt(scene, channel=SurfaceChannel.EVALUATED_MESH, *, source,
         int(getattr(scene, "frame_current", 0) if timeline_frame is None else timeline_frame),
         solver_frame, state_revision, simulation_time, cache_frame, cache_identity,
         None, None, None, 0, 0, False, 0.0, monotonic(), source_timeline_frame,
+        state_ready_at if source == SurfaceSource.LIVE else None,
     )
     attempt = _Attempt(key, slot, publication)
     token = _active_attempt.set(attempt)

@@ -24,7 +24,6 @@ from ..sim.attributes import (
     enabled_attribute_keys,
     validate_attribute_values,
 )
-from ..sim.constants import TIMER_PHASE_SLOTS
 from ..sim.whitewater_types import (
     LEGACY_UNCLASSIFIED,
     WhitewaterType,
@@ -1938,6 +1937,8 @@ def update_outputs(scene, sess, *, force_surface=False, timeline_frame=None):
     if not sess.active:
         return
     solver = sess.solver
+    completion_query = getattr(sess, "current_solver_completion", None)
+    completion = completion_query(scene) if callable(completion_query) else None
     with surface_publication.surface_attempt(
         scene, source=surface_publication.SurfaceSource.LIVE,
         epoch=getattr(sess, "surface_epoch", None), timeline_frame=timeline_frame,
@@ -1945,6 +1946,7 @@ def update_outputs(scene, sess, *, force_surface=False, timeline_frame=None):
         solver_frame=getattr(solver, "frame", None),
         state_revision=getattr(solver, "liquid_state_revision", None),
         simulation_time=getattr(solver, "sim_time", None),
+        state_ready_at=completion.ready_at if completion is not None else None,
     ) as attempt:
         ds = _domain_settings(scene)
         surface = output_object(scene, SURFACE_NAME)
