@@ -2129,6 +2129,12 @@ def build_nets_showcase():
     # The extractor reads this when the solver is created, so set it first.
     os.environ[ns.BACKEND_ENV] = ns.BACKEND
     p = ns.preset()
+    # A build that fails its checks must not leave an older .blend behind: the
+    # sim stage would open it and simulate a different scene.
+    for stale in ("nets_showcase.blend", "nets_showcase/meta.json"):
+        stale_path = os.path.join(REVIEW_DEMOS, stale)
+        if os.path.exists(stale_path):
+            os.remove(stale_path)
     scene = author_nets_showcase()
     initialize_demo()
     sess = session()
