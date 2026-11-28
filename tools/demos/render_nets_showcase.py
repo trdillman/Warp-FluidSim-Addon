@@ -485,6 +485,7 @@ def run_render(opts):
             mesh.update()
             obj = bpy.data.objects.new(data.name, mesh)
             scene.collection.objects.link(obj)
+            obj.hide_render = data.name in ns.HIDDEN_IN_RENDER
         cam = bpy.data.objects.new("Demo Cam", bpy.data.cameras.new("Demo Cam"))
         scene.collection.objects.link(cam)
         cam.location = ns.CAMERA_LOCATION
@@ -545,7 +546,9 @@ def run_render(opts):
         with open(config_path, "w", encoding="utf-8") as fh:
             json.dump(config, fh)
     for f in frames:
-        path = os.path.join(frames_dir, f"frame_{f:04d}.png")
+        # A still goes beside the sequence, never over a frame the cache vouches for.
+        name = f"still_{f:04d}.png" if opts["still"] is not None else f"frame_{f:04d}.png"
+        path = os.path.join(frames_dir, name)
         if not (keep and os.path.exists(path)) or opts["still"] is not None:
             verts = np.load(os.path.join(mesh_dir, f"verts_{f:04d}.npy"))
             tris = np.load(os.path.join(mesh_dir, f"tris_{f:04d}.npy"))
