@@ -155,9 +155,10 @@ DROPS = (
     Drop("Nets Drop C", (0.105, -0.016), 0.016, -0.95, 0.219),
 )
 
-# Camera for a 16:9 frame: at the top of the trough walls, looking along its side.
-CAMERA_LOCATION = (0.0, -0.95, 0.26)
-CAMERA_TARGET = (0.0, 0.0, 0.12)
+# Camera for a 16:9 frame: close and a little above the trough's middle, so the whole
+# trough (walls included) fills most of the frame.
+CAMERA_LOCATION = (0.0, -0.60, 0.18)
+CAMERA_TARGET = (0.0, 0.0, 0.115)
 CAMERA_LENS = 45.0
 
 WATER_COLOR = (0.55, 0.80, 0.95, 1.0)

@@ -250,6 +250,28 @@ def test_camera_frames_every_drop():
             assert abs(rel @ up) / depth < half_v
 
 
+def _project(point):
+    cam = np.array(ns.CAMERA_LOCATION)
+    forward = np.array(ns.CAMERA_TARGET) - cam
+    forward /= np.linalg.norm(forward)
+    right = np.cross(forward, (0, 0, 1))
+    right /= np.linalg.norm(right)
+    up = np.cross(right, forward)
+    rel = np.array(point) - cam
+    depth = rel @ forward
+    half_h = 18.0 / ns.CAMERA_LENS
+    return (rel @ right) / depth / half_h, (rel @ up) / depth / (half_h * 9 / 16)
+
+
+def test_camera_fills_the_frame_with_the_trough():
+    hx, hy = ns.POOL_HX + ns.WALL_THICKNESS, ns.POOL_HY + ns.WALL_THICKNESS
+    corners = [(sx * hx, sy * hy, z) for sx in (-1, 1) for sy in (-1, 1)
+               for z in (ns.SLAB_TOP, ns.WALL_TOP)]
+    xs, ys = zip(*(_project(c) for c in corners), strict=True)
+    assert max(abs(v) for v in xs) < 0.95 and max(abs(v) for v in ys) < 0.95
+    assert max(xs) - min(xs) > 1.3   # at least 65% of the frame width
+
+
 def test_particle_checks():
     inside = np.array([[0.0, 0.0, 0.10], [0.1, 0.0, 0.12]])
     assert ns.wall_clearance(inside) == pytest.approx(ns.DOMAIN_HY)

@@ -397,6 +397,14 @@ def setup_look(scene, opts):
             obj.data.materials.clear()
             obj.data.materials.append(slab)
     if scene.camera is not None:
+        # The camera is set here, not only at build time, so a framing change
+        # needs a re-render but no rebuild or re-simulation.
+        from mathutils import Vector
+
+        scene.camera.location = ns.CAMERA_LOCATION
+        scene.camera.rotation_euler = (
+            Vector(ns.CAMERA_TARGET) - scene.camera.location
+        ).to_track_quat("-Z", "Y").to_euler()
         scene.camera.data.lens = ns.CAMERA_LENS
         scene.camera.data.sensor_width = 36.0
         scene.camera.data.dof.use_dof = False
@@ -569,7 +577,9 @@ def run_render(opts):
     rendered = []
     config = {"size": list(opts["size"]), "samples": opts["samples"],
               "engine": opts["engine"], "preset": ns.preset().name,
-              "mesh_stamp": mesh_stamp(mesh_dir)}
+              "mesh_stamp": mesh_stamp(mesh_dir),
+              "camera": [list(ns.CAMERA_LOCATION), list(ns.CAMERA_TARGET),
+                         ns.CAMERA_LENS]}
     config_path = os.path.join(frames_dir, "render_config.json")
     keep = False
     if opts["resume"] and os.path.exists(config_path):
