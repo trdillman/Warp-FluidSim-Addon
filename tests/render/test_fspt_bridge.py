@@ -49,6 +49,101 @@ def test_static_scene_does_not_require_a_solver(monkeypatch):
     assert b.capture_publications(SimpleNamespace(session_uid=400), for_viewport=True) == ()
 
 
+def _gpu_publication(scene, surface):
+    with publication.surface_attempt(
+            scene, channel=publication.SurfaceChannel.GPU_FINAL,
+            source=publication.SurfaceSource.LIVE, epoch=25, timeline_frame=7,
+            solver_frame=6, state_revision=60, simulation_time=0.25,
+            source_timeline_frame=7) as attempt:
+        attempt.record(vertex_count=3, triangle_count=1, visible=True, obj=surface)
+        attempt.succeed(synchronized=True)
+    return publication.current_surface_publication(scene, publication.SurfaceChannel.GPU_FINAL)
+
+
+def test_channel_retirement_never_retires_the_native_mesh(accepted):
+    b, scene, surface = accepted
+    native = b.capture_publications(scene, for_viewport=True)
+    gpu = _gpu_publication(scene, surface)
+    publication.invalidate_surfaces(scene, channel=publication.SurfaceChannel.GPU_FINAL)
+    assert publication.current_surface_publication(scene, gpu.channel) is None
+    assert b.capture_publications(scene, for_viewport=True) == native
+    _gpu_publication(scene, surface)
+    publication.invalidate_surface_channel(scene.session_uid, publication.SurfaceChannel.GPU_FINAL)
+    assert publication.current_surface_publication(scene, gpu.channel) is None
+    assert b.capture_publications(scene, for_viewport=True) == native
+
+
+def test_gpu_capture_requires_its_own_live_selection_and_device(accepted, monkeypatch):
+    b, scene, surface = accepted
+    native = b.capture_publications(scene, for_viewport=True)
+    gpu = _gpu_publication(scene, surface)
+    calls = []
+    def selected(owner, device):
+        calls.append((owner, device))
+        return SimpleNamespace(publication=gpu) if device == 'cuda:0' else None
+    monkeypatch.setattr(b, '_device_selection', selected, raising=False)
+    monkeypatch.setattr(b, '_device_capability_reason', lambda *_args: '', raising=False)
+    assert b.capture_publications(scene, for_viewport=True) == native
+    captured = b.capture_publications(scene, for_viewport=True, channel=gpu.channel, device='cuda:0')
+    assert captured == (gpu,) and calls == [(scene, 'cuda:0')]
+    b.validate_publications(scene, captured, for_viewport=True, device='cuda:0')
+    with pytest.raises(b.SurfaceNotReadyError, match='device|selection'):
+        b.validate_publications(scene, captured, for_viewport=True, device='cuda:1')
+    with pytest.raises(b.SurfaceNotReadyError, match='device|selection'):
+        b.validate_publications(scene, captured, for_viewport=True)
+    monkeypatch.setattr(b, '_device_selection', lambda *_args: None)
+    with pytest.raises(b.SurfaceNotReadyError, match='selection|ready'):
+        b.validate_publications(scene, captured, for_viewport=True, device='cuda:0')
+    assert b.capture_publications(scene, for_viewport=True) == native
+
+
+def test_gpu_capture_rejects_late_route_changes_and_final_even_with_matching_stamp(accepted, monkeypatch):
+    b, scene, surface = accepted
+    gpu = _gpu_publication(scene, surface)
+    monkeypatch.setattr(b, '_device_selection', lambda *_args: SimpleNamespace(publication=gpu), raising=False)
+    monkeypatch.setattr(b, '_device_capability_reason', lambda *_args: 'modifier requires evaluated mesh', raising=False)
+    with pytest.raises(b.SurfaceNotReadyError, match='modifier'):
+        b.validate_viewport_publications(scene, (gpu,), device='cuda:0')
+    monkeypatch.setattr(b, '_device_capability_reason', lambda *_args: '')
+    for viewport, exact in ((False, True), (True, True), (False, False)):
+        with pytest.raises(b.SurfaceNotReadyError, match='viewport|Final'):
+            b.capture_publications(scene, for_viewport=viewport, exact_frame=exact,
+                                   channel=gpu.channel, device='cuda:0')
+
+
+def test_validation_rejects_a_mixed_channel_capture(accepted):
+    b, scene, surface = accepted
+    native, = b.capture_publications(scene, for_viewport=True)
+    gpu = _gpu_publication(scene, surface)
+    with pytest.raises(b.SurfaceNotReadyError, match='channel'):
+        b.validate_publications(scene, (native, gpu), for_viewport=True, device='cuda:0')
+
+
+def test_device_publication_preserves_earlier_prepare_entry_clock(accepted, monkeypatch):
+    _, scene, surface = accepted
+    monkeypatch.setattr(publication, 'monotonic', lambda: 12.0)
+    with publication.surface_attempt(
+            scene, channel=publication.SurfaceChannel.GPU_FINAL,
+            source=publication.SurfaceSource.LIVE, epoch=25, captured_at=10.2,
+            state_ready_at=10.0) as attempt:
+        attempt.record(vertex_count=3, triangle_count=1, visible=True, obj=surface)
+        attempt.succeed(synchronized=True)
+    stamp = publication.current_surface_publication(scene, publication.SurfaceChannel.GPU_FINAL)
+    assert (stamp.state_ready_at, stamp.captured_at, stamp.published_at) == (10.0, 10.2, 12.0)
+
+
+@pytest.mark.parametrize('captured_at', [float('nan'), float('inf'), 12.1, True])
+def test_invalid_prepare_entry_clock_does_not_disturb_committed_channel(accepted, monkeypatch, captured_at):
+    _, scene, surface = accepted
+    prior = _gpu_publication(scene, surface)
+    monkeypatch.setattr(publication, 'monotonic', lambda: 12.0)
+    with pytest.raises(ValueError, match='capture|clock'):
+        with publication.surface_attempt(scene, channel=publication.SurfaceChannel.GPU_FINAL,
+                                          source=publication.SurfaceSource.LIVE, captured_at=captured_at):
+            pytest.fail('Invalid clock reached publication body')
+    assert publication.current_surface_publication(scene, publication.SurfaceChannel.GPU_FINAL) == prior
+
+
 def _advance_live(scene, surface, *, solver_frame=7, state_revision=61,
                   simulation_time=0.30, synchronized=True, triangle_count=1):
     with publication.surface_attempt(scene, source=publication.SurfaceSource.LIVE,

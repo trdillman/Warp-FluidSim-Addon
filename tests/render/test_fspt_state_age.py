@@ -7,7 +7,7 @@ from fluidSim_warp_blender51.blender import fspt_bridge as bridge
 
 
 def stamp(*, ready=10.0, source="LIVE", published=10.06):
-    return SimpleNamespace(source=source, state_ready_at=ready,
+    return SimpleNamespace(source=source, channel='EVALUATED_MESH', state_ready_at=ready,
                            captured_at=10.02, published_at=published)
 
 

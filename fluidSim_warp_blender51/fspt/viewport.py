@@ -8,10 +8,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from operator import index
-from threading import RLock
+from threading import RLock, current_thread, main_thread
 from weakref import WeakSet
 
 from .contracts import MAX_BOUNCES, frame_key
+from .device_scene import DeviceSceneUnavailable
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class ViewportCoordinator:
 
     def __init__(self):
         self.views = WeakSet()
+        self.retirement_failures = set()
         self._final_depth = {}
         self._admission_locks = {}
 
@@ -211,7 +213,11 @@ class ViewportState:
         with self.coordinator.admission(device) as admitted:
             if not admitted or self.request.device != device:
                 return False
-            return self._capture(extract)
+            try:
+                return self._capture(extract)
+            except DeviceSceneUnavailable:
+                self.defer()
+                return False
 
     def _capture(self, extract):
         if self.closed or self.request is None or self.coordinator.blocked(self.request.device):
@@ -235,6 +241,8 @@ class ViewportState:
             self.error = ""
             self.statistics["captures"] += 1
             return True
+        except DeviceSceneUnavailable:
+            raise
         except Exception as exc:
             self.fail(exc)
             raise
@@ -268,7 +276,11 @@ class ViewportState:
                 return "suspended"
             if self.request.device != device:
                 return "capture"
-            return self._tick(eligible, presentation_eligible or eligible)
+            try:
+                return self._tick(eligible, presentation_eligible or eligible)
+            except DeviceSceneUnavailable:
+                self.defer()
+                return "capture"
 
     def _tick(self, eligible, presentation_eligible):
         if self.closed:
@@ -327,6 +339,38 @@ class ViewportState:
                 if self.backend is backend and self._submitted_snapshot is submitted:
                     self._completed = completed
 
+    def defer(self):
+        """A retired optional source requests recapture without a fatal error."""
+        self.dirty, self.error, self.snapshot = True, "", None
+        if self.backend is not None:
+            self.backend.arbiter.cancel(self._capture_owner)
+            self.backend.arbiter.cancel(self.backend.owner)
+
+    def retire_backend(self):
+        """Main-thread Final handoff: retire geometry, retain the live request.
+
+        Close must succeed before any owner reference is cleared. A worker may
+        suspend/drain a view, but only the publication thread may retire its
+        pooled geometry and authorize a separately allocated Final scene.
+        """
+        if current_thread() is not main_thread():
+            raise RuntimeError("FSPT geometry retirement requires the main thread")
+        if self.backend is not None:
+            self.backend.arbiter.cancel(self._capture_owner)
+            try:
+                self.backend.close()
+            except BaseException:
+                self.coordinator.retirement_failures.add(self)
+                raise
+            self.backend = None
+        self.snapshot = self.presentable = self.presented_snapshot = None
+        self._submitted_snapshot = self._completed = None
+        self.coordinator.retirement_failures.discard(self)
+        if self.closed:
+            self.coordinator.views.discard(self)
+            self.request = None
+        self.invalidate()
+
     def fail(self, exc):
         self.error = f"{type(exc).__name__}: {exc}"
         self.dirty = False
@@ -339,10 +383,15 @@ class ViewportState:
         if self.closed and self.backend is None:
             return
         self.closed = True
-        self.coordinator.views.discard(self)
         if self.backend is not None:
             self.backend.arbiter.cancel(self._capture_owner)
-            self.backend.close()
+            try:
+                self.backend.close()
+            except BaseException:
+                self.coordinator.retirement_failures.add(self)
+                raise
             self.backend = None
+        self.coordinator.views.discard(self)
+        self.coordinator.retirement_failures.discard(self)
         self.request = self.snapshot = self.presentable = self.presented_snapshot = None
         self._submitted_snapshot = self._completed = None

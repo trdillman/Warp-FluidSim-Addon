@@ -8,6 +8,7 @@ Every device scene uses the reference fresh single BVH and original face order.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import current_thread
 
 import numpy as np
 
@@ -38,6 +39,7 @@ class DeviceAsyncCudaBackend(AsyncCudaBackend):
 
     def _initialize_device_resources(self, budget):
         self.geometry_budget = budget
+        self._publication_thread = current_thread()
         self._device_current = None
         self._device_retired = []
         self.statistics.update(device_geometry_copies=0, device_geometry_copy_bytes=0,
@@ -50,6 +52,9 @@ class DeviceAsyncCudaBackend(AsyncCudaBackend):
             raise RuntimeError('FSPT backend is closed')
         if self.pending:
             return False
+        if current_thread() is not self._publication_thread:
+            raise RuntimeError('GPU scene preparation requires its publication thread')
+        self._release_retired_geometry()
         if not isinstance(scene, DeviceSceneRequest):
             raise TypeError('development GPU consumer requires DeviceSceneRequest')
         try:
@@ -195,6 +200,11 @@ class DeviceAsyncCudaBackend(AsyncCudaBackend):
         # Called only after checked job completion/owned-stream drain. The
         # ledger still owns/charges these aggregates until pool.poll/close proves
         # the new last-read fence retired. Open accepted leases survive refinement.
+        if current_thread() is not self._publication_thread:
+            # Final suspension may collect a checked job on Blender's render
+            # worker. Keep the records, leases and byte claims strongly owned;
+            # only the next publication-thread pump may mutate the pool/ledger.
+            return False
         while self._device_retired:
             generation = self._device_retired[0]
             generation.lease.finish()
@@ -202,6 +212,20 @@ class DeviceAsyncCudaBackend(AsyncCudaBackend):
                                                generation.release_owners)
             self._device_retired.pop(0)
         self.statistics['geometry_array_reserved_bytes'] = self.geometry_budget.reserved_bytes
+        return True
+
+    def retire_completed_geometry(self):
+        """Main-thread, nonblocking cleanup after a checked worker collection."""
+        if current_thread() is not self._publication_thread:
+            raise RuntimeError('geometry retirement requires its publication thread')
+        if not self._state_lock.acquire(blocking=False):
+            return False
+        try:
+            if self.pending:
+                return False
+            return self._release_retired_geometry()
+        finally:
+            self._state_lock.release()
 
     def _retire(self):
         try:

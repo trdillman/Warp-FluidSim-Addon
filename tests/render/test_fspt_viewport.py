@@ -95,6 +95,105 @@ def test_busy_device_refuses_capture_before_extraction(viewport):
     assert v.view.snapshot is v.scene
 
 
+@pytest.mark.parametrize('boundary', ['factory', 'capture', 'submit'])
+def test_temporary_device_source_retirement_defers_without_poisoning_view(viewport, boundary):
+    from fluidSim_warp_blender51.fspt.device_scene import DeviceSceneUnavailable
+
+    v = viewport
+    def unavailable(*_args, **_kwargs):
+        raise DeviceSceneUnavailable('source retired while changing routes')
+    if boundary == 'factory':
+        v.view.backend_factory = unavailable
+        assert not v.view.capture(lambda: v.scene)
+        v.view.backend_factory = v.factory
+    elif boundary == 'capture':
+        assert not v.view.capture(unavailable)
+    else:
+        assert v.view.capture(lambda: v.scene)
+        backend = v.view.backend
+        original_submit = backend.submit
+        backend.submit = unavailable
+        assert v.view.tick(lambda _: True) == 'capture'
+        backend.submit = original_submit
+    assert v.view.dirty and not v.view.error and v.view.snapshot is None
+    assert v.view.capture(lambda: v.scene)
+    assert v.view.tick(lambda _: True) == 'submitted'
+
+
+def test_final_retirement_detaches_geometry_and_preserves_view_request(viewport):
+    v = viewport
+    assert v.view.capture(lambda: v.scene)
+    assert v.view.tick(lambda _: True) == 'submitted'
+    old = v.view.backend
+    v.view.retire_backend()
+    assert old.closed and not old.pending
+    assert v.view.backend is None and v.view.snapshot is None
+    assert v.view.presentable is None and v.view._submitted_snapshot is None
+    assert v.view._completed is None and v.view.request is v.request
+    assert not v.view.closed and v.view in v.coordinator.views
+    assert v.view.dirty and v.view.capture(lambda: v.scene)
+    assert v.view.backend is not old
+
+
+def test_failed_final_retirement_keeps_backend_owner_for_retry(viewport):
+    v = viewport
+    assert v.view.capture(lambda: v.scene)
+    old = v.view.backend
+    close = old.close
+    def fail():
+        raise RuntimeError('checked geometry retirement failed')
+    old.close = fail
+    with pytest.raises(RuntimeError, match='checked geometry'):
+        v.view.retire_backend()
+    assert v.view.backend is old and v.view.snapshot is v.scene
+    old.close = close
+    v.view.retire_backend()
+    assert v.view.backend is None
+
+
+def test_final_geometry_retirement_requires_main_thread(viewport):
+    v = viewport
+    assert v.view.capture(lambda: v.scene)
+    old = v.view.backend
+    errors = []
+    def worker():
+        try:
+            v.view.retire_backend()
+        except RuntimeError as exc:
+            errors.append(str(exc))
+    thread = Thread(target=worker)
+    thread.start()
+    thread.join(2)
+    assert not thread.is_alive() and errors and 'main thread' in errors[0]
+    assert v.view.backend is old and not old.closed
+
+
+def test_failed_close_stays_registered_and_strongly_owned_until_retirement(viewport):
+    import gc
+    import weakref
+
+    v = viewport
+    view = v.ViewportState(v.coordinator, v.factory)
+    view.request_update(v.request)
+    assert view.capture(lambda: v.scene)
+    backend = view.backend
+    close = backend.close
+    def failed():
+        raise RuntimeError('unproven read retirement')
+    backend.close = failed
+    with pytest.raises(RuntimeError, match='unproven'):
+        view.close()
+    assert view.closed and view.backend is backend and view in v.coordinator.views
+    owner = weakref.ref(view)
+    del view
+    gc.collect()
+    assert owner() is not None, 'failed viewport lost its discoverable geometry owner'
+    backend.close = close
+    owner().retire_backend()
+    gc.collect()
+    assert owner() is None, 'successful retirement retained a closed viewport'
+
+
 def test_pending_job_retains_owned_snapshot_and_only_newest_request(viewport):
     v = viewport
     v.view.capture(lambda: v.scene)

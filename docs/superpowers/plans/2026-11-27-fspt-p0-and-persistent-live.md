@@ -124,3 +124,41 @@ minutes for packaging/delivery and preserving unfinished source explicitly.
   native artifacts between commits so recovery does not depend on one host.
 - Task 1 complete, commit 1995a754; three native terminal receipts independently
   verified. Tasks 2–5 continue within their distinct acceptance scopes.
+- At 5f6d83ad, the asynchronous evaluated route passed native CPU, source-render,
+  edge, handler, CUDA backend and 24-state live checks. GUI lifecycle acceptance
+  exposed harness launch/instrumentation defects; its repairs and rerun remain
+  separate from the passed live evidence. No realtime qualification follows.
+- M3 review found that per-asset traversal and BVH refit change equal-distance
+  hit winners in Warp 1.19. The original candidate and failed probes are retained.
+  This session first implements a bounded subset: reuse aggregate geometry
+  buffers and unchanged upload spans, with a fresh aggregate BVH on every
+  geometry change. Per-asset acceleration/refit and the full M3 target stay open.
+  No optical tolerance or compatibility target changes.
+- The two-slot device surface pool passed independent host review and is ready
+  for native lifetime/parity qualification. It is not yet an enabled renderer
+  route. Fresh one-shot destination allocations are counted; backing-array reuse
+  and total latency improvements are not claimed.
+- Add an authoritative completed-solver-state timestamp before optional output
+  work, bound to actual solver/epoch/frame/revision/time. This supplies measurement
+  provenance; it does not change presentation eligibility or qualify freshness.
+- Dropbox confirmed the 41,116,279-byte 00:23 UTC checkpoint at 5f6d83ad with
+  matching content hash. It contains P0 closure, native live evidence, the
+  committed asynchronous route and explicitly unfinished component drafts.
+- The resumed 04:01–09:01 UTC session retains the P0 contract. Native aggregate
+  reuse, 50 GUI lifecycle cycles, solver completion-clock provenance, 24 changing
+  asynchronous live states, bounded surface-pool controls, ordered GPU consumer,
+  and inactive cold shared producer have passed at separately recorded source
+  commits. These results do not establish the full normal gate or real-time targets.
+- The optional runtime, per-device route broker and checked main-thread Final
+  handoff are implemented behind a process opt-in. Failed owners remain strongly
+  retained and admission stays blocked until checked retirement. Independent
+  reviews reproduced and corrected zero-byte generation, cancelled-callback,
+  failed-close ownership, first/pending edit and late-activation faults.
+- Coalesced native/manual fluid updates lack an exclusive owner observation
+  boundary. Such batches latch evaluated fallback for the view lifetime; later
+  publication alone cannot clear it. The live direct-GPU milestone remains open.
+  No extra dependency-graph flush is placed on the solver's critical path.
+- The 91,015,649-byte checkpoint at 41771aa0 is present in Dropbox. A separate
+  05:30 UTC source/review draft checkpoint is confirmed, and ccf14086 was pushed
+  without force to the existing experimental branch. Integrated native route and
+  Final qualification, full normal gate, final reviews and package installs follow.

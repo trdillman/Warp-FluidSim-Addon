@@ -154,6 +154,157 @@ def test_draw_without_completion_schedules_work_without_capturing_or_building_ba
     assert a.module.LAST_VIEWPORT_INFO["status"] == "WAITING"
 
 
+def _optional_runtime(adapter, monkeypatch, **overrides):
+    runtime = SimpleNamespace(enabled=lambda: True, has_resources=lambda *_: False,
+                              resource_error=lambda _: '', device_resources=lambda _: None,
+                              pump=lambda: False, shutdown=lambda: (),
+                              retire_for_final=lambda _: {'reserved_bytes': 0, 'generation_count': 0})
+    for name, value in overrides.items():
+        setattr(runtime, name, value)
+    monkeypatch.setattr(adapter.module, '_device_runtime', lambda: runtime, raising=False)
+    return runtime
+
+
+def test_optional_resource_pending_never_allocates_untracked_evaluated_backend(adapter, monkeypatch):
+    from fluidSim_warp_blender51.fspt.device_scene import DeviceSceneUnavailable
+
+    a = adapter
+    _optional_runtime(a, monkeypatch, has_resources=lambda *_: True)
+    monkeypatch.setattr(a.module, '_backend', lambda _: pytest.fail('untracked geometry allocation'))
+    with pytest.raises(DeviceSceneUnavailable):
+        a.module._viewport_backend('cuda:0')
+
+
+def test_disabled_optional_route_still_retains_old_geometry_boundary(adapter, monkeypatch):
+    from fluidSim_warp_blender51.fspt.device_scene import DeviceSceneUnavailable
+
+    a = adapter
+    _optional_runtime(a, monkeypatch, enabled=lambda: False, has_resources=lambda *_: True)
+    monkeypatch.setattr(a.module, '_backend', lambda _: pytest.fail('old owners bypassed'))
+    with pytest.raises(DeviceSceneUnavailable):
+        a.module._viewport_backend('cuda:0')
+
+
+def test_optional_route_uses_shared_broker_facade(adapter, monkeypatch):
+    a = adapter
+    facade = object()
+    _optional_runtime(a, monkeypatch, device_resources=lambda _: SimpleNamespace(
+        broker=SimpleNamespace(new_backend=lambda: facade)))
+    monkeypatch.setattr(a.module, '_backend', lambda _: pytest.fail('untracked geometry allocation'))
+    assert a.module._viewport_backend('cuda:0') is facade
+
+
+def test_main_device_timer_services_final_even_without_viewport_work(adapter, monkeypatch):
+    a = adapter
+    order = []
+    _optional_runtime(a, monkeypatch, pump=lambda: order.append('pump'))
+    from fluidSim_warp_blender51.fspt import final_handoff
+    monkeypatch.setattr(final_handoff.MAIN_FINAL_HANDOFF, 'service', lambda: order.append('handoff'))
+    assert a.module._pump_device_runtime() > 0
+    assert order == ['handoff', 'pump']
+
+
+def test_final_cleanup_receipt_follows_all_matching_view_retirements(adapter, monkeypatch):
+    a = adapter
+    order = []
+    a.engine.view_update(a.context, a.graph)
+    view = a.engine._view
+    close = a.backend.close
+    monkeypatch.setattr(a.backend, 'close', lambda: (order.append('view'), close()))
+    _optional_runtime(a, monkeypatch, retire_for_final=lambda _: (
+        order.append('runtime') or {'reserved_bytes': 0, 'generation_count': 0}))
+    identity = object()
+    result = a.module._retire_device_for_final('cuda:0', identity)
+    assert order == ['view', 'runtime']
+    assert result.request_id is identity and result.owners_retired is True
+    assert result.reserved_bytes == result.generation_count == 0
+    assert view.backend is None and view.request is not None
+
+
+def test_failed_view_cleanup_does_not_issue_final_zero_receipt(adapter, monkeypatch):
+    a = adapter
+    a.engine.view_update(a.context, a.graph)
+    def failed():
+        raise RuntimeError('owned trace could not retire')
+    close = a.backend.close
+    monkeypatch.setattr(a.backend, 'close', failed)
+    _optional_runtime(a, monkeypatch, retire_for_final=lambda _: pytest.fail('early zero receipt'))
+    with pytest.raises(RuntimeError, match='owned trace'):
+        a.module._retire_device_for_final('cuda:0', object())
+    assert a.engine._view.backend is a.backend
+    monkeypatch.setattr(a.backend, 'close', close)
+
+
+def test_checked_final_close_failure_holds_device_until_explicit_retry(adapter, monkeypatch):
+    from fluidSim_warp_blender51.fspt import final_handoff
+    from fluidSim_warp_blender51.fspt.device_scene import DeviceSceneUnavailable
+
+    a = adapter
+    runtime = _optional_runtime(a, monkeypatch)
+    manager = final_handoff.MAIN_FINAL_HANDOFF
+    closed = []
+    def failed_close():
+        closed.append('failed')
+        raise RuntimeError('CUDA retirement failed')
+    monkeypatch.setattr(a.backend, 'close', failed_close)
+    with pytest.raises(RuntimeError, match='CUDA retirement'):
+        with a.module._final_backend('cuda:0') as backend:
+            assert backend is a.backend and manager.blocked('cuda:0')
+    assert manager.blocked('cuda:0')
+    assert a.module._FAILED_FINAL_OWNERS[0][0] is a.backend
+    # Disabling the experiment cannot bypass its still-owned Final claim.
+    runtime.enabled = lambda: False
+    with pytest.raises(DeviceSceneUnavailable, match='Final rendering'):
+        a.module._viewport_backend('cuda:0')
+    monkeypatch.setattr(a.backend, 'close', lambda: closed.append('retired'))
+    a.module._retire_failed_finals()
+    assert not manager.blocked('cuda:0') and not a.module._FAILED_FINAL_OWNERS
+    assert closed == ['failed', 'retired']
+
+
+def test_coalesced_fluid_update_latches_evaluated_route_across_later_publications(adapter, monkeypatch):
+    from fluidSim_warp_blender51.blender import fspt_device_scene
+    from fluidSim_warp_blender51.blender import surface_publication as publication
+
+    a = adapter
+    a.engine.view_update(a.context, a.graph)
+    mesh = Pointer(9, bl_rna=SimpleNamespace(identifier='Mesh'))
+    surface = Pointer(8, type='MESH', data=mesh, matrix_world=np.eye(4), material_slots=[],
+                      fluidsim=SimpleNamespace(role='NONE'), bl_rna=SimpleNamespace(identifier='Object'))
+    old = publication.SurfacePublication(
+        1, (None, 'FluidSim Output'), 1, publication.SurfaceChannel.EVALUATED_MESH,
+        1, publication.SurfaceSource.LIVE, 1, 1, 1, 0.1, None, None, None,
+        8, 9, 3, 1, True, monotonic(), source_timeline_frame=1)
+    current = [old]
+    monkeypatch.setattr(publication, 'current_surface_publication', lambda _: current[0])
+    monkeypatch.setattr(a.bridge, '_surface_object', lambda _: surface)
+    monkeypatch.setattr(fspt_device_scene, 'viewport_capability', lambda _: '')
+    a.engine._device_subscription_key = (1, 2, 'cuda:0')
+    a.engine._native_publication = old
+    a.engine._device_unsubscribe = lambda: None
+    reasons = []
+    _optional_runtime(a, monkeypatch,
+                      set_capability=lambda *_, reason: reasons.append(reason),
+                      poll=lambda *_: None)
+    a.graph.updates = [SimpleNamespace(id=surface), SimpleNamespace(id=mesh)]
+    # Even an exact owner notification cannot assign every coalesced edit to it.
+    newer = replace(old, generation=2, solver_frame=2, state_revision=2,
+                    simulation_time=0.2, source_timeline_frame=2)
+    current[0] = newer
+    a.engine._published(publication.SurfaceChannel.EVALUATED_MESH,
+                        publication.ChannelState(status=publication.SurfaceStatus.READY, committed=newer))
+    a.engine.view_update(a.context, a.graph)
+    assert a.engine._edited_surface_generation == 2
+    assert a.engine._view.presentable is None and reasons[-1]
+    a.graph.updates = []
+    current[0] = replace(newer, generation=3, solver_frame=3, state_revision=3,
+                         simulation_time=0.3, source_timeline_frame=3)
+    a.engine._published(publication.SurfaceChannel.EVALUATED_MESH,
+                        publication.ChannelState(status=publication.SurfaceStatus.READY, committed=current[0]))
+    a.engine.view_update(a.context, a.graph)
+    assert a.engine._edited_surface_generation == 2 and reasons[-1] == reasons[-2]
+
+
 def test_busy_device_defers_actual_depsgraph_extraction(adapter):
     a = adapter
     lease = a.backend.arbiter.try_acquire(object())

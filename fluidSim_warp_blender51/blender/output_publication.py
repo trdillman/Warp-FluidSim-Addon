@@ -1936,49 +1936,78 @@ def update_outputs(scene, sess, *, force_surface=False, timeline_frame=None):
     _require_bpy()
     if not sess.active:
         return
+    from . import fspt_device_runtime
+
     solver = sess.solver
     completion_query = getattr(sess, "current_solver_completion", None)
     completion = completion_query(scene) if callable(completion_query) else None
-    with surface_publication.surface_attempt(
-        scene, source=surface_publication.SurfaceSource.LIVE,
-        epoch=getattr(sess, "surface_epoch", None), timeline_frame=timeline_frame,
-        source_timeline_frame=getattr(sess, "solved_timeline_frame", None),
-        solver_frame=getattr(solver, "frame", None),
-        state_revision=getattr(solver, "liquid_state_revision", None),
-        simulation_time=getattr(solver, "sim_time", None),
-        state_ready_at=completion.ready_at if completion is not None else None,
-    ) as attempt:
-        ds = _domain_settings(scene)
-        surface = output_object(scene, SURFACE_NAME)
-        has_surface = (surface is not None and surface.type == "MESH" and
-                       len(surface.data.vertices) > 0)
-        _record_cost("host_frame_acquisitions", phase="live_adaptation")
-        if hasattr(solver, "host_frame"):
-            host = solver.host_frame()
-        else:
-            from ..sim.frame_output import HostFrame
-            host = HostFrame(solver)
-        publish_surface = (
-            force_surface or not has_surface or
-            host.should_publish_surface(
-                getattr(ds, "live_surface_publish_cadence", 1))
-        )
-        payload = prepare_live_payload(scene, host, publish_surface=publish_surface)
-        build_key = getattr(getattr(solver, "surface", None), "mesh_key", None)
-        publication = publish_payload(scene, payload)
-        from . import rigid_publication
+    device_ticket = None
+    try:
+        with surface_publication.surface_attempt(
+            scene, source=surface_publication.SurfaceSource.LIVE,
+            epoch=getattr(sess, "surface_epoch", None), timeline_frame=timeline_frame,
+            source_timeline_frame=getattr(sess, "solved_timeline_frame", None),
+            solver_frame=getattr(solver, "frame", None),
+            state_revision=getattr(solver, "liquid_state_revision", None),
+            simulation_time=getattr(solver, "sim_time", None),
+            state_ready_at=completion.ready_at if completion is not None else None,
+        ) as attempt:
+            ds = _domain_settings(scene)
+            surface = output_object(scene, SURFACE_NAME)
+            has_surface = (surface is not None and surface.type == "MESH" and
+                           len(surface.data.vertices) > 0)
+            _record_cost("host_frame_acquisitions", phase="live_adaptation")
+            if hasattr(solver, "host_frame"):
+                host = solver.host_frame()
+            else:
+                from ..sim.frame_output import HostFrame
+                host = HostFrame(solver)
+            publish_surface = (
+                force_surface or not has_surface or
+                host.should_publish_surface(
+                    getattr(ds, "live_surface_publish_cadence", 1))
+            )
+            # Forced publications include exact Final preparation. They retain
+            # the established host-only route even on Blender's main thread.
+            try:
+                if publish_surface and not force_surface and fspt_device_runtime.has_demand(scene):
+                    from .liquid_display import viewport_families
 
-        rigid_publication.publish_live(scene, sess)
-        attempt.succeed(
-            synchronized=getattr(publication, "synchronized", False),
-            warning=getattr(publication, "warning", ""), build_key=build_key,
-            retained_obj=surface)
-        return publication
+                    surface_enabled = bool(getattr(ds, "surface_enabled", False))
+                    viewport_surface, _ = viewport_families(scene, surface_enabled)
+                    host_required = surface_enabled and (scene.fluidsim.show_surface or viewport_surface)
+                    device_ticket = fspt_device_runtime.prepare_live(
+                        scene, sess, host, completion, publish_surface=publish_surface,
+                        host_required=host_required)
+            except Exception as exc:  # The optional experiment cannot block native output.
+                fspt_device_runtime.fail_optional(getattr(solver, "device", ""), exc)
+            payload = prepare_live_payload(scene, host, publish_surface=publish_surface)
+            build_key = getattr(getattr(solver, "surface", None), "mesh_key", None)
+            publication = publish_payload(scene, payload)
+            from . import rigid_publication
+
+            rigid_publication.publish_live(scene, sess)
+            attempt.succeed(
+                synchronized=getattr(publication, "synchronized", False),
+                warning=getattr(publication, "warning", ""), build_key=build_key,
+                retained_obj=surface)
+    except BaseException:
+        fspt_device_runtime.cancel_live(device_ticket)
+        raise
+    if device_ticket is not None:
+        try:
+            fspt_device_runtime.finish_live(scene, device_ticket)
+        except Exception as exc:
+            fspt_device_runtime.fail_optional(getattr(solver, "device", ""), exc)
+    return publication
 
 
 def update_outputs_from_cache_frame(scene, frame_data):
     """Write a cached frame snapshot into the regular Blender output objects."""
     _require_bpy()
+    from . import fspt_device_runtime
+
+    fspt_device_runtime.invalidate(scene, reason="cache playback requires evaluated mesh")
     cache_identity = getattr(frame_data, "cache_identity", None)
     cache_frame = int(frame_data["frame"]) if cache_identity is not None else None
     with surface_publication.surface_attempt(

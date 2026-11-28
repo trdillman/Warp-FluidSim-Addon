@@ -70,11 +70,34 @@ def _cache_root(scene):
     return os.path.normcase(os.path.realpath(os.path.abspath(path)))
 
 
-def capture_publications(scene, *, for_viewport, exact_frame=False, view_layer=None):
+def _device_selection(scene, device):
+    from .fspt_device_runtime import selection
+
+    return selection(scene, device)
+
+
+def _device_capability_reason(scene, view_layer):
+    from .fspt_device_scene import surface_capability_reason
+
+    return surface_capability_reason(scene, view_layer)
+
+
+def _captured_channel(captured):
+    channels = {stamp.channel for stamp in captured}
+    if len(channels) > 1:
+        raise SurfaceNotReadyError("A captured fluid surface cannot mix publication channels")
+    return next(iter(channels), publication.SurfaceChannel.EVALUATED_MESH)
+
+
+def capture_publications(scene, *, for_viewport, exact_frame=False, view_layer=None,
+                         channel=publication.SurfaceChannel.EVALUATED_MESH, device=None):
     """Return immutable eligible facts without extracting or creating output IDs."""
     scene = _original(scene)
     obj = _surface_object(scene)
-    state = publication.get_surface_state(scene)
+    channel = publication.SurfaceChannel(channel)
+    if channel == publication.SurfaceChannel.GPU_FINAL and (not for_viewport or exact_frame):
+        raise SurfaceNotReadyError("GPU_FINAL is a viewport route; Final requires evaluated geometry")
+    state = publication.get_surface_state(scene, channel)
     stamp = state.eligible
     if obj is not None and not _visible(obj, for_viewport, view_layer):
         return ()
@@ -113,13 +136,25 @@ def capture_publications(scene, *, for_viewport, exact_frame=False, view_layer=N
         raise SurfaceNotReadyError("Selected cache sequence differs from the validated surface publication")
     if exact_frame and getattr(stamp, "source_timeline_frame", None) != int(scene.frame_current):
         raise SurfaceNotReadyError("Final render requires the exact solved or validated cache frame")
+    if channel == publication.SurfaceChannel.GPU_FINAL:
+        if device is None:
+            raise SurfaceNotReadyError("GPU surface capture requires its explicit CUDA device")
+        selection = _device_selection(scene, device)
+        if selection is None or selection.publication != stamp:
+            raise SurfaceNotReadyError("GPU surface selection is no longer ready for this device")
+        reason = _device_capability_reason(scene, view_layer)
+        if reason:
+            raise SurfaceNotReadyError(reason)
     return (stamp,)
 
 
-def validate_publications(scene, captured, *, for_viewport, exact_frame=False, view_layer=None):
+def validate_publications(scene, captured, *, for_viewport, exact_frame=False, view_layer=None,
+                          device=None):
+    captured = tuple(captured)
     current = capture_publications(scene, for_viewport=for_viewport, exact_frame=exact_frame,
-                                   view_layer=view_layer)
-    if tuple(captured) != current:
+                                   view_layer=view_layer, channel=_captured_channel(captured),
+                                   device=device)
+    if captured != current:
         raise SurfaceNotReadyError("Fluid publication generation changed during capture or rendering")
 
 
@@ -141,7 +176,7 @@ def forward_live_publication(previous, current):
     return True
 
 
-def validate_viewport_publications(scene, captured, *, view_layer=None, clock=monotonic):
+def validate_viewport_publications(scene, captured, *, view_layer=None, clock=monotonic, device=None):
     """Validate already-owned pixels, with at most 250 ms of LIVE retention.
 
     This does not grant access to a mutable Blender mesh. Capture and final
@@ -151,7 +186,8 @@ def validate_viewport_publications(scene, captured, *, view_layer=None, clock=mo
     receipt exists; the two measurements must never substitute for one another.
     """
     captured = tuple(captured)
-    current = capture_publications(scene, for_viewport=True, view_layer=view_layer)
+    current = capture_publications(scene, for_viewport=True, view_layer=view_layer,
+                                   channel=_captured_channel(captured), device=device)
     now = float(clock())
     ages = [now - stamp.published_at for stamp in captured]
     if not isfinite(now) or any(not isfinite(age) or age < 0 for age in ages):

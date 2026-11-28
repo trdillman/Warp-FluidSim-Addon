@@ -13,6 +13,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from itertools import count
+from math import isfinite
 from time import monotonic
 from types import MethodType
 from weakref import WeakMethod, ref
@@ -176,14 +177,23 @@ def _notify(key, state):
                 _log.exception("Surface publication observer failed for %s", channel)
 
 
-def invalidate_surfaces(scene=None, *, source=None) -> None:
+def invalidate_surfaces(scene=None, *, source=None, channel=None) -> None:
     """Retire scene/channel eligibility before an owner or Blender ID goes away."""
     scene_token = id_token(scene)
+    channel = None if channel is None else SurfaceChannel(channel)
     keys = [
         key for key, slot in _channels.items()
         if (scene is None or key[0] == scene_token) and (source is None or slot.source == source)
+        and (channel is None or key[1] == channel)
     ]
     _retire_channels(keys)
+
+
+def invalidate_surface_channel(scene_token, channel) -> None:
+    """Retire one channel by UID without retaining a Blender Scene wrapper."""
+    key = int(scene_token), SurfaceChannel(channel)
+    if key in _channels:
+        _retire_channels([key])
 
 
 def cache_root_token(cache_path) -> str:
@@ -303,8 +313,15 @@ class _Attempt:
 def surface_attempt(scene, channel=SurfaceChannel.EVALUATED_MESH, *, source,
                     epoch=None, timeline_frame=None, solver_frame=None,
                     state_revision=None, simulation_time=None, cache_frame=None,
-                    cache_identity=None, source_timeline_frame=None, state_ready_at=None):
+                    cache_identity=None, source_timeline_frame=None, state_ready_at=None,
+                    captured_at=None):
     """Stage one surface and keep the previous committed descriptor until success."""
+    entered_at = monotonic()
+    if captured_at is None:
+        captured_at = entered_at
+    elif (type(captured_at) not in (int, float) or not isfinite(captured_at)
+          or captured_at > entered_at):
+        raise ValueError("Invalid surface capture entry clock")
     owner = surface_owner_token(scene)
     key = id_token(scene), channel
     cache_root = cache_identity[0] if cache_identity is not None else None
@@ -318,7 +335,7 @@ def surface_attempt(scene, channel=SurfaceChannel.EVALUATED_MESH, *, source,
         key[0], owner, slot.epoch, channel, 0, source,
         int(getattr(scene, "frame_current", 0) if timeline_frame is None else timeline_frame),
         solver_frame, state_revision, simulation_time, cache_frame, cache_identity,
-        None, None, None, 0, 0, False, 0.0, monotonic(), source_timeline_frame,
+        None, None, None, 0, 0, False, 0.0, captured_at, source_timeline_frame,
         state_ready_at if source == SurfaceSource.LIVE else None,
     )
     attempt = _Attempt(key, slot, publication)
