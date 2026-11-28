@@ -280,7 +280,7 @@ class AsyncLiveAcceptance(reference.LiveAcceptance):
         self.scene.render.engine = "BLENDER_WORKBENCH"
         self.addon.unregister()
         scheduler = importlib.import_module(self.addon.__name__ + ".fspt.scheduler")
-        arbiter = scheduler.get_arbiter("cuda:0")
+        arbiter = scheduler.get_arbiter(self.base.script_device())
         assert arbiter._active is None and not arbiter._viewport_waiters and not arbiter._final_waiters
         self.stage = "complete"
         self.report.update(status="VERIFIED", stage=self.stage,

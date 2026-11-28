@@ -479,25 +479,32 @@ class _ReachedNextLane(Exception):
     """Raised once the gate has moved past every background script lane."""
 
 
-def _gate_lanes(monkeypatch, *, drop=None):
+def _gate_lanes(monkeypatch, tmp_path, *, drop=None):
     """Record the commands the production gate would run, without running any.
 
     This executes the gate's own control flow (``_production_main``) up to the
     performance budget, which runs after every background Blender script lane
-    (including the quiet batch that follows the concurrent lanes). Every helper that would touch git,
-    the disk or Blender is replaced, ``subprocess`` is unreachable, and ``_run``
-    only records, so nothing starts. ``drop`` removes one background script from
-    the gate's table first.
+    (including the quiet batch that follows the concurrent lanes). The invocation
+    and reports live in a test-owned directory. The mocked runner records each
+    lane and supplies the FSPT JSON expected by the real report checks. No child
+    process starts. ``drop`` removes one background script from the gate's table.
     """
     spec = importlib.util.spec_from_file_location("run_production_gate_memory_lane", _GATE_PATH)
     gate = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gate)
     lanes = []
 
-    def run(label, command, env=None, reject_output=False, expect_marker=None):
+    def run_step(label, command, env, reject_output, expect_marker):
         lanes.append(SimpleNamespace(
             label=label, command=list(command), reject_output=reject_output,
             marker=expect_marker))
+        if "--python" in command:
+            script = Path(command[command.index("--python") + 1])
+            if script.name.startswith("blender_fspt_"):
+                report = Path(command[command.index("--json-out") + 1])
+                assert report.is_relative_to(tmp_path) and not report.exists()
+                report.parent.mkdir(parents=True, exist_ok=True)
+                report.write_text('{"status":"VERIFIED"}\n', encoding="utf-8")
 
     def no_process(*_args, **_kwargs):
         raise AssertionError("inspecting the gate must not start a process")
@@ -506,7 +513,9 @@ def _gate_lanes(monkeypatch, *, drop=None):
         raise _ReachedNextLane
 
     for name, replacement in {
-        "_run": run,
+        "ROOT": tmp_path,
+        "GATE_MANIFEST": tmp_path / "artifacts" / "production_gate_manifest.json",
+        "_run_step": run_step,
         "_reusable_budget_demos": reached_budget,
         "_env": lambda: {},
         # This test executes lane dispatch only; qualification admission has
@@ -527,6 +536,7 @@ def _gate_lanes(monkeypatch, *, drop=None):
             entry for entry in gate.BACKGROUND_ACCEPTANCE if entry[0] != drop))
     monkeypatch.setenv("BLENDER_EXE", "blender-under-test")
     monkeypatch.delenv("FLUIDSIM_FULL_GUI_ACCEPTANCE", raising=False)
+    gate._begin_invocation()
     with pytest.raises(_ReachedNextLane):
         gate._production_main([])
     return lanes
@@ -541,8 +551,8 @@ def _blender_runs_of(lanes, script):
     ]
 
 
-def test_production_gate_runs_the_memory_recovery_lane_in_blender(monkeypatch):
-    lanes = _gate_lanes(monkeypatch)
+def test_production_gate_runs_the_memory_recovery_lane_in_blender(monkeypatch, tmp_path):
+    lanes = _gate_lanes(monkeypatch, tmp_path)
 
     runs = _blender_runs_of(lanes, _MEMORY_LANE)
 
@@ -559,9 +569,9 @@ def test_production_gate_runs_the_memory_recovery_lane_in_blender(monkeypatch):
     assert _MEMORY_MARKER in printed, "the script must print the marker the gate waits for"
 
 
-def test_dropping_the_memory_lane_from_the_gate_is_detected(monkeypatch):
+def test_dropping_the_memory_lane_from_the_gate_is_detected(monkeypatch, tmp_path):
     """The path is still named by the syntax-check lane, so a text search would pass."""
-    lanes = _gate_lanes(monkeypatch, drop=_MEMORY_LANE)
+    lanes = _gate_lanes(monkeypatch, tmp_path, drop=_MEMORY_LANE)
 
     assert _blender_runs_of(lanes, _MEMORY_LANE) == []
     assert any(_MEMORY_LANE in lane.command for lane in lanes if lane.label == "python syntax")

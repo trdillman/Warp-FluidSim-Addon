@@ -120,7 +120,7 @@ def _prepare_fixture(bpy, base, scene):
     scene.render.engine = base.ENGINE
     scene.sync_mode = "NONE"
     settings = scene.fspt
-    settings.device = "cuda:0"
+    settings.device = base.script_device()
     settings.viewport_samples = 1
     settings.resolution_percentage = 25
     settings.max_bounces = 6

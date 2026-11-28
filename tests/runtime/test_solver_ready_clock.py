@@ -1,6 +1,7 @@
 """Completed solver clocks precede optional work and cannot follow new identities."""
 
 from dataclasses import FrozenInstanceError
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -11,7 +12,14 @@ from test_surface_publication import live_surface  # noqa: F401 - shared publica
 @pytest.fixture
 def completed_session(monkeypatch, live_surface):  # noqa: F811 - imported pytest fixture
     from test_scene_bridge_settings import _install_scene_bridge_stubs
+    from test_surface_publication import output as fixture_publication
+    from fluidSim_warp_blender51 import blender
 
+    # Sibling runtime tests reload publication to isolate their Blender doubles.
+    # Bind Session and per-test imports to the exact module patched by this
+    # shared live_surface fixture, restoring both import paths after the test.
+    monkeypatch.setitem(sys.modules, fixture_publication.__name__, fixture_publication)
+    monkeypatch.setattr(blender, "output_publication", fixture_publication)
     bridge = _install_scene_bridge_stubs(monkeypatch)
     scene, old, obj, settings = live_surface
     session = bridge.Session()
