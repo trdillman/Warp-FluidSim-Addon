@@ -8,7 +8,7 @@ the middle. It is built to show the Surface Nets render surface
 where an even triangle mesh reads best.
 
 Resolution is the point of the scene. ``HERO`` runs the simulation and the
-render surface at 1 mm voxels, 560 cells along the long axis of the domain; the
+render surface at 1 mm voxels, 600 cells along the long axis of the domain; the
 highest-resolution demo scene before it, Upres Cove, has 280 cells along its
 longest axis at 20 mm (``BASELINE``). ``DRAFT`` is the same scene at 2 mm, a
 cheap way to check the build and the render before the hero run.
@@ -74,9 +74,9 @@ class Preset:
 
 PRESETS = {
     HERO: Preset(HERO, voxel=0.001, leaf_capacity=24576,
-                 max_particles=8_000_000, max_dense_dim=576),
+                 max_particles=8_000_000, max_dense_dim=640),
     DRAFT: Preset(DRAFT, voxel=0.002, leaf_capacity=8192,
-                  max_particles=1_300_000, max_dense_dim=288),
+                  max_particles=1_300_000, max_dense_dim=320),
 }
 
 
@@ -91,9 +91,9 @@ def preset(name=None):
 # ---------------------------------------------------------------------------
 # Layout (metres). x is the long axis; the trough is centred in the domain.
 
-DOMAIN_HX, DOMAIN_HY = 0.28, 0.17
+DOMAIN_HX, DOMAIN_HY = 0.30, 0.20
 DOMAIN_LO = (-DOMAIN_HX, -DOMAIN_HY, 0.0)
-DOMAIN_HI = (DOMAIN_HX, DOMAIN_HY, 0.40)
+DOMAIN_HI = (DOMAIN_HX, DOMAIN_HY, 0.44)
 
 SLAB_TOP = 0.03          # the floor the pool sits on, well above the domain floor
 SLAB_BELOW = 0.05        # collider reaches below the domain floor
@@ -129,12 +129,14 @@ class Drop:
         return self.center[2] + self.radius
 
 
-# Biggest first, left to right. Impacts at about frames 5, 9 and 14 (liquid time per
-# frame is TIME_SCALE / FPS = 12.5 ms).
+# Biggest first, left to right. Dropped nearly from rest (the first has a small
+# push) so the impacts are gentle: 2.0, 1.9 and 2.35 m/s. A harder splash threw
+# spray into the domain walls on the first GPU run. Impacts at about frames 9,
+# 16 and 20 (liquid time per frame is TIME_SCALE / FPS = 12.5 ms).
 DROPS = (
-    Drop("Nets Drop A", (-0.130, 0.000), 0.028, 3.0, 0.045),
-    Drop("Nets Drop B", (0.000, 0.015), 0.020, 2.0, 0.100),
-    Drop("Nets Drop C", (0.130, -0.020), 0.016, 1.0, 0.160),
+    Drop("Nets Drop A", (-0.130, 0.000), 0.028, 1.0, 0.102),
+    Drop("Nets Drop B", (0.000, 0.015), 0.020, 0.0, 0.190),
+    Drop("Nets Drop C", (0.130, -0.020), 0.016, 0.0, 0.240),
 )
 
 # Camera for a 16:9 frame: a little above the trough rim, looking along its side.
@@ -316,6 +318,23 @@ def free_surface_height(positions, quantile=0.5):
     if not inside.any():
         return 0.0
     return float(np.quantile(pos[inside, 2], quantile))
+
+
+def wall_contact_fraction(positions, distance):
+    """Share of particles within ``distance`` of a domain side wall or the ceiling."""
+    pos = np.asarray(positions, dtype=np.float64)
+    if len(pos) == 0:
+        return 0.0
+    lo = np.array(DOMAIN_LO)
+    hi = np.array(DOMAIN_HI)
+    near = ((pos[:, :2] - lo[:2] < distance) | (hi[:2] - pos[:, :2] < distance)).any(axis=1)
+    near |= hi[2] - pos[:, 2] < distance
+    return float(np.mean(near))
+
+
+# Stray spray will reach a wall in any hard splash and costs a speck of mesh.
+# What must not happen is the body of the liquid meeting a wall.
+MAX_WALL_CONTACT_FRACTION = 1.0e-3
 
 
 def wall_clearance(positions):

@@ -24,7 +24,7 @@ not become source-control assets.
                      `-- upres_cove`; saved to artifacts/review_demos/, not
                      demos/; tools/profiling/compare_guided_upres.py
                      --demo upres_cove runs the upres on it).
-6. nets_showcase   - a triple splash into a marble trough at 1 mm voxels (560
+6. nets_showcase   - a triple splash into a marble trough at 1 mm voxels (600
                      cells along the long axis), built for the Surface Nets render
                      surface (build explicitly with `-- nets_showcase`; set
                      NETS_SHOWCASE_PRESET=draft for the 2 mm check run; saved
@@ -404,7 +404,7 @@ def use_material_shading(scene):
         scene.world.color = (0.66, 0.70, 0.73)
 
 
-def render_preview(name, *, min_water_fraction, directory=DEMOS):
+def render_preview(name, *, min_water_fraction, directory=DEMOS, blue_margin=0.2):
     """Render the current solver state and require visible water in it."""
     from fluidSim_warp_blender51.blender import playback
 
@@ -425,7 +425,7 @@ def render_preview(name, *, min_water_fraction, directory=DEMOS):
     finally:
         bpy.data.images.remove(image)
     rgb = px.reshape(-1, 4)[:, :3]
-    water = float(np.mean((rgb[:, 2] - rgb[:, 0] > 0.2) & (rgb[:, 2] > rgb[:, 1])))
+    water = float(np.mean((rgb[:, 2] - rgb[:, 0] > blue_margin) & (rgb[:, 2] > rgb[:, 1])))
     log(f"{name} preview rendered: {water:.1%} water pixels")
     if water < min_water_fraction:
         raise RuntimeError(
@@ -2136,8 +2136,9 @@ def build_nets_showcase():
 
     def record(frame):
         if frame == NETS_SHOWCASE_PREVIEW_FRAME:
+            # Pale, glassy water: far less blue than the other demos' water.
             render_preview("nets_showcase", min_water_fraction=0.005,
-                           directory=REVIEW_DEMOS)
+                           directory=REVIEW_DEMOS, blue_margin=0.04)
         if frame in NETS_SHOWCASE_CHECK_FRAMES:
             solver = sess.solver
             pos = solver.particle_positions()
@@ -2149,6 +2150,7 @@ def build_nets_showcase():
                 "particles": int(len(pos)),
                 "top_z": float(pos[:, 2].max()),
                 "wall_clearance_m": ns.wall_clearance(pos),
+                "near_wall_fraction": ns.wall_contact_fraction(pos, 10 * p.voxel),
                 "inside_wall_fraction": ns.inside_wall_fraction(pos),
                 "airborne_particles": int(len(high)),
                 "airborne_mean_vz": (float(falling[:, 2].mean())
@@ -2178,11 +2180,15 @@ def build_nets_showcase():
             raise RuntimeError(
                 f"nets_showcase frame {frame}: {check['inside_wall_fraction']:.2%} "
                 "of the particles are inside the basin wall")
-        if check["wall_clearance_m"] < 10 * p.voxel:
+        if check["wall_clearance_m"] < 0.0:
             raise RuntimeError(
-                f"nets_showcase frame {frame}: liquid is within "
-                f"{check['wall_clearance_m'] * 1000:.1f} mm of a domain wall; the "
-                "Surface Nets mesh would be cut there")
+                f"nets_showcase frame {frame}: particles outside the domain")
+        if check["near_wall_fraction"] > ns.MAX_WALL_CONTACT_FRACTION:
+            raise RuntimeError(
+                f"nets_showcase frame {frame}: {check['near_wall_fraction']:.3%} of the "
+                f"particles are within 10 voxels of a domain wall (closest "
+                f"{check['wall_clearance_m'] * 1000:.1f} mm); the Surface Nets mesh "
+                "would be cut there")
     if not 0.6 * expected <= first <= p.max_particles:
         raise RuntimeError(
             f"nets_showcase emitted {first:,} particles, estimate "

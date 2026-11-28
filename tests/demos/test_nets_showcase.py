@@ -71,6 +71,11 @@ def test_drops_are_big_enough_for_surface_nets_at_hero_resolution():
         assert ns.drop_voxels(drop) >= ns.MIN_DROP_VOXELS
 
 
+def test_impacts_are_gentle():
+    for d in ns.DROPS:
+        assert d.speed + ns.G * d.impact_time < 2.5  # m/s at the pool
+
+
 def test_drops_land_one_after_another_inside_the_clip():
     frames = [ns.drop_fall_frame(d) for d in ns.DROPS]
     assert frames == sorted(frames)
@@ -86,7 +91,7 @@ def test_drops_fall_where_the_launch_speed_says():
 
 def test_hero_is_at_least_twice_the_finest_demo_scene():
     f = ns.fidelity(ns.PRESETS[ns.HERO])
-    assert f["longest_axis_cells"] == 560
+    assert f["longest_axis_cells"] == 600
     assert f["cells_per_axis_x"] >= 2.0
     assert f["domain_cells_x"] >= 8.0
     assert f["particles_x"] >= 2.0
@@ -208,6 +213,9 @@ def test_particle_checks():
     assert ns.inside_wall_fraction(in_wall) == 1.0
     near_side = np.array([[ns.DOMAIN_HX - 0.005, 0.0, 0.2]])
     assert ns.wall_clearance(near_side) == pytest.approx(0.005)
+    swarm = np.concatenate([np.zeros((999, 3)) + [0, 0, 0.1], near_side])
+    assert ns.wall_contact_fraction(swarm, 0.01) == pytest.approx(1 / 1000)
+    assert ns.wall_contact_fraction(inside, 0.01) == 0.0
 
 
 def test_builder_and_renderer_are_wired_to_the_shared_numbers():
