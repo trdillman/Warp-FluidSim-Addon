@@ -113,6 +113,15 @@ def heartbeat():
     status["fluidsim_status"] = fs.status
     status["live"] = bool(fs.live)
     status["elapsed_s"] = round(time.time() - state["started"], 1)
+    # Health is recomputed every beat: the solver switches Live off when a step
+    # fails, while the timeline can keep running.
+    failed = "fail" in (fs.status or "").lower() or "error" in (fs.status or "").lower()
+    if not fs.live or failed:
+        status["stage"] = "live_stopped"
+        status["ok"] = False
+    else:
+        status["stage"] = "playing" if status["is_playing"] else "paused"
+        status["ok"] = bool(not fs.cache_playback_enabled and fs.deck_shown)
     frames = status.setdefault("frames_seen", [])
     if not frames or frames[-1] != scene.frame_current:
         frames.append(scene.frame_current)

@@ -20,9 +20,26 @@ def test_every_shipped_demo_is_launchable_and_on_disk():
         assert ld.demo_blend(demo).is_file(), demo
 
 
-def test_opt_in_demos_live_in_the_review_folder():
-    for demo in ld.OPT_IN:
+def test_opt_in_demos_are_read_from_where_their_builder_saves():
+    builder = (REPO / "tools" / "demos" / "build_demo_scenes.py").read_text(encoding="utf-8")
+    assert ld.demo_blend("tsunami_parthenon").parent == REPO / "demos"
+    for demo in ("upres_cove", "nets_showcase"):
         assert ld.demo_blend(demo).parent == REPO / "artifacts" / "review_demos"
+    # tsunami's builder saves with the default directory (demos/); the others pass REVIEW_DEMOS.
+    start = builder.index("def build_tsunami_parthenon")
+    end = builder.index("UPRES_COVE_PREVIEW_FRAME")
+    assert "REVIEW_DEMOS" not in builder[start:end]
+
+
+def test_builder_finds_the_provisioned_warp_on_pythonpath(tmp_path, monkeypatch):
+    from tools.release import build_extension as be
+
+    seen = []
+    monkeypatch.setattr(be, "_provision_smoke_warp", lambda target: seen.append(target))
+    env = ld.builder_environment(tmp_path / "b", {"PYTHONPATH": "C:/dev"})
+    assert seen == [tmp_path / "b" / "warp-site"]
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(tmp_path / "b" / "warp-site")
+    assert "C:/dev" in env["PYTHONPATH"]
 
 
 def test_unknown_demo_is_refused():
@@ -78,7 +95,7 @@ def test_boot_script_forces_live_realtime_playback_with_the_deck_on():
     ast.parse(source)
     for needle in ("fs.live = True", "cache_playback_enabled = False",
                    "cache_enabled = False", "deck_shown = True", "animation_play",
-                   "addon_in_temp_profile"):
+                   "addon_in_temp_profile", "live_stopped"):
         assert needle in source, needle
 
 

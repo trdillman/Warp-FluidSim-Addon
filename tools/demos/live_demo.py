@@ -48,6 +48,9 @@ SHIPPED = (
 OPT_IN = ("tsunami_parthenon", "upres_cove", "nets_showcase")
 ALL_DEMOS = SHIPPED + OPT_IN
 
+# Opt-in demos whose builder saves into demos/ rather than artifacts/review_demos.
+SAVED_IN_DEMOS = ("tsunami_parthenon",)
+
 # The Surface Nets backend is read from the environment when the solver is
 # created and a .blend cannot store it. Keep these in step with
 # tools/demos/nets_showcase.py (BACKEND_ENV / BACKEND).
@@ -56,7 +59,7 @@ DEMO_ENV = {"nets_showcase": {"FLUIDSIM_SURFACE_BACKEND": "nets"}}
 
 def demo_blend(demo: str, repo: Path = REPO) -> Path:
     """Where a demo's .blend lives: tracked demos/, or the opt-in review folder."""
-    if demo in SHIPPED:
+    if demo in SHIPPED or demo in SAVED_IN_DEMOS:
         return repo / "demos" / f"{demo}.blend"
     if demo in OPT_IN:
         return repo / "artifacts" / "review_demos" / f"{demo}.blend"
@@ -90,6 +93,24 @@ def launch_environment(demo: str, profile: Path, config: Path, base=None) -> dic
         dict(os.environ if base is None else base), profile_dir=profile)
     env.update(DEMO_ENV.get(demo, {}))
     env["FLUIDSIM_LIVE_DEMO_CONFIG"] = str(config)
+    return env
+
+
+def builder_environment(build_profile: Path, base: dict[str, str]) -> dict[str, str]:
+    """Environment for the scene builder. It loads the add-on from source, which only
+    finds Warp on PYTHONPATH, so the locked Warp is unpacked there (not into an extension)."""
+    sys.path.insert(0, str(REPO))
+    try:
+        from tools.release import build_extension as be
+    finally:
+        sys.path.pop(0)
+    build_profile.mkdir(parents=True, exist_ok=True)
+    env = be._blender_process_environment(
+        base, profile_dir=build_profile, allow_source_imports=True)
+    warp_site = build_profile / "warp-site"
+    be._provision_smoke_warp(warp_site)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(warp_site) + (os.pathsep + existing if existing else "")
     return env
 
 
@@ -190,20 +211,8 @@ def main(argv=None) -> int:
             build_env.update(DEMO_ENV.get(args.demo, {}))
             if args.preset:
                 build_env["NETS_SHOWCASE_PRESET"] = args.preset
-            # The builder loads the add-on from source and needs Warp on its own profile.
-            sys.path.insert(0, str(REPO))
-            try:
-                from tools.release import build_extension as be
-            finally:
-                sys.path.pop(0)
-            build_profile = profile / "build"
-            build_profile.mkdir()
-            benv = be._blender_process_environment(
-                build_env, profile_dir=build_profile, allow_source_imports=True)
-            be._provision_smoke_warp(
-                Path(benv["BLENDER_USER_EXTENSIONS"]) / ".user" / "fluidsim_ci"
-                / EXTENSION_ID / ".local")
-            _run(build_builder_command(blender, args.demo), benv)
+            _run(build_builder_command(blender, args.demo),
+                 builder_environment(profile / "build", build_env))
         if not blend.is_file():
             print(f"error: {blend} does not exist. "
                   f"Run again with --build to create it.", file=sys.stderr)
