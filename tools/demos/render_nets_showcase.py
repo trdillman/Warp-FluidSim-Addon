@@ -515,10 +515,18 @@ def encode_with_ffmpeg(frames_dir, frames, out_path):
 
 
 def mesh_stamp(mesh_dir):
-    """Changes whenever the saved meshes do (names, sizes and nanosecond times)."""
-    names = sorted(n for n in os.listdir(mesh_dir) if n.endswith(".npy"))
-    return [[n, os.path.getsize(os.path.join(mesh_dir, n)),
-             os.stat(os.path.join(mesh_dir, n)).st_mtime_ns] for n in names]
+    """Changes whenever the saved meshes do (names, sizes and a content hash)."""
+    import hashlib
+
+    stamp = []
+    for n in sorted(n for n in os.listdir(mesh_dir) if n.endswith(".npy")):
+        path = os.path.join(mesh_dir, n)
+        digest = hashlib.blake2b(digest_size=12)
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 22), b""):
+                digest.update(block)
+        stamp.append([n, os.path.getsize(path), digest.hexdigest()])
+    return stamp
 
 
 def run_render(opts):
