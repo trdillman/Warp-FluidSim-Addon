@@ -536,6 +536,12 @@ def run_render(opts):
         if not keep:
             log("render settings or meshes changed since the last run; rendering every frame again")
     if opts["still"] is None:
+        if not keep:
+            # PNGs from another configuration must not survive next to the new
+            # one, or a later --resume would certify them.
+            for name in os.listdir(frames_dir):
+                if name.startswith("frame_") and name.endswith(".png"):
+                    os.remove(os.path.join(frames_dir, name))
         with open(config_path, "w", encoding="utf-8") as fh:
             json.dump(config, fh)
     for f in frames:
