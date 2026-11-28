@@ -230,4 +230,7 @@ def test_builder_and_renderer_are_wired_to_the_shared_numbers():
     assert "render_extractor.backend" in renderer
     # A paused or failed step must stop the capture, not save the old surface again.
     assert "sess.last_frame != frame" in renderer
+    # Meshes from an earlier run must not reach the render.
+    assert 'os.remove(os.path.join(mesh_dir, name))' in renderer
+    assert 'json.load(fh)["frames"]' in renderer
     assert "FLUIDSIM_SURFACE_BACKEND" in renderer or "ns.BACKEND_ENV" in renderer

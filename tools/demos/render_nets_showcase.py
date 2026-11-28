@@ -136,6 +136,14 @@ def run_sim(opts):
         start, end = max(start, opts["frames"][0]), min(end, opts["frames"][1])
     mesh_dir = os.path.join(opts["out"], "meshes")
     os.makedirs(mesh_dir, exist_ok=True)
+    # Meshes and the manifest of an earlier run (another preset or frame range)
+    # must not leak into this one.
+    for name in os.listdir(mesh_dir):
+        if name.endswith(".npy"):
+            os.remove(os.path.join(mesh_dir, name))
+    manifest = os.path.join(opts["out"], "sim_series.json")
+    if os.path.exists(manifest):
+        os.remove(manifest)
     series = {"frames": [], "particles": [], "step_ms": [], "substeps": [],
               "verts": [], "tris": [], "backend": [], "wall_s": []}
     t_all = time.perf_counter()
@@ -503,6 +511,12 @@ def run_render(opts):
         return
 
     frames = sorted(int(f[6:10]) for f in os.listdir(mesh_dir) if f.startswith("verts_"))
+    manifest = os.path.join(out, "sim_series.json")
+    if os.path.exists(manifest):
+        # Only the frames the last simulation recorded, never stray older meshes.
+        with open(manifest, encoding="utf-8") as fh:
+            recorded = set(json.load(fh)["frames"])
+        frames = [f for f in frames if f in recorded]
     if opts["frames"]:
         frames = [f for f in frames if opts["frames"][0] <= f <= opts["frames"][1]]
     if opts["still"] is not None:
