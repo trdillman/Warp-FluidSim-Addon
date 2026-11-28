@@ -351,7 +351,7 @@ def setup_look(scene, opts):
         if obj.name.startswith("Nets Trough"):
             obj.data.materials.clear()
             obj.data.materials.append(marble)
-        elif obj.name == "Nets Slab":
+        elif obj.name == "Nets Slab" or obj.name.startswith("Nets Rim"):
             obj.data.materials.clear()
             obj.data.materials.append(slab)
     if scene.camera is not None:

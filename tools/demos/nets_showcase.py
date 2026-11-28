@@ -26,6 +26,9 @@ Layout rules that come from the Surface Nets review (see
 * Narrow Band is off and the pool is a thin film (8 mm). A source's startup
   demand is its whole volume, so a deep pool would be booked at tens of
   millions of particles before any narrow-band culling.
+* A catch rim runs around the slab edge, 30 mm inside the domain walls: the first
+  GPU run showed the splash running out of the trough and over the slab to the
+  domain walls, so what leaves the trough piles up against the rim instead.
 * The domain is a long box, not a cube. The Surface Nets extractor works in a
   dense box, 40 bytes per voxel in the add-on's own memory estimate, so the two
   short axes are kept short to fit a 16 GB card.
@@ -102,7 +105,19 @@ POOL_HX, POOL_HY = 0.22, 0.10   # inner half sizes of the trough
 POOL_DEPTH = 0.008      # a thin film: every pool voxel holds particles, see expected_particles
 POOL_TOP = SLAB_TOP + POOL_DEPTH
 WALL_THICKNESS = 0.014
-WALL_TOP = POOL_TOP + 0.03
+# Trough wall heights above the pool. The camera side (front, -y) is low so the
+# film shows; the back and the ends are tall enough to hold most of the splash.
+TROUGH_TOP_FRONT = POOL_TOP + 0.012
+TROUGH_TOP_BACK = POOL_TOP + 0.05
+TROUGH_TOP_END = POOL_TOP + 0.05
+WALL_TOP = TROUGH_TOP_BACK
+# A catch rim around the slab edge: what leaves the trough runs out over the slab
+# and must pile up against this, not against the domain wall. Its outer face is
+# RIM_INSET inside the domain.
+RIM_INSET = 0.03
+RIM_TOP_FRONT = SLAB_TOP + 0.02
+RIM_TOP_BACK = SLAB_TOP + 0.045
+RIM_TOP_END = SLAB_TOP + 0.045
 
 MIN_DROP_VOXELS = 18
 
@@ -149,6 +164,7 @@ WATER_COLOR = (0.55, 0.80, 0.95, 1.0)
 MATERIAL_COLORS = {
     "Nets Marble": (0.86, 0.84, 0.80, 1.0),
     "Nets Slab": (0.045, 0.05, 0.06, 1.0),
+    "Nets Rim": (0.07, 0.075, 0.085, 1.0),
 }
 
 
@@ -274,16 +290,34 @@ def slab_mesh():
     return _boxes("Nets Slab", [((-hx, -hy, -SLAB_BELOW), (hx, hy, SLAB_TOP))], "Nets Slab")
 
 
+def _ring_boxes(hx, hy, thickness, z0, top_front, top_back, top_end):
+    """(sides, ends) of a rectangular ring with inner half sizes hx, hy.
+
+    The end boxes sink into the side boxes by OVERLAP, so they go in their own
+    mesh.
+    """
+    ox, oy = hx + thickness, hy + thickness
+    sides = [((-ox, -oy, z0), (ox, -hy, top_front)),
+             ((-ox, hy, z0), (ox, oy, top_back))]
+    ends = [((-ox, -hy - OVERLAP, z0), (-hx, hy + OVERLAP, top_end)),
+            ((hx, -hy - OVERLAP, z0), (ox, hy + OVERLAP, top_end))]
+    return sides, ends
+
+
 def wall_boxes():
     """(side walls, end walls) of the trough."""
-    t = WALL_THICKNESS
-    z0, z1 = SLAB_TOP - OVERLAP, WALL_TOP
-    ox, oy = POOL_HX + t, POOL_HY + t
-    sides = [((-ox, -oy, z0), (ox, -POOL_HY, z1)),
-             ((-ox, POOL_HY, z0), (ox, oy, z1))]
-    ends = [((-ox, -POOL_HY - OVERLAP, z0), (-POOL_HX, POOL_HY + OVERLAP, z1)),
-            ((POOL_HX, -POOL_HY - OVERLAP, z0), (ox, POOL_HY + OVERLAP, z1))]
-    return sides, ends
+    return _ring_boxes(POOL_HX, POOL_HY, WALL_THICKNESS, SLAB_TOP - OVERLAP,
+                       TROUGH_TOP_FRONT, TROUGH_TOP_BACK, TROUGH_TOP_END)
+
+
+RIM_HX = DOMAIN_HX - RIM_INSET - WALL_THICKNESS   # inner half sizes of the catch rim
+RIM_HY = DOMAIN_HY - RIM_INSET - WALL_THICKNESS
+
+
+def rim_boxes():
+    """(side walls, end walls) of the catch rim."""
+    return _ring_boxes(RIM_HX, RIM_HY, WALL_THICKNESS, SLAB_TOP - OVERLAP,
+                       RIM_TOP_FRONT, RIM_TOP_BACK, RIM_TOP_END)
 
 
 def trough_wall_meshes():
@@ -292,8 +326,14 @@ def trough_wall_meshes():
             _boxes("Nets Trough Ends", ends, "Nets Marble")]
 
 
+def rim_meshes():
+    sides, ends = rim_boxes()
+    return [_boxes("Nets Rim Sides", sides, "Nets Rim"),
+            _boxes("Nets Rim Ends", ends, "Nets Rim")]
+
+
 def collider_meshes():
-    return [slab_mesh(), *trough_wall_meshes()]
+    return [slab_mesh(), *trough_wall_meshes(), *rim_meshes()]
 
 
 def signed_volume(mesh):
@@ -350,13 +390,16 @@ def wall_clearance(positions):
 
 
 def inside_wall_fraction(positions):
-    """Share of particles inside the trough wall's footprint (should be zero)."""
+    """Share of particles inside the trough or catch rim walls (should be zero)."""
     pos = np.asarray(positions, dtype=np.float64)
     if len(pos) == 0:
         return 0.0
     margin = 0.002
-    ox, oy = POOL_HX + WALL_THICKNESS, POOL_HY + WALL_THICKNESS
-    in_outer = (np.abs(pos[:, 0]) < ox - margin) & (np.abs(pos[:, 1]) < oy - margin)
-    in_inner = (np.abs(pos[:, 0]) < POOL_HX + margin) & (np.abs(pos[:, 1]) < POOL_HY + margin)
-    in_height = (pos[:, 2] < WALL_TOP - margin) & (pos[:, 2] > SLAB_TOP + margin)
-    return float(np.mean(in_outer & ~in_inner & in_height))
+    inside = np.zeros(len(pos), dtype=bool)
+    for hx, hy, top in ((POOL_HX, POOL_HY, WALL_TOP), (RIM_HX, RIM_HY, RIM_TOP_BACK)):
+        ox, oy = hx + WALL_THICKNESS, hy + WALL_THICKNESS
+        in_outer = (np.abs(pos[:, 0]) < ox - margin) & (np.abs(pos[:, 1]) < oy - margin)
+        in_inner = (np.abs(pos[:, 0]) < hx + margin) & (np.abs(pos[:, 1]) < hy + margin)
+        in_height = (pos[:, 2] < top - margin) & (pos[:, 2] > SLAB_TOP + margin)
+        inside |= in_outer & ~in_inner & in_height
+    return float(np.mean(inside))

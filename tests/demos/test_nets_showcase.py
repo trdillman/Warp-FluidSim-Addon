@@ -56,14 +56,30 @@ def test_slab_covers_the_domain_floor():
 
 
 def test_trough_wall_rises_above_the_pool_but_stays_below_the_camera_line():
-    assert ns.POOL_TOP < ns.WALL_TOP < ns.CAMERA_LOCATION[2]
+    assert ns.POOL_TOP < ns.TROUGH_TOP_FRONT <= ns.TROUGH_TOP_BACK < ns.CAMERA_LOCATION[2]
+    # The camera side stays low so the film is visible over it.
+    assert ns.TROUGH_TOP_FRONT - ns.POOL_TOP <= 0.02
+
+
+def test_catch_rim_keeps_spill_away_from_the_domain_walls():
+    p = ns.PRESETS[ns.HERO]
+    assert ns.DOMAIN_HX - (ns.RIM_HX + ns.WALL_THICKNESS) == pytest.approx(ns.RIM_INSET)
+    assert ns.DOMAIN_HY - (ns.RIM_HY + ns.WALL_THICKNESS) == pytest.approx(ns.RIM_INSET)
+    assert ns.RIM_INSET >= 20 * p.voxel  # draft: 15 voxels, still over the 10-voxel check
+    assert ns.RIM_INSET >= 10 * ns.PRESETS[ns.DRAFT].voxel
+    assert ns.RIM_TOP_FRONT > ns.SLAB_TOP
+    # Camera line of sight over the front rim to the front edge of the pool.
+    cam = np.array(ns.CAMERA_LOCATION)
+    target = np.array([0.0, -ns.POOL_HY, ns.POOL_TOP])
+    t = (-(ns.RIM_HY + ns.WALL_THICKNESS) - cam[1]) / (target[1] - cam[1])
+    assert cam[2] + t * (target[2] - cam[2]) > ns.RIM_TOP_FRONT
 
 
 def test_trough_wall_parts_do_not_overlap_inside_one_mesh():
-    sides, ends = ns.wall_boxes()
-    for group in (sides, ends):
-        (lo0, hi0), (lo1, hi1) = group
-        assert any(hi0[i] <= lo1[i] or hi1[i] <= lo0[i] for i in range(3))
+    for sides, ends in (ns.wall_boxes(), ns.rim_boxes()):
+        for group in (sides, ends):
+            (lo0, hi0), (lo1, hi1) = group
+            assert any(hi0[i] <= lo1[i] or hi1[i] <= lo0[i] for i in range(3))
 
 
 def test_drops_are_big_enough_for_surface_nets_at_hero_resolution():
