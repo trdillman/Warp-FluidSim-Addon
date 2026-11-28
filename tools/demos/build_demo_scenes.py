@@ -965,7 +965,8 @@ def body_states(sess):
     return states
 
 
-def save_playable(name, scene, frames, seed_particles=None, directory=DEMOS):
+def save_playable(name, scene, frames, seed_particles=None, directory=DEMOS,
+                  fresh_solver=False):
     """Reset to frame 1 (clears the published poses) and save live-ready.
 
     INITIAL_FILL sources emit on the first step, so a bare reset leaves frame 1
@@ -980,7 +981,14 @@ def save_playable(name, scene, frames, seed_particles=None, directory=DEMOS):
     scene.frame_set(1)
     assign_input_identities(scene)
     sess = session()
-    sess.reset(scene)
+    if fresh_solver:
+        # A Reset plans the old solver and its replacement together, which does
+        # not fit a 16 GB card at Nets Showcase hero. Release, then initialize.
+        bpy.ops.fluidsim.release()
+        if bpy.ops.fluidsim.initialize() != {"FINISHED"}:
+            raise RuntimeError(f"{name} playback re-initialize was refused")
+    else:
+        sess.reset(scene)
     if seed_particles is not None:
         restored = sess.solver.particles.refresh_host_count()
         if restored == 0:
@@ -2076,11 +2084,12 @@ def author_nets_showcase():
     # must hold the whole domain.
     ds.surface_max_dense_dim = p.max_dense_dim
     show_liquid(scene, "NetsShowcase", ns.WATER_COLOR, view="SURFACE")
-    fs.live = True
+    # Not Live and no frame_set here: that would start a solver for the empty
+    # scene, and the Initialize below would then have to fit the old and the new
+    # solver in memory together (twice the 11.8 GiB hero estimate).
     scene.frame_start = 1
     scene.frame_end = ns.FRAMES
     scene.render.fps = ns.FPS
-    scene.frame_set(1)
     # Several tiles, not one box: the planner bounds a source by a cube of its
     # longest side (see nets_showcase.MAX_TILE).
     for i, (lo_t, hi_t) in enumerate(ns.pool_tiles(p), start=1):
@@ -2098,8 +2107,6 @@ def author_nets_showcase():
     for data in ns.collider_meshes():
         obj = make_temple_object(scene, data, materials)
         _colliders.tag_collider(obj, friction=data.friction, restitution=0.0)
-        if data.name in ns.HIDDEN_IN_RENDER:
-            obj.hide_render = True
     add_camera_light(scene, ns.CAMERA_LOCATION, (0.0, 0.0, 0.0))
     look_at(scene.camera, ns.CAMERA_TARGET)
     scene.camera.data.lens = ns.CAMERA_LENS
@@ -2140,6 +2147,8 @@ def build_nets_showcase():
             os.remove(stale_path)
     scene = author_nets_showcase()
     assign_input_identities(scene)
+    if session().solver is not None:
+        bpy.ops.fluidsim.release()
     # The sim stage opens the saved file and initializes through the same
     # admission check, so a refusal here must stop the build: stepping on
     # regardless gave a build that passed and a file that could not be opened.
@@ -2238,7 +2247,7 @@ def build_nets_showcase():
     use_material_shading(scene)
     # Not demos/: check_demo_blends.py fails on any untracked demos/*.blend.
     save_playable("nets_showcase", scene, ns.FRAMES, seed_particles=first,
-                  directory=REVIEW_DEMOS)
+                  directory=REVIEW_DEMOS, fresh_solver=True)
 
 
 # ---------------------------------------------------------------------------

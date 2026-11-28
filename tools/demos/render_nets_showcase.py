@@ -254,6 +254,31 @@ def make_stone_material(name, color, roughness, specular=0.5, coat=0.0):
     return mat
 
 
+def make_glass_material(name):
+    """Clear glass without refraction or shadow: transparent, with Fresnel reflections.
+
+    Real glass would bend the view of the water and fill the shadows with caustic
+    noise; this only adds the faint reflections that make the wall read as glass.
+    """
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    tree = mat.node_tree
+    tree.nodes.clear()
+    out = tree.nodes.new("ShaderNodeOutputMaterial")
+    clear = tree.nodes.new("ShaderNodeBsdfTransparent")
+    gloss = tree.nodes.new("ShaderNodeBsdfGlossy")
+    gloss.inputs["Roughness"].default_value = 0.03
+    fresnel = tree.nodes.new("ShaderNodeFresnel")
+    fresnel.inputs["IOR"].default_value = 1.45
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    tree.links.new(fresnel.outputs["Fac"], mix.inputs["Fac"])
+    tree.links.new(clear.outputs["BSDF"], mix.inputs[1])
+    tree.links.new(gloss.outputs["BSDF"], mix.inputs[2])
+    tree.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+    mat.diffuse_color = (0.8, 0.9, 1.0, 0.1)
+    return mat
+
+
 def add_softbox(name, location, size, strength, target, color=(1.0, 1.0, 1.0)):
     """A big emissive card that lights the splash and shows up in its reflections."""
     from mathutils import Vector
@@ -344,11 +369,17 @@ def setup_look(scene, opts):
     add_softbox("Nets Top", (0.0, 0.0, 1.30), (0.7, 0.7), 40.0, (0.0, 0.0, 0.1))
     # Materials on the collider meshes.
     marble = make_stone_material("Nets Marble", ns.MATERIAL_COLORS["Nets Marble"], 0.18, 0.6, 0.3)
+    glass = make_glass_material("Nets Glass")
     slab = make_stone_material("Nets Slab", ns.MATERIAL_COLORS["Nets Slab"], 0.06, 0.8, 0.0)
     for obj in scene.objects:
         if obj.type != "MESH" or not obj.name.startswith("Nets "):
             continue
-        if obj.name.startswith("Nets Trough"):
+        if obj.name in ns.GLASS_WALLS:
+            obj.data.materials.clear()
+            obj.data.materials.append(glass)
+            obj.hide_render = False
+            obj.visible_shadow = False
+        elif obj.name.startswith("Nets Trough"):
             obj.data.materials.clear()
             obj.data.materials.append(marble)
         elif obj.name == "Nets Slab" or obj.name.startswith("Nets Rim"):
@@ -485,7 +516,6 @@ def run_render(opts):
             mesh.update()
             obj = bpy.data.objects.new(data.name, mesh)
             scene.collection.objects.link(obj)
-            obj.hide_render = data.name in ns.HIDDEN_IN_RENDER
         cam = bpy.data.objects.new("Demo Cam", bpy.data.cameras.new("Demo Cam"))
         scene.collection.objects.link(cam)
         cam.location = ns.CAMERA_LOCATION

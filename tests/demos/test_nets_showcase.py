@@ -65,7 +65,7 @@ def _builder_source():
         return fh.read()
 
 
-def test_trough_walls_are_taller_than_the_splash_and_the_front_is_hidden():
+def test_trough_walls_are_taller_than_the_splash_and_the_front_is_glass():
     # GPU runs saw spray up to 0.28 m with low walls; the walls must clear it.
     assert ns.TROUGH_TOP_FRONT == ns.TROUGH_TOP_BACK == ns.TROUGH_TOP_END
     assert ns.TROUGH_TOP_FRONT >= 0.30
@@ -73,10 +73,10 @@ def test_trough_walls_are_taller_than_the_splash_and_the_front_is_hidden():
     names = [m.name for m in ns.trough_wall_meshes()]
     assert names == ["Nets Trough Front", "Nets Trough Back", "Nets Trough Left",
                      "Nets Trough Right"]
-    assert ns.HIDDEN_IN_RENDER == ("Nets Trough Front",)
-    # The builder hides it from the render but keeps it as a collider.
-    src = _builder_source()
-    assert "obj.hide_render = True" in src and "ns.HIDDEN_IN_RENDER" in src
+    # The camera-side wall is clear glass in the render, not hidden.
+    assert ns.GLASS_WALLS == ("Nets Trough Front",)
+    assert "hide_render" not in _builder_source().split("def build_nets_showcase")[0].split(
+        "def author_nets_showcase")[1].split("make_temple_object")[1].split("add_camera_light")[0]
 
 
 def test_trough_keeps_water_far_from_the_domain_walls():
@@ -294,3 +294,15 @@ def test_pool_tiles_cover_the_pool_once_and_keep_each_source_small():
 def test_build_stops_when_initialize_is_refused():
     src = _builder_source()
     assert 'bpy.ops.fluidsim.initialize() != {"FINISHED"}' in src
+
+
+def test_authoring_does_not_start_a_solver_before_the_build_initializes():
+    src = _builder_source()
+    author = src.split("def author_nets_showcase")[1].split("def build_nets_showcase")[0]
+    assert "frame_set(" not in author and "fs.live = True" not in author
+    assert "bpy.ops.fluidsim.release()" in src.split("def build_nets_showcase")[1]
+
+
+def test_playback_save_rebuilds_the_solver_instead_of_resetting_it():
+    # A Reset needs the old and the new solver in memory together.
+    assert "fresh_solver=True" in _builder_source().split("def build_nets_showcase")[1]

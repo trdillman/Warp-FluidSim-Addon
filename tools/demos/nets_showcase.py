@@ -110,14 +110,14 @@ WALL_THICKNESS = 0.008
 # Trough wall height above the pool. The walls are taller than any spray the
 # three drops throw (the first GPU runs saw 0.28 m with the walls at 0.05 m, and
 # the water ran out over the slab to the domain walls). The camera-side wall is
-# left out of the render (see HIDDEN_IN_RENDER): it holds the water like a pane
-# of clear glass, so the camera sees the splash without a wall in the way.
+# rendered as clear glass (see GLASS_WALLS), so the camera sees the splash
+# through it like the front of a tank.
 TROUGH_HEIGHT = 0.30
 TROUGH_TOP_FRONT = POOL_TOP + TROUGH_HEIGHT
 TROUGH_TOP_BACK = POOL_TOP + TROUGH_HEIGHT
 TROUGH_TOP_END = POOL_TOP + TROUGH_HEIGHT
 WALL_TOP = TROUGH_TOP_BACK
-HIDDEN_IN_RENDER = ("Nets Trough Front",)
+GLASS_WALLS = ("Nets Trough Front",)
 MIN_DROP_VOXELS = 18
 
 
