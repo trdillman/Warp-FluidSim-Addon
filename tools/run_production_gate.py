@@ -153,6 +153,8 @@ REPORT_ACCEPTANCE = (
      "artifacts/fspt_async_acceptance.json", "FSPT-ASYNC-BACKEND-PASS"),
     ("FSPT final device surface", "tests/acceptance/blender_fspt_device_surface_acceptance.py",
      "artifacts/fspt_device_surface_acceptance.json", "FSPT-DEVICE-SURFACE-PASS"),
+    ("FSPT bounded device surface pool", "tests/acceptance/blender_fspt_surface_pool_acceptance.py",
+     "artifacts/fspt_surface_pool_acceptance.json", "FSPT-SURFACE-POOL-PASS"),
     ("paused cache output acceptance", "tests/acceptance/blender_paused_cache_output_acceptance.py",
      "artifacts/paused_cache_output_acceptance.json", "PAUSED-CACHE-OUTPUT-ACCEPTANCE-PASS"),
     ("allocation accounting acceptance", "tests/acceptance/blender_allocation_accounting_acceptance.py",
