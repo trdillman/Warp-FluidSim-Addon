@@ -54,6 +54,12 @@ def test_blender_starts_normally_so_the_installed_extension_is_on():
     assert command[-2:] == ["--python", "boot.py"]
 
 
+def test_builder_command_lets_blender_see_pythonpath():
+    command = ld.build_builder_command(Path("blender"), "upres_cove")
+    assert "--python-use-system-env" in command
+    assert command.index("--python-use-system-env") < command.index("--python")
+
+
 def test_nets_showcase_switches_the_surface_backend_on():
     assert ld.DEMO_ENV["nets_showcase"] == {ns.BACKEND_ENV: ns.BACKEND}
 

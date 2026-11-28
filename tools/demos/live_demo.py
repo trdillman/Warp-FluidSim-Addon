@@ -77,8 +77,9 @@ def blender_command(blender: Path, blend: Path, boot: Path) -> list[str]:
 
 
 def build_builder_command(blender: Path, demo: str) -> list[str]:
-    return [str(blender), "--background", "--factory-startup", "--offline-mode",
-            "--python", str(REPO / "tools" / "demos" / "build_demo_scenes.py"), "--", demo]
+    # --python-use-system-env lets Blender's Python see the PYTHONPATH that holds Warp.
+    return [str(blender), "--python-use-system-env", "--background", "--factory-startup",
+            "--offline-mode", "--python", str(REPO / "tools" / "demos" / "build_demo_scenes.py"), "--", demo]
 
 
 def launch_environment(demo: str, profile: Path, config: Path, base=None) -> dict[str, str]:
@@ -220,6 +221,7 @@ def main(argv=None) -> int:
         package = build_package(blender, profile)
         install_package(blender, package, profile, env)
         report = args.report.resolve() if args.report else (profile / "live_status.json")
+        report.parent.mkdir(parents=True, exist_ok=True)
         write_config(profile / "config.json", demo=args.demo, report=report, profile=profile,
                      shading=args.shading, camera_view=not args.no_camera_view)
         print(f"profile: {profile}\nstatus file: {report}", flush=True)

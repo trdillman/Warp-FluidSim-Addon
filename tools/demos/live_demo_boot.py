@@ -30,10 +30,14 @@ def write():
     # Write a whole file beside the report, then swap it in, so a reader never sees half a file.
     temporary = REPORT.with_name(REPORT.name + ".tmp")
     try:
+        REPORT.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_text(json.dumps(status, indent=2, default=str), encoding="utf-8")
         os.replace(temporary, REPORT)
-    except OSError:
-        pass
+    except OSError as exc:
+        # Do not lose the diagnostic silently: say so in Blender's console, once.
+        if not state.get("write_failed"):
+            state["write_failed"] = True
+            print(f"FLUIDSIM-LIVE-DEMO could not write {REPORT}: {exc!r}", flush=True)
 
 
 def find_addon_module():
