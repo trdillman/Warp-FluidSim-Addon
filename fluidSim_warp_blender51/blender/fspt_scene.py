@@ -5,7 +5,7 @@ Its record tests do not qualify actual Blender extraction or material appearance
 """
 import numpy as np
 
-from ..fspt.contracts import CameraSnapshot, Material, SceneSnapshot
+from ..fspt.contracts import AssetSpan, CameraSnapshot, Material, SceneSnapshot
 
 
 class UnsupportedSceneError(RuntimeError):
@@ -108,6 +108,16 @@ def _validate_evaluated_geometry(obj):
             _fail(obj, "anonymous geometry instances are not supported by P1; use Realize Instances")
 
 
+def _asset_key(instance, id_token):
+    # Original ID survives dependency-graph reevaluation, even when Blender
+    # replaces the evaluated mesh. A persistent path distinguishes copies of
+    # the same object (also when they have identical transforms).
+    object_id = id_token(instance.object.original)
+    if not instance.is_instance:
+        return (0, object_id)
+    return (1, object_id, id_token(instance.parent) or 0, *instance.persistent_id)
+
+
 def extract_scene(depsgraph, for_viewport=False):
     from .fspt_bridge import SurfaceNotReadyError, capture_publications, validate_publications
     from .scene_access import active_domain_object
@@ -122,6 +132,7 @@ def extract_scene(depsgraph, for_viewport=False):
         _fail(layer, "view-layer material/world overrides are not supported by P1")
     world = world_color(scene.world)
     vertices, triangles, assignments, materials = [], [], [], [Material()]
+    spans = []
     material_cache = {}
     captured_outputs = set()
     expected_outputs = {p.object_token for p in publications}
@@ -181,6 +192,7 @@ def extract_scene(depsgraph, for_viewport=False):
                         materials.append(translate_material(material))
                     index = material_cache[identity]
                 ids[slots == slot] = index
+            spans.append(AssetSpan(_asset_key(instance, id_token), len(points), len(faces)))
             vertices.append(points)
             triangles.append(faces + vertex_offset)
             assignments.append(ids)
@@ -194,7 +206,7 @@ def extract_scene(depsgraph, for_viewport=False):
     return SceneSnapshot(np.concatenate(vertices) if vertices else [],
                          np.concatenate(triangles) if triangles else [],
                          np.concatenate(assignments) if assignments else [],
-                         tuple(materials), world, int(scene.frame_current), publications)
+                         tuple(materials), world, int(scene.frame_current), publications, tuple(spans))
 
 
 def camera_snapshot(depsgraph, width, height):

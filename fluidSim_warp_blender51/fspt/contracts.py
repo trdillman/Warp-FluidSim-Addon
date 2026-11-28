@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass, field, is_dataclass
+from operator import index
 
 import numpy as np
 
@@ -56,6 +57,58 @@ def _owned(value, dtype, shape, name):
     return np.frombuffer(array.tobytes(), dtype=dtype).reshape(array.shape)
 
 
+@dataclass(frozen=True)
+class AssetSpan:
+    """One evaluated instance's contiguous contribution to flattened geometry."""
+    key: tuple[int, ...]
+    vertex_count: int
+    triangle_count: int
+
+    def __post_init__(self):
+        object.__setattr__(self, "key", tuple(index(v) for v in self.key))
+        for name in ("vertex_count", "triangle_count"):
+            object.__setattr__(self, name, index(getattr(self, name)))
+        if not self.key or self.vertex_count < 0 or self.triangle_count < 0:
+            raise ValueError("invalid asset span")
+
+
+@dataclass(frozen=True, eq=False)
+class GeometryAsset:
+    key: tuple[int, ...]
+    # Offsets/counts are in buffer elements (vec3 positions or scalar indices).
+    position: tuple[int, int, bytes]
+    index: tuple[int, int, bytes]
+
+
+def _geometry_assets(vertices, triangles, spans):
+    if not spans:
+        return ()  # Legacy snapshots use the original full-buffer upload path.
+    assets, seen = [], set()
+    start = face = 0
+    for span in spans:
+        if not isinstance(span, AssetSpan) or span.key in seen:
+            raise ValueError("invalid or duplicate scene asset identity")
+        seen.add(span.key)
+        end, stop = start + span.vertex_count, face + span.triangle_count
+        if end > len(vertices) or stop > len(triangles):
+            raise ValueError("scene asset span exceeds flattened geometry")
+        faces = triangles[face:stop]
+        if faces.size and (faces.min() < start or faces.max() >= end):
+            raise ValueError("triangle index crosses asset boundary")
+        if end > start or stop > face:
+            # Hash the exact uploaded global indices. A vertex-offset shift can
+            # change their bytes even when the local connectivity is identical.
+            points = vertices[start:end]
+            assets.append(GeometryAsset(
+                span.key,
+                (start, len(points), hashlib.sha256(points.ravel().view(np.uint8)).digest()),
+                (3 * face, faces.size, hashlib.sha256(faces.ravel().view(np.uint8)).digest())))
+        start, face = end, stop
+    if start != len(vertices) or face != len(triangles):
+        raise ValueError("scene asset spans must cover all geometry")
+    return tuple(assets)
+
+
 @dataclass(frozen=True, eq=False)
 class SceneSnapshot:
     vertices: np.ndarray
@@ -65,6 +118,8 @@ class SceneSnapshot:
     world: tuple[float, float, float]
     frame: int
     publications: tuple = ()
+    asset_spans: tuple[AssetSpan, ...] = ()
+    assets: tuple[GeometryAsset, ...] = field(init=False)
     digest: str = field(init=False)
     geometry_digest: str = field(init=False)
     shading_digest: str = field(init=False)
@@ -89,6 +144,10 @@ class SceneSnapshot:
         if any(not is_dataclass(p) or not p.__dataclass_params__.frozen for p in publications):
             raise ValueError("surface publications must be immutable records")
         object.__setattr__(self, "publications", publications)
+        spans = tuple(self.asset_spans)
+        assets = _geometry_assets(vertices, triangles, spans)
+        object.__setattr__(self, "asset_spans", spans)
+        object.__setattr__(self, "assets", assets)
         geometry = hashlib.sha256()
         for array in (vertices, triangles):
             geometry.update(str(array.shape).encode())
@@ -99,6 +158,8 @@ class SceneSnapshot:
         object.__setattr__(self, "geometry_digest", geometry.hexdigest())
         object.__setattr__(self, "shading_digest", shading.hexdigest())
         digest = hashlib.sha256(geometry.digest() + shading.digest())
+        if spans:
+            digest.update(json.dumps([(s.key, s.vertex_count, s.triangle_count) for s in spans]).encode())
         digest.update(json.dumps([world, int(self.frame), [asdict(p) for p in publications]],
                                  allow_nan=False).encode())
         object.__setattr__(self, "digest", digest.hexdigest())

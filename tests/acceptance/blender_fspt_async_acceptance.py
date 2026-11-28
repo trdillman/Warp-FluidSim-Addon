@@ -122,7 +122,9 @@ def main():
             np.testing.assert_array_equal(reduced.pixels, smaller.pixels)
             assert hashlib.sha256(frame.pixels.tobytes()).hexdigest() == old_hash
             counts = dict(reduced.statistics)
-            assert counts["image_allocations"] == counts["mesh_builds"] == counts["geometry_uploads"] == 1
+            assert counts["image_allocations"] == 1
+            assert counts["mesh_builds"] == counts["geometry_uploads"] == 1
+            assert counts["geometry_array_allocations"] == 2 and len(snapshot.assets) > 1
             report["counts_after_resize"] = counts
 
             p1.checkpoint(path, report, "partial_copy_failure_then_retry")

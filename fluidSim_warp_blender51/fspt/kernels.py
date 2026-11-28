@@ -4,6 +4,8 @@ Software BVH traversal through Warp; no OptiX/RTX claim. BSDF-only sampling
 and a hard path-length limit are deliberate P1 limits. MIS, explicit light
 sampling, rough transmission and nested media are not implemented here.
 """
+# Warp uses explicit scalar constructors to mark mutable values in dynamic loops.
+# ruff: noqa: UP018
 import warp as wp
 
 

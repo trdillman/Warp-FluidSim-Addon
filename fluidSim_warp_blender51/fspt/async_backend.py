@@ -80,6 +80,7 @@ class _Job:
     camera: object
     key: tuple
     samples: int
+    prepared_scene: bool = False
     producer_ready: object = None
     rendered: object = None
     copied: object = None
@@ -108,9 +109,9 @@ class AsyncCudaBackend(CudaBackend):
         if count <= self._capacity:
             return
         wp = self.wp
-        accumulation = wp.empty(count, dtype=wp.vec3, device=self.device)
-        output = wp.empty(count, dtype=wp.vec4, device=self.device)
-        pinned = wp.empty(count, dtype=wp.vec4, device="cpu", pinned=True)
+        accumulation = self._retain(wp.empty(count, dtype=wp.vec3, device=self.device))
+        output = self._retain(wp.empty(count, dtype=wp.vec4, device=self.device))
+        pinned = self._retain(wp.empty(count, dtype=wp.vec4, device="cpu", pinned=True))
         self.accumulation, self.output, self._pinned = accumulation, output, pinned
         self._capacity = count
         self.statistics["image_allocations"] += 1
@@ -155,7 +156,9 @@ class AsyncCudaBackend(CudaBackend):
             with wp.ScopedStream(self._prepare_stream, sync_enter=False, sync_exit=False):
                 if self.scene_digest != scene.digest:
                     self._set_scene(scene)
+                    job.prepared_scene = True
                 self._ensure_storage(count)
+                self._retain_dispatch(self._pinned)
                 if self.history.begin(key):
                     self.accumulation[:count].zero_()
                 job.producer_ready = self._render_stream.record_checked(self._prepare_stream)
@@ -217,6 +220,7 @@ class AsyncCudaBackend(CudaBackend):
 
     def _retire(self):
         job = self._job
+        self._pending_resources.clear()
         self.arbiter.release(job.lease)
         job.failure = None
         self.owner.quarantined = None
@@ -239,6 +243,9 @@ class AsyncCudaBackend(CudaBackend):
         except BaseException:
             self.owner.quarantined = self
             raise
+        if self._job.prepared_scene:
+            # Queued uploads/builds may have failed after Warp returned.
+            self._forget_scene()
         self._retire()
 
     def render(self, scene, camera, width, height, *, samples=1, max_bounces=6, seed=0):
@@ -260,10 +267,10 @@ class AsyncCudaBackend(CudaBackend):
             self.arbiter.cancel(self.owner)
             if self.pending:
                 self._abort(RuntimeError("FSPT submission cancelled by close"))
-            self.mesh = self.arrays = self.accumulation = self.output = self._pinned = None
+            self._forget_scene()
+            self.accumulation = self.output = self._pinned = None
             retirement = getattr(self._render_stream, "retirement", None)
             self._prepare_stream = self._render_stream = None
-            self.scene_digest = self.geometry_digest = self.shading_digest = None
             self._capacity = 0
             self.history = AccumulationState()
             self.closed = True
