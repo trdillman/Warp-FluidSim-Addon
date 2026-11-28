@@ -1906,6 +1906,7 @@ def build_tsunami_parthenon():
         "preview_frame": TSUNAMI_PREVIEW_FRAME,
         "whitewater_enabled": False,
         "build_checks": {str(k): v for k, v in sorted(checks.items())},
+        "build_active_leaves": {str(k): v for k, v in sorted(leaf_series.items())},
         "build_frames": tp.FRAMES,
         "build_peak_particles": int(max(series["particle_count"])),
     })
@@ -2163,7 +2164,11 @@ def build_nets_showcase():
     sess = session()
     checks = {}
 
+    leaf_series = {}
+
     def record(frame):
+        # Active leaves after this step: the number the leaf capacity must cover.
+        leaf_series[frame] = int(scene.fluidsim.stat_voxels) // 512
         if frame == NETS_SHOWCASE_PREVIEW_FRAME:
             # Pale, glassy water: far less blue than the other demos' water.
             render_preview("nets_showcase", min_water_fraction=0.005,
@@ -2200,6 +2205,8 @@ def build_nets_showcase():
         f"mean step {np.mean(series['step_ms']):.0f} ms")
     if sess.solver is None:
         raise RuntimeError("nets_showcase: solver released during the build")
+    log(f"nets_showcase [{p.name}]: active leaves per frame (capacity {p.leaf_capacity}): "
+        + " ".join(f"{k}:{v}" for k, v in sorted(leaf_series.items())))
     for frame, check in checks.items():
         if check["surface_backend"] != ns.BACKEND:
             raise RuntimeError(
@@ -2244,6 +2251,7 @@ def build_nets_showcase():
         "whitewater_enabled": False,
         "fidelity": ns.fidelity(p),
         "build_checks": {str(k): v for k, v in sorted(checks.items())},
+        "build_active_leaves": {str(k): v for k, v in sorted(leaf_series.items())},
         "build_frames": NETS_SHOWCASE_BUILD_FRAMES,
         "build_peak_particles": int(max(series["particle_count"])),
         "build_mean_step_ms": float(np.mean(series["step_ms"])),

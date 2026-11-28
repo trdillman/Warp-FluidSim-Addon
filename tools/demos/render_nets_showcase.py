@@ -154,7 +154,7 @@ def run_sim(opts):
     if os.path.exists(manifest):
         os.remove(manifest)
     series = {"frames": [], "particles": [], "step_ms": [], "substeps": [],
-              "verts": [], "tris": [], "backend": [], "wall_s": []}
+              "verts": [], "tris": [], "backend": [], "wall_s": [], "leaves": []}
     t_all = time.perf_counter()
     scene.frame_set(scene.frame_start)
     # The solver is sequential: step from the first frame, keep what is asked for.
@@ -196,12 +196,14 @@ def run_sim(opts):
         series["particles"].append(int(solver.particles.refresh_host_count()))
         series["step_ms"].append(float(fs.stat_step_ms))
         series["substeps"].append(int(fs.stat_substeps))
+        series["leaves"].append(int(fs.stat_voxels) // 512)
         series["verts"].append(int(len(verts)))
         series["tris"].append(int(len(tris)))
         series["backend"].append(backend)
         series["wall_s"].append(time.perf_counter() - t0)
         log(f"frame {frame}/{end}: {series['particles'][-1]:,} particles, "
-            f"{len(tris):,} tris, step {series['step_ms'][-1]:.0f} ms, "
+            f"{len(tris):,} tris, {series['leaves'][-1]:,} leaves, "
+            f"step {series['step_ms'][-1]:.0f} ms, "
             f"{series['wall_s'][-1]:.1f} s, backend {backend}")
     series["total_s"] = time.perf_counter() - t_all
     series["preset"] = ns.preset().name
