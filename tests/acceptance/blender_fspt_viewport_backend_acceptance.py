@@ -309,6 +309,72 @@ def run_empty_generation(modules, helpers, report):
         pool.close()
 
 
+def _guard_live_graph(graph, surface, id_token, calls):
+    """Guard the fluid object while leaving real static RNA extraction available."""
+    class MeshGuard:
+        def __init__(self, mesh):
+            self.mesh = mesh
+        def __getattr__(self, name):
+            if name in {'vertices', 'loop_triangles', 'loops', 'polygons', 'edges'}:
+                calls.append(name)
+                raise AssertionError('fluid bulk mesh array was accessed')
+            return getattr(self.mesh, name)
+
+    class ObjectGuard:
+        def __init__(self, obj, original=None):
+            self.obj, self._original = obj, original
+        @property
+        def original(self):
+            return self if self._original is None else self._original
+        @property
+        def data(self):
+            return MeshGuard(self.obj.data)
+        def __getattr__(self, name):
+            if name in {'to_mesh', 'evaluated_geometry'}:
+                calls.append(name)
+                raise AssertionError('fluid evaluated geometry was accessed')
+            return getattr(self.obj, name)
+
+
+    class StaticObject:
+        def __init__(self, obj):
+            self.obj = obj
+
+        def to_mesh(self, *, preserve_all_data_layers=False, depsgraph=None):
+            # Blender's RNA argument parser rejects the Python graph guard.
+            native_graph = graph if depsgraph is guarded_graph else depsgraph
+            return self.obj.to_mesh(preserve_all_data_layers=preserve_all_data_layers,
+                                    depsgraph=native_graph)
+
+        def __getattr__(self, name):
+            return getattr(self.obj, name)
+
+    guarded = ObjectGuard(surface)
+    output_token = id_token(surface)
+
+    class InstanceGuard:
+        def __init__(self, instance):
+            self.instance = instance
+        @property
+        def object(self):
+            value = self.instance.object
+            return (ObjectGuard(value, guarded)
+                    if id_token(value.original) == output_token else StaticObject(value))
+        def __getattr__(self, name):
+            return getattr(self.instance, name)
+
+    class GraphGuard:
+        scene = graph.scene
+        view_layer = graph.view_layer
+        @property
+        def object_instances(self):
+            # Do not retain Blender's transient depsgraph iterator values.
+            for instance in graph.object_instances:
+                yield InstanceGuard(instance)
+    guarded_graph = GraphGuard()
+    return guarded_graph, guarded
+
+
 def run_live_capture(modules, helpers, report, folder):
     """Actual Blender RNA plus controlled selection; not the runtime producer hook."""
     import bpy
@@ -357,52 +423,7 @@ def run_live_capture(modules, helpers, report, folder):
             vertex_count=asset.vertex_count, triangle_count=asset.triangle_count)
         calls = []
 
-        class MeshGuard:
-            def __init__(self, mesh):
-                self.mesh = mesh
-            def __getattr__(self, name):
-                if name in {'vertices', 'loop_triangles', 'loops', 'polygons', 'edges'}:
-                    calls.append(name)
-                    raise AssertionError('fluid bulk mesh array was accessed')
-                return getattr(self.mesh, name)
-
-        class ObjectGuard:
-            def __init__(self, obj, original=None):
-                self.obj, self._original = obj, original
-            @property
-            def original(self):
-                return self if self._original is None else self._original
-            @property
-            def data(self):
-                return MeshGuard(self.obj.data)
-            def __getattr__(self, name):
-                if name in {'to_mesh', 'evaluated_geometry'}:
-                    calls.append(name)
-                    raise AssertionError('fluid evaluated geometry was accessed')
-                return getattr(self.obj, name)
-
-        guarded = ObjectGuard(surface)
-        output_token = publication.id_token(surface)
-
-        class InstanceGuard:
-            def __init__(self, instance):
-                self.instance = instance
-            @property
-            def object(self):
-                value = self.instance.object
-                return (ObjectGuard(value, guarded)
-                        if publication.id_token(value.original) == output_token else value)
-            def __getattr__(self, name):
-                return getattr(self.instance, name)
-
-        class GraphGuard:
-            scene = graph.scene
-            view_layer = graph.view_layer
-            @property
-            def object_instances(self):
-                # Do not retain Blender's transient depsgraph iterator values.
-                for instance in graph.object_instances:
-                    yield InstanceGuard(instance)
+        guarded_graph, guarded = _guard_live_graph(graph, surface, publication.id_token, calls)
 
         # Challenge the guard itself before qualifying its protected capture.
         for forbidden in ('to_mesh', 'evaluated_geometry'):
@@ -424,7 +445,7 @@ def run_live_capture(modules, helpers, report, folder):
         assert hasattr(bridge, '_device_selection'), 'channel-aware bridge is required'
         with patch.object(bridge, '_surface_object', lambda _: guarded), patch.object(
                 bridge, '_device_selection', lambda *_: selection):
-            captured = adapter.capture_device_scene(GraphGuard(), selection)
+            captured = adapter.capture_device_scene(guarded_graph, selection)
         assert not calls, 'fluid mesh guard was reached during protected capture'
         camera = modules('fspt.contracts').CameraSnapshot(
             [[.28, 0, 0, .25], [0, .28, 0, .25], [0, 0, 1, 0], [0, 0, 0, 1]])
