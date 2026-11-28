@@ -131,6 +131,17 @@ def run_sim(opts):
     scene = bpy.context.scene
     if not scene.fluidsim.live:
         raise SystemExit("the saved scene is not in Live mode")
+    # Invalidate the last capture before anything can fail: its meshes and
+    # manifest (another preset or frame range) must not be taken for this run's
+    # if Initialize or a frame fails part-way.
+    mesh_dir = os.path.join(opts["out"], "meshes")
+    os.makedirs(mesh_dir, exist_ok=True)
+    for name in os.listdir(mesh_dir):
+        if name.endswith(".npy"):
+            os.remove(os.path.join(mesh_dir, name))
+    manifest = os.path.join(opts["out"], "sim_series.json")
+    if os.path.exists(manifest):
+        os.remove(manifest)
     # Start the solver here, once. The first frame_set would otherwise start it
     # and then Reset it for the start frame, which plans the old and the new
     # solver together and is refused at hero resolution on a 16 GB card.
@@ -143,16 +154,6 @@ def run_sim(opts):
     start, end = scene.frame_start, scene.frame_end
     if opts["frames"]:
         start, end = max(start, opts["frames"][0]), min(end, opts["frames"][1])
-    mesh_dir = os.path.join(opts["out"], "meshes")
-    os.makedirs(mesh_dir, exist_ok=True)
-    # Meshes and the manifest of an earlier run (another preset or frame range)
-    # must not leak into this one.
-    for name in os.listdir(mesh_dir):
-        if name.endswith(".npy"):
-            os.remove(os.path.join(mesh_dir, name))
-    manifest = os.path.join(opts["out"], "sim_series.json")
-    if os.path.exists(manifest):
-        os.remove(manifest)
     series = {"frames": [], "particles": [], "step_ms": [], "substeps": [],
               "verts": [], "tris": [], "backend": [], "wall_s": [], "leaves": []}
     t_all = time.perf_counter()
@@ -562,14 +563,19 @@ def run_render(opts):
 
     frames = sorted(int(f[6:10]) for f in os.listdir(mesh_dir) if f.startswith("verts_"))
     manifest = os.path.join(out, "sim_series.json")
-    if os.path.exists(manifest):
-        # Only the frames the last simulation recorded, never stray older meshes.
-        with open(manifest, encoding="utf-8") as fh:
-            recorded = set(json.load(fh)["frames"])
-        frames = [f for f in frames if f in recorded]
+    if not os.path.exists(manifest):
+        raise SystemExit(
+            f"no sim_series.json in {out}: the last simulation did not finish "
+            "(or never ran); run the sim stage first")
+    # Only the frames the last simulation recorded, never stray older meshes.
+    with open(manifest, encoding="utf-8") as fh:
+        recorded = set(json.load(fh)["frames"])
+    frames = [f for f in frames if f in recorded]
     if opts["frames"]:
         frames = [f for f in frames if opts["frames"][0] <= f <= opts["frames"][1]]
     if opts["still"] is not None:
+        if opts["still"] not in recorded:
+            raise SystemExit(f"frame {opts['still']} is not in the last simulation's capture")
         frames = [opts["still"]]
     if not frames:
         raise SystemExit(f"no meshes in {mesh_dir}; run the sim stage first")

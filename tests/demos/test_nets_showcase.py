@@ -345,3 +345,13 @@ def test_sim_stage_starts_the_solver_once_without_a_reset():
     assert 'bpy.ops.fluidsim.initialize() != {"FINISHED"}' in run_sim
     assert "first.last_frame = scene.frame_start" in run_sim
     assert run_sim.index("first.last_frame") < run_sim.index("scene.frame_set(")
+
+
+def test_old_capture_is_invalidated_before_initialize_and_render_needs_a_manifest():
+    with open(os.path.join(REPO, "tools", "demos", "render_nets_showcase.py"), encoding="utf-8") as fh:
+        renderer = fh.read()
+    sim = renderer.split("def run_sim")[1].split("def ")[0]
+    assert sim.index("os.remove(manifest)") < sim.index("bpy.ops.fluidsim.initialize()")
+    render = renderer.split("not os.path.exists(manifest)")[1]
+    assert "raise SystemExit" in render.split("recorded = set")[0]
+    assert "not in the last simulation's capture" in renderer
