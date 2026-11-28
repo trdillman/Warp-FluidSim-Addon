@@ -67,7 +67,7 @@ def _builder_source():
 
 def test_trough_walls_are_taller_than_the_splash_and_the_front_is_glass():
     # The spray of a v m/s impact rises about v^2 / 2g (0.28 m at the first run's
-    # 2.35 m/s); the walls clear twice that for the 1.4 m/s impacts.
+    # 2.35 m/s); the walls clear twice that for the 1.2 m/s impacts.
     assert ns.TROUGH_TOP_FRONT == ns.TROUGH_TOP_BACK == ns.TROUGH_TOP_END
     fastest = max(d.speed + ns.G * d.impact_time for d in ns.DROPS)
     assert ns.TROUGH_HEIGHT >= 2.0 * fastest ** 2 / (2.0 * ns.G)

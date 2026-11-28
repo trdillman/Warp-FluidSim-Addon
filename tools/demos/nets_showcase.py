@@ -54,7 +54,7 @@ PRESET_ENV = "NETS_SHOWCASE_PRESET"
 
 FPS = 24
 # Slow motion: one film frame is this fraction of 1/24 s of liquid time.
-TIME_SCALE = 0.30
+TIME_SCALE = 0.20
 FRAMES = 144
 MAX_SUBSTEPS = 32
 PARTICLES_PER_VOXEL = 8.0
@@ -78,7 +78,7 @@ class Preset:
 
 
 PRESETS = {
-    HERO: Preset(HERO, voxel=0.001, leaf_capacity=49152,
+    HERO: Preset(HERO, voxel=0.001, leaf_capacity=52000,
                  max_particles=6_700_000, max_dense_dim=640),
     DRAFT: Preset(DRAFT, voxel=0.002, leaf_capacity=16384,
                   max_particles=1_300_000, max_dense_dim=320),
@@ -96,14 +96,14 @@ def preset(name=None):
 # ---------------------------------------------------------------------------
 # Layout (metres). x is the long axis; the trough is centred in the domain.
 
-DOMAIN_HX, DOMAIN_HY = 0.30, 0.14
+DOMAIN_HX, DOMAIN_HY = 0.30, 0.13
 DOMAIN_LO = (-DOMAIN_HX, -DOMAIN_HY, 0.0)
-DOMAIN_HI = (DOMAIN_HX, DOMAIN_HY, 0.34)
+DOMAIN_HI = (DOMAIN_HX, DOMAIN_HY, 0.30)
 
 SLAB_TOP = 0.016         # the floor the pool sits on (hero: 16 voxels above the domain floor)
 SLAB_BELOW = 0.05        # collider reaches below the domain floor
 SLAB_OVERHANG = 0.006    # past the outer face of the trough walls
-POOL_HX, POOL_HY = 0.18, 0.10   # inner half sizes of the trough
+POOL_HX, POOL_HY = 0.15, 0.08   # inner half sizes of the trough
 POOL_DEPTH = 0.008      # a thin film: every pool voxel holds particles, see expected_particles
 POOL_TOP = SLAB_TOP + POOL_DEPTH
 WALL_THICKNESS = 0.008
@@ -112,7 +112,7 @@ WALL_THICKNESS = 0.008
 # at 0.05 m, and the water ran out over the slab to the domain walls). The camera-side wall is
 # rendered as clear glass (see GLASS_WALLS), so the camera sees the splash
 # through it like the front of a tank.
-TROUGH_HEIGHT = 0.22
+TROUGH_HEIGHT = 0.18
 TROUGH_TOP_FRONT = POOL_TOP + TROUGH_HEIGHT
 TROUGH_TOP_BACK = POOL_TOP + TROUGH_HEIGHT
 TROUGH_TOP_END = POOL_TOP + TROUGH_HEIGHT
@@ -143,21 +143,21 @@ class Drop:
         return self.center[2] + self.radius
 
 
-# Biggest first, left to right. All three land at about 1.4 m/s, gently, because
+# Biggest first, left to right. All three land at about 1.2 m/s, gently, because
 # the splash height (and with it the wall height, the domain height and the leaf
 # capacity) grows with the square of the speed: the first run's 2.0-2.35 m/s
 # splashes threw spray 0.28 m up. The later drops are thrown UP (negative speed)
-# so they come down late and slowly. Impacts at about frames 9, 16 and 20
-# (liquid time per frame is TIME_SCALE / FPS = 12.5 ms).
+# so they come down late and slowly. Impacts at about frames 11, 21 and 27
+# (liquid time per frame is TIME_SCALE / FPS = 8.3 ms).
 DROPS = (
-    Drop("Nets Drop A", (-0.130, 0.000), 0.028, 0.40, 0.102),
-    Drop("Nets Drop B", (0.000, 0.015), 0.020, -0.46, 0.190),
-    Drop("Nets Drop C", (0.130, -0.020), 0.016, -0.95, 0.240),
+    Drop("Nets Drop A", (-0.105, 0.000), 0.026, 0.40, 0.082),
+    Drop("Nets Drop B", (0.000, 0.012), 0.020, -0.46, 0.169),
+    Drop("Nets Drop C", (0.105, -0.016), 0.016, -0.95, 0.219),
 )
 
 # Camera for a 16:9 frame: at the top of the trough walls, looking along its side.
-CAMERA_LOCATION = (0.0, -1.00, 0.32)
-CAMERA_TARGET = (0.0, 0.0, 0.17)
+CAMERA_LOCATION = (0.0, -0.95, 0.26)
+CAMERA_TARGET = (0.0, 0.0, 0.12)
 CAMERA_LENS = 45.0
 
 WATER_COLOR = (0.55, 0.80, 0.95, 1.0)
