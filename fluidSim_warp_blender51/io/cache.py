@@ -12,18 +12,18 @@ collider at that frame (``source_frame_stamp``) and carries the sparse
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
-from enum import Enum
 import hashlib
-import json
 import io
+import json
 import math
 import os
 import pickle
 import struct
-from pathlib import Path
 import tempfile
 import zipfile
+from dataclasses import asdict, is_dataclass
+from enum import Enum
+from pathlib import Path
 
 import numpy as np
 
@@ -37,13 +37,13 @@ from ..sim.attributes import (
     validate_attribute_values,
 )
 from ..sim.whitewater_types import validate_type_values
-from .fsutil import apply_umask_mode, fsync_directory
 from .cache_schema import (
     LEAF_DIM,
     LEGACY_2X_CACHE_MESSAGE,
     LEGACY_2X_FORMAT_VERSION,
     LegacyCacheFormatError,
 )
+from .fsutil import apply_umask_mode, fsync_directory
 
 CACHE_FORMAT_VERSION = 3
 INPUT_IDENTITY_SCHEMA_VERSION = 2
@@ -760,6 +760,20 @@ def write_frame_v3_atomic(
     return path, digest, size
 
 
+class VerifiedCacheFrame(dict):
+    """Unchanged cache payload plus the identity of its verified bytes."""
+
+    __slots__ = ("_cache_identity",)
+
+    def __init__(self, payload, *, cache_identity: tuple[str, str]):
+        super().__init__(payload)
+        self._cache_identity = cache_identity
+
+    @property
+    def cache_identity(self) -> tuple[str, str]:
+        return self._cache_identity
+
+
 def _read_v3_frame(base_dir: str, frame: int) -> dict | None:
     from .cache_schema import load_manifest, manifest_path
 
@@ -832,7 +846,9 @@ def _read_v3_frame(base_dir: str, frame: int) -> dict | None:
                 f"cache-v3 frame {frame} effect inventory is invalid: {exc}") from exc
         if frame_effect_inventory != [dict(item) for item in manifest.effect_inventory]:
             raise ValueError(f"cache-v3 frame {frame} effect-inventory mismatch")
-        result = {name: data[name] for name in data.files}
+        result = VerifiedCacheFrame(
+            ((name, data[name]) for name in data.files),
+            cache_identity=(os.path.normcase(base_dir), digest))
     counts = authoritative_payload_counts(result)
     validate_liquid_sdf(result, enabled=bool(manifest.narrow_band["enabled"]))
     validate_optional_attributes(result)
@@ -858,13 +874,16 @@ def read_frame(base_dir: str, frame: int) -> dict | None:
     A FluidSim 1.0 or 2.x cache raises rather than reading as empty, so
     playback tells the user to re-bake instead of reporting missing frames.
     """
-    version = detect_cache_format(base_dir)
+    # Pin the physical root before opening either the manifest or frame.
+    # A retargeted alias cannot change the origin of verified bytes.
+    canonical_root = os.path.realpath(os.path.abspath(base_dir))
+    version = detect_cache_format(canonical_root)
     if version == 1:
         raise ValueError(f"{LEGACY_CACHE_MESSAGE} ({base_dir})")
     if version == LEGACY_2X_FORMAT_VERSION:
         raise LegacyCacheFormatError()
     if version == CACHE_FORMAT_VERSION:
-        return _read_v3_frame(base_dir, frame)
+        return _read_v3_frame(canonical_root, frame)
     return None
 
 

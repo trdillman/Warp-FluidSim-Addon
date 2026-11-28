@@ -17,7 +17,6 @@ if REPO_ROOT not in sys.path:
 
 from tools.repo_addon_loader import enable_repo_addon  # noqa: E402
 
-
 ADDON_PREFIX = "fluidSim_warp_blender51"
 
 # Every app-handler list the add-on registers into. Checked as a whole, because
@@ -30,7 +29,9 @@ HANDLER_LISTS = (
     "render_pre",
     "render_post",
     "depsgraph_update_post",
+    "undo_pre",
     "undo_post",
+    "redo_pre",
     "save_pre",
     "save_post",
     "save_post_fail",
@@ -49,12 +50,15 @@ EXPECTED_HANDLERS = {
     "frame_change_post": {"_on_frame_change"},
     "load_pre": {
         "_on_load_pre", "_on_compat_load_pre", "_on_gpu_preview_load_pre", "_on_preview_load_pre",
+        "_on_fspt_view_history_pre",
     },
     "load_post": {"_on_load_post", "_on_deck_load_post"},
     "blend_import_post": {"_on_blend_import_post"},
     "animation_playback_pre": {"_on_playback_pre"},
     "depsgraph_update_post": {"_on_interaction_state_update", "_on_imported_domain_update"},
+    "undo_pre": {"_on_surface_history_pre", "_on_fspt_view_history_pre"},
     "undo_post": {"_on_interaction_state_update"},
+    "redo_pre": {"_on_surface_history_pre", "_on_fspt_view_history_pre"},
     "save_pre": {"_on_gpu_preview_save_pre", "_on_preview_save_pre"},
     "save_post": {"_on_gpu_preview_save_post"},
     "render_init": {"_on_render_init"},
@@ -79,11 +83,14 @@ EXPECTED_HANDLER_MODULES = {
         "_on_interaction_state_update":
             "fluidSim_warp_blender51.blender.pending_settings",
     },
+    "undo_pre": {"_on_fspt_view_history_pre": "fluidSim_warp_blender51.blender.fspt_engine"},
+    "redo_pre": {"_on_fspt_view_history_pre": "fluidSim_warp_blender51.blender.fspt_engine"},
     "load_pre": {
         "_on_compat_load_pre": "fluidSim_warp_blender51.blender.file_compat",
         "_on_load_pre": "fluidSim_warp_blender51.blender.pending_settings",
         "_on_gpu_preview_load_pre": "fluidSim_warp_blender51.blender.gpu_particle_owner",
         "_on_preview_load_pre": "fluidSim_warp_blender51.blender.liquid_preview.handler",
+        "_on_fspt_view_history_pre": "fluidSim_warp_blender51.blender.fspt_engine",
     },
     "save_pre": {
         "_on_gpu_preview_save_pre": "fluidSim_warp_blender51.blender.gpu_particle_owner",

@@ -1,0 +1,38 @@
+[
+  {
+    "label": "edges",
+    "lease": "984dd8301cfd",
+    "log": "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-p1-20261125\\20261125-230209-984dd8301cfd.log",
+    "log_sha256": "601cbbac7fe32cb3864ff02c78b36905880942b8d4bde5b7d96de19d6f16980a",
+    "exit_code": 0,
+    "pass_marker": "FSPT-EDGE-ACCEPTANCE-PASS",
+    "marker_present": true
+  },
+  {
+    "label": "render",
+    "lease": "6c38f6e48f17",
+    "log": "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-p1-20261125\\20261125-230335-6c38f6e48f17.log",
+    "log_sha256": "8a5bf0c9d32c07f2bf3795654a87d39c76aad0fbc1acd69c947f1ee2a234753e",
+    "exit_code": 0,
+    "pass_marker": "FSPT-ACCEPTANCE-PASS",
+    "marker_present": true
+  },
+  {
+    "label": "viewport",
+    "lease": "42d062295ef3",
+    "log": "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-p1-20261125\\20261125-230338-42d062295ef3.log",
+    "log_sha256": "bcb57348d61014e8f94f58374eb8ee9fa63160267ce62336a8cb7968ffc8c60b",
+    "exit_code": 0,
+    "pass_marker": "FSPT-VIEWPORT-PASS",
+    "marker_present": true
+  },
+  {
+    "label": "preview",
+    "lease": "42d43ee859f0",
+    "log": "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-p1-20261125\\20261125-225114-42d43ee859f0.log",
+    "log_sha256": "c59aa5185961b9be3ec09f5cd47e5c902802eb67b2dc7eda0f9c550061798cf9",
+    "exit_code": 0,
+    "pass_marker": "FSPT-PREVIEW-PASS",
+    "marker_present": true
+  }
+]

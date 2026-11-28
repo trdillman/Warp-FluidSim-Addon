@@ -25,13 +25,29 @@ from .scene_access import (
 )
 from .solver_settings import (
     DIRECT_SETTING_FIELDS as _DIRECT_SETTING_FIELDS,
+)
+from .solver_settings import (
     SETTING_ALIASES as _SETTING_ALIASES,
+)
+from .solver_settings import (
     apply_gravity as _project_gravity,
+)
+from .solver_settings import (
     apply_scene_settings as _apply_scene_settings,
+)
+from .solver_settings import (
     domain_bounds as _domain_bounds,
+)
+from .solver_settings import (
     enum_setting_fields as _enum_setting_fields,
+)
+from .solver_settings import (
     normalize_domain_boundary_settings as _normalize_domain_boundary_settings,
+)
+from .solver_settings import (
     scene_quality_fidelity as _scene_quality_fidelity,
+)
+from .solver_settings import (
     validate_setting_registry as _validate_solver_setting_registry,
 )
 
@@ -866,8 +882,8 @@ def _effect_changes(scene):
     stack = getattr(scene, "fluidsim_effects", None)
     if stack is None:
         return False
-    from .effects import scene_effect_instances
     from ..sim.effects.fingerprint import execution_stack_fingerprint
+    from .effects import scene_effect_instances
 
     signature, _ = execution_stack_fingerprint(scene_effect_instances(scene))
     return signature != stack.applied_signature
@@ -1351,12 +1367,18 @@ def _on_interaction_state_update(*args):
 
 
 @persistent
-def _on_load_pre(_filepath):
-    from . import playback
+def _on_surface_history_pre(*_args):
+    from . import playback, surface_publication
 
+    surface_publication.invalidate_surfaces()
+    playback.clear_cache_cursors()
+
+
+@persistent
+def _on_load_pre(_filepath):
     global _presentation_epoch
 
-    playback.clear_cache_cursors()
+    _on_surface_history_pre()
     session().force_release()
     _INTERACTION_STATES.clear()
     _presentation_epoch = _new_presentation_epoch()
@@ -1369,13 +1391,15 @@ def register_handlers():
     with handler_registration((
         (getattr(handlers, "depsgraph_update_post", None), _on_interaction_state_update),
         (getattr(handlers, "undo_post", None), _on_interaction_state_update),
+        (getattr(handlers, "undo_pre", None), _on_surface_history_pre),
+        (getattr(handlers, "redo_pre", None), _on_surface_history_pre),
         (getattr(handlers, "load_pre", None), _on_load_pre),
     )):
         pass
 
 
 def _remove_handlers():
-    for name in ("depsgraph_update_post", "undo_post", "load_pre"):
+    for name in ("depsgraph_update_post", "undo_post", "undo_pre", "redo_pre", "load_pre"):
         handlers = getattr(bpy.app.handlers, name, None)
         if handlers is None:
             continue

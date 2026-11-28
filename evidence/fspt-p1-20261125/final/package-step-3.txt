@@ -1,0 +1,2 @@
+[bgate] running on this PC, not the pool: `--command` runs a Blender CLI command (e.g. extension install) for this PC (+2 more)
+[bgate] log saved: C:\Users\Tyler\AppData\Local\blender-gate\logs\agent-fspt-p1-20261125\20261125-230322-f77542826b49.log

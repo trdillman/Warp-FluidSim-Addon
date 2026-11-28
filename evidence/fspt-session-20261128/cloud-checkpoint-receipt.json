@@ -1,0 +1,45 @@
+{
+  "archive": "/workspace/scratch/91ea30c62a0e/fspt-cloud-checkpoint-20261128T082100Z-ce6afc9a-pending.zip",
+  "archive_manifest_sha256": "7f5c86631d8e7327f50e1ccecc00323d79f6540f56e3b2c5d96f058f2d3c932f",
+  "branch": "experimental/fspt-p1-20261125",
+  "cloud_mirror_scope": "Text mirror, with reviewed 3-file successor overlay. Exact native committed source requires Git history.",
+  "dropbox_content_hash": "a23d4a4427bf94f1577d60e626cda5dc6a47e528a573b45cc2c38a31c93d2b53",
+  "entries": 1037,
+  "exact_overlay_files": {
+    "fluidSim_warp_blender51/blender/fspt_engine.py": {
+      "lf_sha256": "a9c4ba549ce239479a874cde9a1415f39b09ab74a17f8498355c4720eb7c2e09",
+      "raw_sha256": "a9c4ba549ce239479a874cde9a1415f39b09ab74a17f8498355c4720eb7c2e09",
+      "verifier": false
+    },
+    "fluidSim_warp_blender51/fspt/viewport.py": {
+      "lf_sha256": "0154af5d4baf0aa416609bc3022bec319399766c0f179bb9c5a15ebb115ee14f",
+      "raw_sha256": "0154af5d4baf0aa416609bc3022bec319399766c0f179bb9c5a15ebb115ee14f",
+      "verifier": false
+    },
+    "tests/render/test_fspt_engine_boundary.py": {
+      "lf_sha256": "2bedbca51174f7640acdeff354ea2f6b35c3cba79a9de37c1f0af590fbb555f1",
+      "raw_sha256": "2bedbca51174f7640acdeff354ea2f6b35c3cba79a9de37c1f0af590fbb555f1",
+      "verifier": true
+    }
+  },
+  "fresh_installed_fspt": "NOT_QUALIFIED",
+  "full_production_gate": "NOT_QUALIFIED",
+  "head": "ce6afc9ae8b607a33b5c429e6743a60a86df8b1e",
+  "name": "fspt-cloud-checkpoint-20261128T082100Z-ce6afc9a-pending.zip",
+  "native_verifier_inputs": 884,
+  "parent": "0607daad9354b872c7530277371b1d998443c394",
+  "prior_package_identity": {
+    "disposition": "PROVISIONAL_FULL_GATE_BLOCKED",
+    "head": "0607daad9354b872c7530277371b1d998443c394"
+  },
+  "prior_recovery_prerequisite": "82f08a9b34c0e2971103acb87ed6d0a4cb63bb89",
+  "remote_restore": "Fetch the exact recorded ce6afc9a commit on the existing draft branch and verify its recorded tree first.",
+  "runtime_rerun_result": "PENDING_AT_CHECKPOINT",
+  "sha256": "f4f51ae7263e7439ee20546badf2783f2854229384a23bb46a69728568ab66e5",
+  "size": 22143383,
+  "source_fingerprint": "894057a2db428085028ab3e6388e42caf4bd209d526dfe989472616c98756943",
+  "source_inventory_sha256": "0710366113654f45c4756b8a3164df52b22b8f6aa58c67e4d1f90e370c3001a4",
+  "status": "RECOVERY_CHECKPOINT_SUCCESSOR_RUNTIME_PENDING",
+  "tree": "4f349bc837b8610b35a39f204f038d2db43c3ea4",
+  "verifier_fingerprint": "b236a2c95e631a040d9958eb506ea859e5b899223bf71d4fd130fcff2646927d"
+}

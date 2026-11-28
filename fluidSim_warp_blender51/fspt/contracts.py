@@ -1,0 +1,236 @@
+"""Owned scene snapshots and image identity, independent of bpy and Warp."""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from dataclasses import asdict, dataclass, field, is_dataclass
+from operator import index
+
+import numpy as np
+
+MAX_BOUNCES = 64
+
+
+class DeviceSceneUnavailable(RuntimeError):
+    """A captured source reference retired; recapture instead of waiting on it."""
+
+
+def _rgb(value, name, *, bounded=False):
+    result = tuple(float(x) for x in value)
+    if len(result) != 3 or not all(math.isfinite(x) and x >= 0 for x in result):
+        raise ValueError(f"{name} must contain three finite nonnegative values")
+    if bounded and max(result) > 1:
+        raise ValueError(f"{name} reflectance must not exceed one")
+    return result
+
+
+@dataclass(frozen=True)
+class Material:
+    kind: str = "diffuse"
+    color: tuple[float, float, float] = (0.8, 0.8, 0.8)
+    emission: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    ior: float = 1.45
+
+    def __post_init__(self):
+        if self.kind not in {"diffuse", "glass", "emission"}:
+            raise ValueError(f"unsupported material kind: {self.kind}")
+        object.__setattr__(self, "color", _rgb(self.color, "color", bounded=True))
+        object.__setattr__(self, "emission", _rgb(self.emission, "emission"))
+        if not math.isfinite(self.ior) or self.ior <= 0:
+            raise ValueError("IOR must be finite and positive")
+
+
+def _owned(value, dtype, shape, name):
+    array = np.asarray(value)
+    if array.size == 0:
+        array = np.empty(shape, dtype=dtype)
+    if np.issubdtype(dtype, np.integer) and array.size:
+        if not np.all(np.isfinite(array)) or not np.all(array == np.floor(array)):
+            raise ValueError(f"{name} must contain finite integer indices")
+        limit = np.iinfo(dtype)
+        if array.min() < limit.min or array.max() > limit.max:
+            raise ValueError(f"{name} indices exceed supported range")
+    array = np.array(array, dtype=dtype, order="C", copy=True)
+    if len(array.shape) != len(shape) or array.shape[1:] != shape[1:]:
+        raise ValueError(f"{name} has invalid shape {array.shape}")
+    if not np.isfinite(array).all():
+        raise ValueError(f"{name} must be finite")
+    # A bytes owner makes write protection irreversible, unlike setflags(False)
+    # on an owning ndarray, which callers can turn writable again.
+    return np.frombuffer(array.tobytes(), dtype=dtype).reshape(array.shape)
+
+
+@dataclass(frozen=True)
+class AssetSpan:
+    """One evaluated instance's contiguous contribution to flattened geometry."""
+    key: tuple[int, ...]
+    vertex_count: int
+    triangle_count: int
+
+    def __post_init__(self):
+        object.__setattr__(self, "key", tuple(index(v) for v in self.key))
+        for name in ("vertex_count", "triangle_count"):
+            object.__setattr__(self, name, index(getattr(self, name)))
+        if not self.key or self.vertex_count < 0 or self.triangle_count < 0:
+            raise ValueError("invalid asset span")
+
+
+@dataclass(frozen=True, eq=False)
+class GeometryAsset:
+    key: tuple[int, ...]
+    # Offsets/counts are in buffer elements (vec3 positions or scalar indices).
+    position: tuple[int, int, bytes]
+    index: tuple[int, int, bytes]
+
+
+def _geometry_assets(vertices, triangles, spans):
+    if not spans:
+        return ()  # Legacy snapshots use the original full-buffer upload path.
+    assets, seen = [], set()
+    start = face = 0
+    for span in spans:
+        if not isinstance(span, AssetSpan) or span.key in seen:
+            raise ValueError("invalid or duplicate scene asset identity")
+        seen.add(span.key)
+        end, stop = start + span.vertex_count, face + span.triangle_count
+        if end > len(vertices) or stop > len(triangles):
+            raise ValueError("scene asset span exceeds flattened geometry")
+        faces = triangles[face:stop]
+        if faces.size and (faces.min() < start or faces.max() >= end):
+            raise ValueError("triangle index crosses asset boundary")
+        if end > start or stop > face:
+            # Hash the exact uploaded global indices. A vertex-offset shift can
+            # change their bytes even when the local connectivity is identical.
+            points = vertices[start:end]
+            assets.append(GeometryAsset(
+                span.key,
+                (start, len(points), hashlib.sha256(points.ravel().view(np.uint8)).digest()),
+                (3 * face, faces.size, hashlib.sha256(faces.ravel().view(np.uint8)).digest())))
+        start, face = end, stop
+    if start != len(vertices) or face != len(triangles):
+        raise ValueError("scene asset spans must cover all geometry")
+    return tuple(assets)
+
+
+@dataclass(frozen=True, eq=False)
+class SceneSnapshot:
+    vertices: np.ndarray
+    triangles: np.ndarray
+    material_indices: np.ndarray
+    materials: tuple[Material, ...]
+    world: tuple[float, float, float]
+    frame: int
+    publications: tuple = ()
+    asset_spans: tuple[AssetSpan, ...] = ()
+    assets: tuple[GeometryAsset, ...] = field(init=False)
+    digest: str = field(init=False)
+    geometry_digest: str = field(init=False)
+    shading_digest: str = field(init=False)
+
+    def __post_init__(self):
+        vertices = _owned(self.vertices, np.float32, (0, 3), "vertices")
+        triangles = _owned(self.triangles, np.int32, (0, 3), "triangles")
+        indices = _owned(self.material_indices, np.int32, (0,), "material indices")
+        materials = tuple(self.materials)
+        world = _rgb(self.world, "world")
+        if not materials or not all(isinstance(m, Material) for m in materials):
+            raise ValueError("scene requires validated materials")
+        if triangles.size and (triangles.min() < 0 or triangles.max() >= len(vertices)):
+            raise ValueError("triangle index outside vertices")
+        if len(indices) != len(triangles) or (indices.size and
+                (indices.min() < 0 or indices.max() >= len(materials))):
+            raise ValueError("material index outside materials or wrong count")
+        for name, value in (("vertices", vertices), ("triangles", triangles),
+                            ("material_indices", indices), ("materials", materials), ("world", world)):
+            object.__setattr__(self, name, value)
+        publications = tuple(self.publications)
+        if any(not is_dataclass(p) or not p.__dataclass_params__.frozen for p in publications):
+            raise ValueError("surface publications must be immutable records")
+        object.__setattr__(self, "publications", publications)
+        spans = tuple(self.asset_spans)
+        assets = _geometry_assets(vertices, triangles, spans)
+        object.__setattr__(self, "asset_spans", spans)
+        object.__setattr__(self, "assets", assets)
+        geometry = hashlib.sha256()
+        for array in (vertices, triangles):
+            geometry.update(str(array.shape).encode())
+            geometry.update(array.tobytes())
+        shading = hashlib.sha256(indices.tobytes())
+        shading.update(json.dumps([(m.kind, m.color, m.emission, m.ior) for m in materials],
+                                  allow_nan=False).encode())
+        object.__setattr__(self, "geometry_digest", geometry.hexdigest())
+        object.__setattr__(self, "shading_digest", shading.hexdigest())
+        digest = hashlib.sha256(geometry.digest() + shading.digest())
+        if spans:
+            digest.update(json.dumps([(s.key, s.vertex_count, s.triangle_count) for s in spans]).encode())
+        digest.update(json.dumps([world, int(self.frame), [asdict(p) for p in publications]],
+                                 allow_nan=False).encode())
+        object.__setattr__(self, "digest", digest.hexdigest())
+
+
+@dataclass(frozen=True, eq=False)
+class CameraSnapshot:
+    inverse_view_projection: np.ndarray
+    digest: str = field(init=False)
+
+    def __post_init__(self):
+        matrix = _owned(self.inverse_view_projection, np.float32, (4, 4), "camera matrix")
+        if matrix.shape != (4, 4) or abs(float(np.linalg.det(matrix))) < 1e-20:
+            raise ValueError("camera matrix must be invertible and 4 by 4")
+        # Invertibility alone does not ensure finite near/far unprojection.
+        # Extreme clip ratios can round the far plane to homogeneous w=0.
+        corners = np.array([(x, y, z, 1) for x in (-1, 1) for y in (-1, 1)
+                            for z in (-1, 1)], dtype=np.float64)
+        projected = corners @ matrix.astype(np.float64).T
+        weights = projected[:, 3]
+        if np.any(np.abs(weights) < 1e-12) or weights.min() * weights.max() < 0:
+            raise ValueError("camera clip projection is not finite; reduce the near/far ratio")
+        endpoints = projected[:, :3] / weights[:, None]
+        if (not np.isfinite(endpoints).all()
+                or np.max(np.linalg.norm(endpoints, axis=1)) > np.sqrt(np.finfo(np.float32).max) / 4):
+            raise ValueError("camera clip projection exceeds float32 ray bounds")
+        object.__setattr__(self, "inverse_view_projection", matrix)
+        object.__setattr__(self, "digest", hashlib.sha256(matrix.tobytes()).hexdigest())
+
+
+def frame_key(scene, camera, width, height, max_bounces, seed):
+    if not (1 <= width <= 16384 and 1 <= height <= 16384 and 1 <= max_bounces <= MAX_BOUNCES):
+        raise ValueError("invalid render dimensions or bounce limit")
+    return (scene.digest, camera.digest, int(width), int(height), int(max_bounces), int(seed))
+
+
+@dataclass
+class AccumulationState:
+    key: tuple | None = None
+    samples: int = 0
+
+    def begin(self, key):
+        changed = key != self.key
+        if changed:
+            self.key, self.samples = key, 0
+        return changed
+
+    def advance(self, samples):
+        if samples < 1 or self.key is None:
+            raise ValueError("cannot accumulate without an active image identity")
+        self.samples += int(samples)
+
+
+def require_current(expected, received):
+    if expected != received:
+        raise RuntimeError("FSPT refused a stale image identity")
+
+
+@dataclass(frozen=True)
+class RenderFrame:
+    pixels: np.ndarray
+    key: tuple
+    samples: int
+    device: str
+    backend: str
+    transport: str
+    scene_frame: int | None = None
+    publications: tuple = ()
+    geometry_digest: str = ""
+    statistics: tuple = ()

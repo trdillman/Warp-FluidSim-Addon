@@ -1,0 +1,272 @@
+{
+  "read_only_workbench_run": "8cdd3f0fff6d437b96a0e1233c22e2fd",
+  "observations": {
+    "broker": {
+      "report_sha256": "cf8dc504a3f2b484c56496f062b7a221de8f2e973088bfc48ddc7ee8bfbd2cf2",
+      "terminal_sha256": "a297e8321af05c121aadd7b082ca60c873cda6c4cfcbdfb2de7d14036bf65aa8",
+      "terminal": {
+        "returncode": 0,
+        "source_sha": "5c91c8188e5e148f0218a596ed64de4c087e1cc5",
+        "started_utc": null,
+        "finished_utc": null,
+        "finished_at": "2026-11-28T06:43:12.409983+00:00",
+        "ended_at": null,
+        "elapsed_seconds": null,
+        "expect_marker": null
+      },
+      "runtime": {
+        "warp": "1.19.0",
+        "warp_path": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site\\warp\\__init__.py",
+        "device": "cuda:0",
+        "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+        "cuda_driver": 13050,
+        "cuda_toolkit": 13040
+      },
+      "status": "VERIFIED",
+      "broker": {
+        "status": "VERIFIED",
+        "worker_thread": 36984,
+        "publication_thread": 3888,
+        "two_facade_shared_bytes": 416,
+        "peak_explicit_array_bytes": 488,
+        "peak_generations": 2,
+        "memory_excludes": "BVH internals, shading, image/history, solver and allocator caching",
+        "actual_factories": [
+          [
+            "GPU",
+            3888
+          ],
+          [
+            "GPU",
+            3888
+          ],
+          [
+            "GPU",
+            3888
+          ],
+          [
+            "EVALUATED",
+            3888
+          ],
+          [
+            "GPU",
+            3888
+          ],
+          [
+            "EVALUATED",
+            3888
+          ]
+        ],
+        "queued_stale_rejected": true,
+        "poisoned_recovery_checked": true,
+        "originals": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\ownership-5c91c8188e-20261128T064212158236Z\\broker\\acceptance-originals-20261128T064258928810Z\\broker-images.npz",
+        "sha256": "be0ece6fcc1827acf3fd83606ccd69eee3c0c2f43fd297580c6a34e968e1b027",
+        "render_stream_retirement_results": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "live_adapter": {
+        "status": "VERIFIED",
+        "polls": 1,
+        "solver_clock": [
+          1,
+          0.041666666666666664,
+          5
+        ],
+        "scope": "actual Blender scene, injected selection binding; no producer cadence or UI claim",
+        "evaluated_generation": 1,
+        "gpu_publication_generation": 1,
+        "pool_generation": 1,
+        "fluid_bulk_accesses": [],
+        "guard_negative_controls": 3,
+        "originals": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\ownership-5c91c8188e-20261128T064212158236Z\\broker\\acceptance-originals-20261128T064258928810Z\\live-adapter.npz",
+        "sha256": "fd5fba128367214ca28c832099943f650d196245f895d5d426a0bd7018e48722",
+        "render_stream_retirement_result": 0
+      },
+      "empty_generation": {
+        "status": "VERIFIED",
+        "pending_bytes": 0,
+        "pending_generations": 1,
+        "completion": "actual checked CUDA copy fence",
+        "final_generations": 0
+      }
+    },
+    "device-viewport": {
+      "report_sha256": "5122cdfce0d34f86564d8b978b814e092ee199fb91981e86b3d5551d376e1d49",
+      "terminal_sha256": "0407353bbaf7ccc42990402894ef769479242b3e6bcd26b6307293498fb65e79",
+      "terminal": {
+        "returncode": 0,
+        "source_sha": "5c91c8188e5e148f0218a596ed64de4c087e1cc5",
+        "started_utc": null,
+        "finished_utc": null,
+        "finished_at": "2026-11-28T06:44:19.276537+00:00",
+        "ended_at": null,
+        "elapsed_seconds": null,
+        "expect_marker": null
+      },
+      "runtime": {
+        "warp": "1.19.0",
+        "warp_path": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site\\warp\\__init__.py",
+        "device": "cuda:0",
+        "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+        "cuda_driver": 13050,
+        "cuda_toolkit": 13040
+      },
+      "status": "VERIFIED",
+      "frames": [
+        {
+          "timeline_frame": 2,
+          "solver_frame": 1,
+          "state_revision": 5,
+          "samples": 4,
+          "device_geometry_copies": 1
+        },
+        {
+          "timeline_frame": 3,
+          "solver_frame": 2,
+          "state_revision": 9,
+          "samples": 4,
+          "device_geometry_copies": 2,
+          "image_mean_absolute_difference": 0.006475032772868872
+        }
+      ],
+      "final": {
+        "operator_result": [
+          "RUNNING_MODAL"
+        ],
+        "viewport_before": {
+          "aggregate_open": true,
+          "trace_pending": true,
+          "reserved_bytes": 7163956,
+          "generation_count": 1,
+          "hold_active": false,
+          "coordinator_blocked": false,
+          "resources_remaining": true,
+          "view_owned": true
+        },
+        "handoff_statistics_delta": {
+          "requests": 1,
+          "serviced": 1,
+          "timeouts": 0,
+          "failures": 0
+        },
+        "events": [
+          {
+            "event": "render_init",
+            "thread": 61780,
+            "on_main": false
+          },
+          {
+            "event": "render_enter",
+            "thread": 61780,
+            "on_main": false
+          },
+          {
+            "event": "retirement_enter",
+            "thread": 28556,
+            "on_main": true,
+            "aggregate_open": true,
+            "trace_pending": false,
+            "reserved_bytes": 7163956,
+            "generation_count": 1,
+            "hold_active": true,
+            "coordinator_blocked": true,
+            "resources_remaining": true,
+            "view_owned": true
+          },
+          {
+            "event": "retirement_receipt",
+            "thread": 28556,
+            "on_main": true,
+            "request_matches": true,
+            "owners_retired": true,
+            "reserved_bytes": 0,
+            "generation_count": 0,
+            "device": "cuda:0",
+            "hold_active": true,
+            "coordinator_blocked": true,
+            "resources_remaining": false,
+            "view_owned": false
+          },
+          {
+            "event": "final_backend_allocate",
+            "thread": 61780,
+            "on_main": false,
+            "hold_active": true,
+            "coordinator_blocked": true,
+            "resources_remaining": false,
+            "view_owned": false
+          },
+          {
+            "event": "final_backend_allocated",
+            "thread": 61780,
+            "on_main": false,
+            "backend_type": "AsyncCudaBackend",
+            "hold_active": true,
+            "coordinator_blocked": true,
+            "resources_remaining": false,
+            "view_owned": false
+          },
+          {
+            "event": "final_backend_close_enter",
+            "thread": 61780,
+            "on_main": false,
+            "hold_active": true,
+            "coordinator_blocked": true,
+            "resources_remaining": false,
+            "view_owned": false
+          },
+          {
+            "event": "final_backend_closed",
+            "thread": 61780,
+            "on_main": false,
+            "backend_closed": true,
+            "render_stream_retirement": 0,
+            "hold_active": true,
+            "coordinator_blocked": true,
+            "resources_remaining": false,
+            "view_owned": false
+          },
+          {
+            "event": "render_exit",
+            "thread": 61780,
+            "on_main": false,
+            "hold_active": false,
+            "coordinator_blocked": false,
+            "resources_remaining": false,
+            "view_owned": false
+          },
+          {
+            "event": "render_complete",
+            "thread": 61780,
+            "on_main": false
+          }
+        ],
+        "image_size": [
+          128,
+          96
+        ],
+        "original_sha256": "2c2fdd284d01eedc30fa5d7313b522550f61a751e1dc6cf0c8da88f801253293",
+        "render_summary": {
+          "status": "COMPLETE",
+          "scene_frame": 3,
+          "samples": 8,
+          "device": "cuda:0",
+          "backend": "warp-cuda-async-v1",
+          "transport": "host-pinned-rgba32f"
+        }
+      },
+      "cleanup": {
+        "viewport_closed": true,
+        "unretired_devices": [],
+        "resources_remaining": false,
+        "hold_remaining": false,
+        "addon_unregistered": true
+      }
+    }
+  }
+}

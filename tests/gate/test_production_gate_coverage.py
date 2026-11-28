@@ -62,6 +62,20 @@ def test_manual_probes_give_a_reason():
         assert len(reason.split()) >= 4, script
 
 
+def test_fspt_async_gui_and_live_proofs_remain_in_the_full_production_gate():
+    launched = _scripts_launched_by_blender_calls()
+    assert {"tests/acceptance/blender_fspt_async_viewport_acceptance.py",
+            "tests/acceptance/blender_fspt_async_live_acceptance.py"} <= launched
+    source = GATE_PATH.read_text(encoding="utf-8")
+    assert '"--lifecycle-cycles", "50"' in source
+    assert '"--states", "240"' in source and '"--soak-seconds", "600"' in source
+    assert "tests/acceptance/blender_fspt_live_acceptance.py" in gate.MANUAL_BLENDER_PROBES
+    for filename, marker in (
+            ("blender_fspt_async_viewport_acceptance.py", "FSPT-ASYNC-VIEWPORT-PASS"),
+            ("blender_fspt_async_live_acceptance.py", "FSPT-ASYNC-LIVE-ACCEPTANCE-PASS")):
+        assert marker in (ROOT / "tests/acceptance" / filename).read_text(encoding="utf-8")
+
+
 def test_gate_markers_are_printed_by_their_scripts():
     """A marker the script never prints would fail every gate run."""
     common = (ROOT / "tests" / "acceptance" / "_phase2_source_acceptance_common.py").read_text(encoding="utf-8")

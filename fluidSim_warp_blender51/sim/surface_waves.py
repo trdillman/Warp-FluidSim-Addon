@@ -449,6 +449,7 @@ class SurfaceWaves:
         self.device = wp.get_device(device)
         self.time = 0.0
         self.frame = 0
+        self.state_revision = 0
         self.count = 0
         self.stats = {}
         self._empty()
@@ -464,6 +465,7 @@ class SurfaceWaves:
         self.count = 0
 
     def reset(self):
+        self.state_revision += 1
         self.time = 0.0
         self.frame = 0
         self.stats = {}
@@ -512,6 +514,7 @@ class SurfaceWaves:
     # Frame step
 
     def step(self, verts, tris, velocities, dt):
+        self.state_revision += 1
         s, dev = self.settings, self.device
         verts = np.ascontiguousarray(verts, dtype=np.float32).reshape(-1, 3)
         tris = np.ascontiguousarray(tris, dtype=np.int32).reshape(-1)
@@ -691,6 +694,17 @@ class SurfaceWaves:
             return verts.copy()
         v_dev = wp.array(verts, dtype=wp.vec3, device=dev)
         t_dev = wp.array(tris, dtype=wp.int32, device=dev)
+        output = self.displace_device(v_dev, t_dev)
+        return output.positions.numpy()
+
+    def displace_device(self, v_dev, t_dev):
+        """Apply current heights on-device, preserving vertex order and wave time."""
+        from .device_surface import SurfaceDeviceArrays
+
+        nv, nt = v_dev.size, t_dev.size // 3
+        if not nv or not nt or not self.count:
+            return SurfaceDeviceArrays(v_dev, t_dev)
+        dev = self.device
         normals = wp.zeros(nv, dtype=wp.vec3, device=dev)
         wp.launch(k_wave_vertex_normals, dim=nt, inputs=[v_dev, t_dev, normals],
                   device=dev)
@@ -700,7 +714,11 @@ class SurfaceWaves:
         wp.launch(k_wave_displace, dim=nv,
                   inputs=[grid.id, self.pos, self.nrm, self.h, v_dev, normals,
                           self.radius, out], device=dev)
-        return out.numpy()
+        # The kernel receives grid.id; a bare ID does not keep its HashGrid
+        # alive. The original coarse vertices, normals and current wave arrays
+        # must likewise survive reset/replacement until the producer fence.
+        return SurfaceDeviceArrays(
+            out, t_dev, (v_dev, normals, grid, self.pos, self.nrm, self.h))
 
     # Checkpoints: the layer is state, not scratch, so a resumed bake must
     # carry it on rather than start new waves.
@@ -718,6 +736,7 @@ class SurfaceWaves:
         return arrays, {"time": float(self.time), "frame": int(self.frame)}
 
     def import_state(self, arrays, scalars):
+        self.state_revision += 1
         count = int(np.asarray(arrays["h"]).shape[0])
         for name, dtype, width in self.STATE_FIELDS:
             value = np.asarray(arrays[name], dtype=np.float32)

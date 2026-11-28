@@ -1,0 +1,153 @@
+{
+  "native_workbench_read": "7471bd37fbfb407ea2de906887fd5531",
+  "observations": [
+    {
+      "status": "PROVISIONAL_VERIFIED"
+    },
+    {
+      "scope": [
+        "standard source/package builder",
+        "Windows generic installed double smoke and uninstall",
+        "Linux archive construction and inspection",
+        "CPU-only Warp for this package run"
+      ]
+    },
+    {
+      "head": "ce6afc9ae8b607a33b5c429e6743a60a86df8b1e"
+    },
+    {
+      "disposition": "PROVISIONAL_FULL_GATE_BLOCKED"
+    },
+    {
+      "finished_at": "2026-11-28T08:33:13.286903+00:00"
+    },
+    {
+      "archives": {
+        "linux-x64": {
+          "path": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\archives\\fluidsim_warp-4.1.0-linux_x64.zip",
+          "platform": "linux-x64",
+          "python_members": 202,
+          "runtime_dependency": "user-install",
+          "sha256": "22b2d89e69afea972c5ecfd415dabcfae4a21b8ad2ffc29f651b4a0fa5ef75c0",
+          "size": 8483342,
+          "observed_bytes": 8483342,
+          "observed_sha256": "22b2d89e69afea972c5ecfd415dabcfae4a21b8ad2ffc29f651b4a0fa5ef75c0"
+        },
+        "windows-x64": {
+          "path": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\archives\\fluidsim_warp-4.1.0-windows_x64.zip",
+          "platform": "windows-x64",
+          "python_members": 202,
+          "runtime_dependency": "user-install",
+          "sha256": "6c07df0d034789e41b989c5473765e8393f314079e71acee5785e766713eac7b",
+          "size": 8483340,
+          "observed_bytes": 8483340,
+          "observed_sha256": "6c07df0d034789e41b989c5473765e8393f314079e71acee5785e766713eac7b"
+        }
+      }
+    },
+    {
+      "smoke_pids": [
+        27704,
+        43464
+      ]
+    },
+    {
+      "uninstall_verified": true
+    },
+    {
+      "test_dependencies": {
+        "numpy": {
+          "origin": "C:\\Users\\Tyler\\Documents\\Codex\\2026-11-06\\resolve-and-merge-all-prs-across\\work\\daily-20261117\\fluid65-cpu\\deps\\numpy\\__init__.py",
+          "version": "2.3.4"
+        },
+        "pytest": {
+          "origin": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site\\pytest\\__init__.py",
+          "version": "9.1.1"
+        },
+        "ruff": {
+          "origin": "C:\\Users\\Tyler\\Documents\\Codex\\2026-11-06\\resolve-and-merge-all-prs-across\\work\\daily-20261117\\fluid65-cpu\\deps\\ruff\\__init__.py",
+          "version": "0.16.2"
+        },
+        "warp": {
+          "cuda_available": false,
+          "origin": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site\\warp\\__init__.py",
+          "runtime_version": "1.19.0",
+          "version": "1.19.0"
+        }
+      }
+    },
+    {
+      "controller_sha256": "fc8dbb001186382850547a998d90d14d26481fc12c305a2be52c1a2674a2b094"
+    },
+    {
+      "name": "canonical-package-report.json",
+      "sha256": "5f1074fe1bd5fddf96aa200f06b27705afdd01d229b3d181340ca674d688e9d8",
+      "keys": [
+        "artifacts",
+        "mode",
+        "release_ready",
+        "smoke_platform",
+        "smoke_report"
+      ]
+    },
+    {
+      "name": "provisional-receipt.json",
+      "sha256": "7849553ff2e8474ae7b072c16169518e5402e149416cbd0d602af534ae3d94e0",
+      "keys": [
+        "archives",
+        "blender_sha256",
+        "broker_label",
+        "broker_receipts",
+        "builder_report_sha256",
+        "commands",
+        "controller_sha256",
+        "disposition",
+        "finished_at",
+        "head",
+        "python_sha256",
+        "scope",
+        "smoke_pids",
+        "smoke_report_sha256",
+        "staged_after_sha256",
+        "staged_before_sha256",
+        "status",
+        "test_dependencies",
+        "tracked_demo_sha256",
+        "uninstall_verified",
+        "wheel_sha256"
+      ]
+    },
+    {
+      "name": "source-after.json",
+      "sha256": "7b8dc43f356a6f0cbdfcbe8fbabe13feb4ed9adbc14a481dada8381f1a2642ab",
+      "keys": [
+        "file_mtimes",
+        "files",
+        "git_head",
+        "source_fingerprint",
+        "verifier_fingerprint"
+      ]
+    },
+    {
+      "name": "source-before.json",
+      "sha256": "7b8dc43f356a6f0cbdfcbe8fbabe13feb4ed9adbc14a481dada8381f1a2642ab",
+      "keys": [
+        "file_mtimes",
+        "files",
+        "git_head",
+        "source_fingerprint",
+        "verifier_fingerprint"
+      ]
+    },
+    {
+      "name": "builder.stdout.log",
+      "sha256": "26da51b12d875da26a1c84d816d03b9b8a1aa9f361d881bd22798ba791246e37",
+      "lines": [
+        "All checks passed!",
+        "767 passed, 7 skipped in 40.92s",
+        "Info: Draft compiled and passed guarded sandbox launches",
+        "Info: Draft compiled and passed guarded sandbox launches"
+      ]
+    }
+  ]
+}

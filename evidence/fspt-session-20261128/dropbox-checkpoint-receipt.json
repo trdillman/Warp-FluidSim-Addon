@@ -1,0 +1,11 @@
+{
+  "status": "UPLOADED_AND_METADATA_MATCHED",
+  "path_display": "/ChatGPT Deliveries/FluidSim FSPT Backups/fspt-cloud-checkpoint-20261128T082100Z-ce6afc9a-pending.zip",
+  "id": "id:EtQ5xUNtt8AAAAAAABZulw",
+  "bytes": 22143383,
+  "rev": "66151e24768fa5c3d38d1",
+  "server_modified": "2026-11-28T08:22:56Z",
+  "content_hash_exposed": false,
+  "local_sha256": "f4f51ae7263e7439ee20546badf2783f2854229384a23bb46a69728568ab66e5",
+  "local_dropbox_style_content_hash": "a23d4a4427bf94f1577d60e626cda5dc6a47e528a573b45cc2c38a31c93d2b53"
+}

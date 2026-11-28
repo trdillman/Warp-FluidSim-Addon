@@ -1,0 +1,139 @@
+{
+  "status": "VERIFIED",
+  "verifier_sha256": "98787648f0a930dd76c65dabed7ae94448a2648c1ab04bea6872744ce6904904",
+  "stage": "complete",
+  "addon": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\fluidSim_warp_blender51\\__init__.py",
+  "python_tree_sha256": "00215ba75e4e0e72b81a8526327b9639f078a726c280225f0bebf3430552735f",
+  "blender": "5.2.0 LTS",
+  "blender_build": "fbe6228777e7",
+  "blender_executable": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+  "python": "3.13.13 (main, May  8 2026, 12:37:03) [MSC v.1944 64 bit (AMD64)]",
+  "os": "Windows-11-10.0.26200-SP0",
+  "runtime": {
+    "warp": "1.18.0",
+    "warp_path": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\5.2\\python\\Lib\\site-packages\\warp\\__init__.py",
+    "device": "cuda:0",
+    "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+    "cuda_driver": 13050,
+    "cuda_toolkit": 13040
+  },
+  "renders": {
+    "fixture": {
+      "status": "COMPLETE",
+      "key": [
+        "d27a6432b4eb11fe0ab209b538f3ec7e0bd371e2f06079a7da6093f99c2610ce",
+        "c9de264d20b408e0074a6048ded989401a01f32ce4a7eb0eb72f0025c252f226",
+        128,
+        96,
+        6,
+        31
+      ],
+      "samples": 32,
+      "device": "cuda:0",
+      "backend": "warp-cuda-reference-v1",
+      "transport": "host-staged-rgba32f",
+      "width": 128,
+      "height": 96,
+      "scene_frame": 1,
+      "exr": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\fixture.exr",
+      "exr_sha256": "25a3932b6773ccacad73026c0a4ecf483e68d3b514d446ab4cc6facab6009078",
+      "png": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\fixture.png",
+      "png_sha256": "5166228023e3daf64e1b253439840ddcd4dd3fa123329648ad30d2ea07e57cc6",
+      "mean_rgb": [
+        0.2239203304052353,
+        0.2449333220720291,
+        0.27513694763183594
+      ]
+    },
+    "camera_edit": {
+      "status": "COMPLETE",
+      "key": [
+        "d27a6432b4eb11fe0ab209b538f3ec7e0bd371e2f06079a7da6093f99c2610ce",
+        "b8a558d1601155aaebcd8a79c601653a2d7b305702eb25e4fcd15835d248c1a7",
+        128,
+        96,
+        6,
+        31
+      ],
+      "samples": 32,
+      "device": "cuda:0",
+      "backend": "warp-cuda-reference-v1",
+      "transport": "host-staged-rgba32f",
+      "width": 128,
+      "height": 96,
+      "scene_frame": 1,
+      "exr": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\camera_edit.exr",
+      "exr_sha256": "d681e5322a388d5e773dec05872630f4f0b0c44be06cc5469952c05ca302d6b3",
+      "png": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\camera_edit.png",
+      "png_sha256": "f953fc3a2bf24873b64f6493eb9e3a3eb0c2a7fe5cffdfe1b7073ad1d91c37f9",
+      "mean_rgb": [
+        0.22586852312088013,
+        0.24575687944889069,
+        0.2755403220653534
+      ]
+    },
+    "material_edit": {
+      "status": "COMPLETE",
+      "key": [
+        "9b9f4d5fef2519b1a27d739ca27204059034aab2d2fce36132394c4cc5e0d6b6",
+        "b8a558d1601155aaebcd8a79c601653a2d7b305702eb25e4fcd15835d248c1a7",
+        128,
+        96,
+        6,
+        31
+      ],
+      "samples": 32,
+      "device": "cuda:0",
+      "backend": "warp-cuda-reference-v1",
+      "transport": "host-staged-rgba32f",
+      "width": 128,
+      "height": 96,
+      "scene_frame": 1,
+      "exr": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\material_edit.exr",
+      "exr_sha256": "0602327982aad3e3f689fb0a1f251dc3f63c393d5ece05d3dcb8c72a66383fe9",
+      "png": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\material_edit.png",
+      "png_sha256": "94c9d1911cf5b763446b94340ea0e609799b31539db339560f984ada3477622b",
+      "mean_rgb": [
+        0.21402199566364288,
+        0.2626909911632538,
+        0.27655699849128723
+      ]
+    },
+    "world_only": {
+      "status": "COMPLETE",
+      "key": [
+        "5be9f8a2733775c38553ce54f0ba7948f2afd50172ea2863ccd9680ff3eb5284",
+        "b8a558d1601155aaebcd8a79c601653a2d7b305702eb25e4fcd15835d248c1a7",
+        128,
+        96,
+        6,
+        31
+      ],
+      "samples": 32,
+      "device": "cuda:0",
+      "backend": "warp-cuda-reference-v1",
+      "transport": "host-staged-rgba32f",
+      "width": 128,
+      "height": 96,
+      "scene_frame": 1,
+      "exr": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\world_only.exr",
+      "exr_sha256": "b2d55a725dbec27071ca3814730295b575e1a5b716d5dd44e41caa6598df133c",
+      "png": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\world_only.png",
+      "png_sha256": "45836bb8d8c02ed3c27728e50528dae5b07cc4b02215a7a33b9f02b96154a5bb",
+      "mean_rgb": [
+        0.11999565362930298,
+        0.21997646987438202,
+        0.34003451466560364
+      ]
+    }
+  },
+  "camera_mean_abs_delta": 0.166104257106781,
+  "material_mean_abs_delta": 0.009931975044310093,
+  "cpu_rejection": "FSPT requires an explicit CUDA device; CPU fallback is forbidden",
+  "unsupported_material_rejection": "Validation diffuse: linked input Diffuse BSDF.Color is not supported by P1",
+  "unsupported_operator": "Error: Validation diffuse: linked input Diffuse BSDF.Color is not supported by P1\nError: Validation diffuse: linked input Diffuse BSDF.Color is not supported by P1\n",
+  "unsupported_render": {
+    "status": "ERROR",
+    "error": "UnsupportedSceneError: Validation diffuse: linked input Diffuse BSDF.Color is not supported by P1"
+  }
+}

@@ -8,11 +8,14 @@ deterministic production cache generation lives in ``cache_bake``.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, field
+from time import monotonic
 from types import SimpleNamespace
 
 import bpy
 
 from ..sim.effects.runtime import EffectExecutionError
+from . import surface_publication
 from .scene_access import (
     active_domain_settings,
     scene_get,
@@ -34,11 +37,34 @@ persistent = getattr(_handlers, "persistent", lambda fn: fn)
 # Session state
 
 
+@dataclass(frozen=True)
+class SolverCompletion:
+    """Host boundary after a successful solver step, before optional outputs.
+
+    The solver reference prevents an object's recycled identity from inheriting
+    a timestamp. Consumers use Session.current_solver_completion to validate
+    these captured facts; the receipt itself never reads or advances a solver.
+    """
+
+    solver: object = field(repr=False, compare=False)
+    scene_token: int
+    owner_token: tuple[int | None, str]
+    epoch: int
+    solver_frame: int
+    state_revision: int
+    simulation_time: float
+    source_timeline_frame: int | None
+    ready_at: float
+
+
 class Session:
     """Live GPU solver session for one scene."""
 
     def __init__(self):
         self.solver = None
+        self.surface_epoch = None
+        self.solved_timeline_frame = None
+        self._solver_completion = None
         self.profiler = None
         self.last_frame = -1
         self.start_frame = 1
@@ -74,6 +100,22 @@ class Session:
     @property
     def active(self):
         return self.solver is not None
+
+    def current_solver_completion(self, scene):
+        """Return a matching completed-state receipt without GPU work or reads."""
+        completed = self._solver_completion
+        solver = self.solver
+        if (completed is None or not self.owns_scene(scene)
+                or solver is not completed.solver
+                or self.scene_identity != completed.scene_token
+                or surface_publication.surface_owner_token(scene) != completed.owner_token
+                or self.surface_epoch != completed.epoch
+                or self.solved_timeline_frame != completed.source_timeline_frame
+                or getattr(solver, "frame", None) != completed.solver_frame
+                or getattr(solver, "liquid_state_revision", None) != completed.state_revision
+                or getattr(solver, "sim_time", None) != completed.simulation_time):
+            return None
+        return completed
 
     @property
     def collider_mesh_cache_stats(self):
@@ -187,7 +229,8 @@ class Session:
         self.scene_key = key
 
     def install_solver(
-            self, candidate, *, profiler, device, scene_inputs, admitted_effects=()):
+            self, candidate, *, profiler, device, scene_inputs, admitted_effects=(),
+            solved_timeline_frame=None):
         """Replacement Cutover: the single swap of the authoritative solver.
 
         ``candidate`` has already passed admission. The retired solver, its
@@ -200,6 +243,10 @@ class Session:
         gpu_particle_owner.reset_runtime()
         old_solver = self.solver
         old_inputs = self.scene_inputs
+        surface_publication.invalidate_surfaces(source=surface_publication.SurfaceSource.LIVE)
+        self.surface_epoch = surface_publication.new_surface_epoch()
+        self.solved_timeline_frame = solved_timeline_frame
+        self._solver_completion = None
         self.solver = candidate
         self.profiler = profiler
         self.device = device
@@ -228,6 +275,10 @@ class Session:
                 + "; ".join(str(exc) for exc in failures)) from failures[0]
 
     def _clear_runtime(self):
+        surface_publication.invalidate_surfaces(source=surface_publication.SurfaceSource.LIVE)
+        self.surface_epoch = None
+        self.solved_timeline_frame = None
+        self._solver_completion = None
         failures = []
         try:
             from . import gpu_particle_owner
@@ -447,12 +498,15 @@ class Session:
 
         if not self.owns_scene(scene):
             return None
+        # A failed solve, including one which leaves the public counters
+        # untouched, cannot keep an earlier completion receipt eligible.
+        self._solver_completion = None
         fs = scene.fluidsim
         # Custom Effect frame windows are authored in timeline frames; tell the
         # solver which one this step produces so preview and bake (whose solver
         # frame counters start from different origins) agree (decision D6).
-        self.solver.effect_frame = int(
-            scene.frame_current if timeline_frame is None else timeline_frame)
+        target_frame = int(scene.frame_current if timeline_frame is None else timeline_frame)
+        self.solver.effect_frame = target_frame
         effects = None
         if hasattr(bpy, "props") and getattr(scene, "fluidsim_effects", None) is not None:
             from . import effects  # animated effect values (B66, lane E)
@@ -460,11 +514,27 @@ class Session:
             effects.sync_animated_effect_bindings(scene, self)
         try:
             stats = self._step_growing_leaves(scene)
+            ready_at = monotonic()
         except EffectExecutionError as exc:
             if effects is not None:
                 # Before any caller releases the solver and its runtime error.
                 effects.publish_runtime_error(scene, exc)
             raise
+        # Playback can move its cursor without a solve. Only a same-frame
+        # manual step or a consecutive solve preserves exact timeline mapping.
+        # Admission/reset establishes a new mapping after a discontinuity.
+        previous = self.solved_timeline_frame
+        contiguous = previous is not None and previous <= target_frame <= previous + 1
+        self.solved_timeline_frame = target_frame if contiguous else None
+        frame = getattr(self.solver, "frame", None)
+        revision = getattr(self.solver, "liquid_state_revision", None)
+        simulation_time = getattr(self.solver, "sim_time", None)
+        if (self.surface_epoch is not None and frame is not None and revision is not None
+                and simulation_time is not None and math.isfinite(simulation_time)):
+            self._solver_completion = SolverCompletion(
+                self.solver, self.scene_identity, surface_publication.surface_owner_token(scene),
+                self.surface_epoch, frame, revision, simulation_time,
+                self.solved_timeline_frame, ready_at)
         if effects is not None:
             effects.publish_runtime_telemetry(
                 scene, getattr(stats, "custom_effects", None) or ())
@@ -579,7 +649,11 @@ class Session:
         if publish_outputs:
             from . import output_publication
 
-            publication = output_publication.update_outputs(scene, self)
+            if timeline_frame is None:
+                publication = output_publication.update_outputs(scene, self)
+            else:
+                publication = output_publication.update_outputs(
+                    scene, self, timeline_frame=timeline_frame)
             warning = str(getattr(publication, "warning", "") or "")
             if warning:
                 self.set_error(scene, warning)

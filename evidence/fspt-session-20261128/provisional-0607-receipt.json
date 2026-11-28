@@ -1,0 +1,668 @@
+{
+  "archives": {
+    "linux-x64": {
+      "demo_sha256": {
+        "buoyancy_ladder": "e10fbff3fb2fff4ef7936bcad0fa2d02a549f01668d2ba47cf47c26c2515a267",
+        "capillary_droplet": "9d1ac1c09a6f0865fe0edc196db4a859c4b8ce1d31a8aef4a5472b30a3161af8",
+        "chromatic_vortex": "678c3851daa79d3743b5e1cebf050abba81dbf3f20a94b8697f8db40b30eab0c",
+        "crown_splash": "f3ee4e00dbcbf003fab15733c8494b4f7932bd1e68d21b7ce3dd58af4f6f46d4",
+        "dam_break": "05e1918423e48fdf22ea702ff5ca2db1c8f7464be865619d382ad5d8118b92f8",
+        "deep_plunge": "6a644fc0744206ae63e72db689f5c94bca46acec5db41ada13cccd0ef69c4840",
+        "paddle_stir": "fa0521b10fa6b0e029ab60e0c2ddcb08ff5f8d7cde9c7c536eea8edf7bb022c3",
+        "viscosity_race": "6319784fc17221a237ddf4b1c6f0e39a98055cd6a444cad1123625d4ac1eeb67",
+        "water_wheel": "9fb9b0ff5fa44b95423ae93c8c9a9e459b2bc8a6c11ddb0388523c3ea08a6c49"
+      },
+      "path": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\archives\\fluidsim_warp-4.1.0-linux_x64.zip",
+      "platform": "linux-x64",
+      "python_members": 202,
+      "runtime_dependency": "user-install",
+      "sha256": "85c79518a75546a8c4b967c44cbec8b6c19e6d65f4801cb6c26c8232bf17ea6e",
+      "size": 8483009
+    },
+    "windows-x64": {
+      "demo_sha256": {
+        "buoyancy_ladder": "e10fbff3fb2fff4ef7936bcad0fa2d02a549f01668d2ba47cf47c26c2515a267",
+        "capillary_droplet": "9d1ac1c09a6f0865fe0edc196db4a859c4b8ce1d31a8aef4a5472b30a3161af8",
+        "chromatic_vortex": "678c3851daa79d3743b5e1cebf050abba81dbf3f20a94b8697f8db40b30eab0c",
+        "crown_splash": "f3ee4e00dbcbf003fab15733c8494b4f7932bd1e68d21b7ce3dd58af4f6f46d4",
+        "dam_break": "05e1918423e48fdf22ea702ff5ca2db1c8f7464be865619d382ad5d8118b92f8",
+        "deep_plunge": "6a644fc0744206ae63e72db689f5c94bca46acec5db41ada13cccd0ef69c4840",
+        "paddle_stir": "fa0521b10fa6b0e029ab60e0c2ddcb08ff5f8d7cde9c7c536eea8edf7bb022c3",
+        "viscosity_race": "6319784fc17221a237ddf4b1c6f0e39a98055cd6a444cad1123625d4ac1eeb67",
+        "water_wheel": "9fb9b0ff5fa44b95423ae93c8c9a9e459b2bc8a6c11ddb0388523c3ea08a6c49"
+      },
+      "path": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\archives\\fluidsim_warp-4.1.0-windows_x64.zip",
+      "platform": "windows-x64",
+      "python_members": 202,
+      "runtime_dependency": "user-install",
+      "sha256": "9dc97824b62b99556c87df92d6336d47522c4a33e5c7f66814413b03fd440207",
+      "size": 8483007
+    }
+  },
+  "blender_sha256": "0060916d6921eb4d46c57254609d805a2ea711917399051391a52ba14beb6327",
+  "broker_label": "FSPT provisional package a1332cc5aa8d4c63ada13e8a77e382cd",
+  "broker_receipts": [
+    {
+      "adopted": false,
+      "argv": [
+        "--factory-startup",
+        "--background",
+        "--offline-mode",
+        "--command",
+        "extension",
+        "validate",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\fluidSim_warp_blender51"
+      ],
+      "cls": "shared",
+      "contamination": [],
+      "created": 1795852926.6692038,
+      "cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\fluidSim_warp_blender51",
+      "detached": false,
+      "end_reason": "",
+      "ended": 1795852928.2664256,
+      "exe": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+      "exit_code": 0,
+      "expires": null,
+      "gpu_samples": 0,
+      "granted": 1795852926.669266,
+      "heartbeat": 1795852926.6692038,
+      "held": false,
+      "id": "c0d59eba7b57",
+      "idle": false,
+      "job": "",
+      "label": "FSPT provisional package a1332cc5aa8d4c63ada13e8a77e382cd",
+      "last_active": 1795852926.669266,
+      "launcher": [],
+      "local_reason": "Offload is disabled for this run.",
+      "logs": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-continue-20261128\\20261128-030207-c0d59eba7b57.log"
+      ],
+      "max_seconds": 300.0,
+      "movable": false,
+      "move_to": "",
+      "owner": "FluidSim FSPT",
+      "owner_ctime": 134403265262578338,
+      "owner_pid": 18484,
+      "pids": [
+        [
+          60360,
+          134403265271074273
+        ]
+      ],
+      "preemptible": false,
+      "priority": 0,
+      "profile": {
+        "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\temp\\fluidsim-package-profile-erlzz5_n\\config",
+        "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\temp\\fluidsim-package-profile-erlzz5_n\\datafiles",
+        "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\temp\\fluidsim-package-profile-erlzz5_n\\extensions",
+        "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\temp\\fluidsim-package-profile-erlzz5_n\\scripts"
+      },
+      "restart": false,
+      "restarts": 0,
+      "run_seconds": 1.597,
+      "scope_ctime": null,
+      "scope_pid": null,
+      "seq": 448,
+      "session": "agent:fspt-continue-20261128",
+      "session_cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\fluidSim_warp_blender51",
+      "session_home": "",
+      "state": "released",
+      "suspended_by": null,
+      "ttl": null,
+      "wait_seconds": 0.0
+    },
+    {
+      "adopted": false,
+      "argv": [
+        "--factory-startup",
+        "--background",
+        "--offline-mode",
+        "--command",
+        "extension",
+        "build",
+        "--split-platforms",
+        "--source-dir",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\fluidSim_warp_blender51",
+        "--output-dir",
+        "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\archives",
+        "--verbose"
+      ],
+      "cls": "shared",
+      "contamination": [],
+      "created": 1795852929.001937,
+      "cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\fluidSim_warp_blender51",
+      "detached": false,
+      "end_reason": "",
+      "ended": 1795852931.7837706,
+      "exe": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+      "exit_code": 0,
+      "expires": null,
+      "gpu_samples": 0,
+      "granted": 1795852929.0020275,
+      "heartbeat": 1795852929.001937,
+      "held": false,
+      "id": "09c1e4a2f910",
+      "idle": false,
+      "job": "",
+      "label": "FSPT provisional package a1332cc5aa8d4c63ada13e8a77e382cd",
+      "last_active": 1795852930.4190543,
+      "launcher": [],
+      "local_reason": "Offload is disabled for this run.",
+      "logs": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-continue-20261128\\20261128-030209-09c1e4a2f910.log"
+      ],
+      "max_seconds": 300.0,
+      "movable": false,
+      "move_to": "",
+      "owner": "FluidSim FSPT",
+      "owner_ctime": 134403265283751267,
+      "owner_pid": 66476,
+      "pids": [
+        [
+          25460,
+          134403265295005120
+        ]
+      ],
+      "preemptible": false,
+      "priority": 0,
+      "profile": {
+        "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\temp\\fluidsim-package-profile-erlzz5_n\\config",
+        "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\temp\\fluidsim-package-profile-erlzz5_n\\datafiles",
+        "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\temp\\fluidsim-package-profile-erlzz5_n\\extensions",
+        "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\temp\\fluidsim-package-profile-erlzz5_n\\scripts"
+      },
+      "restart": false,
+      "restarts": 0,
+      "run_seconds": 2.782,
+      "scope_ctime": null,
+      "scope_pid": null,
+      "seq": 449,
+      "session": "agent:fspt-continue-20261128",
+      "session_cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\fluidSim_warp_blender51",
+      "session_home": "",
+      "state": "released",
+      "suspended_by": null,
+      "ttl": null,
+      "wait_seconds": 0.0
+    },
+    {
+      "adopted": false,
+      "argv": [
+        "--command",
+        "extension",
+        "repo-add",
+        "fluidsim_ci",
+        "--name",
+        "FluidSim CI",
+        "--directory",
+        "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo",
+        "--clear-all"
+      ],
+      "cls": "shared",
+      "contamination": [],
+      "created": 1795852938.3383904,
+      "cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release",
+      "detached": false,
+      "end_reason": "",
+      "ended": 1795852939.9168234,
+      "exe": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+      "exit_code": 0,
+      "expires": null,
+      "gpu_samples": 0,
+      "granted": 1795852938.338433,
+      "heartbeat": 1795852938.3383904,
+      "held": false,
+      "id": "12c981aa5c26",
+      "idle": false,
+      "job": "",
+      "label": "FSPT provisional package a1332cc5aa8d4c63ada13e8a77e382cd",
+      "last_active": 1795852938.338433,
+      "launcher": [],
+      "local_reason": "Offload is disabled for this run.",
+      "logs": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-continue-20261128\\20261128-030218-12c981aa5c26.log"
+      ],
+      "max_seconds": 300.0,
+      "movable": false,
+      "move_to": "",
+      "owner": "FluidSim FSPT",
+      "owner_ctime": 134403265380133291,
+      "owner_pid": 58372,
+      "pids": [
+        [
+          65472,
+          134403265388419687
+        ]
+      ],
+      "preemptible": false,
+      "priority": 0,
+      "profile": {
+        "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\config",
+        "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\datafiles",
+        "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\extensions",
+        "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\scripts"
+      },
+      "restart": false,
+      "restarts": 0,
+      "run_seconds": 1.578,
+      "scope_ctime": null,
+      "scope_pid": null,
+      "seq": 450,
+      "session": "agent:fspt-continue-20261128",
+      "session_cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release",
+      "session_home": "",
+      "state": "released",
+      "suspended_by": null,
+      "ttl": null,
+      "wait_seconds": 0.0
+    },
+    {
+      "adopted": false,
+      "argv": [
+        "--command",
+        "extension",
+        "install-file",
+        "-r",
+        "fluidsim_ci",
+        "-e",
+        "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\archives\\fluidsim_warp-4.1.0-windows_x64.zip"
+      ],
+      "cls": "shared",
+      "contamination": [],
+      "created": 1795852940.282502,
+      "cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release",
+      "detached": false,
+      "end_reason": "",
+      "ended": 1795852944.1329896,
+      "exe": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+      "exit_code": 0,
+      "expires": null,
+      "gpu_samples": 0,
+      "granted": 1795852940.2825513,
+      "heartbeat": 1795852940.282502,
+      "held": false,
+      "id": "bce6a52b04d9",
+      "idle": false,
+      "job": "",
+      "label": "FSPT provisional package a1332cc5aa8d4c63ada13e8a77e382cd",
+      "last_active": 1795852940.4673495,
+      "launcher": [],
+      "local_reason": "Offload is disabled for this run.",
+      "logs": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-continue-20261128\\20261128-030220-bce6a52b04d9.log"
+      ],
+      "max_seconds": 300.0,
+      "movable": false,
+      "move_to": "",
+      "owner": "FluidSim FSPT",
+      "owner_ctime": 134403265399676544,
+      "owner_pid": 33828,
+      "pids": [
+        [
+          64204,
+          134403265406991799
+        ]
+      ],
+      "preemptible": false,
+      "priority": 0,
+      "profile": {
+        "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\config",
+        "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\datafiles",
+        "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\extensions",
+        "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\scripts"
+      },
+      "restart": false,
+      "restarts": 0,
+      "run_seconds": 3.85,
+      "scope_ctime": null,
+      "scope_pid": null,
+      "seq": 451,
+      "session": "agent:fspt-continue-20261128",
+      "session_cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release",
+      "session_home": "",
+      "state": "released",
+      "suspended_by": null,
+      "ttl": null,
+      "wait_seconds": 0.0
+    },
+    {
+      "adopted": false,
+      "argv": [
+        "--background",
+        "--offline-mode",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release\\smoke_test_blender.py"
+      ],
+      "cls": "shared",
+      "contamination": [],
+      "created": 1795852958.8014214,
+      "cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release",
+      "detached": false,
+      "end_reason": "",
+      "ended": 1795852972.0189562,
+      "exe": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+      "exit_code": 0,
+      "expires": null,
+      "gpu_samples": 0,
+      "granted": 1795852958.801479,
+      "heartbeat": 1795852958.8014214,
+      "held": false,
+      "id": "266f6de09b01",
+      "idle": false,
+      "job": "",
+      "label": "FSPT provisional package a1332cc5aa8d4c63ada13e8a77e382cd",
+      "last_active": 1795852970.6282647,
+      "launcher": [],
+      "local_reason": "Offload is disabled for this run.",
+      "logs": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-continue-20261128\\20261128-030239-266f6de09b01.log"
+      ],
+      "max_seconds": 300.0,
+      "movable": false,
+      "move_to": "",
+      "owner": "FluidSim FSPT",
+      "owner_ctime": 134403265441969676,
+      "owner_pid": 35876,
+      "pids": [
+        [
+          60020,
+          134403265592779574
+        ]
+      ],
+      "preemptible": false,
+      "priority": 0,
+      "profile": {
+        "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\config",
+        "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\datafiles",
+        "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\extensions",
+        "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\scripts"
+      },
+      "restart": false,
+      "restarts": 0,
+      "run_seconds": 13.217,
+      "scope_ctime": null,
+      "scope_pid": null,
+      "seq": 452,
+      "session": "agent:fspt-continue-20261128",
+      "session_cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release",
+      "session_home": "",
+      "state": "released",
+      "suspended_by": null,
+      "ttl": null,
+      "wait_seconds": 0.0
+    },
+    {
+      "adopted": false,
+      "argv": [
+        "--background",
+        "--offline-mode",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release\\smoke_test_blender.py"
+      ],
+      "cls": "shared",
+      "contamination": [],
+      "created": 1795852986.780275,
+      "cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release",
+      "detached": false,
+      "end_reason": "",
+      "ended": 1795852990.4453168,
+      "exe": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+      "exit_code": 0,
+      "expires": null,
+      "gpu_samples": 0,
+      "granted": 1795852986.7803469,
+      "heartbeat": 1795852986.780275,
+      "held": false,
+      "id": "83dd9954a930",
+      "idle": false,
+      "job": "",
+      "label": "FSPT provisional package a1332cc5aa8d4c63ada13e8a77e382cd",
+      "last_active": 1795852986.7803469,
+      "launcher": [],
+      "local_reason": "Offload is disabled for this run.",
+      "logs": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-continue-20261128\\20261128-030307-83dd9954a930.log"
+      ],
+      "max_seconds": 300.0,
+      "movable": false,
+      "move_to": "",
+      "owner": "FluidSim FSPT",
+      "owner_ctime": 134403265720806152,
+      "owner_pid": 35216,
+      "pids": [
+        [
+          15988,
+          134403265873390648
+        ]
+      ],
+      "preemptible": false,
+      "priority": 0,
+      "profile": {
+        "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\config",
+        "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\datafiles",
+        "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\extensions",
+        "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\scripts"
+      },
+      "restart": false,
+      "restarts": 0,
+      "run_seconds": 3.665,
+      "scope_ctime": null,
+      "scope_pid": null,
+      "seq": 454,
+      "session": "agent:fspt-continue-20261128",
+      "session_cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release",
+      "session_home": "",
+      "state": "released",
+      "suspended_by": null,
+      "ttl": null,
+      "wait_seconds": 0.0
+    },
+    {
+      "adopted": false,
+      "argv": [
+        "--command",
+        "extension",
+        "remove",
+        "fluidsim_ci.fluidsim_warp"
+      ],
+      "cls": "shared",
+      "contamination": [],
+      "created": 1795852990.8814878,
+      "cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release",
+      "detached": false,
+      "end_reason": "",
+      "ended": 1795852993.7791214,
+      "exe": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+      "exit_code": 0,
+      "expires": null,
+      "gpu_samples": 0,
+      "granted": 1795852990.8815608,
+      "heartbeat": 1795852990.8814878,
+      "held": false,
+      "id": "dfddb46aaec3",
+      "idle": false,
+      "job": "",
+      "label": "FSPT provisional package a1332cc5aa8d4c63ada13e8a77e382cd",
+      "last_active": 1795852990.8815608,
+      "launcher": [],
+      "local_reason": "Offload is disabled for this run.",
+      "logs": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\logs\\agent-fspt-continue-20261128\\20261128-030311-dfddb46aaec3.log"
+      ],
+      "max_seconds": 300.0,
+      "movable": false,
+      "move_to": "",
+      "owner": "FluidSim FSPT",
+      "owner_ctime": 134403265905118530,
+      "owner_pid": 56088,
+      "pids": [
+        [
+          56216,
+          134403265916642665
+        ]
+      ],
+      "preemptible": false,
+      "priority": 0,
+      "profile": {
+        "BLENDER_USER_CONFIG": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\config",
+        "BLENDER_USER_DATAFILES": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\datafiles",
+        "BLENDER_USER_EXTENSIONS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\extensions",
+        "BLENDER_USER_SCRIPTS": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo-profile\\scripts"
+      },
+      "restart": false,
+      "restarts": 0,
+      "run_seconds": 2.898,
+      "scope_ctime": null,
+      "scope_pid": null,
+      "seq": 455,
+      "session": "agent:fspt-continue-20261128",
+      "session_cwd": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tools\\release",
+      "session_home": "",
+      "state": "released",
+      "suspended_by": null,
+      "ttl": null,
+      "wait_seconds": 0.0
+    }
+  ],
+  "builder_report_sha256": "63efb7e77960afcf77d18eec8e358a8c65bad3f919827274e52e35adbfbf5663",
+  "commands": [
+    {
+      "argv": [
+        "C:\\Program Files\\Blender Foundation\\Blender 5.2\\5.2\\python\\bin\\python.exe",
+        "-B",
+        "-c",
+        "\nimport importlib.metadata as md, importlib.util, json\nfrom pathlib import Path\nimport sys\nroots = tuple(Path(arg).resolve() for arg in sys.argv[1:])\nversions = {'pytest': ('pytest', '9.1.1'), 'ruff': ('ruff', '0.16.2'),\n            'numpy': ('numpy', '2.3.4'), 'warp': ('warp-lang', '1.19.0')}\nfound = {}\nfor module, (distribution, expected) in versions.items():\n    spec = importlib.util.find_spec(module)\n    assert spec is not None and spec.origin, module\n    origin = Path(spec.origin).resolve()\n    assert any(origin.is_relative_to(root) for root in roots), origin\n    actual = md.version(distribution)\n    assert actual.split('+', 1)[0] == expected, (distribution, actual, expected)\n    found[module] = {'version': actual, 'origin': str(origin)}\nimport warp as wp\nwp.init()\nassert wp.__version__ == '1.19.0' and not wp.is_cuda_available()\nfound['warp'].update(runtime_version=wp.__version__, cuda_available=False)\nprint(json.dumps(found))\n",
+        "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site",
+        "C:\\Users\\Tyler\\Documents\\Codex\\2026-11-06\\resolve-and-merge-all-prs-across\\work\\daily-20261117\\fluid65-cpu\\deps"
+      ],
+      "exit_code": 0,
+      "label": "test-dependencies",
+      "pid": 50388,
+      "stderr": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\test-dependencies.stderr.log",
+      "stderr_sha256": "fa203527c3dee36b64eb097f6f62a940146cb2b66e5aeb2f37651dafb13bea77",
+      "stdout": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\test-dependencies.stdout.log",
+      "stdout_sha256": "09284c841e194ee14a62cdb64ec71da28cfaa16d5caec49d4c908bed12655716"
+    },
+    {
+      "argv": [
+        "C:\\Program Files\\Blender Foundation\\Blender 5.2\\5.2\\python\\bin\\python.exe",
+        "-B",
+        "-u",
+        "tools/release/fetch_warp_wheels.py",
+        "--offline",
+        "--platform",
+        "windows-x64",
+        "--source",
+        "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\wheel\\warp_lang-1.19.0-py3-none-win_amd64.whl"
+      ],
+      "exit_code": 0,
+      "label": "wheel",
+      "pid": 41080,
+      "stderr": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\wheel.stderr.log",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\wheel.stdout.log",
+      "stdout_sha256": "d9a830b0acd5b3c7876fdff033152538a4d661042c4d988879b1c288abaf8526"
+    },
+    {
+      "argv": [
+        "C:\\Program Files\\Blender Foundation\\Blender 5.2\\5.2\\python\\bin\\python.exe",
+        "-B",
+        "-u",
+        "tools/release/build_extension.py",
+        "--blender",
+        "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+        "--output",
+        "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\archives",
+        "--smoke-platform",
+        "windows-x64",
+        "--repository",
+        "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\smoke-repo",
+        "--json-report",
+        "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\canonical-package-report.json"
+      ],
+      "exit_code": 0,
+      "label": "builder",
+      "pid": 42612,
+      "stderr": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\builder.stderr.log",
+      "stderr_sha256": "952650e9a9e07b5472d5c4a560ae419246bcae46f417f8b1b511add43e436b99",
+      "stdout": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-Packages\\0607-provisional-20261128T080123728806Z\\builder.stdout.log",
+      "stdout_sha256": "2331d0867a24531de73570375f73c0517a5b921a47694854132125261b03b318"
+    }
+  ],
+  "controller_sha256": "3c3c6e198692e96b17d7c0c92b88e7fad5719b61438239aa5f12c12f092b270f",
+  "disposition": "PROVISIONAL_FULL_GATE_BLOCKED",
+  "finished_at": "2026-11-28T08:03:17.155902+00:00",
+  "head": "0607daad9354b872c7530277371b1d998443c394",
+  "python_sha256": "7d984ee02e70c22f04d5e26f1328865d75a5da14b677890896a294f35815d37a",
+  "scope": [
+    "standard source/package builder",
+    "Windows generic installed double smoke and uninstall",
+    "Linux archive construction and inspection",
+    "CPU-only Warp for this package run"
+  ],
+  "smoke_pids": [
+    15988,
+    60020
+  ],
+  "smoke_report_sha256": "a73a94ad6c0e8973948d75c7e6d851da05196165eafce5b4278868b8407a722c",
+  "staged_after_sha256": {
+    "buoyancy_ladder": "e10fbff3fb2fff4ef7936bcad0fa2d02a549f01668d2ba47cf47c26c2515a267",
+    "capillary_droplet": "9d1ac1c09a6f0865fe0edc196db4a859c4b8ce1d31a8aef4a5472b30a3161af8",
+    "chromatic_vortex": "678c3851daa79d3743b5e1cebf050abba81dbf3f20a94b8697f8db40b30eab0c",
+    "crown_splash": "f3ee4e00dbcbf003fab15733c8494b4f7932bd1e68d21b7ce3dd58af4f6f46d4",
+    "dam_break": "05e1918423e48fdf22ea702ff5ca2db1c8f7464be865619d382ad5d8118b92f8",
+    "deep_plunge": "6a644fc0744206ae63e72db689f5c94bca46acec5db41ada13cccd0ef69c4840",
+    "paddle_stir": "fa0521b10fa6b0e029ab60e0c2ddcb08ff5f8d7cde9c7c536eea8edf7bb022c3",
+    "viscosity_race": "6319784fc17221a237ddf4b1c6f0e39a98055cd6a444cad1123625d4ac1eeb67",
+    "water_wheel": "9fb9b0ff5fa44b95423ae93c8c9a9e459b2bc8a6c11ddb0388523c3ea08a6c49"
+  },
+  "staged_before_sha256": {
+    "buoyancy_ladder": "e10fbff3fb2fff4ef7936bcad0fa2d02a549f01668d2ba47cf47c26c2515a267",
+    "capillary_droplet": "9d1ac1c09a6f0865fe0edc196db4a859c4b8ce1d31a8aef4a5472b30a3161af8",
+    "chromatic_vortex": "678c3851daa79d3743b5e1cebf050abba81dbf3f20a94b8697f8db40b30eab0c",
+    "crown_splash": "f3ee4e00dbcbf003fab15733c8494b4f7932bd1e68d21b7ce3dd58af4f6f46d4",
+    "dam_break": "05e1918423e48fdf22ea702ff5ca2db1c8f7464be865619d382ad5d8118b92f8",
+    "deep_plunge": "6a644fc0744206ae63e72db689f5c94bca46acec5db41ada13cccd0ef69c4840",
+    "paddle_stir": "fa0521b10fa6b0e029ab60e0c2ddcb08ff5f8d7cde9c7c536eea8edf7bb022c3",
+    "viscosity_race": "6319784fc17221a237ddf4b1c6f0e39a98055cd6a444cad1123625d4ac1eeb67",
+    "water_wheel": "9fb9b0ff5fa44b95423ae93c8c9a9e459b2bc8a6c11ddb0388523c3ea08a6c49"
+  },
+  "status": "PROVISIONAL_VERIFIED",
+  "test_dependencies": {
+    "numpy": {
+      "origin": "C:\\Users\\Tyler\\Documents\\Codex\\2026-11-06\\resolve-and-merge-all-prs-across\\work\\daily-20261117\\fluid65-cpu\\deps\\numpy\\__init__.py",
+      "version": "2.3.4"
+    },
+    "pytest": {
+      "origin": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site\\pytest\\__init__.py",
+      "version": "9.1.1"
+    },
+    "ruff": {
+      "origin": "C:\\Users\\Tyler\\Documents\\Codex\\2026-11-06\\resolve-and-merge-all-prs-across\\work\\daily-20261117\\fluid65-cpu\\deps\\ruff\\__init__.py",
+      "version": "0.16.2"
+    },
+    "warp": {
+      "cuda_available": false,
+      "origin": "C:\\Users\\Tyler\\Documents\\FluidSim-Warp119-gate-20261103-env\\site\\warp\\__init__.py",
+      "runtime_version": "1.19.0",
+      "version": "1.19.0"
+    }
+  },
+  "tracked_demo_sha256": {
+    "buoyancy_ladder": "e10fbff3fb2fff4ef7936bcad0fa2d02a549f01668d2ba47cf47c26c2515a267",
+    "capillary_droplet": "9d1ac1c09a6f0865fe0edc196db4a859c4b8ce1d31a8aef4a5472b30a3161af8",
+    "chromatic_vortex": "678c3851daa79d3743b5e1cebf050abba81dbf3f20a94b8697f8db40b30eab0c",
+    "crown_splash": "f3ee4e00dbcbf003fab15733c8494b4f7932bd1e68d21b7ce3dd58af4f6f46d4",
+    "dam_break": "05e1918423e48fdf22ea702ff5ca2db1c8f7464be865619d382ad5d8118b92f8",
+    "deep_plunge": "6a644fc0744206ae63e72db689f5c94bca46acec5db41ada13cccd0ef69c4840",
+    "paddle_stir": "fa0521b10fa6b0e029ab60e0c2ddcb08ff5f8d7cde9c7c536eea8edf7bb022c3",
+    "viscosity_race": "6319784fc17221a237ddf4b1c6f0e39a98055cd6a444cad1123625d4ac1eeb67",
+    "water_wheel": "9fb9b0ff5fa44b95423ae93c8c9a9e459b2bc8a6c11ddb0388523c3ea08a6c49"
+  },
+  "uninstall_verified": true,
+  "wheel_sha256": "bb4865dde4c2ae916d3d2a4e20ed1cd406e1d0a76ae722c3c574a9d43385c4d9"
+}

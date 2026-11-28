@@ -100,6 +100,9 @@ GATE_MANIFEST = ROOT / "artifacts" / "production_gate_manifest.json"
 GATE_BLENDER_USER_EXTENSIONS = ROOT / "artifacts" / "gate_blender_user_extensions"
 # Background Blender acceptance scripts that take no arguments: (script, marker).
 BACKGROUND_ACCEPTANCE = (
+    ("tests/acceptance/blender_fspt_preflight.py", "FSPT-PREFLIGHT-PASS"),
+    ("tests/acceptance/blender_fspt_acceptance.py", "FSPT-ACCEPTANCE-PASS"),
+    ("tests/acceptance/blender_fspt_edge_acceptance.py", "FSPT-EDGE-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_append_migration_acceptance.py", "APPEND-MIGRATION-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_vdb_production_bake_acceptance.py", "VDB-PRODUCTION-BAKE-ACCEPTANCE-PASS"),
     ("tests/acceptance/blender_cache_vdb_export_acceptance.py", "CACHE-VDB-EXPORT-ACCEPTANCE-PASS"),
@@ -146,6 +149,22 @@ BACKGROUND_ACCEPTANCE = (
 )
 # Acceptance scripts that take --json-out: (label, script, report path, marker).
 REPORT_ACCEPTANCE = (
+    ("FSPT asynchronous CUDA backend", "tests/acceptance/blender_fspt_async_acceptance.py",
+     "artifacts/fspt_async_acceptance.json", "FSPT-ASYNC-BACKEND-PASS"),
+    ("FSPT final device surface", "tests/acceptance/blender_fspt_device_surface_acceptance.py",
+     "artifacts/fspt_device_surface_acceptance.json", "FSPT-DEVICE-SURFACE-PASS"),
+    ("FSPT bounded device surface pool", "tests/acceptance/blender_fspt_surface_pool_acceptance.py",
+     "artifacts/fspt_surface_pool_acceptance.json", "FSPT-SURFACE-POOL-PASS"),
+    ("FSPT device geometry consumer", "tests/acceptance/blender_fspt_device_consumer_acceptance.py",
+     "artifacts/fspt_device_consumer_acceptance.json", "FSPT-DEVICE-CONSUMER-PASS"),
+    ("FSPT demand-driven device producer", "tests/acceptance/blender_fspt_device_bridge_acceptance.py",
+     "artifacts/fspt_device_bridge_acceptance.json", "FSPT-DEVICE-BRIDGE-PASS"),
+    ("FSPT viewport route broker and worker ownership", "tests/acceptance/blender_fspt_viewport_backend_acceptance.py",
+     "artifacts/fspt_viewport_backend_acceptance.json", "FSPT-VIEWPORT-BACKEND-PASS"),
+    ("FSPT aggregate geometry reuse", "tests/acceptance/blender_fspt_persistent_assets.py",
+     "artifacts/fspt_persistent_assets.json", "FSPT-PERSISTENT-ASSETS-PASS"),
+    ("FSPT solver completion clock", "tests/acceptance/blender_fspt_state_clock_acceptance.py",
+     "artifacts/fspt_state_clock_acceptance.json", "FSPT-STATE-CLOCK-PASS"),
     ("paused cache output acceptance", "tests/acceptance/blender_paused_cache_output_acceptance.py",
      "artifacts/paused_cache_output_acceptance.json", "PAUSED-CACHE-OUTPUT-ACCEPTANCE-PASS"),
     ("allocation accounting acceptance", "tests/acceptance/blender_allocation_accounting_acceptance.py",
@@ -169,6 +188,14 @@ SOURCE_REPORT_ACCEPTANCE = (
 # tests/gate/test_production_gate_coverage.py requires every script to be run here
 # or listed here, so a new acceptance script cannot silently go unrun.
 MANUAL_BLENDER_PROBES = {
+    "tests/acceptance/blender_fspt_live_acceptance.py": (
+        "Retained strict draw-current oracle for the synchronous reference renderer. "
+        "The gated asynchronous live verifier inherits its content/fault/reset controls "
+        "and joins independent capture-time geometry to the actual presented snapshot."),
+    "tests/acceptance/blender_fspt_p0_runtime_acceptance.py": (
+        "P0 feasibility runs in a separately admitted real graphics window with "
+        "an explicitly built and hash-bound optional OptiX probe. It records API, "
+        "ABI and transport capabilities; it is not a product backend release gate."),
     "tests/acceptance/blender_saved_preview_acceptance.py": (
         "Requires an installed candidate, exact archive/source identity, a private "
         "profile and separate produce/reopen processes for both render selections; "
@@ -284,8 +311,8 @@ def _profile_directory(*, windows=None):
 
 
 def _env():
-    from tools.release.build_extension import _blender_process_environment
     from tools.gate import qualification as q
+    from tools.release.build_extension import _blender_process_environment
     profile = _profile_directory()
     if _RUN_DIRECTORY is not None:
         q.atomic_json(_RUN_DIRECTORY / "private_profile.json", {"profile_directory": str(profile)})
@@ -332,6 +359,69 @@ def _release_env(env):
     return release_env
 
 
+def _is_fspt_acceptance(script):
+    return Path(script).name.startswith("blender_fspt_")
+
+
+def _fspt_report_path(script, args):
+    if not _is_fspt_acceptance(script):
+        return None
+    if args.count("--json-out") != 1 or args[-1] == "--json-out":
+        raise RuntimeError(f"{script}: one explicit --json-out is required")
+    report = Path(args[args.index("--json-out") + 1])
+    if (not report.is_absolute() or _RUN_DIRECTORY is None
+            or not report.resolve().is_relative_to(_RUN_DIRECTORY.resolve())):
+        raise RuntimeError(f"{script}: report must be inside this qualification run")
+    return report
+
+
+def _require_new_fspt_report(report):
+    if any(path.exists() or path.is_symlink()
+           for path in (report, report.with_suffix(".receipt.json"))):
+        raise RuntimeError(f"FSPT acceptance report or receipt already exists: {report}")
+
+
+def _reject_json_constant(value):
+    raise ValueError(f"non-JSON constant {value}")
+
+
+def _record_fspt_report(label, script, path):
+    from tools.gate.qualification import atomic_json
+    from tools.gate.fspt_evidence import validate_report
+
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError(f"{label}: missing FSPT acceptance report: {path}")
+    try:
+        payload = path.read_bytes()
+        report = json.loads(payload.decode("utf-8"), parse_constant=_reject_json_constant)
+    except (ValueError, OSError) as exc:
+        raise RuntimeError(f"{label}: invalid JSON in FSPT acceptance report {path}: {exc}") from exc
+    if not isinstance(report, dict):
+        raise RuntimeError(f"{label}: expected a JSON object in FSPT acceptance report: {path}")
+    if report.get("status") != "VERIFIED":
+        raise RuntimeError(f"{label}: FSPT acceptance report status {report.get('status')!r}: {path}")
+    originals = validate_report(ROOT, script, path, report, _QUALIFICATION)
+    receipt = {"step": label, "script": script, "report": str(path), "status": "VERIFIED",
+               "run_id": _RUN_DIRECTORY.name, "sha256": hashlib.sha256(payload).hexdigest(),
+               "evidence_files": originals}
+    atomic_json(path.with_suffix(".receipt.json"), receipt)
+    _FSPT_REPORTS[script] = receipt
+
+
+def _fspt_report_manifest():
+    from tools.gate.qualification import sha256
+
+    for receipt in _FSPT_REPORTS.values():
+        report = Path(receipt["report"])
+        if not report.is_file() or report.is_symlink() or sha256(report) != receipt["sha256"]:
+            raise RuntimeError(f"FSPT acceptance report changed or disappeared: {report}")
+        for name, expected in receipt.get("evidence_files", {}).items():
+            original = Path(name)
+            if not original.is_file() or original.is_symlink() or sha256(original) != expected:
+                raise RuntimeError(f"FSPT original evidence changed or disappeared: {original}")
+    return dict(_FSPT_REPORTS)
+
+
 def _run(label, command, env=None, reject_output=False, expect_marker=None):
     """Run a gate lane, optionally requiring positive proof in stdout.
 
@@ -343,7 +433,16 @@ def _run(label, command, env=None, reject_output=False, expect_marker=None):
     _emit(f"\n== {label} ==\n" + " ".join(str(x) for x in command) + "\n")
     start = time.perf_counter()
     try:
+        report = None
+        if "--python" in command:
+            script_index = command.index("--python") + 1
+            script = command[script_index]
+            report = _fspt_report_path(script, command[script_index + 1:])
+            if report is not None:
+                _require_new_fspt_report(report)
         _run_step(label, command, env, reject_output, expect_marker)
+        if report is not None:
+            _record_fspt_report(label, script, report)
     finally:
         seconds = time.perf_counter() - start
         STEP_TIMES.append((label, round(seconds, 1)))
@@ -447,7 +546,21 @@ CUDA_HIDDEN_ACCEPTANCE = frozenset({
 })
 
 
+def _background_report_args(script, args, attempt):
+    if not _is_fspt_acceptance(script):
+        return args
+    if _RUN_DIRECTORY is None:
+        raise RuntimeError(f"{script}: no qualification run for FSPT report")
+    name = Path(script).stem.removeprefix("blender_fspt_")
+    report = _RUN_DIRECTORY / "fspt" / f"{name}-{attempt}" / "report.json"
+    if "--json-out" in args:
+        report_index = args.index("--json-out") + 1
+        return (*args[:report_index], str(report), *args[report_index + 1:])
+    return (*args, "--json-out", str(report))
+
+
 def _run_alone(blender_exe, env, label, script, args, marker):
+    args = _background_report_args(script, args, "standalone")
     _run(label, _blender(blender_exe, "--background", "--factory-startup", "--python",
                          script, *(("--", *args) if args else ())),
          env=env, reject_output=True, expect_marker=marker)
@@ -471,10 +584,16 @@ def _run_acceptance_batch(blender_exe, env, entries, name="gate_batch"):
     out.mkdir(parents=True, exist_ok=True)
     spec_path, results_path = out / "spec.json", out / "results.json"
     results_path.unlink(missing_ok=True)
+    batch_entries = []
+    for _label, script, args, marker in entries:
+        args = _background_report_args(script, args, "batch")
+        report = _fspt_report_path(script, args)
+        if report is not None:
+            _require_new_fspt_report(report)
+        batch_entries.append({"script": script, "args": list(args), "marker": marker})
     spec_path.write_text(json.dumps({
         "failure_markers": list(BLENDER_FAILURE_MARKERS),
-        "entries": [{"script": script, "args": list(args), "marker": marker}
-                    for _label, script, args, marker in entries],
+        "entries": batch_entries,
     }, indent=2), encoding="utf-8")
     try:
         _run(f"Blender acceptance batch ({len(entries)} scripts)", _blender(
@@ -490,9 +609,17 @@ def _run_acceptance_batch(blender_exe, env, entries, name="gate_batch"):
     passed = {item["script"] for item in results if item.get("passed") is True}
     for item in results:
         STEP_TIMES.append((f"  batch: {item['script']}", item.get("seconds")))
-    for label, script, args, marker in entries:
+    for (label, script, args, marker), batch_entry in zip(entries, batch_entries, strict=True):
         if script in passed:
-            continue
+            report = _fspt_report_path(script, batch_entry["args"])
+            if report is None:
+                continue
+            try:
+                _record_fspt_report(label, script, report)
+            except RuntimeError as exc:
+                _emit(f"\n{exc}\n")
+            else:
+                continue
         _emit(f"\nbatch did not pass {script}; rerunning it alone\n")
         _run_alone(blender_exe, env, label, script, args, marker)
 
@@ -604,6 +731,7 @@ _FROZEN_SOURCE = None
 _RUN_DIRECTORY = None
 _RUN_ID = None
 _FINAL_SOURCE_FILES = None
+_FSPT_REPORTS = {}
 
 
 def _begin_invocation():
@@ -614,6 +742,7 @@ def _begin_invocation():
     _RUN_DIRECTORY = ROOT / "artifacts/qualification_runs" / _RUN_ID
     _RUN_DIRECTORY.mkdir(parents=True, exist_ok=False)
     _QUALIFICATION = _FROZEN_SOURCE = _FINAL_SOURCE_FILES = None
+    _FSPT_REPORTS.clear()
     if GATE_MANIFEST.exists():
         os.replace(GATE_MANIFEST, _RUN_DIRECTORY / "prior_manifest.json")
     q.atomic_json(_RUN_DIRECTORY / "invocation.json", {"run_id": _RUN_ID, "status": "admitting"})
@@ -932,6 +1061,7 @@ def _write_gate_manifest(blender_exe, warp_version=None, reuse_budget=False):
         "performance_budget_reused": bool(reuse_budget),
         "performance_budget_measured_at": {
             demo: _demo_provenance(report, demo)[0] for demo in report_demos},
+        "fspt_acceptance_reports": _fspt_report_manifest(),
     }
     from tools.gate import qualification as q
     _assert_receipt_inputs()
@@ -1028,6 +1158,11 @@ def _production_main(argv=None):
         "tests/acceptance/blender_phase3_profile_safe_review.py",
         "tests/acceptance/blender_phase4_live_interaction_acceptance.py",
         "tests/acceptance/blender_gui_acceptance.py",
+        "tests/acceptance/blender_fspt_viewport_acceptance.py",
+        "tests/acceptance/blender_fspt_live_acceptance.py",
+        "tests/acceptance/blender_fspt_async_viewport_acceptance.py",
+        "tests/acceptance/blender_fspt_async_live_acceptance.py",
+        "tests/acceptance/blender_fspt_device_viewport_acceptance.py",
         "tests/acceptance/blender_gui_playback_probe.py",
         "tests/acceptance/blender_rigid_authoring_ui_acceptance.py",
         "tests/acceptance/blender_viewport_2frame_gate.py",
@@ -1093,6 +1228,7 @@ def _production_main(argv=None):
         release_validators()
         _run_acceptance_batch(blender_exe, env, entries)
         _finish_qualification(blender_exe, blender_py, env)
+        _fspt_report_manifest()
         _print_quick_pass()
         return 0
 
@@ -1136,6 +1272,32 @@ def _production_main(argv=None):
         entry for entry in entries if entry[1] in QUIET_ACCEPTANCE],
         name="gate_batch_quiet")
     if include_gui:
+        _run("FSPT device publication and GUI-worker Final handoff", _blender(
+            blender_exe, "--factory-startup", "--python-exit-code", "1",
+            "--python", "tests/acceptance/blender_fspt_device_viewport_acceptance.py",
+            "--", "--json-out", str(_RUN_DIRECTORY / "fspt-device-viewport.json"),
+            "--deadline", "240",
+        ), env=env, reject_output=True, expect_marker="FSPT-DEVICE-VIEWPORT-PASS")
+        _run("FSPT asynchronous viewport lifecycle acceptance", _blender(
+            blender_exe, "--factory-startup", "--python-exit-code", "1",
+            "--python", "tests/acceptance/blender_fspt_async_viewport_acceptance.py",
+            "--", "--json-out", str(_RUN_DIRECTORY / "fspt-async-viewport.json"),
+            "--lifecycle-cycles", "50", "--deadline", "360",
+        ), env=env, reject_output=True, expect_marker="FSPT-ASYNC-VIEWPORT-PASS")
+        _run("FSPT changing asynchronous live surface acceptance", _blender(
+            blender_exe, "--factory-startup", "--python-exit-code", "1",
+            "--python", "tests/acceptance/blender_fspt_async_live_acceptance.py",
+            "--", "--json-out", str(_RUN_DIRECTORY / "fspt-async-live.json"),
+            "--blend", str(ROOT / "demos/dam_break.blend"), "--states", "240",
+            "--soak-seconds", "600", "--deadline", "1800",
+        ), env=env, reject_output=True, expect_marker="FSPT-ASYNC-LIVE-ACCEPTANCE-PASS")
+        _run("FSPT rendered viewport acceptance", _blender(
+            blender_exe,
+            "--factory-startup",
+            "--python",
+            "tests/acceptance/blender_fspt_viewport_acceptance.py",
+            "--", "--json-out", str(_RUN_DIRECTORY / "fspt-viewport.json"),
+        ), env=env, reject_output=True, expect_marker="FSPT-VIEWPORT-PASS")
         _run("interactive GUI acceptance", _blender(
             blender_exe,
             "--factory-startup",
@@ -1239,6 +1401,7 @@ def _production_main(argv=None):
             blender_exe, _version_constant("CERTIFIED_WARP_VERSION"), reuse_budget)
         print("\nFULL-PRODUCTION-GATE-PASS")
     else:
+        _fspt_report_manifest()
         print("\nHEADLESS-GATE-PASS")
         print("GUI acceptance not run; use --include-gui for full production proof.")
     return 0

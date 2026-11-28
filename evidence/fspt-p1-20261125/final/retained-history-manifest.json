@@ -1,0 +1,102 @@
+[
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\anonymous-diagnostic-red.txt",
+    "bytes": 2179,
+    "sha256": "627f96884600283ed781ad7d1a6d77ad20432420aa16713fc556688f498abb59"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\review-regressions-red.txt",
+    "bytes": 10410,
+    "sha256": "ae23cc8430daa7481c5bebe00c7f45570b05c79ad311b07b4edd46cdabadc50c"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\camera-muted-red.txt",
+    "bytes": 1400,
+    "sha256": "52632bee4efafee1d7fd9e9bfa5c18aeb2397c696926e84e7a881ef14096a477"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\contracts-red.txt",
+    "bytes": 11322,
+    "sha256": "ed8bdffcd9199abe5cae9df255db41b9fa6429ba6454467f0c67103dfdcabbb7"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\backend-red.txt",
+    "bytes": 1706,
+    "sha256": "27512f53f77f3a1bbe9279ec88f25673d3b6232133592f2d337d22d496e283be"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\host-suite.json",
+    "bytes": 259,
+    "sha256": "6de4d034d75b8fccd165efe9bb8508082b76545189a8e80dabcaedcb36b6cfda"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\host-suite.txt",
+    "bytes": 827,
+    "sha256": "c95ed51a294994074be8001e2ee21714b2ec94d208e754c6c2d75a1a4a9a3926"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\edges-release.json",
+    "bytes": 6361,
+    "sha256": "92c945d347c357da0b635ef623aeb5d2505bafa884e2dd33d99834c6a4d31880"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\20261125-220938-438abb4bf8d3.log",
+    "bytes": 2904,
+    "sha256": "57baede4d47f1691154664e3c3ef055bcaf468bc16b8a4de0a8d4d30e2689bd2"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\20261125-220938-888c5cc57acb.log",
+    "bytes": 3599,
+    "sha256": "4effda5593c0c5b448f5a42bf4d8db4818c5e87b23492912666405da6b1a7516"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\blender.crash.txt",
+    "bytes": 55071,
+    "sha256": "2ad10f7d34b538b86c0e6b4aa239396c7db0ad3549af5696e7ed7c519058dfd5"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\camera_edit.exr",
+    "bytes": 68898,
+    "sha256": "a0d6c485e4528b9088b8d7d40030ed1a726ec58ba3f6871af1210872ed56e477"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\camera_edit.png",
+    "bytes": 35511,
+    "sha256": "fb9fd2bb7875f470accafce1172687268698b2eaf06c5764b9e23cbe179fa6c5"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\fixture.exr",
+    "bytes": 70159,
+    "sha256": "068ca4bc6893b7acfa21f7f85bb525856c0684b373578b7f20ca6786ac6851a8"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\fixture.png",
+    "bytes": 35940,
+    "sha256": "578785240c3efc0138e2b02c8cf2966789248989802641e42c4c159b30ba92a8"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\material_edit.exr",
+    "bytes": 68979,
+    "sha256": "5c53ee642204753101bb190edcd9436a6bc0628d33524b4ffc371c57518b3954"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\material_edit.png",
+    "bytes": 35760,
+    "sha256": "b757a37ef6fa9e039d6d7727e04d70b665f0e3075a40ba2a1a8e1f3965fa39cc"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\preflight.json",
+    "bytes": 951,
+    "sha256": "3faa32abb30c96b2e36f3c84971729af3d7209edd28a0fc06d86cb0099aeb754"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\viewport-screenshot.png",
+    "bytes": 2700424,
+    "sha256": "2c0cde2a20651ae53f714c77d52552b10258ac39cde037cfd48ce094fab5e68c"
+  },
+  {
+    "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\evidence\\fspt-p1-20261125\\attempt-1\\viewport.json",
+    "bytes": 14159,
+    "sha256": "d6cfdb5ebbaec7728eee8fef24d66b917b49f05656e5346577bc265966351486"
+  }
+]

@@ -26,6 +26,41 @@ def test_dirty_solver_cannot_be_admitted(tmp_path):
         q.freeze_source(root)
 
 
+@pytest.mark.parametrize('name', ['pytest.ini', '.pytest.ini', 'pytest.toml', '.pytest.toml',
+                                'pyproject.toml', '.ruff.toml', '.gitignore'])
+def test_active_root_configuration_is_a_reviewed_verifier_input(tmp_path, name):
+    from tools.gate import qualification as q
+    root = repo(tmp_path)
+    path = root / name
+    path.write_text('# original configuration\n')
+    subprocess.run(['git', '-C', str(root), 'add', name], check=True)
+    subprocess.run(['git', '-C', str(root), '-c', 'user.name=Test', '-c',
+                    'user.email=test@example.invalid', 'commit', '-qm', 'config'], check=True)
+    frozen = q.freeze_source(root)
+    assert name in frozen['files']
+    path.write_text('# changed configuration\n')
+    with pytest.raises(RuntimeError, match='changed during'):
+        q.check_source(root, frozen)
+    with pytest.raises(RuntimeError, match='dirty product'):
+        q.freeze_source(root)
+
+
+@pytest.mark.parametrize('name', ['pytest.ini', '.pytest.ini', 'pytest.toml', '.pytest.toml'])
+def test_untracked_active_config_cannot_hide_behind_gitignore(tmp_path, name):
+    from tools.gate import qualification as q
+    root = repo(tmp_path)
+    (root / '.gitignore').write_text(name + '\n')
+    subprocess.run(['git', '-C', str(root), 'add', '.gitignore'], check=True)
+    subprocess.run(['git', '-C', str(root), '-c', 'user.name=Test', '-c',
+                    'user.email=test@example.invalid', 'commit', '-qm', 'ignore'], check=True)
+    frozen = q.freeze_source(root)
+    (root / name).write_text('[pytest]\naddopts = --ignore=tests\n')
+    with pytest.raises(RuntimeError, match='dirty product'):
+        q.freeze_source(root)
+    with pytest.raises(RuntimeError, match='changed during'):
+        q.check_source(root, frozen)
+
+
 @pytest.mark.parametrize('name', ['fluidSim_warp_blender51/sim/solver.py', 'tools/evaluator.py'])
 def test_midrun_source_or_verifier_change_is_rejected(tmp_path, name):
     from tools.gate import qualification as q

@@ -5,10 +5,10 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
-from pathlib import Path
 import sys
 import textwrap
 import types
+from pathlib import Path
 from types import SimpleNamespace
 
 
@@ -532,3 +532,28 @@ def test_gpu_preview_disable_callback_does_not_step_solver(monkeypatch):
     properties._gpu_particle_preview_changed(
         SimpleNamespace(gpu_particle_preview=False, id_data=scene), context)
     assert calls == [(context, scene)]
+
+
+
+def test_surface_identity_is_retired_before_undo_redo_and_load(monkeypatch):
+    _, pending, _ = _modules(monkeypatch)
+    from fluidSim_warp_blender51.blender.surface_publication import (
+        SurfaceSource,
+        current_surface_publication,
+        surface_attempt,
+    )
+
+    handlers = pending.bpy.app.handlers
+    handlers.undo_pre, handlers.redo_pre, handlers.load_pre = [], [], []
+    pending.register_handlers()
+    scene = SimpleNamespace(frame_current=8)
+    for handler in (handlers.undo_pre, handlers.redo_pre, handlers.load_pre):
+        with surface_attempt(scene, source=SurfaceSource.LIVE, epoch=1) as attempt:
+            attempt.record(vertex_count=3, triangle_count=1, visible=True)
+            attempt.succeed(synchronized=True)
+        assert current_surface_publication(scene) is not None
+        assert len(handler) == 1
+        handler[0](scene)
+        assert current_surface_publication(scene) is None
+    pending.unregister_handlers()
+    assert not handlers.undo_pre and not handlers.redo_pre and not handlers.load_pre

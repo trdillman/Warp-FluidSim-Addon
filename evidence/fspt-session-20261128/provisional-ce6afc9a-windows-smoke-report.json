@@ -1,0 +1,488 @@
+{
+  "run_count": 2,
+  "runs": [
+    {
+      "blender_version": "5.2.0 LTS",
+      "cpu_kernel_output": [
+        0.0,
+        2.0,
+        4.0,
+        6.0
+      ],
+      "cuda_available": false,
+      "cuda_device_count": 0,
+      "cuda_message": "Warp loaded, but no CUDA device is available. Check the NVIDIA GPU, driver, and whether Blender can access the device.",
+      "custom_effects": {
+        "builtin_count": 8,
+        "builtin_ids": [
+          "fluidsim.vortex_force",
+          "fluidsim.curl_turbulence",
+          "fluidsim.radial_pulse",
+          "fluidsim.planar_split",
+          "fluidsim.velocity_damping",
+          "fluidsim.temperature_lift",
+          "fluidsim.particle_speed_limit",
+          "fluidsim.voxel_cooling"
+        ],
+        "device": "cpu",
+        "imported_effect_id": "smoke.imported-vortex",
+        "imported_package": true,
+        "signature": "53daa54ebdb49383e9160c6ea4be78143eeafcff5d7f1dcd9f972897f583b58f",
+        "status": "APPLIED"
+      },
+      "demo_gallery": {
+        "available": [
+          "dam_break",
+          "crown_splash",
+          "paddle_stir",
+          "chromatic_vortex",
+          "buoyancy_ladder",
+          "water_wheel",
+          "viscosity_race",
+          "deep_plunge",
+          "capillary_droplet"
+        ],
+        "opened": "crown_splash"
+      },
+      "elapsed_seconds": 10.954835414886475,
+      "extension_root": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\smoke-repo\\fluidsim_warp",
+      "module": "bl_ext.fluidsim_ci.fluidsim_warp",
+      "phase5_setup": {
+        "active_preset": "preview_water",
+        "attribute_defaults": {
+          "particles": [
+            "age",
+            "lifetime"
+          ],
+          "surface": [
+            "velocity",
+            "motion"
+          ],
+          "whitewater": [
+            "age",
+            "lifetime",
+            "type"
+          ]
+        },
+        "cache_format": "V2",
+        "collections": [
+          "FluidSim",
+          "Inputs",
+          "Outputs",
+          "Helpers"
+        ],
+        "domain": "FluidSim Domain",
+        "materials": [
+          "FluidSim Liquid",
+          "FluidSim Particles",
+          "FluidSim Whitewater",
+          "FluidSim Foam",
+          "FluidSim Bubbles",
+          "FluidSim Spray"
+        ],
+        "outputs": [
+          "FluidSim Surface",
+          "FluidSim Particles",
+          "FluidSim Whitewater",
+          "FluidSim Foam",
+          "FluidSim Bubbles",
+          "FluidSim Spray"
+        ],
+        "render_nodes": {
+          "FluidSim Bubbles": "fluidsim-render-p4-v1",
+          "FluidSim Foam": "fluidsim-render-p4-v1",
+          "FluidSim Particles": "fluidsim-render-p4-v1",
+          "FluidSim Spray": "fluidsim-render-p4-v1",
+          "FluidSim Surface": "fluidsim-render-p4-v1",
+          "FluidSim Whitewater": "fluidsim-render-p4-v1"
+        },
+        "source": "Cube"
+      },
+      "phase5_surface_tension": {
+        "capillary_dt": 0.132980758537548,
+        "coefficient": 0.072,
+        "panel_registered": true,
+        "required_substeps": 1
+      },
+      "preset_library": {
+        "builtin_count": 8,
+        "builtin_ids": [
+          "honey",
+          "preview_water",
+          "production_water",
+          "splash_whitewater",
+          "stylized_high_tension",
+          "thick_liquid",
+          "thin_liquid",
+          "water_surface_tension"
+        ]
+      },
+      "process_id": 43464,
+      "properties_ui": {
+        "FLUIDSIM_PT_custom_effects": {
+          "context": "scene",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_effect_packages": {
+          "context": "scene",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_effect_warp_code": {
+          "context": "scene",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_header_popover": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_PT_object_role": {
+          "context": "object",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_physics_domain_scene_domain": {
+          "context": "physics",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_physics_domain_sim_surface_tension": {
+          "context": "physics",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_physics_root": {
+          "context": "physics",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_physics_surface_output": {
+          "context": "physics",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_scene_control": {
+          "context": "scene",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_viewport_status": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_bake": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_bake_manage": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_bake_storage": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_look": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_look_materials": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_setup": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_setup_advanced": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_setup_collider": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_simulate": {
+          "context": "",
+          "space": "VIEW_3D"
+        }
+      },
+      "registration_cycles": 2,
+      "saved_blend": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\smoke-repo-profile\\phase5-workflow-43464.blend",
+      "status": "passed",
+      "support_report": {
+        "backend": "NVIDIA Warp / CUDA",
+        "cache": {
+          "path": "~/FluidSimCache",
+          "writable": true
+        },
+        "fluidsim": {
+          "build_channel": "stable",
+          "extension_id": "fluidsim_warp",
+          "package": "bl_ext.fluidsim_ci.fluidsim_warp",
+          "version": "4.1.0"
+        },
+        "generated": "2026-11-28T08:32:32Z",
+        "host": {
+          "blender": "5.2.0",
+          "platform": "Windows-11-10.0.26200-SP0",
+          "python": "3.13.13"
+        },
+        "runtime": {
+          "available": false,
+          "cuda_driver_version": 0,
+          "cuda_toolkit_version": 13040,
+          "devices": [],
+          "last_error": "",
+          "message": "Warp loaded, but no CUDA device is available. Check the NVIDIA GPU, driver, and whether Blender can access the device.",
+          "module_file": "~/Documents/FluidSim-FSPT-ce6afc9a-20261128T082930Z/package/smoke-repo-profile/extensions/.user/fluidsim_ci/fluidsim_warp/.local/warp/__init__.py",
+          "selected_device": "",
+          "warp_version": "1.19.0"
+        },
+        "scene": {
+          "scene_signature": "phase5-smoke-scene",
+          "settings_signature": "phase5-smoke-settings"
+        },
+        "tool": "fluidSim",
+        "warp": "1.19.0"
+      },
+      "warp_module": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\smoke-repo-profile\\extensions\\.user\\fluidsim_ci\\fluidsim_warp\\.local\\warp\\__init__.py",
+      "warp_version": "1.19.0"
+    },
+    {
+      "blender_version": "5.2.0 LTS",
+      "cpu_kernel_output": [
+        0.0,
+        2.0,
+        4.0,
+        6.0
+      ],
+      "cuda_available": false,
+      "cuda_device_count": 0,
+      "cuda_message": "Warp loaded, but no CUDA device is available. Check the NVIDIA GPU, driver, and whether Blender can access the device.",
+      "custom_effects": {
+        "builtin_count": 8,
+        "builtin_ids": [
+          "fluidsim.vortex_force",
+          "fluidsim.curl_turbulence",
+          "fluidsim.radial_pulse",
+          "fluidsim.planar_split",
+          "fluidsim.velocity_damping",
+          "fluidsim.temperature_lift",
+          "fluidsim.particle_speed_limit",
+          "fluidsim.voxel_cooling"
+        ],
+        "device": "cpu",
+        "imported_effect_id": "smoke.imported-vortex",
+        "imported_package": true,
+        "signature": "f614677383ee2433f13a127ed665d1cf19dd7a4384dcc84f10bbe7984a69df77",
+        "status": "APPLIED"
+      },
+      "demo_gallery": {
+        "available": [
+          "dam_break",
+          "crown_splash",
+          "paddle_stir",
+          "chromatic_vortex",
+          "buoyancy_ladder",
+          "water_wheel",
+          "viscosity_race",
+          "deep_plunge",
+          "capillary_droplet"
+        ],
+        "opened": "crown_splash"
+      },
+      "elapsed_seconds": 1.7030785083770752,
+      "extension_root": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\smoke-repo\\fluidsim_warp",
+      "module": "bl_ext.fluidsim_ci.fluidsim_warp",
+      "phase5_setup": {
+        "active_preset": "preview_water",
+        "attribute_defaults": {
+          "particles": [
+            "age",
+            "lifetime"
+          ],
+          "surface": [
+            "velocity",
+            "motion"
+          ],
+          "whitewater": [
+            "age",
+            "lifetime",
+            "type"
+          ]
+        },
+        "cache_format": "V2",
+        "collections": [
+          "FluidSim",
+          "Inputs",
+          "Outputs",
+          "Helpers"
+        ],
+        "domain": "FluidSim Domain",
+        "materials": [
+          "FluidSim Liquid",
+          "FluidSim Particles",
+          "FluidSim Whitewater",
+          "FluidSim Foam",
+          "FluidSim Bubbles",
+          "FluidSim Spray"
+        ],
+        "outputs": [
+          "FluidSim Surface",
+          "FluidSim Particles",
+          "FluidSim Whitewater",
+          "FluidSim Foam",
+          "FluidSim Bubbles",
+          "FluidSim Spray"
+        ],
+        "render_nodes": {
+          "FluidSim Bubbles": "fluidsim-render-p4-v1",
+          "FluidSim Foam": "fluidsim-render-p4-v1",
+          "FluidSim Particles": "fluidsim-render-p4-v1",
+          "FluidSim Spray": "fluidsim-render-p4-v1",
+          "FluidSim Surface": "fluidsim-render-p4-v1",
+          "FluidSim Whitewater": "fluidsim-render-p4-v1"
+        },
+        "source": "Cube"
+      },
+      "phase5_surface_tension": {
+        "capillary_dt": 0.132980758537548,
+        "coefficient": 0.072,
+        "panel_registered": true,
+        "required_substeps": 1
+      },
+      "preset_library": {
+        "builtin_count": 8,
+        "builtin_ids": [
+          "honey",
+          "preview_water",
+          "production_water",
+          "splash_whitewater",
+          "stylized_high_tension",
+          "thick_liquid",
+          "thin_liquid",
+          "water_surface_tension"
+        ]
+      },
+      "process_id": 27704,
+      "properties_ui": {
+        "FLUIDSIM_PT_custom_effects": {
+          "context": "scene",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_effect_packages": {
+          "context": "scene",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_effect_warp_code": {
+          "context": "scene",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_header_popover": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_PT_object_role": {
+          "context": "object",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_physics_domain_scene_domain": {
+          "context": "physics",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_physics_domain_sim_surface_tension": {
+          "context": "physics",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_physics_root": {
+          "context": "physics",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_physics_surface_output": {
+          "context": "physics",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_scene_control": {
+          "context": "scene",
+          "space": "PROPERTIES"
+        },
+        "FLUIDSIM_PT_viewport_status": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_bake": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_bake_manage": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_bake_storage": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_look": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_look_materials": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_setup": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_setup_advanced": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_setup_collider": {
+          "context": "",
+          "space": "VIEW_3D"
+        },
+        "FLUIDSIM_STAGE_PT_simulate": {
+          "context": "",
+          "space": "VIEW_3D"
+        }
+      },
+      "registration_cycles": 2,
+      "saved_blend": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\smoke-repo-profile\\phase5-workflow-27704.blend",
+      "status": "passed",
+      "support_report": {
+        "backend": "NVIDIA Warp / CUDA",
+        "cache": {
+          "path": "~/FluidSimCache",
+          "writable": true
+        },
+        "fluidsim": {
+          "build_channel": "stable",
+          "extension_id": "fluidsim_warp",
+          "package": "bl_ext.fluidsim_ci.fluidsim_warp",
+          "version": "4.1.0"
+        },
+        "generated": "2026-11-28T08:32:57Z",
+        "host": {
+          "blender": "5.2.0",
+          "platform": "Windows-11-10.0.26200-SP0",
+          "python": "3.13.13"
+        },
+        "runtime": {
+          "available": false,
+          "cuda_driver_version": 0,
+          "cuda_toolkit_version": 13040,
+          "devices": [],
+          "last_error": "",
+          "message": "Warp loaded, but no CUDA device is available. Check the NVIDIA GPU, driver, and whether Blender can access the device.",
+          "module_file": "~/Documents/FluidSim-FSPT-ce6afc9a-20261128T082930Z/package/smoke-repo-profile/extensions/.user/fluidsim_ci/fluidsim_warp/.local/warp/__init__.py",
+          "selected_device": "",
+          "warp_version": "1.19.0"
+        },
+        "scene": {
+          "scene_signature": "phase5-smoke-scene",
+          "settings_signature": "phase5-smoke-settings"
+        },
+        "tool": "fluidSim",
+        "warp": "1.19.0"
+      },
+      "warp_module": "C:\\Users\\Tyler\\Documents\\FluidSim-FSPT-ce6afc9a-20261128T082930Z\\package\\smoke-repo-profile\\extensions\\.user\\fluidsim_ci\\fluidsim_warp\\.local\\warp\\__init__.py",
+      "warp_version": "1.19.0"
+    }
+  ],
+  "status": "passed"
+}

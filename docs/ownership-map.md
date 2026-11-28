@@ -48,12 +48,12 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 |---|---|---|---|---|---|---|---:|---|
 | `ui_mode` | PRESENTATION | scene | - | - | scene | scene | 0 | UI_STATE |
 | `quality` | REINITIALIZE | scene | scene | - | scene | scene | 0 | OK |
-| `live` | ADAPTER | - | scene | scene | - | scene | 5 | PUBLISHED |
+| `live` | ADAPTER | - | scene | scene | - | scene | 4 | PUBLISHED |
 | `max_frame_catchup` | ADAPTER | scene | scene | - | - | scene | 1 | OK |
 | `domain_object` | REINITIALIZE | scene | scene | scene | - | scene | 1 | OK |
 | `capacity_show_alternatives` | PRESENTATION | scene | - | - | scene | scene | 0 | UI_STATE |
 | `liquid_view_mode` | OUTPUT | scene | - | - | scene | scene | 0 | UI_STATE |
-| `show_surface` | OUTPUT | - | scene | - | scene | scene | 4 | READ_ONLY |
+| `show_surface` | OUTPUT | - | scene | - | scene | scene | 6 | READ_ONLY |
 | `show_particles` | OUTPUT | - | scene | - | scene | scene | 6 | READ_ONLY |
 | `view_surface` | OUTPUT | scene | scene | scene | scene | scene | 1 | OK |
 | `view_particles` | OUTPUT | scene | scene | scene | scene | scene | 1 | OK |
@@ -75,7 +75,7 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `foam_material` | OUTPUT | scene | scene | - | - | scene | 1 | OK |
 | `bubble_material` | OUTPUT | scene | scene | - | - | scene | 1 | OK |
 | `spray_material` | OUTPUT | scene | scene | - | - | scene | 1 | OK |
-| `output_collection_name` | OUTPUT | scene | scene | scene | - | scene | 3 | OK |
+| `output_collection_name` | OUTPUT | scene | scene | scene | - | scene | 4 | OK |
 | `setup_mode` | AUTHORED_NEXT_RUN | - | - | scene | scene | scene | 0 | PUBLISHED |
 | `product_preset` | AUTHORED_NEXT_RUN | scene | scene | scene | scene | scene | 0 | OK |
 | `active_preset_id` | AUTHORED_NEXT_RUN | - | - | scene | scene | scene | 0 | PUBLISHED |
@@ -99,9 +99,9 @@ A mirror re-runs its source panel's draw unchanged, so every control writes the 
 | `benchmark_frames` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
 | `benchmark_baseline` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
 | `cache_enabled` | AUTHORED_NEXT_RUN | - | - | scene | - | scene | 0 | INTERNAL |
-| `cache_path` | AUTHORED_NEXT_RUN | scene | scene | scene | scene | scene | 1 | OK |
+| `cache_path` | AUTHORED_NEXT_RUN | scene | scene | scene | scene | scene | 2 | OK |
 | `cache_compress` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 2 | OK |
-| `cache_playback_enabled` | ADAPTER | - | scene | scene | - | scene | 12 | PUBLISHED |
+| `cache_playback_enabled` | ADAPTER | - | scene | scene | - | scene | 16 | PUBLISHED |
 | `cache_use_custom_range` | AUTHORED_NEXT_RUN | scene | scene | - | scene | scene | 3 | OK |
 | `cache_frame_start` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
 | `cache_frame_end` | AUTHORED_NEXT_RUN | scene | scene | - | - | scene | 0 | OK |
@@ -300,12 +300,12 @@ These have a declared scope, but nothing in the shipped add-on observes them -- 
 | `view_particles_overridden` | UNOBSERVED | (never written either) |
 | `cache_format` | UNOBSERVED | (never written either) |
 | `cache_enabled` | INTERNAL | `fluidSim_warp_blender51/blender/setup_wizard.py:888` |
-| `stat_liquid_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:549`, `fluidSim_warp_blender51/blender/scene_bridge.py:514` |
-| `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:557`, `fluidSim_warp_blender51/blender/scene_bridge.py:543` |
-| `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:558`, `fluidSim_warp_blender51/blender/scene_bridge.py:545` |
-| `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:559`, `fluidSim_warp_blender51/blender/scene_bridge.py:547` |
-| `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:560`, `fluidSim_warp_blender51/blender/scene_bridge.py:549` |
-| `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:561`, `fluidSim_warp_blender51/blender/scene_bridge.py:551` |
-| `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:562`, `fluidSim_warp_blender51/blender/scene_bridge.py:553` |
-| `stat_learned_guess_message` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:565`, `fluidSim_warp_blender51/blender/scene_bridge.py:559` |
+| `stat_liquid_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:563`, `fluidSim_warp_blender51/blender/scene_bridge.py:584` |
+| `stat_surface_tension_active_voxels` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:571`, `fluidSim_warp_blender51/blender/scene_bridge.py:613` |
+| `stat_surface_tension_max_curvature` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:572`, `fluidSim_warp_blender51/blender/scene_bridge.py:615` |
+| `stat_surface_tension_max_acceleration` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:573`, `fluidSim_warp_blender51/blender/scene_bridge.py:617` |
+| `stat_surface_tension_temporary_bytes` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:574`, `fluidSim_warp_blender51/blender/scene_bridge.py:619` |
+| `stat_surface_tension_submission_ms` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:575`, `fluidSim_warp_blender51/blender/scene_bridge.py:621` |
+| `stat_surface_tension_status` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:576`, `fluidSim_warp_blender51/blender/scene_bridge.py:623` |
+| `stat_learned_guess_message` | INTERNAL | `fluidSim_warp_blender51/blender/playback.py:579`, `fluidSim_warp_blender51/blender/scene_bridge.py:629` |
 

@@ -1,0 +1,44 @@
+[bgate] lease 984dd8301cfd class shared session agent:fspt-p1-20261125 label fspt-edges-recovery
+[bgate] started 2026-11-25 23:02:09 cwd=C:\Users\Tyler\projects\fluidsim-fspt-20261125
+[bgate] command: "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python-exit-code 1 --python tests/acceptance/blender_fspt_edge_acceptance.py -- --json-out artifacts/fspt-p1/edges-recovery.json
+FSPT loaded C:\Users\Tyler\projects\fluidsim-fspt-20261125\fluidSim_warp_blender51\__init__.py
+C:\Users\Tyler\projects\fluidsim-fspt-20261125\tests\acceptance\blender_fspt_edge_acceptance.py:34: DeprecationWarning: 'World.use_nodes' is expected to be removed in Blender 6.0
+  world.use_nodes = True
+Warp 1.18.0 initialized:
+   CUDA Toolkit 13.4, Driver 13.5
+   Devices:
+     "cpu"      : "AMD64 Family 23 Model 113 Stepping 0, AuthenticAMD"
+     "cuda:0"   : "NVIDIA GeForce RTX 4080 SUPER" (16 GiB, sm_89, mempool enabled)
+   Kernel cache:
+     \\?\C:\Users\Tyler\projects\fluidsim-fspt-20261125\artifacts\fspt-p1\profile-fspt-p1-edges\warp-cache\1.18.0
+FSPT-EDGE object_emission_override VERIFIED
+C:\Users\Tyler\projects\fluidsim-fspt-20261125\tests\acceptance\blender_fspt_edge_acceptance.py:78: DeprecationWarning: 'Material.use_nodes' is expected to be removed in Blender 6.0
+  override.use_nodes = True
+FSPT-EDGE object_principled_override VERIFIED
+FSPT-EDGE view_layer_material_override VERIFIED
+FSPT-EDGE muted_surface_link VERIFIED
+FSPT-EDGE mixed_mesh_points VERIFIED
+FSPT-EDGE anonymous_geometry_instances VERIFIED
+Module fluidSim_warp_blender51.fspt.kernels 4fc31f0 load on device 'cuda:0' took 2.71 ms  (cached)
+FSPT-EDGE glass_ior_one VERIFIED
+FSPT-EDGE glass_tir_70_degrees VERIFIED
+FSPT-EDGE clip_perspective VERIFIED
+FSPT-EDGE clip_orthographic VERIFIED
+FSPT-EDGE diffuse_bounce_depth VERIFIED
+Error: FSPT P1 does not support transparent film
+Error: FSPT P1 does not support transparent film
+FSPT-EDGE film_transparent VERIFIED
+Error: FSPT P1 does not support multiview/stereo rendering
+Error: FSPT P1 does not support multiview/stereo rendering
+FSPT-EDGE multiview VERIFIED
+Error: FSPT P1 requires exactly one enabled view layer
+Error: FSPT P1 requires exactly one enabled view layer
+Error: FSPT P1 requires exactly one enabled view layer
+FSPT-EDGE multiple_layers VERIFIED
+00:02.313  render           | Saved: 'C:\Users\Tyler\projects\fluidsim-fspt-20261125\artifacts\fspt-p1\edges-recovery-6ockla8e\recovery\recovered.exr'
+FSPT-EDGE render_after_refusal VERIFIED
+FSPT-EDGE-ACCEPTANCE-PASS C:\Users\Tyler\projects\fluidsim-fspt-20261125\artifacts\fspt-p1\edges-recovery.json
+Blender 5.2.0 LTS (hash fbe6228777e7 built 2026-07-14 01:35:40)
+
+Blender quit
+[bgate] exit code 0 after 3.1s

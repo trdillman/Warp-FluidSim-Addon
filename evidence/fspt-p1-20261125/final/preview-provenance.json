@@ -1,0 +1,14 @@
+{
+  "source_sha": "3a0622d2340e062afc7bc362052232a276d9d485",
+  "source_python_tree_sha256": "1cef38f6a12f6474dba04b3578f7056acea013204600ddb04022ec5201b97762",
+  "capture_date": "2026-11-25",
+  "timezone": "America/New_York",
+  "status": "PROVISIONAL",
+  "claim": "actual static FSPT CUDA output; no fluid simulation or performance claim",
+  "script": "evidence/fspt-p1-20261125/create_preview.py",
+  "files": {
+    "static-p1-validation.blend": "2224c8233b9775db0ad45d3a8c349ced2cf248a3320c7c752d785693fa2bb8df",
+    "static-p1-validation.exr": "df22eca91df9258535f2705bd74b2d181802c86a39ff345cc4001eba11abd1cd",
+    "static-p1-validation.png": "efda40cc25fb79e0556402d9c829342f9cae4d97b3e2563182e4966c2b682738"
+  }
+}

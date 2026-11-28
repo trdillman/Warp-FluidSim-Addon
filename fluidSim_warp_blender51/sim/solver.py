@@ -2645,6 +2645,15 @@ class FluidSolver:
         )
 
 
+    def owns_host_frame(self, host):
+        """Whether ``host`` is the current exact snapshot, without acquiring one.
+
+        Identity survives neither a same-frame state invalidation nor owner
+        replacement. This query never constructs a HostFrame or reads outputs.
+        """
+        return (host is not None and self._host_frame_cache is host
+                and host.solver is self and host.frame == self.frame)
+
     def host_frame(self):
         """Return the lazy host snapshot for the current solver frame."""
         if (self._host_frame_cache is None or

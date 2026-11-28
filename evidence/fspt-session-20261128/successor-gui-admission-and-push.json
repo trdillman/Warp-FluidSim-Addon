@@ -1,0 +1,204 @@
+{
+  "disposition": "ADMISSION_BLOCKED",
+  "qualification": "NO_PRODUCT_TEST_OUTCOME",
+  "nativeRunDirectory": "artifacts\\fspt-p0\\bridge-qualification\\gui-ce6afc9ae8-20261128T082122009491Z",
+  "controllerStatus": {
+    "file": {
+      "bytes": 13894,
+      "sha256": "400f1334d55b1d0b260e80339f883e3ce710d328715943c425f0d42a81c745d7"
+    },
+    "summary": {
+      "status": "FAILED",
+      "requested_head": "ce6afc9ae8b607a33b5c429e6743a60a86df8b1e",
+      "phase": "gui",
+      "controller_pid": 64792,
+      "controller_sha256": "957bc9a1b23abc27a44cb33ad6563b8ea9a0485c98ba1d022324bd84d5de84d7",
+      "controller_python": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\5.2\\python\\bin\\python.exe",
+      "controller_python_version": "3.13.13 (main, May  8 2026, 12:37:03) [MSC v.1944 64 bit (AMD64)]",
+      "started_at": "2026-11-28T08:21:22.010426+00:00",
+      "steps": [
+        "async-viewport",
+        "async-live"
+      ],
+      "heartbeat_utc": "2026-11-28T08:25:20.457577+00:00",
+      "source_before": [
+        "head",
+        "python_files",
+        "python_payload_sha256",
+        "addon_python_tree_sha256",
+        "demo_sha256"
+      ],
+      "runtime": [
+        "blender",
+        "python",
+        "wheel",
+        "site",
+        "deps",
+        "session"
+      ],
+      "source_before_sha256": "d75a1e5a0d1f3d51dc2e9820a9293d1cd3633633ab07675afb1f2bc948148fb7",
+      "wrapper_sha256": "041ccee9e8f52ed1658f878f49f46aee4ca25c5a517297da631d242c793050d8",
+      "bgate_sha256": "94ea11395e30f09347d9fbcb293af4aa94c5a3ba053299125df0619c8745baa3",
+      "scope": "standalone per-lane native acceptance, not production or package qualification",
+      "requested_lanes": 2,
+      "active_step": null,
+      "source_after_sha256": "d75a1e5a0d1f3d51dc2e9820a9293d1cd3633633ab07675afb1f2bc948148fb7",
+      "error": "Traceback (most recent call last):\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\run_exclusive_fspt_gui_ce6afc9a.py\", line 370, in run\n    require(len(passed) == len(names) and all(passed), \"One or more standalone cases did not verify\")\n    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\run_exclusive_fspt_gui_ce6afc9a.py\", line 46, in require\n    raise RuntimeError(reason)\nRuntimeError: One or more standalone cases did not verify\n",
+      "finished_at": "2026-11-28T08:25:20.457556+00:00"
+    }
+  },
+  "lanes": {
+    "async-viewport": {
+      "command": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\bin\\bgate.exe",
+        "run",
+        "--class",
+        "exclusive",
+        "--local",
+        "--session",
+        "agent:fspt-continue-20261128",
+        "--wait",
+        "90",
+        "--max-seconds",
+        "390",
+        "--owner",
+        "FluidSim FSPT",
+        "--label",
+        "FluidSim FSPT async-viewport gui-ce6afc9ae8-20261128T082122009491Z",
+        "--report",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-ce6afc9ae8-20261128T082122009491Z\\async-viewport\\lease.json",
+        "--blender",
+        "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+        "--",
+        "--python-use-system-env",
+        "--factory-startup",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tests\\acceptance\\blender_fspt_async_viewport_acceptance.py",
+        "--",
+        "--json-out",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-ce6afc9ae8-20261128T082122009491Z\\async-viewport\\acceptance.json",
+        "--lifecycle-cycles",
+        "50",
+        "--deadline",
+        "360"
+      ],
+      "case": "async-viewport",
+      "startUTC": "2026-11-28T08:21:27.546005+00:00",
+      "finishUTC": "2026-11-28T08:23:21.658906+00:00",
+      "returncode": 75,
+      "markerSeen": false,
+      "terminalSha256": "a33d83c3b89369c4b9a156d1a74cd43be36959c647e112e5c0e932b893005ceb",
+      "leaseReportPresent": false,
+      "acceptanceReportPresent": false,
+      "originalsPresent": false,
+      "stderr": {
+        "path": "artifacts\\fspt-p0\\bridge-qualification\\gui-ce6afc9ae8-20261128T082122009491Z\\async-viewport\\stderr.log",
+        "sha256": "daa71082ae97d1f1e3a81296bc2deaa6d070dcdc75d000e4fc12899f6cf3371a",
+        "text": "[bgate] queued for exclusive GPU lease, position 1\n[bgate] no exclusive lease granted (state=queued)\n"
+      }
+    },
+    "async-live": {
+      "command": [
+        "C:\\Users\\Tyler\\AppData\\Local\\blender-gate\\bin\\bgate.exe",
+        "run",
+        "--class",
+        "exclusive",
+        "--local",
+        "--session",
+        "agent:fspt-continue-20261128",
+        "--wait",
+        "90",
+        "--max-seconds",
+        "1230",
+        "--owner",
+        "FluidSim FSPT",
+        "--label",
+        "FluidSim FSPT async-live gui-ce6afc9ae8-20261128T082122009491Z",
+        "--report",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-ce6afc9ae8-20261128T082122009491Z\\async-live\\lease.json",
+        "--blender",
+        "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+        "--",
+        "--python-use-system-env",
+        "--factory-startup",
+        "--python-exit-code",
+        "1",
+        "--python",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\tests\\acceptance\\blender_fspt_async_live_acceptance.py",
+        "--",
+        "--json-out",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p0\\bridge-qualification\\gui-ce6afc9ae8-20261128T082122009491Z\\async-live\\acceptance.json",
+        "--blend",
+        "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\demos\\dam_break.blend",
+        "--states",
+        "240",
+        "--soak-seconds",
+        "600",
+        "--deadline",
+        "1200"
+      ],
+      "case": "async-live",
+      "startUTC": "2026-11-28T08:23:21.739488+00:00",
+      "finishUTC": "2026-11-28T08:25:18.855303+00:00",
+      "returncode": 75,
+      "markerSeen": false,
+      "terminalSha256": "be9012089e54ddea49919231cc0b534b412ec935e9db044c09b3846762798941",
+      "leaseReportPresent": false,
+      "acceptanceReportPresent": false,
+      "originalsPresent": false,
+      "stderr": {
+        "path": "artifacts\\fspt-p0\\bridge-qualification\\gui-ce6afc9ae8-20261128T082122009491Z\\async-live\\stderr.log",
+        "sha256": "daa71082ae97d1f1e3a81296bc2deaa6d070dcdc75d000e4fc12899f6cf3371a",
+        "text": "[bgate] queued for exclusive GPU lease, position 1\n[bgate] no exclusive lease granted (state=queued)\n"
+      }
+    }
+  },
+  "nativeFileHashes": {
+    "source-after.json": "d75a1e5a0d1f3d51dc2e9820a9293d1cd3633633ab07675afb1f2bc948148fb7",
+    "source-before.json": "d75a1e5a0d1f3d51dc2e9820a9293d1cd3633633ab07675afb1f2bc948148fb7",
+    "status.json": "400f1334d55b1d0b260e80339f883e3ce710d328715943c425f0d42a81c745d7",
+    "async-live\\stderr.log": "daa71082ae97d1f1e3a81296bc2deaa6d070dcdc75d000e4fc12899f6cf3371a",
+    "async-live\\stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "async-live\\terminal.json": "be9012089e54ddea49919231cc0b534b412ec935e9db044c09b3846762798941",
+    "async-viewport\\stderr.log": "daa71082ae97d1f1e3a81296bc2deaa6d070dcdc75d000e4fc12899f6cf3371a",
+    "async-viewport\\stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "async-viewport\\terminal.json": "a33d83c3b89369c4b9a156d1a74cd43be36959c647e112e5c0e932b893005ceb"
+  },
+  "gitPush": {
+    "receiptPath": "artifacts\\fspt-p0\\push-ce6afc9a-082222\\receipt.json",
+    "sha256": "2b292075f1d913b17814374f5db89f62aa3f3687120405abe62af0e7dee8893b",
+    "receipt": {
+      "push": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "To github.com:trdillman/Warp-FluidSim-Addon.git\n   0607daad..ce6afc9a  HEAD -> experimental/fspt-p1-20261125\n"
+      },
+      "remote": {
+        "exit_code": 0,
+        "stdout": "ce6afc9ae8b607a33b5c429e6743a60a86df8b1e\trefs/heads/experimental/fspt-p1-20261125\n",
+        "stderr": ""
+      },
+      "verified": true,
+      "finished_at": "2026-11-28T08:22:26.268098+00:00"
+    }
+  },
+  "historicalComparableFixture": {
+    "source": "0607daad9354b872c7530277371b1d998443c394",
+    "nativeRunDirectory": "artifacts\\fspt-p0\\bridge-qualification\\gui-0607daad93-20261128T074100109056Z",
+    "viewportReport": {
+      "bytes": 108808,
+      "sha256": "b1ebdbf33b71d389c473e77d76143e5ae32f944d461cb56edb7176a6719311ce"
+    },
+    "liveReport": {
+      "bytes": 1645189,
+      "sha256": "8afc88c9bcce7740ebf44d5e28c21e70ac07f51a722d1134dc485bd33dabe6ae"
+    }
+  },
+  "readReceipts": [
+    "fd7d285867384abab36c55093e6b128c",
+    "ad4851719c934a24b532a9f913933064",
+    "9a2333ace1664072a799a83a5a1cbf01"
+  ]
+}

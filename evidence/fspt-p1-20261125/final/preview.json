@@ -1,0 +1,76 @@
+{
+  "status": "VERIFIED",
+  "subject": "Static P1 validation fixture",
+  "script_sha256": "c52a0bd49b6c62e6507ca94466c755235862ea93f33e26b9b2ea2bf3f6b7a997",
+  "helper_sha256": "98787648f0a930dd76c65dabed7ae94448a2648c1ab04bea6872744ce6904904",
+  "stage": "complete",
+  "addon": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\fluidSim_warp_blender51\\__init__.py",
+  "python_tree_sha256": "1cef38f6a12f6474dba04b3578f7056acea013204600ddb04022ec5201b97762",
+  "blender": "5.2.0 LTS",
+  "blender_build": "fbe6228777e7",
+  "blender_executable": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe",
+  "python": "3.13.13 (main, May  8 2026, 12:37:03) [MSC v.1944 64 bit (AMD64)]",
+  "os": "Windows-11-10.0.26200-SP0",
+  "runtime": {
+    "warp": "1.18.0",
+    "warp_path": "C:\\Program Files\\Blender Foundation\\Blender 5.2\\5.2\\python\\Lib\\site-packages\\warp\\__init__.py",
+    "device": "cuda:0",
+    "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+    "cuda_driver": 13050,
+    "cuda_toolkit": 13040
+  },
+  "settings": {
+    "width": 512,
+    "height": 384,
+    "samples": 128,
+    "max_bounces": 6,
+    "seed": 31,
+    "engine": "FLUIDSIM_FSPT",
+    "device": "cuda:0",
+    "display": "sRGB",
+    "view_transform": "AgX",
+    "look": "None",
+    "exposure": 0.0,
+    "gamma": 1.0
+  },
+  "completed_render": {
+    "status": "COMPLETE",
+    "key": [
+      "19094d729e2e598a1552b90cea390f87417e5130f4d1ea89a5236aba3b303e80",
+      "c9de264d20b408e0074a6048ded989401a01f32ce4a7eb0eb72f0025c252f226",
+      512,
+      384,
+      6,
+      31
+    ],
+    "samples": 128,
+    "device": "cuda:0",
+    "backend": "warp-cuda-reference-v1",
+    "transport": "host-staged-rgba32f",
+    "width": 512,
+    "height": 384,
+    "scene_frame": 1
+  },
+  "mean_linear_rgb": [
+    0.20984448492527008,
+    0.22677981853485107,
+    0.25216659903526306
+  ],
+  "artifacts": {
+    "png": {
+      "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\preview\\static-p1-validation.png",
+      "sha256": "efda40cc25fb79e0556402d9c829342f9cae4d97b3e2563182e4966c2b682738",
+      "bytes": 291172
+    },
+    "exr": {
+      "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\preview\\static-p1-validation.exr",
+      "sha256": "df22eca91df9258535f2705bd74b2d181802c86a39ff345cc4001eba11abd1cd",
+      "bytes": 1186223
+    },
+    "blend": {
+      "path": "C:\\Users\\Tyler\\projects\\fluidsim-fspt-20261125\\artifacts\\fspt-p1\\preview\\static-p1-validation.blend",
+      "sha256": "2224c8233b9775db0ad45d3a8c349ced2cf248a3320c7c752d785693fa2bb8df",
+      "bytes": 146890
+    }
+  }
+}

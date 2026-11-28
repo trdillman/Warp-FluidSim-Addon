@@ -12,6 +12,16 @@ from urllib.parse import urlparse
 
 GENERATED_DEMOS = frozenset({'demos/dam_break.blend', 'demos/crown_splash.blend'})
 BINDING_FIELDS = ('source_fingerprint', 'verifier_fingerprint', 'environment_fingerprint')
+VERIFIER_CONFIGS = frozenset({
+    'pytest.ini', '.pytest.ini', 'pytest.toml', '.pytest.toml',
+    'pyproject.toml', 'setup.cfg', 'tox.ini', 'ruff.toml', '.ruff.toml',
+    'mypy.ini', '.pre-commit-config.yaml', '.gitignore', '.gitattributes',
+    'requirements.txt', 'requirements-dev.txt', 'uv.lock', 'Pipfile', 'Pipfile.lock',
+})
+
+
+def _verifier_input(name):
+    return name in VERIFIER_CONFIGS or name.startswith(('tools/', 'tests/'))
 
 
 def fingerprint(value):
@@ -32,6 +42,8 @@ def _git(root, *args):
 
 
 def _relevant(name):
+    if name in VERIFIER_CONFIGS:
+        return True
     path = Path(name)
     return (path.parts[0] in ('fluidSim_warp_blender51', 'tools', 'tests', 'demos')
             and '__pycache__' not in path.parts and path.suffix not in ('.pyc', '.md')
@@ -48,6 +60,10 @@ def source_files(root):
 def _dirty_inputs(root):
     changed = _git(root, 'diff', '--no-renames', '--name-only', '-z', 'HEAD').split('\0')
     changed += _git(root, 'ls-files', '--others', '--exclude-standard', '-z').split('\0')
+    # An ignored root config still controls pytest/Ruff and must not silently
+    # replace the reviewed runner options. Active configurations must be tracked.
+    tracked = set(_git(root, 'ls-files', '-z').split('\0'))
+    changed += [name for name in VERIFIER_CONFIGS if name not in tracked and (Path(root) / name).exists()]
     return {name for name in changed if name and _relevant(name)}
 
 
@@ -69,10 +85,10 @@ def freeze_source(root):
         raise RuntimeError('product or verifier changed during admission')
     return {'git_head': head, 'files': files, 'file_mtimes': mtimes,
             'source_fingerprint': fingerprint({k: v for k, v in files.items()
-                                               if not k.startswith(('tools/', 'tests/'))
+                                               if not _verifier_input(k)
                                                and k not in GENERATED_DEMOS}),
             'verifier_fingerprint': fingerprint({k: v for k, v in files.items()
-                                                 if k.startswith(('tools/', 'tests/'))})}
+                                                 if _verifier_input(k)})}
 
 
 def check_source(root, frozen, before_semantics=None, after_semantics=None):

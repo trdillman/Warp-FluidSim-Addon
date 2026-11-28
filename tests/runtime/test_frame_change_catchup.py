@@ -181,13 +181,14 @@ def test_step_never_implicitly_writes_legacy_cache(monkeypatch):
     import fluidSim_warp_blender51.blender as blender_pkg
     import fluidSim_warp_blender51.io as io_pkg
 
-    written = []
+    written, published = [], []
     fake_cache = types.ModuleType("fluidSim_warp_blender51.io.cache")
     fake_cache.write_frame = (
         lambda scene, sess, frame: written.append(int(frame)))
     fake_cache.write_sequence_metadata = lambda *args, **kwargs: None
     fake_viewport = types.ModuleType("fluidSim_warp_blender51.blender.output_publication")
-    fake_viewport.update_outputs = lambda scene, sess: None
+    fake_viewport.update_outputs = lambda scene, sess, *, timeline_frame=None: published.append(
+        (scene.frame_current, timeline_frame))
     monkeypatch.setitem(
         sys.modules, "fluidSim_warp_blender51.io.cache", fake_cache)
     monkeypatch.setitem(
@@ -210,6 +211,7 @@ def test_step_never_implicitly_writes_legacy_cache(monkeypatch):
     sess.step(scene)
 
     assert written == []
+    assert published == [(9, 4), (9, None)]
 
 
 def test_unregister_handlers_releases_the_session(monkeypatch):

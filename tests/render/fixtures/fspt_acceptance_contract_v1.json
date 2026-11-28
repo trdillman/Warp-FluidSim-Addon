@@ -1,0 +1,536 @@
+{
+  "schema_version": 1,
+  "contract_id": "fspt-p0-20261127-v1",
+  "status": "FROZEN_ENGINEERING_ACCEPTANCE_NOT_PRODUCT_VERIFICATION",
+  "source_checkpoint": "82f08a9b34c0e2971103acb87ed6d0a4cb63bb89",
+  "sources": {
+    "roadmap": {
+      "url": "https://chatgpt.com/space/page_e736fb28ec2881918bc688878f62ab03",
+      "sequence": 11
+    },
+    "bridge": "https://chatgpt.com/space/page_bfe819484c448191951c75b707b2d507",
+    "implementation": "https://chatgpt.com/space/page_fcaa1c84864081918959ec241a535863",
+    "existing_release_budget": "tools/performance_budget.py",
+    "default_materials": "fluidSim_warp_blender51/blender/materials.py",
+    "existing_translator": "fluidSim_warp_blender51/blender/fspt_scene.py"
+  },
+  "runtime_policy": {
+    "blender": "5.2.0",
+    "blender_build": "fbe6228777e7",
+    "python": "3.13.13",
+    "warp": "1.19.0",
+    "gpu": "NVIDIA RTX 4080 SUPER",
+    "cuda_required": true,
+    "cpu_or_other_renderer_substitution": false,
+    "driver_and_gpu_uuid": "record actual observed values; never infer from a display name",
+    "production_provenance": "mandatory independent existing gate record"
+  },
+  "primary_live_fixture": "dam_break_authored",
+  "fixtures": {
+    "dam_break_authored": {
+      "path": "demos/dam_break.blend",
+      "sha256": "05e1918423e48fdf22ea702ff5ca2db1c8f7464be865619d382ad5d8118b92f8",
+      "authored_hz": 24,
+      "historical_initial_particles_approx": 256000,
+      "classification": "reopenable live FluidSim demo; use its authoritative domain/sources/solver settings"
+    },
+    "crown_splash_authored": {
+      "path": "demos/crown_splash.blend",
+      "sha256": "f3ee4e00dbcbf003fab15733c8494b4f7932bd1e68d21b7ce3dd58af4f6f46d4",
+      "authored_hz": 24
+    },
+    "paddle_stir_authored": {
+      "path": "demos/paddle_stir.blend",
+      "sha256": "fa0521b10fa6b0e029ab60e0c2ddcb08ff5f8d7cde9c7c536eea8edf7bb022c3",
+      "authored_hz": 24
+    },
+    "chromatic_vortex_authored": {
+      "path": "demos/chromatic_vortex.blend",
+      "sha256": "678c3851daa79d3743b5e1cebf050abba81dbf3f20a94b8697f8db40b30eab0c",
+      "authored_hz": 24
+    }
+  },
+  "workload_matrix": {
+    "lanes": [
+      "FIXED",
+      "ANIMATED_CACHE",
+      "LIVE"
+    ],
+    "fixed_triangle_tiers": [
+      250000,
+      1000000,
+      4000000
+    ],
+    "live_particle_tiers": [
+      100000,
+      500000,
+      1000000
+    ],
+    "count_tolerance_fraction": 0.05,
+    "missing_or_infeasible_tier": "NOT_RUN, BLOCKED or FAIL; cannot be omitted or used to reduce the primary contract",
+    "camera_cases": [
+      "FIXED",
+      "ORBIT",
+      "DISCONTINUOUS_CUT"
+    ],
+    "lighting_cases": [
+      "FIXED",
+      "MOVING_LIGHT",
+      "MATERIAL_EDIT"
+    ],
+    "large_tier_assets": "bind generator revision, actual resulting geometry/settings/camera/masks SHA256 before candidate measurements; authoring is M6 work, not a P0 capacity claim"
+  },
+  "profiles": {
+    "live_native1080p_spp1": {
+      "mode": "LIVE",
+      "settings": {
+        "width": 1920,
+        "height": 1080,
+        "internal_width": 1920,
+        "internal_height": 1080,
+        "samples_per_image": 1,
+        "max_bounces": 12,
+        "max_transmission_bounces": 12,
+        "seed": 31,
+        "adaptive_sampling": false,
+        "resolution_scale": 1.0,
+        "upscaling": false,
+        "denoising": "OFF",
+        "temporal_reuse": false,
+        "radiance_clamp": null,
+        "color_space": "scene_linear_rec709",
+        "exposure": 0.0,
+        "view_transform": "Standard",
+        "look": "None",
+        "display_device": "sRGB",
+        "gamma": 1.0,
+        "depth_of_field": false,
+        "motion_blur": false,
+        "shutter_frames": 0.5,
+        "shutter_position": "CENTER"
+      },
+      "ordinary_nmae_max": 0.1,
+      "caustic_nmae_max": 0.2
+    },
+    "live_native1080p_spp2": {
+      "mode": "LIVE",
+      "settings": {
+        "width": 1920,
+        "height": 1080,
+        "internal_width": 1920,
+        "internal_height": 1080,
+        "samples_per_image": 2,
+        "max_bounces": 12,
+        "max_transmission_bounces": 12,
+        "seed": 31,
+        "adaptive_sampling": false,
+        "resolution_scale": 1.0,
+        "upscaling": false,
+        "denoising": "OFF",
+        "temporal_reuse": false,
+        "radiance_clamp": null,
+        "color_space": "scene_linear_rec709",
+        "exposure": 0.0,
+        "view_transform": "Standard",
+        "look": "None",
+        "display_device": "sRGB",
+        "gamma": 1.0,
+        "depth_of_field": false,
+        "motion_blur": false,
+        "shutter_frames": 0.5,
+        "shutter_position": "CENTER"
+      },
+      "ordinary_nmae_max": 0.1,
+      "caustic_nmae_max": 0.2
+    },
+    "live_native1080p_spp4": {
+      "mode": "LIVE",
+      "settings": {
+        "width": 1920,
+        "height": 1080,
+        "internal_width": 1920,
+        "internal_height": 1080,
+        "samples_per_image": 4,
+        "max_bounces": 12,
+        "max_transmission_bounces": 12,
+        "seed": 31,
+        "adaptive_sampling": false,
+        "resolution_scale": 1.0,
+        "upscaling": false,
+        "denoising": "OFF",
+        "temporal_reuse": false,
+        "radiance_clamp": null,
+        "color_space": "scene_linear_rec709",
+        "exposure": 0.0,
+        "view_transform": "Standard",
+        "look": "None",
+        "display_device": "sRGB",
+        "gamma": 1.0,
+        "depth_of_field": false,
+        "motion_blur": false,
+        "shutter_frames": 0.5,
+        "shutter_position": "CENTER"
+      },
+      "ordinary_nmae_max": 0.1,
+      "caustic_nmae_max": 0.2
+    },
+    "paused_native1080p_spp64": {
+      "mode": "PAUSED",
+      "settings": {
+        "width": 1920,
+        "height": 1080,
+        "internal_width": 1920,
+        "internal_height": 1080,
+        "samples_per_image": 64,
+        "max_bounces": 12,
+        "max_transmission_bounces": 12,
+        "seed": 31,
+        "adaptive_sampling": false,
+        "resolution_scale": 1.0,
+        "upscaling": false,
+        "denoising": "OFF",
+        "temporal_reuse": false,
+        "radiance_clamp": null,
+        "color_space": "scene_linear_rec709",
+        "exposure": 0.0,
+        "view_transform": "Standard",
+        "look": "None",
+        "display_device": "sRGB",
+        "gamma": 1.0,
+        "depth_of_field": false,
+        "motion_blur": false,
+        "shutter_frames": 0.5,
+        "shutter_position": "CENTER"
+      },
+      "ordinary_nmae_max": 0.05,
+      "caustic_nmae_max": 0.1
+    },
+    "final_native1080p_spp1024": {
+      "mode": "FINAL",
+      "settings": {
+        "width": 1920,
+        "height": 1080,
+        "internal_width": 1920,
+        "internal_height": 1080,
+        "samples_per_image": 1024,
+        "max_bounces": 12,
+        "max_transmission_bounces": 12,
+        "seed": 31,
+        "adaptive_sampling": false,
+        "resolution_scale": 1.0,
+        "upscaling": false,
+        "denoising": "OFF",
+        "temporal_reuse": false,
+        "radiance_clamp": null,
+        "color_space": "scene_linear_rec709",
+        "exposure": 0.0,
+        "view_transform": "Standard",
+        "look": "None",
+        "display_device": "sRGB",
+        "gamma": 1.0,
+        "depth_of_field": false,
+        "motion_blur": false,
+        "shutter_frames": 0.5,
+        "shutter_position": "CENTER"
+      },
+      "ordinary_nmae_max": 0.05,
+      "caustic_nmae_max": 0.1
+    }
+  },
+  "path_semantics": {
+    "max_bounces": "total scattering-event cap, including transmission; the transmission cap does not add another 12 events",
+    "russian_roulette": "unbiased throughput correction after event 5; no energy clamp",
+    "unqualified_reconstruction": "separate named contract/profile only; retain raw history-disabled images and rerun all applicable quality/freshness gates"
+  },
+  "joint_live": {
+    "fresh_states_per_second_min": 24.0,
+    "simulated_seconds_per_wall_second_min": 1.0,
+    "p95_state_ready_to_present_ms_max": 100.0,
+    "max_state_ready_to_present_ms_max": 250.0,
+    "solver_wall_ratio_max": 1.05,
+    "solver_p95_step_interval_ratio_max": 1.05,
+    "peak_combined_vram_fraction_max": 0.8,
+    "p95_edit_to_correct_image_ms_max": 100.0,
+    "cancel_acknowledgment_ms_max": 250.0,
+    "controls_usable_ms_max": 1000.0,
+    "geometry_slots_max": 2,
+    "in_flight_trace_quanta_per_device_max": 1,
+    "pending_metadata_per_view_max": 1,
+    "quality_and_freshness_required_together": true,
+    "p95_method": "nearest rank ceil(0.95*N), not interpolated"
+  },
+  "fixed_renderer": {
+    "primary_triangles": 1000000,
+    "width": 1920,
+    "height": 1080,
+    "new_images_per_second_min": 30.0,
+    "p95_completion_interval_ms_max": 33.333333333333336,
+    "evaluation_only_images_per_second": 60.0,
+    "every_counted_image": "new completed tracing work at the exact frozen quality, never draw-call count"
+  },
+  "protocol": {
+    "warmup_states_per_lane": 120,
+    "measured_states_per_trial_min": 600,
+    "paired_runs_min": 3,
+    "paired_order": [
+      "A-B-C-D",
+      "D-C-B-A",
+      "A-B-C-D",
+      "D-C-B-A"
+    ],
+    "required_lanes": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "sustained_live_soak_seconds_min": 600,
+    "expanded_distinct_live_states_min": 240,
+    "lifecycle_cycles_min": 50,
+    "sequence_export_frames": 240,
+    "matched_inputs": [
+      "solver_settings_sha256",
+      "surface_settings_sha256",
+      "required_outputs_sha256"
+    ],
+    "matched_demand_lanes": [
+      "B",
+      "C",
+      "D"
+    ],
+    "raw_records_required": true,
+    "cold_start_separate": true,
+    "presentation_scope": "completed-image submission in actual view_draw; label this as draw submission, never physical scan-out",
+    "no_consumer_recurring_work_allowed": false,
+    "state_age_clock": "state_ready_at equals authoritative completed solver-state completed_at, before optional FSPT surfacing/capture/copy/acceleration/tracing; all event timestamps share a declared monotonic clock domain"
+  },
+  "quality": {
+    "reference_white_luminance": 1.0,
+    "normalization_dark_floor": 0.01,
+    "luminance_weights": [
+      0.2126,
+      0.7152,
+      0.0722
+    ],
+    "confidence_level": 0.99,
+    "ci_half_width_max_fraction_of_tolerance": 0.25,
+    "stochastic_analytic_rays_min": 1048576,
+    "reference_engine": "Cycles in the same certified Blender build plus independent analytic references",
+    "reference_start_spp": 4096,
+    "reference_max_spp": 65536,
+    "reference_sample_doubling_required": true,
+    "reference_convergence_fraction_of_final_gate": 0.25,
+    "reference_masks_frozen_before_candidate": true,
+    "mask_roles": [
+      "ordinary_liquid",
+      "caustic",
+      "thin_features",
+      "disocclusion"
+    ],
+    "thin_feature_min_width_pixels": 2,
+    "thin_feature_registration_tolerance_pixels": 1,
+    "thin_feature_min_reference_contrast": 0.02,
+    "ghost_after_new_frames": 2,
+    "analytic_limits": {
+      "fresnel_absolute_error": 0.005,
+      "slab_transmission_relative_error": 0.02,
+      "snell_angle_degrees_error": 0.25,
+      "tir_leakage_fraction": 0.0001
+    },
+    "image_limits": {
+      "thin_feature_precision_min": 0.95,
+      "thin_feature_recall_min": 0.95,
+      "ghost_residual_max": 0.02,
+      "nonfinite_radiance_count_max": 0
+    },
+    "geometry_parity": {
+      "position_absolute_tolerance_m": 1e-06,
+      "position_relative_tolerance": 0.0,
+      "indices_and_material_mapping": "exact after declared stable correspondence",
+      "normal_max_angle_degrees": 0.1,
+      "attributes_relative_error_max": 1e-05,
+      "attributes_absolute_floor": 1e-06
+    },
+    "visual_rubric": {
+      "required_min_per_category": 4,
+      "scale_max": 5,
+      "categories": [
+        "reflection_refraction",
+        "absorption",
+        "thin_detail",
+        "caustics",
+        "temporal_stability",
+        "workflow_responsiveness"
+      ],
+      "critical_optical_defects_allowed": 0
+    },
+    "optical_fixtures": [
+      "clear_and_tinted_slabs",
+      "water_sphere",
+      "water_in_glass_with_air_bubbles",
+      "rough_and_opaque_liquid",
+      "frozen_splash_thin_sheets",
+      "animated_pour_breakup_disocclusion",
+      "small_light_caustic_receiver",
+      "whitewater_and_emissive_lighting"
+    ],
+    "camera_fixtures": {
+      "depth_of_field": {
+        "focal_length_mm": 50.0,
+        "f_number": 1.4,
+        "focus_distance_m": 2.0,
+        "object_distances_m": [
+          1.0,
+          2.0,
+          4.0
+        ],
+        "sensor_width_mm": 36.0,
+        "aperture": "circular, no anamorphic ratio",
+        "circle_of_confusion_max_absolute_error_pixels": 0.5,
+        "circle_of_confusion_max_relative_error_for_reference_at_least_2_pixels": 0.05,
+        "reference": "thin-lens image-distance equation and converged same-build Cycles point-spread image"
+      },
+      "motion_blur": {
+        "authored_hz": 24,
+        "shutter_frames": 0.5,
+        "shutter_position": "CENTER",
+        "time_offsets_frames": [
+          -0.25,
+          0.25
+        ],
+        "test_speed_m_per_s": 2.4,
+        "orthographic_width_m": 10.0,
+        "endpoint_position_error_pixels_max": 0.5,
+        "centroid_error_pixels_max": 0.25,
+        "integrated_energy_relative_error_max": 0.02,
+        "geometry": "owned time samples from established solver/cache policy including topology births/deaths; never naive index interpolation across remeshing or render-triggered stepping"
+      }
+    }
+  },
+  "required_product_compatibility": {
+    "materials": [
+      "full_required_Principled_inputs",
+      "smooth_and_rough_glass_refraction",
+      "normal_bump",
+      "mixed_shaders",
+      "animated_parameters",
+      "image_textures",
+      "UV_mapping",
+      "math_color_operations",
+      "procedurals_found_in_representative_scenes",
+      "fluidsim_color",
+      "fluidsim_viscosity",
+      "display_color",
+      "node_groups"
+    ],
+    "liquid_interior": [
+      "depth_dependent_absorption",
+      "requested_scattering",
+      "nested_dielectric_media",
+      "glass_water_air_bubbles",
+      "overlapping_interior_exterior_transitions"
+    ],
+    "lights_world": [
+      "constant_background",
+      "HDR_environment_rotation",
+      "required_world_graphs",
+      "point",
+      "sun",
+      "spot",
+      "area",
+      "emissive_geometry",
+      "shadows",
+      "indirect_lighting",
+      "documented_intensity_units"
+    ],
+    "geometry_camera": [
+      "evaluated_triangles",
+      "world_transforms",
+      "nonuniform_reflected_transforms",
+      "instances",
+      "required_modifiers",
+      "generated_surfaces",
+      "visibility",
+      "evaluated_normals",
+      "attributes",
+      "perspective",
+      "orthographic",
+      "camera_shift",
+      "animation",
+      "depth_of_field_final",
+      "motion_blur_final",
+      "topology_changing_fluid_shutter_samples"
+    ],
+    "fluid_channels": [
+      "surface",
+      "surface_waves",
+      "sheet_detail",
+      "whitewater_foam_spray_bubbles",
+      "requested_visible_particles"
+    ],
+    "engine_specific": "inventory each required Blender graph; exact interpretation, artist-selected documented approximation or visible refusal; no permanent exclusion is implied by P1",
+    "current_verified_subset": [
+      "evaluated_triangles",
+      "constant_Diffuse",
+      "constant_Emission",
+      "constant_smooth_Glass",
+      "constant_Background",
+      "perspective_orthographic",
+      "single_layer_opaque_Combined_still"
+    ],
+    "unsupported_required_content": "explicit error for final export unless the artist selected a documented approximation; no generic-water substitution"
+  },
+  "export": {
+    "required_passes": [
+      "Combined",
+      "Alpha",
+      "Depth",
+      "Normal",
+      "Albedo",
+      "Emission",
+      "Environment",
+      "Direct",
+      "Indirect",
+      "Transmission"
+    ],
+    "formats": {
+      "OpenEXR": "32-bit scene-linear RGBA and named passes; no view transform baked into radiance",
+      "PNG": "16-bit display-referred RGBA through active Blender view transform exactly once"
+    },
+    "alpha": "premultiplied radiance in EXR Combined; PNG straight alpha; Alpha is camera coverage, glass retains geometric coverage; background alpha0 with transparent film and1 with opaque film",
+    "depth": "first camera-visible surface distance along normalized primary ray, meters; no hit positive infinity",
+    "normal": "first-hit evaluated shading normal in world coordinates, normalized, no face-forward flip; no hit(0,0,0)",
+    "albedo": "first-hit linear base/scattering color before lighting; attributes/textures evaluated; no hit(0,0,0)",
+    "emission": "radiance from directly camera-visible emitting geometry, zero-scatter paths only",
+    "environment": "direct primary-ray world radiance, zero-scatter paths only",
+    "direct": "all radiance paths with exactly one non-null scattering event",
+    "indirect": "all radiance paths with at least two non-null scattering events",
+    "transmission": "diagnostic subset of Direct+Indirect whose path includes at least one refraction/BTDF event; do not add it again to Combined",
+    "additive_identity": "Combined.rgb = Emission + Environment + Direct + Indirect before display transform",
+    "motion_vectors": "not offered by v1 passset; any later motion-vector/reconstruction profile must freeze direction, units, shutter and disocclusion semantics before qualification",
+    "camera_dof_motion_blur": "Required Final product endpoints. Frozen fixed-quality throughput profiles disable both explicitly; that profile choice does not remove release requirements. Current refusals are explicit unqualified gaps.",
+    "fresh_process_roundtrip": true
+  },
+  "existing_release_gate": {
+    "authority": "tools/run_production_gate.py and tools/performance_budget.py",
+    "reference_version": "4.0.1",
+    "demos": [
+      "crown_splash",
+      "dam_break",
+      "paddle_stir",
+      "chromatic_vortex"
+    ],
+    "base_host_ratio_max": 1.05,
+    "trials_per_variant": 8,
+    "existing_early_stop_trials_per_variant": 4,
+    "existing_early_stop_margin": 0.06,
+    "frames": [
+      1,
+      48
+    ],
+    "residual_ratio_limit": 1.1,
+    "owned_multigrid_residual_ratio_limit": 6.0,
+    "policy": "all existing source/reference pins, intended-change allowances, storage hooks, runtime/package/GUI gates remain unchanged; FSPT overhead uses the stricter independently matched D/A test, never inherits a solver-change allowance"
+  },
+  "claim_boundary": "A pure contract PASS is not native, installed, production or realtime verification. Bind raw artifacts, runtime/source/fixture identities, negative controls and independent review before any such claim."
+}
