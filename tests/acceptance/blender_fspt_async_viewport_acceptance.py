@@ -134,9 +134,20 @@ class AsyncViewportAcceptance:
             original = getattr(backend, name)
             def operation(instance, *args, _name=name, _original=original, **kwargs):
                 assert self.phase != "draw", f"Drawing reached backend {_name}"
+                if (_name == "collect" and not kwargs.get("wait", False)
+                        and self.stage in {"final_pending", "cycle_pending"} and instance.pending):
+                    # Keep an actually submitted owned job observable until the
+                    # acceptance timer requests final admission or retirement.
+                    # This holds publication, not CUDA execution/completion.
+                    self.calls["pending_observation_hold"] += 1
+                    self.check_resources()
+                    return None
                 if _name == "collect" and kwargs.get("wait", False):
                     assert self.phase == "final", "Viewport collection requested a blocking wait"
                     self.calls["final_owned_wait"] += 1
+                    job = instance._job
+                    if job is not None and not job.lease.final:
+                        self.calls["final_viewport_owned_wait"] += 1
                 receipt = (getattr(getattr(instance, "_render_stream", None), "retirement", None)
                            if _name == "close" else None)
                 result = _original(instance, *args, **kwargs)
@@ -202,6 +213,18 @@ class AsyncViewportAcceptance:
 
     def areas(self):
         return [area for area in self.window.screen.areas if area.type == "VIEW_3D"]
+
+    def redraw_views(self):
+        for area in self.areas():
+            area.tag_redraw()
+
+    def request_refinement(self, stage):
+        # Scripted RNA assignments lack the UI's redraw event. At the prior
+        # sample goal the renderer's timer is idle, so wake the actual areas
+        # to capture the new cheap request. Arm observation before either draw.
+        self.checkpoint(stage)
+        self.scene.fspt.viewport_samples = 64
+        self.redraw_views()
 
     def views(self):
         result = {}
@@ -279,6 +302,7 @@ class AsyncViewportAcceptance:
             area.spaces.active.shading.type = "SOLID"
         self.scene.render.engine = "BLENDER_WORKBENCH"
         self.checkpoint("cycle_retire")
+        self.redraw_views()
 
     def tick(self):
         try:
@@ -321,27 +345,29 @@ class AsyncViewportAcceptance:
                           for token, (_, frame) in views.items()}
                 assert all(delta > 0.001 for delta in deltas.values()), deltas
                 self.save_views("world_reassignment", views)["mean_absolute_deltas"] = deltas
-                self.scene.fspt.viewport_samples = 64
-                self.checkpoint("final_pending")
+                self.request_refinement("final_pending")
             elif self.stage == "final_pending":
                 pending = sum(backend.pending for backend in self.backends if not backend.closed)
                 if pending == 0:
                     return 0.002
                 before = self.calls["final_owned_wait"]
+                before_viewport = self.calls["final_viewport_owned_wait"]
                 self.fixture.render(self.addon, self.scene, self.folder, "final-with-pending-view", self.report)
-                assert self.calls["final_owned_wait"] > before
+                viewport_waits = self.calls["final_viewport_owned_wait"] - before_viewport
+                assert viewport_waits >= pending, "Final render did not drain its pending viewport jobs"
                 assert not any(backend.pending for backend in self.backends if not backend.closed)
                 self.report["final_admission"] = {"pending_before": pending,
-                                                  "owned_waits": self.calls["final_owned_wait"] - before}
+                                                  "owned_waits": self.calls["final_owned_wait"] - before,
+                                                  "viewport_owned_waits": viewport_waits}
                 self.scene.fspt.viewport_samples = 2
                 self.checkpoint("after_final")
+                self.redraw_views()
             elif self.stage == "after_final":
                 views = self.ready_views(2)
                 if views is None:
                     return 0.01
                 self.save_views("after_final", views)
-                self.scene.fspt.viewport_samples = 64
-                self.checkpoint("cycle_pending")
+                self.request_refinement("cycle_pending")
             elif self.stage == "cycle_pending":
                 self.views()
                 if not any(backend.pending for backend in self.backends if not backend.closed):
@@ -371,8 +397,7 @@ class AsyncViewportAcceptance:
                 if self.completed_cycles == self.args.cycles:
                     self.save_views("last_cycle", views)
                     return self.finish()
-                self.scene.fspt.viewport_samples = 64
-                self.checkpoint("cycle_pending")
+                self.request_refinement("cycle_pending")
             return 0.01
         except BaseException:
             self.report.update(status="FAILED", error=traceback.format_exc())
@@ -383,6 +408,7 @@ class AsyncViewportAcceptance:
 
     def evidence(self):
         self.report.update(calls=dict(self.calls), stream_retirements=self.retirements,
+                           pending_observation_control="retain_submitted_job_until_observed; CUDA completion unmodified",
                            completed_cycles=self.completed_cycles,
                            maximum_pending_jobs=self.maximum_pending,
                            maximum_active_backends=self.maximum_active_backends,
