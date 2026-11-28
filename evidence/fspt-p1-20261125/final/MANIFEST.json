@@ -5,7 +5,7 @@
       "bytes": 8,
       "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
     },
-    "edges-gate.log": {
+    "edges-gate.txt": {
       "bytes": 2754,
       "sha256": "601cbbac7fe32cb3864ff02c78b36905880942b8d4bde5b7d96de19d6f16980a"
     },
@@ -65,7 +65,7 @@
       "bytes": 291172,
       "sha256": "efda40cc25fb79e0556402d9c829342f9cae4d97b3e2563182e4966c2b682738"
     },
-    "preview-gate.log": {
+    "preview-gate.txt": {
       "bytes": 1319,
       "sha256": "c59aa5185961b9be3ec09f5cd47e5c902802eb67b2dc7eda0f9c550061798cf9"
     },
@@ -85,7 +85,7 @@
       "bytes": 21819,
       "sha256": "e7b4c487c9766e1e76bdd3d5b60f7bbf55cabd5bff6cf3d2ee05e00a36646578"
     },
-    "render-gate.log": {
+    "render-gate.txt": {
       "bytes": 2242,
       "sha256": "8a5bf0c9d32c07f2bf3795654a87d39c76aad0fbc1acd69c947f1ee2a234753e"
     },
@@ -125,7 +125,7 @@
       "bytes": 2700424,
       "sha256": "2c0cde2a20651ae53f714c77d52552b10258ac39cde037cfd48ce094fab5e68c"
     },
-    "viewport-gate.log": {
+    "viewport-gate.txt": {
       "bytes": 3561,
       "sha256": "bcb57348d61014e8f94f58374eb8ee9fa63160267ce62336a8cb7968ffc8c60b"
     },
