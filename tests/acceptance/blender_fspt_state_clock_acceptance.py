@@ -47,7 +47,7 @@ def run_case(modules, device, report, path):
     solver = surface_fixture.make_solver(
         modules, device, origin, waves=True,
         cadence=modules("sim.enums").SurfaceUpdateCadence.FRAME)
-    assert solver.device.is_cuda, "The real solver must execute on CUDA"
+    assert wp.get_device(solver.device).is_cuda, "The real solver must execute on CUDA"
     session = bridge.Session()
     session.install_solver(
         solver, profiler=None, device=solver.device, scene_inputs=inputs.SceneInputs(),
