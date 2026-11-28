@@ -555,6 +555,20 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
         return capture_device_scene(depsgraph, selection, static_revision=view._scene_revision,
                                     cache=self._static_device_cache)
 
+    def _retains_evaluated_live_image(self, depsgraph, stamps):
+        from .fspt_bridge import SurfaceNotReadyError, validate_viewport_publications
+        from .surface_publication import SurfaceChannel
+
+        if len(stamps) != 1 or stamps[0].channel != SurfaceChannel.EVALUATED_MESH:
+            return False
+        try:
+            presentation = validate_viewport_publications(
+                depsgraph.scene, stamps, view_layer=depsgraph.view_layer,
+                device=self._view.request.device)
+        except SurfaceNotReadyError:
+            return False
+        return presentation["status"] == "RETAINED"
+
     @staticmethod
     def _scene_input_key(scene, layer):
         from .fspt_bridge import _surface_object
@@ -598,7 +612,11 @@ class FSPTRenderEngine(bpy.types.RenderEngine):
             self._scene_inputs = inputs
             if _device_runtime().enabled() or self._device_subscription_key is not None:
                 self._update_device_demand(scene, depsgraph.view_layer, depsgraph)
-            view.capture(lambda: self._capture_view_scene(depsgraph))
+            # A costly capture of the next surface can otherwise expire a
+            # compatible image between collection and its first actual draw.
+            if not view.defer_capture_for_presentation(
+                    self._texture_frame, lambda stamps: self._retains_evaluated_live_image(depsgraph, stamps)):
+                view.capture(lambda: self._capture_view_scene(depsgraph))
         except DeviceSceneUnavailable:
             view.defer()
         except Exception as exc:

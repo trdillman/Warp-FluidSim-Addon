@@ -457,3 +457,93 @@ def test_retained_display_expiry_does_not_discard_a_newer_pending_job(adapter, m
     assert a.engine._view.presentable is None
     assert a.backend.pending and a.engine._view._scene_revision == revision
     assert a.engine._view.needs_tick
+
+
+@pytest.fixture
+def retained_completion(adapter, monkeypatch):
+    from fluidSim_warp_blender51.blender import surface_publication as publication
+
+    a = adapter
+    prior = publication.SurfacePublication(
+        scene_token=1, owner_token=(7, 'FluidSim Output'), epoch=4,
+        channel=publication.SurfaceChannel.EVALUATED_MESH, generation=10,
+        source=publication.SurfaceSource.LIVE, timeline_frame=10, solver_frame=10,
+        state_revision=10, simulation_time=1.0, cache_frame=None, cache_identity=None,
+        build_key=None, object_token=8, mesh_token=9, vertex_count=3, triangle_count=1,
+        visible=True, published_at=5.0, source_timeline_frame=10)
+    newer = replace(prior, generation=11, timeline_frame=11, solver_frame=11, state_revision=11,
+                    simulation_time=1.1, published_at=5.05, source_timeline_frame=11)
+    current = [prior]
+    clock = [5.1]
+    validate = a.bridge.validate_viewport_publications
+    monkeypatch.setattr(a.bridge, 'capture_publications', lambda *args, **kwargs: tuple(current))
+    monkeypatch.setattr(a.bridge, 'validate_viewport_publications',
+                        lambda *args, **kwargs: validate(*args, **kwargs, clock=lambda: clock[0]))
+
+    def extract(*args, **kwargs):
+        a.calls.append("extract")
+        return replace(a.snapshot, frame=current[0].timeline_frame, publications=tuple(current))
+
+    monkeypatch.setattr(a.extraction, 'extract_scene', extract)
+    a.engine.view_update(a.context, a.graph)
+    view = a.engine._view
+    a.engine._pump_view()
+    a.backend.pending = True
+    frame = RenderFrame(np.ones((3, 4, 4)), view.key, 1, "cuda:0", "boundary-test", "host",
+                        prior.timeline_frame, (prior,))
+
+    def collect(**kwargs):
+        a.backend.pending = False
+        return frame
+
+    monkeypatch.setattr(a.backend, 'collect', collect)
+    current[0] = newer
+    a.engine._published(newer.channel, SimpleNamespace(eligible=newer))
+    a.engine._pump_view()
+    assert view.presentable is frame and view.dirty
+    a.calls.clear()
+    return SimpleNamespace(adapter=a, prior=prior, current=current, clock=clock)
+
+
+def test_ready_retained_image_gets_first_draw_before_expensive_capture(retained_completion):
+    a = retained_completion.adapter
+    a.engine.view_update(a.context, a.graph)
+    a.engine.view_update(a.context, a.graph)
+    assert a.engine._view.dirty and a.engine._view.needs_tick
+    assert "extract" not in a.calls
+
+    a.engine.view_draw(a.context, a.graph)
+    assert a.module.LAST_VIEWPORT_INFO["presentation"]["status"] == "RETAINED"
+    a.engine.view_update(a.context, a.graph)
+    assert [call for call in a.calls if call in ("draw", "extract")] == ["draw", "extract"]
+
+
+def test_capture_deferral_is_spent_even_without_a_delivered_draw(retained_completion):
+    a = retained_completion.adapter
+    a.engine.view_update(a.context, a.graph)
+    assert "extract" not in a.calls
+    a.engine._pump_view()
+    a.engine.view_update(a.context, a.graph)
+    assert a.calls.count("extract") == 1
+    assert not a.engine._view.dirty
+
+
+@pytest.mark.parametrize("changed", ["expired", "nonforward", "current", "scene", "camera", "already_drawn"])
+def test_only_fresh_unpainted_advancing_live_images_delay_capture(retained_completion, changed):
+    f = retained_completion
+    a = f.adapter
+    if changed == "expired":
+        f.clock[0] = f.prior.published_at + 0.251
+    elif changed == "nonforward":
+        f.current[0] = replace(f.current[0], epoch=f.prior.epoch + 1)
+    elif changed == "current":
+        f.current[0] = f.prior
+    elif changed == "scene":
+        a.scene.world = Pointer(35)
+    elif changed == "camera":
+        a.context.region_data.perspective_matrix.inverted = lambda: np.diag([2, 1, 1, 1])
+    elif changed == "already_drawn":
+        a.engine.view_draw(a.context, a.graph)
+        assert a.module.LAST_VIEWPORT_INFO["status"] == "COMPLETE"
+    a.engine.view_update(a.context, a.graph)
+    assert a.calls.count("extract") == 1

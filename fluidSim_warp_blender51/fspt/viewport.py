@@ -109,6 +109,8 @@ class ViewportState:
         self._capture_owner = object()
         self._submitted_snapshot = self._completed = None
         self._scene_revision = self._submitted_revision = 0
+        self._tick_number = 0
+        self._capture_deferral_tick = None
         self._revision = 0
         self.dirty, self.closed = True, False
         self.error = ""
@@ -218,6 +220,16 @@ class ViewportState:
                 self.defer()
                 return False
 
+    def defer_capture_for_presentation(self, drawn, advancing):
+        """Give a newly accepted image one timer turn to reach draw."""
+        frame = self.presentable
+        if (not self.dirty or frame is None or frame is drawn
+                or self._capture_deferral_tick not in (None, self._tick_number)
+                or not advancing(frame.publications)):
+            return False
+        self._capture_deferral_tick = self._tick_number
+        return True
+
     def _capture(self, extract):
         if self.closed or self.request is None or self.coordinator.blocked(self.request.device):
             return False
@@ -262,6 +274,7 @@ class ViewportState:
             return
         self.presentable = frame
         self.presented_snapshot = submitted
+        self._capture_deferral_tick = None
 
     def tick(self, eligible, *, presentation_eligible=None):
         """Poll once and submit at most one sample quantum, without a wait."""
@@ -275,6 +288,7 @@ class ViewportState:
                 return "suspended"
             if self.request.device != device:
                 return "capture"
+            self._tick_number += 1
             try:
                 return self._tick(eligible, presentation_eligible or eligible)
             except DeviceSceneUnavailable:
