@@ -276,7 +276,8 @@ def run_scene(name, frames, dump_velocities=True, advance_timeline=False,
     for f in range(1, frames + 1):
         if advance_timeline:
             scene.frame_set(f)
-        bpy.ops.fluidsim.step(frames=1)
+        if bpy.ops.fluidsim.step(frames=1) != {"FINISHED"}:
+            raise RuntimeError(f"{name}: step {f} was refused; the frame was not simulated")
         solver = sess.solver
         pos = solver.particle_positions()
         vel = solver.particle_velocities() if export_frames else None
@@ -1906,7 +1907,6 @@ def build_tsunami_parthenon():
         "preview_frame": TSUNAMI_PREVIEW_FRAME,
         "whitewater_enabled": False,
         "build_checks": {str(k): v for k, v in sorted(checks.items())},
-        "build_active_leaves": {str(k): v for k, v in sorted(leaf_series.items())},
         "build_frames": tp.FRAMES,
         "build_peak_particles": int(max(series["particle_count"])),
     })
