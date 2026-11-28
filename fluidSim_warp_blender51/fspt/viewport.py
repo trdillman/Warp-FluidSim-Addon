@@ -171,6 +171,11 @@ class ViewportState:
             self._revision += 1
             self.dirty = True
             self.error = ""
+            if self.backend is not None:
+                # A previously denied trace must not remain ahead of the
+                # recapture this dirty view now needs. Cancellation removes
+                # only scheduling intent; any active GPU lease stays owned.
+                self.backend.arbiter.cancel(self.backend.owner)
             if surface_only:
                 self.statistics["surface_invalidations"] += 1
             else:

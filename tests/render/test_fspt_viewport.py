@@ -153,7 +153,8 @@ def test_camera_and_sample_goal_changes_reuse_captured_geometry(viewport):
     assert v.view.tick(lambda _: True) == "submitted"
     v.backends[0].ready = True
     v.view.tick(lambda _: True)
-    matrix = np.eye(4); matrix[0, 3] = 0.2
+    matrix = np.eye(4)
+    matrix[0, 3] = 0.2
     v.view.request_update(replace(v.request, camera=CameraSnapshot(matrix)))
     assert not v.view.dirty and v.view.presentable is None
     assert v.view.snapshot is v.scene
@@ -441,3 +442,34 @@ def test_static_edit_still_rejects_a_pending_frame_after_soft_publication_change
     v.backends[0].ready = True
     assert v.view.tick(lambda _: True, presentation_eligible=lambda _: True) == "capture"
     assert v.view.presentable is None
+
+
+@pytest.mark.parametrize("surface_only", [False, True])
+def test_invalidation_withdraws_obsolete_submission_before_queuing_recapture(viewport, surface_only):
+    v = viewport
+    v.view.capture(lambda: v.scene)
+    other = v.arbiter.try_acquire(object())
+    assert v.view.tick(lambda _: True) == "admission"
+    v.view.invalidate(surface_only=surface_only)
+    assert not v.view.capture(lambda: v.scene)
+    v.arbiter.release(other)
+    assert v.view.capture(lambda: v.scene), "obsolete render intent blocked its own replacement capture"
+    assert v.view.tick(lambda _: True) == "submitted"
+
+
+@pytest.mark.parametrize("surface_only", [False, True])
+def test_invalidation_keeps_the_active_gpu_lease_until_completion(viewport, surface_only):
+    v = viewport
+    v.view.capture(lambda: v.scene)
+    assert v.view.tick(lambda _: True) == "submitted"
+    backend = v.backends[0]
+    lease = backend.lease
+    v.view.invalidate(surface_only=surface_only)
+    other = object()
+    assert backend.pending and v.arbiter._active is lease
+    assert v.arbiter.try_acquire(other) is None
+    backend.ready = True
+    assert v.view.tick(lambda _: True, presentation_eligible=lambda _: True) == "capture"
+    next_lease = v.arbiter.try_acquire(other)
+    assert next_lease is not None
+    v.arbiter.release(next_lease)
