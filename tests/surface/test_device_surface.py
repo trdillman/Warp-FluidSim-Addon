@@ -1,7 +1,7 @@
 """The opt-in surface producer, separate from Blender route and pool admission."""
 import weakref
 from dataclasses import FrozenInstanceError
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
@@ -259,8 +259,10 @@ def test_failed_wave_or_render_update_refuses_an_old_matching_key(monkeypatch):
 def test_stale_host_frame_and_detached_solver_refuse_before_extraction():
     from fluidSim_warp_blender51.sim.device_surface import DeviceSurfaceUnavailable
     from fluidSim_warp_blender51.sim.frame_output import HostFrame
+    from fluidSim_warp_blender51.sim.solver import FluidSolver
 
     pipe = _pipeline("cpu", Mock(backend="sparse"), object())
+    pipe.solver.owns_host_frame = MethodType(FluidSolver.owns_host_frame, pipe.solver)
     host = HostFrame(pipe.solver)
     stamp = pipe.device_surface_stamp()
     # Same frame number alone is insufficient after reset/replacement.

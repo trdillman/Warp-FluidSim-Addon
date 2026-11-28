@@ -598,9 +598,12 @@ def test_solver_reset_invalidates_frame_zero_host_snapshot():
         finalize_topology=lambda: None)
     solver.surface = SimpleNamespace(reset=lambda: None, invalidate_particle_state=lambda: None)
 
-    solver.host_frame().positions
+    original = solver.host_frame()
+    _ = original.positions
+    assert solver.owns_host_frame(original)
     solver.reset()
-    solver.host_frame().positions
+    assert not solver.owns_host_frame(original)
+    _ = solver.host_frame().positions
 
     assert solver.frame == 0
     assert calls["positions"] == 2

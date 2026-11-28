@@ -12,6 +12,10 @@ import numpy as np
 MAX_BOUNCES = 64
 
 
+class DeviceSceneUnavailable(RuntimeError):
+    """A captured source reference retired; recapture instead of waiting on it."""
+
+
 def _rgb(value, name, *, bounded=False):
     result = tuple(float(x) for x in value)
     if len(result) != 3 or not all(math.isfinite(x) and x >= 0 for x in result):

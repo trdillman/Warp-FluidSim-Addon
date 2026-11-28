@@ -11,8 +11,7 @@ from operator import index
 from threading import RLock, current_thread, main_thread
 from weakref import WeakSet
 
-from .contracts import MAX_BOUNCES, frame_key
-from .device_scene import DeviceSceneUnavailable
+from .contracts import MAX_BOUNCES, DeviceSceneUnavailable, frame_key
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 """Producer admission and host sharing with real pipeline and pool ownership."""
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -17,6 +17,7 @@ from fluidSim_warp_blender51.sim.device_surface import (
     SurfaceDeviceArrays,
 )
 from fluidSim_warp_blender51.sim.frame_output import HostFrame
+from fluidSim_warp_blender51.sim.solver import FluidSolver
 from fluidSim_warp_blender51.sim.surface import SurfacePipeline
 
 VERTICES = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
@@ -154,6 +155,7 @@ def make_host(case, *, waves=False, detail=False, frame=7):
     solver = SimpleNamespace(frame=frame, sim_time=0.5, liquid_state_revision=frame,
                              device=case.pool.device, settings=settings, surface=pipe,
                              surface_mesh=pipe.mesh)
+    solver.owns_host_frame = MethodType(FluidSolver.owns_host_frame, solver)
     pipe.solver = solver
     host = solver._host_frame_cache = HostFrame(solver)
     return host, calls
@@ -177,6 +179,29 @@ def test_no_demand_does_not_check_host_or_poll_pool(bridge_case, monkeypatch):
     assert prepare(bridge_case, object()).status == "NO_DEMAND"
     assert bridge_case.bridge.poll(17).status == "NO_DEMAND"
     assert bridge_case.ops.allocations == []
+
+
+def test_producer_uses_solver_public_ownership_before_reserving(bridge_case):
+    case = bridge_case
+    host, extractions = make_host(case)
+    case.bridge.subscribe(17)
+    queries = []
+    host.solver.owns_host_frame = lambda candidate: queries.append(candidate) or False
+    assert prepare(case, host).status == "UNAVAILABLE"
+    assert queries == [host]
+    assert extractions == case.budget.submissions == case.ops.allocations == []
+
+
+def test_host_device_copy_uses_solver_public_ownership_before_extraction(bridge_case):
+    from fluidSim_warp_blender51.sim.device_surface import DeviceSurfaceUnavailable
+
+    host, extractions = make_host(bridge_case)
+    queries = []
+    host.solver.owns_host_frame = lambda candidate: queries.append(candidate) or False
+    with pytest.raises(DeviceSurfaceUnavailable, match="stale"):
+        host.copy_final_device_surface(None, expected_stamp=host.solver.surface.device_surface_stamp())
+    assert queries == [host]
+    assert extractions == []
 
 
 def test_pinned_sparse_marching_cubes_table_capacity():

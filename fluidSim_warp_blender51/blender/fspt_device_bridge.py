@@ -128,7 +128,7 @@ class DeviceSurfaceBridge:
             return self._fallback(scene_token, "UNSUPPORTED", "requires the verified Warp 1.19.0 sparse surface route")
         try:
             solver = host.solver
-            if (solver is None or solver._host_frame_cache is not host
+            if (solver is None or not solver.owns_host_frame(host)
                     or host.frame != source.solver_frame or solver.frame != source.solver_frame
                     or solver.liquid_state_revision != source.state_revision
                     or solver.sim_time != source.simulation_time):

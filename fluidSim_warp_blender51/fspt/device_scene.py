@@ -16,12 +16,8 @@ from threading import current_thread
 
 import numpy as np
 
-from .contracts import Material, SceneSnapshot, _owned, _rgb
+from .contracts import DeviceSceneUnavailable, Material, SceneSnapshot, _owned, _rgb
 from .surface_pool import SurfaceKey
-
-
-class DeviceSceneUnavailable(RuntimeError):
-    """A captured source reference retired; recapture instead of waiting on it."""
 
 
 class GeometryBudgetExceeded(DeviceSceneUnavailable):

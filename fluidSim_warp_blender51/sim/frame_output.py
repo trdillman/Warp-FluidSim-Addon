@@ -323,8 +323,7 @@ class HostFrame:
         """Copy the current surface, sharing its extraction on joint host demand."""
         from .device_surface import DeviceSurfaceUnavailable
 
-        if (self.solver is None or self.frame != self.solver.frame
-                or getattr(self.solver, "_host_frame_cache", None) is not self):
+        if self.solver is None or not self.solver.owns_host_frame(self):
             raise DeviceSurfaceUnavailable("stale host frame for device surface")
         return self.solver.surface.copy_final_device_surface(
             destination, expected_stamp=expected_stamp, required_channels=required_channels,
