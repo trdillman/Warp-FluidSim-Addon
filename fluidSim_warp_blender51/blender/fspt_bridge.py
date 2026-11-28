@@ -146,8 +146,9 @@ def validate_viewport_publications(scene, captured, *, view_layer=None, clock=mo
 
     This does not grant access to a mutable Blender mesh. Capture and final
     rendering still use validate_publications and exact generation equality.
-    Publication completion is a lower bound on solver-state age, not the P0
-    authoritative completed-state clock required for performance qualification.
+    Retention still uses publication completion. Independent solver-state age
+    includes optional publication work and is unknown when no owned completion
+    receipt exists; the two measurements must never substitute for one another.
     """
     captured = tuple(captured)
     current = capture_publications(scene, for_viewport=True, view_layer=view_layer)
@@ -155,6 +156,17 @@ def validate_viewport_publications(scene, captured, *, view_layer=None, clock=mo
     ages = [now - stamp.published_at for stamp in captured]
     if not isfinite(now) or any(not isfinite(age) or age < 0 for age in ages):
         raise SurfaceNotReadyError("Invalid viewport publication age clock")
+    state_ages = []
+    complete_clock = bool(captured)
+    for stamp in captured:
+        ready = getattr(stamp, "state_ready_at", None)
+        if getattr(stamp, "source", None) != publication.SurfaceSource.LIVE or ready is None:
+            complete_clock = False
+            continue
+        if not isfinite(ready) or not ready <= stamp.captured_at <= stamp.published_at <= now:
+            raise SurfaceNotReadyError("Invalid Solver Session completion clock ordering")
+        state_ages.append(now - ready)
+    state_age = max(state_ages) if complete_clock else None
     retained = captured != current
     if retained:
         if len(captured) != 1 or len(current) != 1 or not forward_live_publication(captured[0], current[0]):
@@ -163,6 +175,10 @@ def validate_viewport_publications(scene, captured, *, view_layer=None, clock=mo
             raise SurfaceNotReadyError("Retained image publication age exceeded 250 ms")
     return {"status": "RETAINED" if retained else "CURRENT",
             "publication_age_seconds": max(ages) if ages else None,
+            "solver_state_age_seconds": state_age,
+            "solver_state_age_clock": (
+                "host monotonic Solver Session completion before optional publication"
+                if state_age is not None else None),
             "retention_limit_seconds": 0.25,
             "age_clock": "host monotonic publication completion; not authoritative solver-ready"}
 

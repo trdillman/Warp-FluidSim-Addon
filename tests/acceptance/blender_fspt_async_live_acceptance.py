@@ -229,13 +229,14 @@ class AsyncLiveAcceptance(reference.LiveAcceptance):
         assert pixels.ndim == 3 and pixels.shape[-1] == 4 and np.isfinite(pixels).all()
         row = {name: getattr(stamp, name) for name in (
             "timeline_frame", "source_timeline_frame", "solver_frame", "state_revision", "simulation_time", "epoch",
-            "generation", "build_key", "channel", "source", "scene_token", "owner_token")}
+            "generation", "build_key", "channel", "source", "scene_token", "owner_token", "state_ready_at")}
         row.update(geometry_sha256=audit["geometry_sha256"], rendered_surface_sha256=audit["geometry_sha256"],
                    image_sha256=hashlib.sha256(pixels.tobytes()).hexdigest(),
                    evaluated_vertex_count=audit["evaluated_vertex_count"],
                    evaluated_triangle_count=audit["evaluated_triangle_count"], capture_audit=dict(audit),
                    presented_at_observer=draw_started, presentation_status=presentation["status"],
                    publication_to_draw_seconds=presentation["publication_age_seconds"],
+                   solver_state_to_draw_seconds=presentation["solver_state_age_seconds"],
                    requested_frame_at_draw=int(scene.frame_current),
                    animation_playing=bool(context.window.screen.is_animation_playing), telemetry=info)
         if self.stage == "reopen":

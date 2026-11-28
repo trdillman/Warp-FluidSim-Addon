@@ -47,6 +47,15 @@ still uses publication time, and its diagnostic age must not be reported as the
 P0 completed-state freshness metric. Changing that policy or qualifying the
 joint quality/overhead/freshness targets requires separate work.
 
+Viewport presentation diagnostics now carry `solver_state_age_seconds` separately
+from `publication_age_seconds`. They use the completed image's captured receipt,
+including when a newer live surface exists. A missing or cached completion clock
+stays unknown; mixed inputs cannot synthesize a complete clock. Invalid known
+clock ordering is rejected. The asynchronous acceptance verifier retains the
+raw receipt and measures `solver_state_to_draw_seconds` at independent draw entry.
+That endpoint precedes texture upload and completed presentation, so it remains
+a lower-bound diagnostic, not the P0 end-to-end freshness result.
+
 ## Verification
 
 Host controls cover optional-work delay, same-frame repeated solves, no-output
@@ -64,3 +73,11 @@ and rejects a deliberately substituted publication clock. It also exercises
 same-frame solves, actual direct solver advancement, failure invalidation and
 clock queries with GPU/readback/stepping calls forbidden. Native and installed
 qualification must be reported separately from the host results.
+
+The native clock lane passed at source
+`2893409902e2c1e41e134a0ab8a2ed42dbb0b70d`. Its retained report is
+`artifacts/fspt-p0/bridge-qualification/state-clock-2893409902-20261128T042503214331Z/state-clock/acceptance.json`,
+SHA-256 `607def3c3b550a2550b37e22aaabd7efc97a9862694b79c0f6fc4535eb45d2c8`.
+The earlier `fe9a9627` attempt stopped in its verifier because it treated the
+solver's string device alias as a Warp device object. Resolving that alias with
+`wp.get_device` corrected the verifier without changing solver or clock behavior.

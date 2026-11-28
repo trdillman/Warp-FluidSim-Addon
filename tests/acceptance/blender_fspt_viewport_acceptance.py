@@ -128,6 +128,9 @@ def main():
             elif stage == "material_edit":
                 fixture.checkpoint(path, report, "resize")
                 scene.fspt.resolution_percentage = 15
+                # The async viewport is idle at its sample goal. A scripted
+                # settings edit needs a redraw to deliver the new request.
+                area.tag_redraw()
             else:
                 for name, item in report["stages"].items():
                     final = item["frame"]
