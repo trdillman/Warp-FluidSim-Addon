@@ -105,12 +105,17 @@ POOL_HX, POOL_HY = 0.22, 0.10   # inner half sizes of the trough
 POOL_DEPTH = 0.008      # a thin film: every pool voxel holds particles, see expected_particles
 POOL_TOP = SLAB_TOP + POOL_DEPTH
 WALL_THICKNESS = 0.014
-# Trough wall heights above the pool. The camera side (front, -y) is low so the
-# film shows; the back and the ends are tall enough to hold most of the splash.
-TROUGH_TOP_FRONT = POOL_TOP + 0.012
-TROUGH_TOP_BACK = POOL_TOP + 0.05
-TROUGH_TOP_END = POOL_TOP + 0.05
+# Trough wall height above the pool. The walls are taller than any spray the
+# three drops throw (the first GPU runs saw 0.28 m with the walls at 0.05 m, and
+# the water ran out over the slab to the domain walls). The camera-side wall is
+# left out of the render (see HIDDEN_IN_RENDER): it holds the water like a pane
+# of clear glass, so the camera sees the splash without a wall in the way.
+TROUGH_HEIGHT = 0.30
+TROUGH_TOP_FRONT = POOL_TOP + TROUGH_HEIGHT
+TROUGH_TOP_BACK = POOL_TOP + TROUGH_HEIGHT
+TROUGH_TOP_END = POOL_TOP + TROUGH_HEIGHT
 WALL_TOP = TROUGH_TOP_BACK
+HIDDEN_IN_RENDER = ("Nets Trough Front",)
 # A catch rim around the slab edge: what leaves the trough runs out over the slab
 # and must pile up against this, not against the domain wall. Its outer face is
 # RIM_INSET inside the domain.
@@ -321,8 +326,9 @@ def rim_boxes():
 
 
 def trough_wall_meshes():
-    sides, ends = wall_boxes()
-    return [_boxes("Nets Trough Sides", sides, "Nets Marble"),
+    (front, back), ends = wall_boxes()
+    return [_boxes("Nets Trough Front", [front], "Nets Marble"),
+            _boxes("Nets Trough Back", [back], "Nets Marble"),
             _boxes("Nets Trough Ends", ends, "Nets Marble")]
 
 
@@ -396,10 +402,15 @@ def inside_wall_fraction(positions):
         return 0.0
     margin = 0.002
     inside = np.zeros(len(pos), dtype=bool)
-    for hx, hy, top in ((POOL_HX, POOL_HY, WALL_TOP), (RIM_HX, RIM_HY, RIM_TOP_BACK)):
+    # The wall tops differ per side (the rim's camera side is low), so a particle
+    # above the low wall is over it, not inside it.
+    for hx, hy, top_front, top_back in (
+            (POOL_HX, POOL_HY, TROUGH_TOP_FRONT, TROUGH_TOP_BACK),
+            (RIM_HX, RIM_HY, RIM_TOP_FRONT, RIM_TOP_BACK)):
         ox, oy = hx + WALL_THICKNESS, hy + WALL_THICKNESS
         in_outer = (np.abs(pos[:, 0]) < ox - margin) & (np.abs(pos[:, 1]) < oy - margin)
         in_inner = (np.abs(pos[:, 0]) < hx + margin) & (np.abs(pos[:, 1]) < hy + margin)
+        top = np.where(pos[:, 1] < 0.0, top_front, top_back)
         in_height = (pos[:, 2] < top - margin) & (pos[:, 2] > SLAB_TOP + margin)
         inside |= in_outer & ~in_inner & in_height
     return float(np.mean(inside))

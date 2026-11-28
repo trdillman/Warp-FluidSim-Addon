@@ -55,10 +55,27 @@ def test_slab_covers_the_domain_floor():
     assert slab[:, 2].min() < 0.0 < ns.SLAB_TOP
 
 
-def test_trough_wall_rises_above_the_pool_but_stays_below_the_camera_line():
-    assert ns.POOL_TOP < ns.TROUGH_TOP_FRONT <= ns.TROUGH_TOP_BACK < ns.CAMERA_LOCATION[2]
-    # The camera side stays low so the film is visible over it.
-    assert ns.TROUGH_TOP_FRONT - ns.POOL_TOP <= 0.02
+def test_trough_walls_are_taller_than_the_splash_and_the_front_is_hidden():
+    # GPU runs saw spray up to 0.28 m with low walls; the walls must clear it.
+    assert ns.TROUGH_TOP_FRONT == ns.TROUGH_TOP_BACK == ns.TROUGH_TOP_END
+    assert ns.TROUGH_TOP_FRONT >= 0.30
+    assert ns.TROUGH_TOP_FRONT < ns.DOMAIN_HI[2] - 0.05
+    names = [m.name for m in ns.trough_wall_meshes()]
+    assert names == ["Nets Trough Front", "Nets Trough Back", "Nets Trough Ends"]
+    assert ns.HIDDEN_IN_RENDER == ("Nets Trough Front",)
+    # The builder hides it from the render but keeps it as a collider.
+    src = open(os.path.join(os.path.dirname(__file__), "..", "..", "tools", "demos",
+                            "build_demo_scenes.py")).read()
+    assert "obj.hide_render = True" in src and "ns.HIDDEN_IN_RENDER" in src
+
+
+def test_inside_wall_check_ignores_particles_over_the_low_rim():
+    over_front_rim = np.array([[0.0, -(ns.RIM_HY + 0.5 * ns.WALL_THICKNESS),
+                                ns.RIM_TOP_FRONT + 0.01]])
+    in_back_rim = np.array([[0.0, ns.RIM_HY + 0.5 * ns.WALL_THICKNESS,
+                             ns.RIM_TOP_FRONT + 0.01]])
+    assert ns.inside_wall_fraction(over_front_rim) == 0.0
+    assert ns.inside_wall_fraction(in_back_rim) == 1.0
 
 
 def test_catch_rim_keeps_spill_away_from_the_domain_walls():

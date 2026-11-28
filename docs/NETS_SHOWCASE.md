@@ -34,8 +34,11 @@ The numbers live in `tools/demos/nets_showcase.py` and are checked by
   pool sits on a collider slab 30 mm above the domain floor and the trough wall
   keeps it at least 66 mm from the sides. The drops are dropped nearly from rest (about 2 m/s
   at the pool): a harder splash threw spray into the domain walls on the first GPU
-  run. A stray droplet will still reach a wall, which costs a speck; the build fails
-  if more than 0.1% of the particles get within 10 voxels of a wall.
+  run. The trough walls are 300 mm tall, above the highest spray the GPU draft runs saw
+  (0.28 m with 50 mm walls, which let the water run out over the slab to the domain
+  walls). The wall on the camera side is left out of the render, so it holds the water
+  like a pane of clear glass. A stray droplet will still reach a wall, which costs a
+  speck; the build fails if more than 0.1% of the particles get within 10 voxels of a wall.
 - Every drop is at least 32 voxels across at hero resolution. Surface Nets
   shrinks very small droplets more than marching cubes (about 2.5 voxels: 83%
   of the volume against 91%); fine spray will shrink a little, the drops will not.
